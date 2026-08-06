@@ -10,6 +10,10 @@ on:
   push:
     branches:
       - main
+  # Lets you fire this manually from the Actions tab (a "Run workflow"
+  # button appears once this file is on the default branch) — handy for
+  # testing without needing a throwaway commit.
+  workflow_dispatch: {}
 
 jobs:
   deploy:
