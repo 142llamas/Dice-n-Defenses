@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fantasy Tower Defense</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0e0e14;
+        color: #e8e8f0;
+        font-family: system-ui, Segoe UI, Arial, sans-serif;
+        overflow: hidden;
+      }
+      /* The Phaser canvas is inserted into this container. */
+      #game-root {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game-root"></div>
+    <!-- This is the single entry file. Vite reads it and loads the game. -->
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

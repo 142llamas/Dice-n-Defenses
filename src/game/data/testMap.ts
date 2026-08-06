@@ -1,0 +1,219 @@
+import type { GridPosition } from "../systems/GridSystem";
+
+/**
+ * The Phase 1 test map, written as human-editable "string art".
+ *
+ * This is the data-driven content pattern from the Source of Truth: the map is
+ * data, not code. To change the battlefield, edit the rows below — no scene code
+ * needs to change. Later phases replace this with loaded map files (maps.json).
+ *
+ * Legend (one character per tile):
+ *   .  floor      (walkable)
+ *   #  wall       (blocked — cannot be selected or walked)
+ *   S  spawn      (floor; where enemies will enter in later phases)
+ *   X  exit       (floor; where enemies would leave)
+ *   H  hero start (floor; placeholder hero token)
+ *   E  enemy start(floor; still parsed, but UNUSED in this map since Phase 3 —
+ *      real enemies now spawn from the S spawn point and march to the X exit)
+ *   ^  cliff      (blocked for ground units, same as a wall; a flying unit
+ *      crosses it for free via PathfindingSystem's existing `ignoreWalls`
+ *      mechanism — no pathfinding change needed for this tile type)
+ *   ~  water      (floor-like: WALKABLE, but carries a terrain effect — see
+ *      GameMap.terrainEffectAt / data/terrain.ts. Phase 11.7, D-071.)
+ *   F  fire       (floor-like: WALKABLE, terrain effect — burns an enemy that
+ *      enters it. Phase 11.7, D-071.)
+ *   A  acid       (floor-like: WALKABLE, terrain effect — damages a ground
+ *      enemy that enters it. Phase 11.7, D-071.)
+ *   $  shop       (floor; a tile a hero must be near to access the Gear HUD)
+ *   T  treasure   (floor; a hero landing here gets a one-time gold bonus)
+ *
+ * All content here is original placeholder data — no third-party IP.
+ *
+ * Phase 7: the roster grew from two heroes to four (see data/heroes.ts), so
+ * this map now carries four H tiles instead of two — one per hero, in
+ * HERO_DEFINITIONS order (see BattleScene.buildHeroes). Two more H's were
+ * added flanking the existing pair rather than changing the map's shape.
+ *
+ * Phase 11.7 (D-071): the map system grew terrain types (cliff/water/fire/
+ * acid), shop/treasure tiles, and support for multiple spawns/exits — this
+ * parser was already generic for the latter (spawns/exits are arrays). None
+ * of that touches TEST_MAP itself, which stays exactly as it was.
+ */
+
+export type TileType = "floor" | "blocked" | "cliff" | "water" | "fire" | "acid";
+
+export interface ParsedMap {
+  id: string;
+  name: string;
+  cols: number;
+  rows: number;
+  /** tiles[y][x] — indexed by row (y) then column (x). */
+  tiles: TileType[][];
+  spawns: GridPosition[];
+  exits: GridPosition[];
+  heroStarts: GridPosition[];
+  enemyStarts: GridPosition[];
+  /** Phase 11.7 (D-071): tiles that gate the Gear HUD by proximity. */
+  shops: GridPosition[];
+  /** Phase 11.7 (D-071): tiles that award a one-time gold bonus. */
+  treasures: GridPosition[];
+}
+
+const TEST_MAP_ROWS: string[] = [
+  "................",
+  "....##....##....",
+  "....##....##....",
+  "..H.............",
+  "S..............X",
+  "..HHH...........",
+  "....##....##....",
+  "....##....##....",
+  "................",
+];
+
+/**
+ * Turn an array of equal-length strings into a ParsedMap.
+ * Throws if the rows are not all the same width, which catches typos early.
+ */
+export function parseMapRows(
+  id: string,
+  name: string,
+  rows: string[],
+): ParsedMap {
+  if (rows.length === 0) {
+    throw new Error(`Map "${id}" has no rows.`);
+  }
+  const width = rows[0].length;
+
+  const tiles: TileType[][] = [];
+  const spawns: GridPosition[] = [];
+  const exits: GridPosition[] = [];
+  const heroStarts: GridPosition[] = [];
+  const enemyStarts: GridPosition[] = [];
+  const shops: GridPosition[] = [];
+  const treasures: GridPosition[] = [];
+
+  rows.forEach((rowText, y) => {
+    if (rowText.length !== width) {
+      throw new Error(
+        `Map "${id}" row ${y} has width ${rowText.length}, expected ${width}.`,
+      );
+    }
+    const tileRow: TileType[] = [];
+    for (let x = 0; x < width; x++) {
+      const char = rowText[x];
+      switch (char) {
+        case "#":
+          tileRow.push("blocked");
+          break;
+        case ".":
+          tileRow.push("floor");
+          break;
+        case "S":
+          tileRow.push("floor");
+          spawns.push({ x, y });
+          break;
+        case "X":
+          tileRow.push("floor");
+          exits.push({ x, y });
+          break;
+        case "H":
+          tileRow.push("floor");
+          heroStarts.push({ x, y });
+          break;
+        case "E":
+          tileRow.push("floor");
+          enemyStarts.push({ x, y });
+          break;
+        case "^":
+          tileRow.push("cliff");
+          break;
+        case "~":
+          tileRow.push("water");
+          break;
+        case "F":
+          tileRow.push("fire");
+          break;
+        case "A":
+          tileRow.push("acid");
+          break;
+        case "$":
+          tileRow.push("floor");
+          shops.push({ x, y });
+          break;
+        case "T":
+          tileRow.push("floor");
+          treasures.push({ x, y });
+          break;
+        default:
+          throw new Error(
+            `Map "${id}" has unknown character "${char}" at (${x}, ${y}).`,
+          );
+      }
+    }
+    tiles.push(tileRow);
+  });
+
+  return {
+    id,
+    name,
+    cols: width,
+    rows: rows.length,
+    tiles,
+    spawns,
+    exits,
+    heroStarts,
+    enemyStarts,
+    shops,
+    treasures,
+  };
+}
+
+export const TEST_MAP: ParsedMap = parseMapRows(
+  "test-map-01",
+  "Training Yard (placeholder)",
+  TEST_MAP_ROWS,
+);
+
+/**
+ * The exact inverse of `parseMapRows` (Phase 11.10, D-085): turns a `ParsedMap`
+ * back into the row-string "string art" format above. Priority-checks role
+ * arrays in the SAME order `GameMap.roleAt` does (spawn > exit > hero-start >
+ * enemy-start > shop > treasure) so a tile that happens to appear in more than
+ * one role array (shouldn't happen by construction, but this stays consistent
+ * with the read-side priority regardless) round-trips predictably. This is
+ * what turns a map-builder draft into the string form stored in Firestore
+ * (`MapSharingSystem.toSharedMapRecord`) — `parseMapRows` is what reads it
+ * back, so the pair is exercised together in `tests/mapBuilder.test.ts`.
+ */
+export function encodeMapRows(map: ParsedMap): string[] {
+  const roleChar = (x: number, y: number): string | null => {
+    const at = (list: GridPosition[]): boolean => list.some((p) => p.x === x && p.y === y);
+    if (at(map.spawns)) return "S";
+    if (at(map.exits)) return "X";
+    if (at(map.heroStarts)) return "H";
+    if (at(map.enemyStarts)) return "E";
+    if (at(map.shops)) return "$";
+    if (at(map.treasures)) return "T";
+    return null;
+  };
+
+  const terrainChar: Record<TileType, string> = {
+    floor: ".",
+    blocked: "#",
+    cliff: "^",
+    water: "~",
+    fire: "F",
+    acid: "A",
+  };
+
+  const rows: string[] = [];
+  for (let y = 0; y < map.rows; y++) {
+    let row = "";
+    for (let x = 0; x < map.cols; x++) {
+      row += roleChar(x, y) ?? terrainChar[map.tiles[y][x]];
+    }
+    rows.push(row);
+  }
+  return rows;
+}

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(npm run build 2>&1)",
+      "PowerShell(Get-Command pandoc -ErrorAction SilentlyContinue)",
+      "PowerShell(\\(Get-Content 'c:\\\\Users\\\\kevinb\\\\Downloads\\\\fantasy-tower-defense-v0_2_0-dev-campaign\\\\src\\\\game\\\\scenes\\\\BattleScene.ts' | Measure-Object -Line\\).Lines)",
+      "PowerShell(npx vitest run tests/settings.test.ts)",
+      "PowerShell(npm test)",
+      "PowerShell(\\(Get-Content 'c:\\\\Users\\\\kevinb\\\\Downloads\\\\fantasy-tower-defense-v0_2_0-dev-campaign\\\\PROJECT_STATUS.md' | Measure-Object -Line\\).Lines)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\kevinb\\.claude\\projects\\c--Users-kevinb-Downloads-fantasy-tower-defense-v0-2-0-dev-campaign\\memory"
+    ]
+  }
+}

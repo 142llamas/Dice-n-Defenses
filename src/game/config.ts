@@ -1,0 +1,102 @@
+/**
+ * Central configuration constants for the game.
+ *
+ * Keeping these numbers in one place (rather than scattered through scene code)
+ * follows the Source of Truth's "data-driven content" architecture rule.
+ *
+ * NOTE: grid dimensions (columns/rows) now live with the map data, not here,
+ * because the map defines the board. This file keeps the fixed screen size,
+ * the tile pixel size, and the colour palette.
+ */
+
+// The logical playfield resolution. The canvas scales to the browser window,
+// but game math always uses this fixed internal size (desktop-first). Height
+// was increased from the original 720 (playtest fix): the area below the grid
+// needs room for the status line, the multi-line combat log, AND a row of
+// action buttons, and 720 only left ~50px for all three, which is what caused
+// text and buttons to overlap. Phaser's Scale.FIT + autoCenter (see main.ts)
+// means this is a safe, purely-cosmetic change — the canvas is always scaled
+// to fit the browser window regardless of its logical size.
+//
+// Raised again, 900 -> 1000 (Phase 7): the shop grew from 3 buildables to 7
+// (D-05x), so the shop HUD is now a multi-row grid instead of one row, which
+// needs more room below the grid than 900 left. Verified by the same
+// bounding-box math as the earlier 720->900 change (see buildShopHud).
+//
+// Raised again, 1000 -> 1080 (Phase 11.5, D-078): the Gear catalogue grew
+// from 3 items to 12 equipment + 2 potions (14, four rows at 4/row), taller
+// than the 7-item/2-row shop grid that used to set the Done button's height
+// budget. `buildShopHud` now sizes the Done button off whichever grid is
+// taller; this bump keeps a comfortable margin below it, same bounding-box
+// approach as the 900->1000 change.
+export const GAME_WIDTH = 1280;
+export const GAME_HEIGHT = 1080;
+
+// Pixel size of one square tile. The grid's on-screen position is computed in
+// the scene so the loaded map is centred, whatever its dimensions.
+export const TILE_SIZE = 64;
+
+// Vertical space reserved above the grid for the title text.
+export const GRID_TOP_MARGIN = 90;
+
+// Phase 3: starting Stronghold Integrity (the shared loss resource). The party
+// loses when this reaches zero. Kept here as a balance value, not in scene code.
+export const STRONGHOLD_START = 20;
+
+// Phase 5: gold the party begins with, before any wave rewards. Enough to buy
+// a wall or two, or one trap, up front. First-pass balance value (see
+// KNOWN_ISSUES KI-015); tune once the five-wave loop is play-tested.
+export const STARTING_GOLD = 20;
+
+// Phase 8: localStorage keys for locally-persisted settings/UI state (kept
+// here, not in scene code, for the same reason every other constant is).
+export const SETTINGS_STORAGE_KEY = "fantasy-td:settings";
+export const TUTORIAL_STORAGE_KEY = "fantasy-td:tutorial-seen";
+// Phase 11.6 (D-079): unlock-on-encounter Bestiary progress (per enemy id,
+// whether it has been seen/killed at least once) — same local-only storage
+// treatment as settings/tutorial above.
+export const BESTIARY_STORAGE_KEY = "fantasy-td:bestiary";
+// Phase 11.8 (D-071): per-campaign-id completion flags — same local-only
+// storage treatment, kept as its own key/system rather than folded into
+// BESTIARY_STORAGE_KEY (a campaign completion and an enemy encounter are
+// different concerns despite sharing the same persistence mechanism).
+export const CAMPAIGN_PROGRESS_STORAGE_KEY = "fantasy-td:campaign-progress";
+// Phase 9 (D-083): locally-saved party builds (see systems/SaveSystem.ts) —
+// same local-only storage treatment, its own key since a save slot's shape
+// (a whole party + party size + difficulty) is unrelated to the other three.
+export const SAVE_STORAGE_KEY = "fantasy-td:saves";
+
+// A small, readable colour palette for placeholder art (all original, no IP).
+export const COLORS = {
+  background: 0x0e0e14,
+  gridLine: 0x2a2a3a,
+  tileFloor: 0x1a1a26,
+  tileBlocked: 0x33202a, // walls
+  tileHover: 0x3a3a5a,
+  tileSelected: 0x4a6a4a,
+  tileRejected: 0x7a3a3a, // brief flash when an invalid tile is clicked
+  spawn: 0x8a3a3a,
+  exit: 0x3a5a8a,
+  hero: 0x4caf72,
+  enemy: 0xd05a5a,
+  // Phase 2 additions:
+  heroActive: 0x9be0b4, // the currently selected hero's brighter token
+  moveRange: 0x2f5a7a, // tiles the selected hero can reach (movement range)
+  pathStep: 0x7ac6ff, // dots marking the previewed path to the hovered tile
+  moveConfirm: 0xffe08a, // the pending destination awaiting confirm/cancel
+  breachFlash: 0xff5a5a, // flash when an enemy reaches the exit (a breach)
+  // Phase 4 (combat) additions:
+  attackTarget: 0xff8a8a, // outline on enemies a selected hero can basic-attack
+  abilityTarget: 0xffc07a, // outline on enemies a hero's aimed ability can hit
+  hitFlash: 0xffd0d0, // brief flash on an enemy struck by a hero
+  heroHurtFlash: 0xff6a6a, // brief flash on a hero struck by an enemy
+  // Phase 5 (building/traps/gold) additions:
+  gold: 0xf0c850, // the gold counter text
+  wall: 0x8a7a5a, // a placed barricade (wall) tile
+  wallEdge: 0xb8a678, // a placed barricade's outline
+  trap: 0xc25a7a, // a placed spike trap tile
+  trapEdge: 0xe58aa8, // a placed spike trap's outline
+  buildValid: 0x6ad08a, // ghost preview on a legal build tile
+  buildInvalid: 0xd06a6a, // ghost preview on an illegal build tile
+  trapFlash: 0xffb0c8, // brief flash when a trap hurts an enemy
+} as const;

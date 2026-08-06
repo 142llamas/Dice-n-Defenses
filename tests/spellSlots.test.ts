@@ -1,0 +1,160 @@
+import { describe, it, expect } from "vitest";
+import { Hero } from "../src/game/entities/Hero";
+import { getHeroDefinition } from "../src/game/data/heroes";
+import { heroDefinitionFromBuild, type CharacterBuild } from "../src/game/systems/CharacterBuildSystem";
+import { WIZARD_CANTRIP_IDS, WIZARD_LEVELED_SPELL_IDS, CLERIC_CANTRIP_IDS, CLERIC_LEVELED_SPELL_IDS } from "../src/game/data/characterCreation";
+
+/**
+ * Phase 13.7 (DECISIONS D-092): a caster hero's real spell-slot economy and
+ * spellbook. `Hero.knownSpellAbilityIds()` lists every spell the hero's
+ * class actually knows (not just the one signature action chosen at
+ * creation); `Hero.canCastSpell`/`spendSpellSlot` gate/spend a leveled
+ * spell's slot. A Long Rest fully restores slots; a Short Rest does not,
+ * matching the SRD (unlike a Warlock).
+ */
+
+function wizardBuild(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
+  return {
+    id: "build-wiz",
+    name: "Elyra",
+    raceId: "human",
+    classId: "wizard",
+    level: 1,
+    abilityScores: { str: 8, dex: 12, con: 13, int: 15, wis: 10, cha: 10 },
+    abilityId: "fire-bolt",
+    controlledBy: "human",
+    ...overrides,
+  };
+}
+
+function clericBuild(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
+  return {
+    id: "build-cleric",
+    name: "Doran",
+    raceId: "human",
+    classId: "cleric",
+    level: 1,
+    abilityScores: { str: 8, dex: 12, con: 13, int: 10, wis: 16, cha: 10 },
+    abilityId: "sacred-flame",
+    controlledBy: "human",
+    ...overrides,
+  };
+}
+
+function heroFrom(build: CharacterBuild): Hero {
+  return new Hero(heroDefinitionFromBuild(build), { x: 0, y: 0 });
+}
+
+function ash(): Hero {
+  return new Hero(getHeroDefinition("hero-ash"), { x: 0, y: 0 });
+}
+
+describe("Hero.knownSpellAbilityIds (Phase 13.7, D-092)", () => {
+  it("is empty for the classic fixed roster", () => {
+    expect(ash().knownSpellAbilityIds()).toEqual([]);
+  });
+
+  it("is empty for a non-caster D&D-built hero (Fighter/Rogue)", () => {
+    const fighterBuild: CharacterBuild = {
+      id: "b",
+      name: "Kael",
+      raceId: "human",
+      classId: "fighter",
+      level: 1,
+      abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
+      abilityId: "cleave",
+      controlledBy: "human",
+    };
+    expect(heroFrom(fighterBuild).knownSpellAbilityIds()).toEqual([]);
+  });
+
+  it("lists the Wizard's full known-spell list (Phase 16, D-106) — not just the one signature ability chosen at creation", () => {
+    const hero = heroFrom(wizardBuild()); // signature ability: fire-bolt
+    const expected = [...WIZARD_CANTRIP_IDS, ...WIZARD_LEVELED_SPELL_IDS].sort();
+    expect(hero.knownSpellAbilityIds().sort()).toEqual(expected);
+    expect(hero.knownSpellAbilityIds()).toContain("fire-bolt");
+    expect(hero.knownSpellAbilityIds()).toContain("magic-missile");
+  });
+
+  it("lists the Cleric's full known-spell list (Phase 16, D-106)", () => {
+    const hero = heroFrom(clericBuild());
+    const expected = [...CLERIC_CANTRIP_IDS, ...CLERIC_LEVELED_SPELL_IDS].sort();
+    expect(hero.knownSpellAbilityIds().sort()).toEqual(expected);
+    expect(hero.knownSpellAbilityIds()).toContain("cure-wounds");
+    expect(hero.knownSpellAbilityIds()).toContain("sacred-flame");
+  });
+});
+
+describe("Hero spell slots (Phase 13.7, D-092)", () => {
+  it("a level-1 Wizard/Cleric starts with 2 first-level slots (FULL_CASTER_SPELL_SLOTS_BY_LEVEL[1])", () => {
+    expect(heroFrom(wizardBuild()).spellSlotsRemainingAt(1)).toBe(2);
+    expect(heroFrom(clericBuild()).spellSlotsRemainingAt(1)).toBe(2);
+  });
+
+  it("the classic fixed roster and non-casters have 0 slots at every level", () => {
+    expect(ash().spellSlotsRemainingAt(1)).toBe(0);
+  });
+
+  it("canCastSpell is always true for a cantrip (fire-bolt), regardless of slots", () => {
+    const hero = heroFrom(wizardBuild());
+    expect(hero.canCastSpell("fire-bolt")).toBe(true);
+    for (let i = 0; i < 5; i++) hero.spendSpellSlot(1);
+    expect(hero.canCastSpell("fire-bolt")).toBe(true); // still true — cantrips are never slot-gated
+  });
+
+  it("canCastSpell is slot-gated for a leveled spell (magic-missile), and spendSpellSlot decrements it", () => {
+    const hero = heroFrom(wizardBuild());
+    expect(hero.canCastSpell("magic-missile")).toBe(true);
+    hero.spendSpellSlot(1);
+    expect(hero.spellSlotsRemainingAt(1)).toBe(1);
+    hero.spendSpellSlot(1);
+    expect(hero.spellSlotsRemainingAt(1)).toBe(0);
+    expect(hero.canCastSpell("magic-missile")).toBe(false);
+  });
+
+  it("spendSpellSlot with none remaining is a safe no-op, never going negative", () => {
+    const hero = heroFrom(wizardBuild());
+    hero.spendSpellSlot(1);
+    hero.spendSpellSlot(1);
+    hero.spendSpellSlot(1); // already 0
+    expect(hero.spellSlotsRemainingAt(1)).toBe(0);
+  });
+
+  it("levelUpClass grows slot capacity (level 1 -> 2: 2 -> 3) without refilling spent slots", () => {
+    const hero = heroFrom(wizardBuild());
+    hero.spendSpellSlot(1);
+    hero.spendSpellSlot(1); // 0 remaining
+    hero.levelUpClass(); // level 2: max rises 2 -> 3, so remaining rises 0 -> 1
+    expect(hero.spellSlotsRemainingAt(1)).toBe(1);
+  });
+
+  it("levelUpClass unlocks a new slot LEVEL when the character reaches it (level 2 -> 3: 2nd-level slots appear)", () => {
+    const hero = heroFrom(wizardBuild());
+    hero.levelUpClass(); // level 2
+    expect(hero.spellSlotsRemainingAt(2)).toBe(0); // no 2nd-level slots yet
+    hero.levelUpClass(); // level 3: FULL_CASTER_SPELL_SLOTS_BY_LEVEL[3] = [4, 2]
+    expect(hero.spellSlotsRemainingAt(1)).toBe(4);
+    expect(hero.spellSlotsRemainingAt(2)).toBe(2);
+  });
+
+  it("a Short Rest does NOT restore spell slots (unlike a Warlock's, this game's casters follow the standard SRD cadence)", () => {
+    const hero = heroFrom(wizardBuild());
+    hero.spendSpellSlot(1);
+    hero.shortRest();
+    expect(hero.spellSlotsRemainingAt(1)).toBe(1); // still down by 1
+  });
+
+  it("a Long Rest fully restores spell slots", () => {
+    const hero = heroFrom(wizardBuild());
+    hero.spendSpellSlot(1);
+    hero.spendSpellSlot(1);
+    hero.longRest();
+    expect(hero.spellSlotsRemainingAt(1)).toBe(2);
+  });
+
+  it("a Long Rest is a no-op on slots for a non-caster/classic hero", () => {
+    const hero = ash();
+    hero.longRest();
+    expect(hero.spellSlotsRemainingAt(1)).toBe(0);
+  });
+});

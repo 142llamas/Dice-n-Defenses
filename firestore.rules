@@ -1,0 +1,210 @@
+rules_version = '2';
+
+// Phase 10 (D-084): owner-scoped cloud saves. One document per save slot at
+// users/{uid}/saves/{slotId}, mirroring `SaveSystem.ts`'s `SaveSlot` shape.
+// Everything not explicitly allowed below is denied by default (Firestore's
+// own rule: no matching `match` block + `allow` => denied).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{uid}/saves/{slotId} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid) && isValidSaveSlot(slotId);
+      allow delete: if isOwner(uid);
+    }
+
+    // Phase 11.10 (D-085): PUBLIC shared maps. One document per published
+    // map at sharedMaps/{mapId} — deliberately NOT owner-scoped for reads
+    // (the whole point is other players can browse/play it), the one
+    // departure from the users/{uid}/... pattern above. Writes are still
+    // author-only, and the author field can never change hands on update.
+    match /sharedMaps/{mapId} {
+      allow read: if true;
+      allow create: if isOwner(request.resource.data.authorUid) && isValidSharedMap(mapId);
+      allow update: if isOwner(resource.data.authorUid)
+        && isValidSharedMap(mapId)
+        && request.resource.data.authorUid == resource.data.authorUid;
+      allow delete: if isOwner(resource.data.authorUid);
+    }
+
+    // Phase 12.2 (D-102): cooperative multiplayer sessions. One document per
+    // session at coopSessions/{sessionId}, keyed by its own 6-character
+    // invite code (see systems/CoopSessionSystem.ts). Readable by any
+    // signed-in user — this app never lists/browses the collection (no UI
+    // anywhere does a collection query against it), so reaching a document
+    // at all requires already having its code; that is what keeps this
+    // "invite-only", not a participant-scoped read (which would make it
+    // impossible for a second player to even look up a session before
+    // they've joined it).
+    //
+    // Phase 12.3 (D-103) adds `status`/`heroOwners` — the turn-lock
+    // ownership assignment the host makes once, when starting the battle.
+    // Deliberately still no `battleState`/`turnQueue`/`lastActionSeq` — this
+    // sub-phase doesn't sync live battle state between clients yet (see
+    // CoopSessionSystem.ts's header comment), so there's nothing for those
+    // fields to hold.
+    match /coopSessions/{sessionId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.hostUid == request.auth.uid
+        && isValidCoopSession(sessionId)
+        && request.resource.data.participants.size() == 1
+        && request.resource.data.participants[0].uid == request.auth.uid
+        && request.resource.data.status == 'lobby'
+        && request.resource.data.heroOwners == {};
+      // Two allowed update shapes: (1) joining — hostUid/protocolVersion/
+      // status/heroOwners immutable, the participant list may only GROW by
+      // exactly one (never shrink, reorder, or rewrite an existing entry),
+      // stays at or under MAX_COOP_PARTICIPANTS (2), and the newly appended
+      // entry must be the caller's own uid (no joining on someone else's
+      // behalf); or (2) the host starting the battle — a one-way
+      // status 'lobby' -> 'battle' flip that also assigns `heroOwners`,
+      // with everything else (including the participant list) unchanged.
+      allow update: if request.auth != null
+        && isValidCoopSession(sessionId)
+        && request.resource.data.hostUid == resource.data.hostUid
+        && request.resource.data.protocolVersion == resource.data.protocolVersion
+        && (
+          (
+            request.resource.data.status == resource.data.status
+            && request.resource.data.heroOwners == resource.data.heroOwners
+            && request.resource.data.participants.size() == resource.data.participants.size() + 1
+            && request.resource.data.participants.size() <= 2
+            && isPrefixOfParticipants(resource.data.participants, request.resource.data.participants)
+            && request.resource.data.participants[request.resource.data.participants.size() - 1].uid == request.auth.uid
+          )
+          || (
+            request.auth.uid == resource.data.hostUid
+            && resource.data.status == 'lobby'
+            && request.resource.data.status == 'battle'
+            && request.resource.data.participants == resource.data.participants
+            && request.resource.data.heroOwners.size() > 0
+          )
+        );
+      allow delete: if request.auth != null && resource.data.hostUid == request.auth.uid;
+    }
+
+    function isValidCoopSession(sessionId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['id', 'protocolVersion', 'hostUid', 'participants', 'createdAt', 'updatedAt', 'status', 'heroOwners'])
+        && data.id is string && data.id == sessionId && data.id.size() == 6
+        && data.protocolVersion is number
+        && data.hostUid is string && data.hostUid.size() <= 128
+        && data.participants is list && data.participants.size() >= 1 && data.participants.size() <= 2
+        && isValidCoopParticipants(data.participants)
+        && data.createdAt is number
+        && data.updatedAt is number
+        && data.status in ['lobby', 'battle']
+        && data.heroOwners is map;
+    }
+
+    // No loop construct in rules — explicit per-index checks, same pattern
+    // as isValidParty/isValidTileRows above (MAX_COOP_PARTICIPANTS is 2).
+    function isValidCoopParticipants(participants) {
+      return (participants.size() < 1 || isValidCoopParticipant(participants[0]))
+        && (participants.size() < 2 || isValidCoopParticipant(participants[1]));
+    }
+
+    function isValidCoopParticipant(p) {
+      return p.keys().hasOnly(['uid', 'displayName', 'joinedAt'])
+        && p.uid is string && p.uid.size() <= 128
+        && (p.displayName == null || (p.displayName is string && p.displayName.size() <= 100))
+        && p.joinedAt is number;
+    }
+
+    // A join may only APPEND to the existing participant list — every
+    // existing entry must reappear, unchanged, at the same index.
+    function isPrefixOfParticipants(oldList, newList) {
+      return (oldList.size() < 1 || newList[0] == oldList[0])
+        && (oldList.size() < 2 || newList[1] == oldList[1]);
+    }
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // Shape/size validation is the concrete "budget safeguard" against a
+    // malformed or abusive client write — not exhaustive leaf-level type
+    // checking (matches this project's existing "good enough" defensive
+    // style elsewhere, e.g. BestiarySystem's `isBestiaryEntry`), but it caps
+    // every string/array size and rejects any unexpected extra field.
+    function isValidSaveSlot(slotId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['id', 'name', 'createdAt', 'updatedAt', 'party', 'partySize', 'difficultyId'])
+        && data.id is string && data.id == slotId && data.id.size() <= 100
+        && data.name is string && data.name.size() <= 100
+        && data.createdAt is number
+        && data.updatedAt is number
+        && data.difficultyId in ['easy', 'normal', 'hard', 'nightmare']
+        && data.partySize is number && data.partySize >= 1 && data.partySize <= 4
+        && data.party is list && data.party.size() >= 1 && data.party.size() <= 4
+        && isValidParty(data.party);
+    }
+
+    // MAX_PARTY_SIZE is 4 (see CharacterCreationScene.ts) — Firestore rules
+    // have no loop construct, so each of the (at most 4) slots is checked
+    // explicitly rather than iterated.
+    function isValidParty(party) {
+      return (party.size() < 1 || isValidBuild(party[0]))
+        && (party.size() < 2 || isValidBuild(party[1]))
+        && (party.size() < 3 || isValidBuild(party[2]))
+        && (party.size() < 4 || isValidBuild(party[3]));
+    }
+
+    function isValidBuild(build) {
+      return build.keys().hasOnly(['id', 'name', 'raceId', 'classId', 'level', 'abilityScores', 'abilityId', 'controlledBy'])
+        && build.id is string && build.id.size() <= 100
+        && build.name is string && build.name.size() <= 100
+        && build.raceId is string
+        && build.classId is string
+        && build.level is number
+        && build.abilityScores is map
+        && build.abilityScores.keys().hasOnly(['str', 'dex', 'con', 'int', 'wis', 'cha'])
+        && build.abilityScores.keys().hasAll(['str', 'dex', 'con', 'int', 'wis', 'cha'])
+        && build.abilityId is string
+        && build.controlledBy in ['human', 'ai', 'remote'];
+    }
+
+    // Phase 11.10 (D-085): tileRows stores the map's row-string "string art"
+    // form (see data/testMap.ts's parseMapRows/encodeMapRows), NOT a nested
+    // tiles[][] array — rules have no loop construct, so a flat array of
+    // strings is what keeps this validation tractable (a `.size()`
+    // string-length check per row, rather than per-cell validation). This
+    // does NOT check that every character in a row is one of the 12 legal
+    // legend characters (still no per-character loop) — same known,
+    // stated limit as isValidSaveSlot above; `parseMapRows` (via
+    // `fromSharedMapRecord`) is the real gatekeeper against a malformed
+    // character on load, exactly as it already is for the hardcoded maps.
+    // Bounds mirror MapBuilderSystem.ts's own MIN/MAX_MAP_COLS/ROWS exactly
+    // (6-20 cols, 6-9 rows — the row cap comes from BattleScene's fixed
+    // TILE_SIZE/HUD layout, see that file's header comment for the math).
+    function isValidSharedMap(mapId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['id', 'name', 'authorUid', 'authorDisplayName', 'createdAt', 'updatedAt', 'cols', 'rows', 'tileRows'])
+        && data.id is string && data.id == mapId && data.id.size() <= 100
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.authorUid is string && data.authorUid == request.auth.uid
+        && (data.authorDisplayName == null || (data.authorDisplayName is string && data.authorDisplayName.size() <= 100))
+        && data.createdAt is number
+        && data.updatedAt is number
+        && data.cols is number && data.cols >= 6 && data.cols <= 20
+        && data.rows is number && data.rows >= 6 && data.rows <= 9
+        && data.tileRows is list && data.tileRows.size() == data.rows
+        && isValidTileRows(data.tileRows, data.cols);
+    }
+
+    // No loop construct in rules — explicit per-index checks up through
+    // MAX_MAP_ROWS (9), same shape as isValidParty's fixed 4-slot pattern.
+    function isValidTileRows(rows, cols) {
+      return (rows.size() < 1 || (rows[0] is string && rows[0].size() == cols))
+        && (rows.size() < 2 || (rows[1] is string && rows[1].size() == cols))
+        && (rows.size() < 3 || (rows[2] is string && rows[2].size() == cols))
+        && (rows.size() < 4 || (rows[3] is string && rows[3].size() == cols))
+        && (rows.size() < 5 || (rows[4] is string && rows[4].size() == cols))
+        && (rows.size() < 6 || (rows[5] is string && rows[5].size() == cols))
+        && (rows.size() < 7 || (rows[6] is string && rows[6].size() == cols))
+        && (rows.size() < 8 || (rows[7] is string && rows[7].size() == cols))
+        && (rows.size() < 9 || (rows[8] is string && rows[8].size() == cols));
+    }
+  }
+}

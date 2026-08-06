@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(npm run typecheck)",
+      "PowerShell(npm test 2>&1)",
+      "PowerShell(npm run build)",
+      "PowerShell(npx vitest run tests/statusEffects.test.ts 2>&1)",
+      "PowerShell(npx vitest run tests/phase7Structures.test.ts 2>&1)",
+      "PowerShell(npm test -- --run tests/combat.test.ts 2>&1)",
+      "PowerShell(npm test -- --run tests/classLeveling.test.ts 2>&1)"
+    ]
+  }
+}

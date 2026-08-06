@@ -1,0 +1,36 @@
+# Dependencies (recreated by `npm install`)
+node_modules/
+
+# Build output (recreated by `npm run build`)
+dist/
+
+# Test coverage output
+coverage/
+
+# Local environment files and secrets
+.env
+.env.*
+*.local
+
+# Firebase service-account credentials and private keys (NEVER commit these)
+*serviceAccount*.json
+*firebase-adminsdk*.json
+*.pem
+*.key
+
+# Firebase CLI's local deploy cache (Phase 10, D-084) — machine-specific, not source
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
