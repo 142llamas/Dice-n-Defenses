@@ -43,6 +43,82 @@ export interface CampaignDefinition {
    * it uses the same full, unrestricted pool Free Play does).
    */
   lootPoolIds?: readonly string[];
+  /**
+   * D-118 (engine scaffolding for CAMPAIGN_STORY_DESIGN.md's "region"
+   * structure): a "region" campaign is 4 chapters (1-5/6-10/11-15/16-20)
+   * instead of one flat wave list. Optional and unused by both existing
+   * campaigns on purpose — they stay flat, single-chapter campaigns with
+   * zero behavior change. When present, `waves`/`bossEnemyId`/`lootPoolIds`
+   * above should still describe the FINALE chapter (chapter index
+   * `chapters.length - 1`), so any code that isn't chapter-aware yet keeps
+   * reading a sensible value. Always go through `getChapter`/`totalChapters`/
+   * `isChapteredCampaign` rather than reading this field directly — they
+   * give a flat campaign the same chapter-shaped access pattern (a single
+   * synthesized chapter at index 0), so callers never need to branch on
+   * "is this campaign chaptered."
+   */
+  chapters?: ChapterDefinition[];
+}
+
+/**
+ * D-118: one chapter of a "region" campaign (see `CampaignDefinition.chapters`
+ * and `CAMPAIGN_STORY_DESIGN.md` §2). Deliberately has NO `mapId` of its own
+ * — all four chapters of a region share the parent campaign's one map; only
+ * the wave list, level band, and (for chapters 1/4) a named threat differ.
+ */
+export interface ChapterDefinition {
+  id: string;
+  name: string;
+  /** The SRD character-level band this chapter targets, e.g. `[1, 5]`. Matches CAMPAIGN_STORY_DESIGN.md §2's four bands. */
+  levelRange: readonly [number, number];
+  waves: WaveDefinition[];
+  /** Chapters 1 and 4 name a real miniboss/boss per the design doc's §2/§3; chapters 2-3 may still name one, but it's not required. */
+  bossEnemyId?: string;
+  lootPoolIds?: readonly string[];
+  /** Minimal chapter-boundary storytelling (CAMPAIGN_STORY_DESIGN.md §7's "no need for a full dialogue engine yet") — shown before/after the chapter's waves. No rendering exists for these yet; declared for content to fill in once that UI does. */
+  introText?: string;
+  outroText?: string;
+}
+
+/**
+ * True if `def` uses the D-118 chapter structure. Both existing campaigns
+ * (Emberford Reach, Saltmere Shallows) return false — they stay flat.
+ */
+export function isChapteredCampaign(def: CampaignDefinition): boolean {
+  return !!def.chapters && def.chapters.length > 0;
+}
+
+/** Total playable chapters — 1 for a flat (non-chaptered) campaign. */
+export function totalChapters(def: CampaignDefinition): number {
+  return isChapteredCampaign(def) ? def.chapters!.length : 1;
+}
+
+/**
+ * Resolve chapter `chapterIndex` of `def`, throwing on an out-of-range index
+ * — matches `getCampaignDefinition`/`getCampaignMap`'s throw-on-unknown-id
+ * convention. A flat (non-chaptered) campaign synthesizes a single chapter
+ * at index 0 from its own top-level fields, so callers never need to branch
+ * on `isChapteredCampaign` themselves — they can always call `getChapter`.
+ */
+export function getChapter(def: CampaignDefinition, chapterIndex: number): ChapterDefinition {
+  if (!isChapteredCampaign(def)) {
+    if (chapterIndex !== 0) {
+      throw new Error(`Campaign "${def.id}" is not chaptered; only chapter index 0 exists.`);
+    }
+    return {
+      id: def.id,
+      name: def.name,
+      levelRange: [1, 20],
+      waves: def.waves,
+      bossEnemyId: def.bossEnemyId,
+      lootPoolIds: def.lootPoolIds,
+    };
+  }
+  const chapter = def.chapters![chapterIndex];
+  if (!chapter) {
+    throw new Error(`Campaign "${def.id}" has no chapter at index ${chapterIndex}.`);
+  }
+  return chapter;
 }
 
 // ----- Emberford Reach (volcanic: fire + acid + cliff) --------------------

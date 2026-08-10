@@ -1,6 +1,18 @@
 import { describe, it, expect } from "vitest";
 import { Hero } from "../src/game/entities/Hero";
-import { getHeroDefinition } from "../src/game/data/heroes";
+import type { HeroDefinition } from "../src/game/data/heroes";
+
+const TEST_HERO_DEF: HeroDefinition = {
+  id: "hero-test",
+  name: "Test Hero",
+  movementTiles: 4,
+  maxHealth: 12,
+  attackDamage: 4,
+  attackRangeTiles: 1,
+  attackBonus: 4,
+  baseArmorClass: 10,
+  abilityId: "cleave",
+};
 
 /**
  * Phase 21 (D-112): a hero can now carry the same status effects an enemy
@@ -14,13 +26,13 @@ import { getHeroDefinition } from "../src/game/data/heroes";
  * for-byte the same code shape here.
  */
 
-function ash(): Hero {
-  return new Hero(getHeroDefinition("hero-ash"), { x: 0, y: 0 });
+function testHero(): Hero {
+  return new Hero(TEST_HERO_DEF, { x: 0, y: 0 });
 }
 
 describe("Hero status effect bookkeeping", () => {
   it("applies, reports, and expires a status after its duration", () => {
-    const hero = ash();
+    const hero = testHero();
     expect(hero.hasStatus("poisoned")).toBe(false);
     hero.applyStatus("poisoned", 2);
     expect(hero.hasStatus("poisoned")).toBe(true);
@@ -31,7 +43,7 @@ describe("Hero status effect bookkeeping", () => {
   });
 
   it("refreshes to the LONGER duration instead of stacking", () => {
-    const hero = ash();
+    const hero = testHero();
     hero.applyStatus("silenced", 1);
     hero.applyStatus("silenced", 3);
     hero.tickStatuses();
@@ -44,7 +56,7 @@ describe("Hero status effect bookkeeping", () => {
 
 describe("Hero: armorClassDelta (exposed) folds into armorClass", () => {
   it("lowers effective Armor Class while active, restored once expired", () => {
-    const hero = ash();
+    const hero = testHero();
     const baseAC = hero.armorClass;
     hero.applyStatus("exposed", 2);
     expect(hero.armorClass).toBe(baseAC - 2);
@@ -56,7 +68,7 @@ describe("Hero: armorClassDelta (exposed) folds into armorClass", () => {
 
 describe("Hero: movementReduction (slowed) folds into effectiveMovementTiles", () => {
   it("reduces movement budget while slowed, never below 0", () => {
-    const hero = ash();
+    const hero = testHero();
     const base = hero.movementTiles;
     expect(hero.effectiveMovementTiles).toBe(base);
     hero.applyStatus("slowed", 1); // -2
@@ -67,7 +79,7 @@ describe("Hero: movementReduction (slowed) folds into effectiveMovementTiles", (
 
 describe("Hero: preventsAction (stunned/restrained) blocks moving and acting", () => {
   it.each(["stunned", "restrained"] as const)("%s prevents canMove/canAct", (statusId) => {
-    const hero = ash();
+    const hero = testHero();
     expect(hero.canMove()).toBe(true);
     expect(hero.canAct()).toBe(true);
     hero.applyStatus(statusId, 1);
@@ -81,7 +93,7 @@ describe("Hero: preventsAction (stunned/restrained) blocks moving and acting", (
 
 describe("Hero: attackRollDisadvantage (blinded/sapped/toppled) exposed via attacksWithDisadvantage", () => {
   it.each(["blinded", "sapped", "toppled"] as const)("%s", (statusId) => {
-    const hero = ash();
+    const hero = testHero();
     expect(hero.attacksWithDisadvantage).toBe(false);
     hero.applyStatus(statusId, 1);
     expect(hero.attacksWithDisadvantage).toBe(true);
@@ -92,7 +104,7 @@ describe("Hero: attackRollDisadvantage (blinded/sapped/toppled) exposed via atta
 
 describe("Hero: preventsCasting (silenced) exposed via isSilenced", () => {
   it("blocks casting only, not moving or a basic attack", () => {
-    const hero = ash();
+    const hero = testHero();
     expect(hero.isSilenced).toBe(false);
     hero.applyStatus("silenced", 2);
     expect(hero.isSilenced).toBe(true);
@@ -106,7 +118,7 @@ describe("Hero: preventsCasting (silenced) exposed via isSilenced", () => {
 
 describe("Hero: damagePerTurn (poisoned) via tickStatusDamage", () => {
   it("deals damage and reports the total, floored at 0 health", () => {
-    const hero = ash();
+    const hero = testHero();
     const startHealth = hero.health;
     hero.applyStatus("poisoned", 3); // 2 dmg/phase
     const dealt = hero.tickStatusDamage();
@@ -115,12 +127,12 @@ describe("Hero: damagePerTurn (poisoned) via tickStatusDamage", () => {
   });
 
   it("returns 0 with no active damage-over-time status", () => {
-    const hero = ash();
+    const hero = testHero();
     expect(hero.tickStatusDamage()).toBe(0);
   });
 
   it("never drops health below 0, and returns 0 once already defeated", () => {
-    const hero = ash();
+    const hero = testHero();
     hero.health = 1;
     hero.applyStatus("poisoned", 1);
     const dealt = hero.tickStatusDamage();
@@ -134,7 +146,7 @@ describe("Hero: damagePerTurn (poisoned) via tickStatusDamage", () => {
 
 describe("Hero: resetForNewTurn ticks statuses down, same cadence as buffs", () => {
   it("expires a 1-turn status on the next reset", () => {
-    const hero = ash();
+    const hero = testHero();
     hero.applyStatus("silenced", 1);
     hero.resetForNewTurn();
     expect(hero.isSilenced).toBe(false);
@@ -143,7 +155,7 @@ describe("Hero: resetForNewTurn ticks statuses down, same cadence as buffs", () 
 
 describe("Hero: toSnapshot/fromSnapshot round-trips activeStatuses", () => {
   it("preserves every active status and its remaining duration", () => {
-    const hero = ash();
+    const hero = testHero();
     hero.applyStatus("poisoned", 3);
     hero.applyStatus("silenced", 1);
     const snap = hero.toSnapshot();

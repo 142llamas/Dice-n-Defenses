@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Hero } from "../src/game/entities/Hero";
-import { getHeroDefinition } from "../src/game/data/heroes";
+import type { HeroDefinition } from "../src/game/data/heroes";
 import {
   heroDefinitionFromBuild,
   subclassIdForNewBuild,
@@ -15,11 +15,10 @@ import { getSpell } from "../src/game/data/spells";
 /**
  * Phase 13.3 (D-089): real per-class leveling. `Hero.levelUpClass()` is the
  * seam a D&D-built hero (classId + abilityScores, both set by
- * `heroDefinitionFromBuild`) advances through on the same wave-clear cadence
- * `ProgressionSystem` already tracked for the classic roster's flat
- * Vigor/Might choice — the two are deliberately unreconciled (see
- * DECISIONS D-089): a hero with no classId/abilityScores (the fixed roster)
- * never calls this and stays on `grantVigor`/`grantMight` instead.
+ * `heroDefinitionFromBuild`) advances through on the wave-clear cadence
+ * `ProgressionSystem` tracks. `classId`/`abilityScores` are still optional on
+ * `HeroDefinition` (see data/heroes.ts) — `levelUpClass()` stays a defensive
+ * no-op for a hero built without them, covered below.
  */
 
 function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
@@ -40,13 +39,25 @@ function heroFromBuild(overrides: Partial<CharacterBuild> = {}): Hero {
   return new Hero(heroDefinitionFromBuild(build(overrides)), { x: 0, y: 0 });
 }
 
-function ash(): Hero {
-  return new Hero(getHeroDefinition("hero-ash"), { x: 0, y: 0 });
+const NO_CLASS_HERO_DEF: HeroDefinition = {
+  id: "hero-no-class",
+  name: "Ash",
+  movementTiles: 4,
+  maxHealth: 12,
+  attackDamage: 4,
+  attackRangeTiles: 1,
+  attackBonus: 4,
+  baseArmorClass: 10,
+  abilityId: "cleave",
+};
+
+function heroWithNoClass(): Hero {
+  return new Hero(NO_CLASS_HERO_DEF, { x: 0, y: 0 });
 }
 
-describe("Hero.levelUpClass — the classic fixed roster (no classId/abilityScores)", () => {
-  it("is a no-op — the classic roster never levels this way", () => {
-    const hero = ash();
+describe("Hero.levelUpClass — a hero with no classId/abilityScores", () => {
+  it("is a no-op", () => {
+    const hero = heroWithNoClass();
     const before = {
       level: hero.level,
       maxHealth: hero.effectiveMaxHealth,
@@ -114,8 +125,8 @@ describe("Hero.levelUpClass — a D&D-built Rogue's Sneak Attack rider scales wi
 });
 
 describe("Hero.spellSaveDC (Phase 13.5, D-090)", () => {
-  it("is null for the classic fixed roster (no classId/abilityScores)", () => {
-    expect(ash().spellSaveDC).toBeNull();
+  it("is null for the hero with no classId/abilityScores", () => {
+    expect(heroWithNoClass().spellSaveDC).toBeNull();
   });
 
   it("is null for a D&D-built hero whose class has no spellcasting (Fighter/Rogue)", () => {
@@ -145,8 +156,8 @@ describe("Hero.spellSaveDC (Phase 13.5, D-090)", () => {
 });
 
 describe("Hero.savingThrowBonus (Phase 13.10) — resolved by an enemy like Blightcaller", () => {
-  it("is a flat default for the classic fixed roster (no ability scores)", () => {
-    expect(ash().savingThrowBonus).toBe(2);
+  it("is a flat default for the hero with no classId/abilityScores", () => {
+    expect(heroWithNoClass().savingThrowBonus).toBe(2);
   });
 
   it("is the DEX modifier alone for a class NOT proficient in DEX saves (Fighter: STR/CON)", () => {
@@ -177,8 +188,8 @@ describe("ProgressionSystem.acknowledgeLevelUp (Phase 13.3, D-089)", () => {
 });
 
 describe("Hero.improveAbilityScore (Phase 13.6, D-091)", () => {
-  it("is a no-op for the classic fixed roster (no classId/abilityScores)", () => {
-    const hero = ash();
+  it("is a no-op for the hero with no classId/abilityScores", () => {
+    const hero = heroWithNoClass();
     const before = hero.effectiveAttackDamage;
     hero.improveAbilityScore("str", 2);
     expect(hero.effectiveAttackDamage).toBe(before);
@@ -588,9 +599,9 @@ describe("Hero.effectiveMaxHealth — Draconic Bloodline's Draconic Resilience (
 });
 
 describe("Hero.meetsFeatPrerequisites (Phase 18, D-109)", () => {
-  it("is false for the classic fixed roster (no classId/abilityScores)", () => {
-    expect(ash().meetsFeatPrerequisites("tough")).toBe(false);
-    expect(ash().meetsFeatPrerequisites("archery")).toBe(false);
+  it("is false for the hero with no classId/abilityScores", () => {
+    expect(heroWithNoClass().meetsFeatPrerequisites("tough")).toBe(false);
+    expect(heroWithNoClass().meetsFeatPrerequisites("archery")).toBe(false);
   });
 
   it("allows every Origin feat with no prerequisite at level 1", () => {

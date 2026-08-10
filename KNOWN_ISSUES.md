@@ -2,18 +2,132 @@
 
 ## Open bugs (confirmed by Kevin, not yet fixed)
 
-- **KI-033 — The Gear button overlaps the "Wave N / 10 · Phase" banner text.**
-  Found by Kevin in-browser right after the D-059 Gear/Build fix. Same root
-  cause shape as D-046/D-055/D-059: the banner (`bannerText`) is centered on
-  the canvas and can run wide enough (e.g. "Wave 10 / 10  ·  Between Waves")
-  to reach the Gear button's left edge, which is anchored to the right margin
-  independently of the banner's width. Not fixed this session — Kevin flagged
-  it as low-priority since a broader HUD/visual overhaul is anticipated later
-  that would likely change this layout anyway. Worth a real fix (shrink/wrap
-  the banner, or push the button row down) whenever the HUD gets touched
-  next, but not urgent standalone.
+(none currently — see "Open items to verify" below for work not yet confirmed in a browser.)
 
 ## Open items to verify
+
+- **KI-078 — D-122's spell-cast and death animations are not yet confirmed
+  by Kevin in a browser.** Built and verified headless-only (typecheck, all
+  1036 tests, production build all pass — 113 modules, up from 112; `npm
+  run dev` serves HTTP 200). To check: play a battle with a caster hero
+  (Wizard/Cleric/Druid/Sorcerer/Warlock/Bard) and cast several different
+  spells, plus kill a few enemies with different spells and with plain
+  attacks/traps.
+  - Confirm each spell's cast plays a visible flourish (a traveling bolt, a
+    ring pulse, a falling judgment, etc.) roughly matching its real effect
+    (an AoE spell should visibly burst at the chosen tile; a heal should
+    sparkle over the target; a teleport should fade-and-reappear).
+  - Confirm two different spells of the same general TYPE (e.g. two attack-
+    roll bolts) still look distinguishable from each other in color/size/
+    speed, not identical — this was the actual ask this session.
+  - Confirm an enemy killed by fire (Fire Bolt, Burning Hands, a burning
+    status tick) fades differently than one killed by a plain weapon
+    attack, and differently again from one killed by a cold/poison/
+    necrotic/radiant spell.
+  - Confirm the "Instant" animation-speed setting skips both the cast
+    flourish and the death flourish outright, same as every other tween in
+    this scene.
+  - **Known, deliberate limit, not a bug**: the cast COLOR is a best-effort
+    keyword guess against each spell's name/description text, not a
+    verified SRD damage type (this game has no damage-type field on spells
+    at all) — a handful of spells may read a shade off from their "real"
+    element. See D-122.
+
+- **KI-077 — D-121's basic-attack lunge is not yet confirmed by Kevin in a
+  browser.** Built and verified headless-only (typecheck, all 1026 tests,
+  production build all pass — 112 modules, unchanged; `npm run dev` serves
+  HTTP 200). To check: play a battle and land a hero's basic Attack on an
+  enemy, then let an enemy attack a hero back.
+  - Confirm the attacker's token visibly nudges toward its target and
+    springs back, on top of the existing hit-flash, on both hero→enemy and
+    enemy→hero swings.
+  - Confirm the lunge respects the Settings animation-speed control —
+    "Instant" should skip the lunge outright (same as it already skips
+    move/hit-flash tweens), not play it at some minimum speed.
+  - Confirm no visual glitch when a hero's status badge, boss banner, or
+    aura ring token is present nearby (the lunge only moves the attacking
+    token's own circle/label/hp-text/sprite, nothing else, but worth an
+    eyes-on check since this is the first tween sharing screen space with
+    those).
+  - **Known, deliberate scope limit, not a bug**: only wired into the
+    single basic Attack action on both sides — Extra Attack's extra swings,
+    the off-hand attack, Cleave's second target, and every spell/ability
+    attack still show only the existing hit-flash, no lunge. See D-121.
+
+- **KI-076 — D-120's dialogue skip controls are not yet confirmed by Kevin
+  in a browser.** Built and verified headless-only (typecheck, all 1026
+  tests, production build all pass — 112 modules, up from 111; `npm run
+  dev` serves HTTP 200). To check: Compendium → Dialogue tab → both sample
+  buttons.
+  - **"Show Sample (skippable)"**: confirm the "Skip ▶▶" button (top-left)
+    is visible and jumps straight to closing the box from any line;
+    confirm clicking anywhere on the parchment panel, and pressing
+    Space/Enter, both advance to the next line exactly like the Continue
+    button does.
+  - **"Show Sample (with a decision)"**: confirm the "Skip ▶▶" button is
+    ABSENT for this entire sequence (including on its first line, before
+    the decision line is even reached) — this is the one behavior this
+    session most needs eyes on, since it's a real gating rule, not just
+    styling.
+  - **Click-target overlap**: confirm clicking the Continue or Skip button
+    only ever triggers that button (not a double-advance from the
+    panel/scrim's own click-to-advance handler underneath it).
+  - **Known, deliberate limit, not a bug**: nothing actually plays out
+    over time yet (no text-reveal animation, no audio), so every skip
+    control's practical effect today is identical to normal advancing —
+    the visible difference (jumping straight to the end vs. one line at a
+    time) is the only thing to confirm; the interrupt seam itself has
+    nothing to visibly interrupt yet.
+
+- **KI-075 — The new stylized parchment dialogue box (D-119) is not yet
+  confirmed by Kevin in a browser.** Built and verified headless-only
+  (typecheck, all 1021 tests, production build all pass — 111 modules, up
+  from 109; `npm run dev` serves HTTP 200) — same standing "no browser in
+  this environment" limitation as every other visual change. To check:
+  open Compendium → the new "Dialogue" tab → "Show Sample Dialogue".
+  - **The parchment panel itself**: does the drawn (not image-based) base
+    fill + mottling + double border actually read as "parchment," or does
+    it need a real texture/more contrast? This is the one part of this
+    session Kevin can fully judge without supplying anything himself.
+  - **The NPC portrait placeholder silhouette**: is the fallback shape (a
+    plain gray bust icon) an acceptable "nothing to see yet" stand-in, or
+    too crude even as a placeholder?
+  - **Layout**: portrait/name-plate/text/Continue-button positioning at the
+    actual rendered sizes, and that the panel doesn't collide with
+    Compendium's own tab row or detail-text area above/behind it.
+  - **The narrator/PC line (no portrait) vs. NPC line (portrait) visual
+    difference** reads clearly as two different speaker styles.
+  - **Known, deliberate, unverifiable-without-art limit, not a bug**: the
+    portrait shows only the placeholder silhouette today — `PORTRAIT_MANIFEST`
+    is empty, so there is nothing else to look at until Kevin supplies a
+    real image.
+
+- **KI-074 — This session's playtest-driven fixes (D-117) are not yet
+  confirmed by Kevin in a browser** — the exact thing they were meant to
+  fix. Built and verified headless-only (typecheck, 976 tests, production
+  build all pass; `npm run dev` serves HTTP 200) — this environment has no
+  browser, so none of the following has actually been SEEN:
+  - **The canvas is no longer visibly off-center** (`main.ts`'s
+    `scale.autoCenter` changed from `CENTER_BOTH` to `NO_CENTER`, letting
+    `index.html`'s flex centering do it alone).
+  - **The Gear button no longer overlaps the "Wave N / M · Phase" banner**
+    at any wave count/phase combination — confirm especially the widest
+    real string, "Wave 10 / 10  ·  Between Waves," and that the banner's
+    font doesn't shrink so far it becomes hard to read.
+  - **The Main Menu**: "New Game" (was "Create Party (new)") now sits in the
+    old START button's slot; Enter/Space go straight to character creation;
+    every button below it shifted up 90px — confirm nothing overlaps and the
+    bottom instructions text still reads correctly.
+  - **A battle is only reachable via "New Game" now** — confirm there is no
+    way left to reach a battle with the old classic roster (Ash/Wren/Bram/
+    Mira are gone from the game entirely) and that Co-op's "Start Battle"
+    still works, now defaulting both players into a small Fighter/Wizard/
+    Rogue/Cleric party instead.
+  - **Known, deliberate, unverifiable-without-art limits, not bugs**: the
+    hero-sprite loading plumbing added this session (`SPRITE_MANIFEST`,
+    `createTokenSprite`) has an empty manifest, so it can never visibly do
+    anything until a real image file is added — there is nothing to look at
+    yet, by design.
 
 - **KI-073 — Phase 25's ten new structure tiers, the opportunistic wall-bash
   AI, and the trap-disarming Saboteur/Warren Stalker (D-116) are not yet
@@ -1713,6 +1827,13 @@
 
 ## Resolved since Phase 3
 
+- **KI-033 (the Gear button overlapped the "Wave N / M · Phase" banner) —
+  RESOLVED by D-117.** Fixed with a measured-width approach instead of
+  another guessed padding number: `buildHud()` records the Gear button's
+  real left edge, and a new `fitBannerToWidth()` shrinks the banner's font
+  using its actual Phaser-measured width until it's guaranteed clear,
+  resetting to full size first so a short label isn't left shrunk. Needs
+  Kevin's in-browser confirmation (KI-074).
 - **KI-017 (structure destruction was "unimplemented by design" — enemies
   never attacked walls, only routed around them) — RESOLVED, in two steps.**
   This entry was never updated when it actually became false: Phase 20

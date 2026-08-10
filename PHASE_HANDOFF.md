@@ -1,292 +1,265 @@
 # Phase Handoff
 
 ## Version and phase
-- **Version:** 0.2.0-dev. Phase 11 (11.1-11.10), Phase 13 (13.1-13.11),
-  Phase 14 (all three parts), Phase 20 (D-111), Phase 21 (D-112), Phase 22
-  (D-113), Phase 23 (D-114), and Phase 24 (D-115) are complete. Phase 12
-  (Cooperative Multiplayer Feasibility) still has no live board sync. **This
-  session ran Phase 25 (D-116): ten new cheap/expensive structure tiers, an
-  opportunistic wall-bash any melee enemy can now take, and a trap-disarming
-  Saboteur archetype (two new enemies).**
-- **Why this ran this session:** Kevin asked, in one message, for three
-  things: (1) more cheap/expensive versions of traps and buildings/walls —
-  an explicit follow-up to a design discussion earlier this session where he
-  chose cost tiers over building an upgrade system; (2) a real siege AI where
-  ANY enemy can choose to attack a structure "if it makes sense based on
-  their particular personality" and "the opportunity (no other option)," in
-  a way that "would improve the enemies' odds"; (3) enemies/enemy skills
-  that detect and disarm/destroy traps. All three are additive to existing,
-  well-understood systems, so this session went straight to design-then-
-  build.
+- **Version:** 0.2.0-dev. Every phase through Phase 25 (D-116) is complete;
+  D-117 through D-120 (playtest fixes, campaign scaffolding, dialogue box,
+  dialogue skip controls) are complete; D-121 (the basic-attack lunge) is
+  complete. **This session ran D-122**: spell-cast and death animations for
+  every one of the ~198 castable spells/abilities in the game, via a
+  data-driven shape+color library rather than 198 bespoke implementations.
+- **Why this ran this session:** immediately after D-121's lunge, Kevin
+  asked to build "a whole host of spell casting animations and death
+  animations," explicitly wanting every spell to feel unique when cast, no
+  two the same. Literally hand-authoring ~198 bespoke animations isn't
+  realistic in any session, so three scoping questions were asked and
+  answered before any code: (1) mechanism — a shared library of shapes/
+  colors with per-ability hashed variation, not bespoke-per-spell (chosen
+  over the impractical alternative); (2) pacing — wire ALL ~198 castable
+  abilities this session, matching this project's precedent for big content
+  passes (chosen over a first-slice-only approach); (3) death animations —
+  vary by CAUSE (burn/frost/poison/necrotic/radiant/lightning/physical/
+  arcane), not one universal treatment (Kevin's own pick, the one question
+  NOT answered toward the simpler default).
 - **Completed this session:**
-  - **Ten new structures** (`data/structures.ts`), every one bracketing an
-    EXISTING item's cost/effect on the cheap or expensive end — no new
-    fields at all, pure content, exactly the pattern Palisade/Bulwark
-    already established for Barricade in Phase 24:
-    - **Wicket Gate** (cost 4, `maxHp` 5) / **Portcullis** (cost 12,
-      `maxHp` 16) bracket Gate, giving it its own low/mid/high tier to
-      match the wall curve.
-    - **Snare Wire** (cost 4, 1 dmg, ground) / **Mangler Trap** (cost 13, 5
-      dmg, ground, persistent — deliberately NOT `singleUse`, a distinct
-      choice from Bear Trap) bracket the ground-trap-damage curve.
-    - **Net Snare** (cost 4, 2 dmg, flying) / **Storm Lance** (cost 13, 7
-      dmg, flying) give the flying-trap curve its first brackets — Sky
-      Snare was previously the only anti-air option at all, closing a
-      Phase 24 KNOWN_ISSUES deferred item.
-    - **Sparring Post** (cost 5, +1 melee dmg) / **War Dais** (cost 14, +4
-      melee dmg) bracket Melee Platform.
-    - **Low Perch** (cost 5, +1 ranged DAMAGE) / **Sky Bastion** (cost 14,
-      +1 ranged damage AND +1 range) bracket Ranged Perch. Low Perch trades
-      the range bonus for a smaller damage bonus rather than being a
-      strictly weaker copy; Sky Bastion is the one structure in the roster
-      granting both bonus types at once.
-    - `SHOP_ORDER` grows from 12 to 22 entries.
-  - **Shop grid pagination** (`BattleScene.ts`): 22 shop items at 4 columns
-    is 6 rows — concrete layout math (`GAME_HEIGHT` 1080px, `cy` ≈848px on
-    `TEST_MAP`) showed this would push the Done button, and part of a large
-    page, past the canvas. Rather than build a second, duplicate paging
-    system, the EXISTING Gear-grid pagination (Phase 17, D-108) was
-    generalized to cover both: `GEAR_GRID_PAGE_SIZE` renamed
-    `ITEM_GRID_PAGE_SIZE`; `showShopUI` gained the same page-slicing
-    `showEquipUI` already had; the three nav-button fields renamed
-    `pageNav*` and shared between both grids (never shown at once, since
-    build/equip modes are mutually exclusive); `turnGearPage` generalized to
-    `turnGridPage` via the pre-existing `currentGridItems()` helper; a new
-    `refreshPageNav()` computes nav visibility purely from `this.ui.kind`,
-    called once after `setInteraction`'s two show-calls (calling it from
-    inside either show method directly would let the second call's
-    `show: false` branch clobber the first one's correct nav state). BOTH
-    grids are now permanently capped at 4 rows regardless of future
-    catalogue growth.
-  - **Opportunistic wall bash** (`WaveSystem.tickEnemyPhase`): a new branch,
-    inserted right after the existing hero-attack branch (a reachable hero
-    always still wins) and before the "advance" fallback. Any enemy that is
-    NOT a dedicated siege enemy (`siegeDamageMultiplier` — unchanged, still
-    its own unconditional priority tier above this one), NOT a pure runner
-    (`ignoresHeroes` — unchanged, never attacks anything), and has
-    `attackRangeTiles <= 1` (the melee "personality" — a ranged/caster enemy
-    usually already reaches past a wall with its own range) now scans its
-    own attack range for a destructible wall via the SAME
-    `WaveSystem.findWallInRange` a siege enemy uses, the moment no hero is
-    reachable ("the opportunity"). Deals plain `attackDamage` (plus any
-    aura/enrage bonus already in play) — no siege multiplier, an improvised
-    bash rather than a dedicated demolition attack. `StructureAttackEvent`
-    gained an optional `opportunistic` flag so `BattleScene
-    .showStructureAttack`'s combat-log line reads correctly either way.
-  - **Trap disarm — the Saboteur archetype** (`data/enemies.ts`,
-    `WaveSystem`, `BuildSystem.disarmTrap`): a new
-    `EnemyDefinition.trapSense?: { rangeTiles }` field. A `trapSense` enemy
-    scans within `rangeTiles` (Manhattan, INCLUDING its own tile) for a
-    placed trap via a new `WaveSystem.findTrapInRange` helper, and — at the
-    SAME unconditional priority tier siege already uses for walls, so it
-    wins even over a reachable hero — disarms/destroys it outright instead
-    of attacking or advancing. A trap has no HP (D-039: it always hits, in
-    full, every time), so `BuildSystem.disarmTrap` is a one-shot removal
-    (wraps `remove()`), never a partial-damage step; it never refunds gold,
-    same as `damageStructure`/`remove()` generally. Two new roster entries:
-    **Saboteur** (fast, fragile, senses 1 tile) and **Warren Stalker**
-    (tougher, senses 2 tiles) — reachable via Free Play/Bestiary only, not
-    yet wired into any campaign wave (same precedent several Phase 20/21
-    enemies set).
-  - Tests: 960 → **983** (+23: `tests/building.test.ts` gained four new
-    `describe` blocks for all ten new structures; a new
-    `tests/enemyMechanicsPhase25.test.ts` behaviourally exercises both new
-    AI mechanics, including that a ranged enemy/pure runner/dedicated siege
-    enemy are each correctly excluded or unaffected, and that trap-disarm
-    beats a reachable hero and respects each enemy's own `rangeTiles`;
-    `tests/enemyRoster.test.ts` gained a Phase 25 section plus an updated
-    minion-count assertion). Typecheck, all tests, and the production build
-    all pass (109 modules, unchanged — no new source files besides the one
-    new test file). `npm run dev` serves HTTP 200 (checked this session).
-  - **A real pre-existing doc bug found and fixed**: `KNOWN_ISSUES.md`'s
-    KI-017 still read "Enemies never attack walls... unimplemented by
-    design" — stale since Phase 20 (D-111) shipped the siege mechanic and
-    never updated it. Moved to the Resolved section, crediting both Phase
-    20's original siege AI and this phase's generalization.
-- **What's NOT done, and why:** the in-browser feel/balance pass covering
-  Phase 17 through 25 is STILL not done — this is now the NINTH consecutive
-  content/mechanics phase to ship without a human playtest (KI-065 through
-  KI-073). No additional Watchtower-style `"any"`-audience platform tier —
-  Watchtower already fills that generalist niche alone; the ask was
-  specifically for brackets around the two EXISTING specialist platforms,
-  not a third audience category. No trap HP/damage-scaling — traps stay
-  indestructible/un-upgradeable, since Kevin explicitly chose cost tiers
-  over an upgrade system for this exact reason at the very start of this
-  session (see D-116's opening paragraph). Saboteur/Warren Stalker are not
-  placed in any existing campaign wave.
-- **Recommended next step:** **the in-browser feel/balance pass covering
-  Phase 17-25** remains the clear, strong recommendation — nine consecutive
-  content/mechanics phases (KI-065 through KI-073) have now shipped with
-  zero human playtesting between them. If Kevin would rather keep building
-  instead, there is no pre-scoped "Phase 26 candidate" — the next chat
-  should ask him directly what to build next.
-- **Last complete milestone:** Phase 6 (`v0.1.1`); Phase 11 (11.1-11.10);
-  Phase 13 (13.1-13.11); Phase 14 (all three parts); Phase 15 (D-104/D-105);
-  Phase 16 (D-106/D-107); Phase 17 (D-108); Phase 18 (D-109); Phase 19
-  (D-110); Phase 20 (D-111); Phase 21 (D-112); Phase 22 (D-113); Phase 23
-  (D-114); Phase 24 (D-115); Phase 25 (D-116, this session). Phase 12 still
-  has no live board sync.
+  - **`systems/VisualFxSystem.ts`** (new, pure, no Phaser import, fully
+    unit-tested): the whole selection mechanism.
+    - **Shape** (11 values: bolt, homingOrb, fallingJudgment, novaBurst,
+      ringPulse, gustCone, sparkleRise, radiantPulse, groundRune,
+      conjureCircle, blink) is picked STRUCTURALLY from an
+      `AbilityDefinition`'s own real mechanical fields, in a fixed
+      priority order (`teleportSelf` → `summonsId` → `altersTerrainId` →
+      `areaAllies` → `targetsAlly` → `forcedMoveTiles` → `kind` →
+      `savingThrow` → `autoHit` → default bolt) — a real fact about the
+      ability, not a guess. Notably, `forcedMoveTiles` wins over an
+      ability's own `aoeAtRange`/`aoeAdjacent` kind, so Thunderwave gets
+      the shove/gust-cone read rather than a generic blast.
+    - **Color** comes from a best-effort keyword match against the
+      ability's own name/description text (11 element tags: fire, frost,
+      lightning, poison, necrotic, radiant, psychic, force, shadow, water,
+      earth), checked in a fixed priority order — radiant is checked
+      BEFORE fire specifically so "Sacred Flame" (real SRD radiant damage)
+      reads gold, not orange, despite the word "flame" — falling back to
+      the ability's real SRD `school` (via a reverse index built from
+      `data/spells.ts`'s `abilityId` links) when no keyword matches, and
+      finally to a generic arcane purple for a mundane hero ability with
+      neither (Cleave, Piercing Shot). **This is a cosmetic guess, not
+      verified SRD damage-typing** — documented plainly in the module's own
+      comment; this game has no damage-type field on spells at all.
+    - **Secondary variation** (particle count 3/5/7, size 0.85-1.25x,
+      rotation direction, duration 0.85-1.15x) comes from a deterministic
+      hash of the ability's own id — NOT `Math.random()`/`RandomService`,
+      since this needs to be exactly reproducible, not a gameplay roll.
+    - **`DeathCause`** (8 values: physical/fire/frost/poison/necrotic/
+      radiant/lightning/arcane) reuses the same keyword inference,
+      collapsed from the richer color palette. `Enemy.lastDeathCause?:
+      DeathCause` (new field, `entities/Enemy.ts`) is a same-tick-only
+      rendering hint — never persisted in `EnemySnapshot`, since it has no
+      meaning outside the instant of a kill.
+  - **Death-cause tagging wired into every real kill source that isn't
+    plain physical**: `applyHeroResults` gained an optional `deathCause`
+    param (covers `castAbilityOn`, `onAbilityButton`'s Cleave-style
+    immediate-cast path, both branches of `castAoeAtRangeSpell`, and
+    `castAoeAdjacentSpell`); `castSavingThrowAbilityOn` and
+    `castAoeAtRangeSpell`'s saving-throw branch tag directly; a burning
+    status tick tags "fire". Left unset (defaulting to "physical") for
+    every ordinary weapon/off-hand/Cleave-second-target/trap/explosion
+    kill — correct behavior, not a gap, since those really are mundane.
+  - **`BattleScene.playCastVisual(ability, casterPos, focusPos)`** (new):
+    dispatches on the descriptor's shape into 11 small Phaser draw methods
+    (Graphics/Arc/Rectangle + Tweens — the same technique Phase 22's Cape
+    of Billowing and D-121's lunge already use, since this environment has
+    no image-generation tool), several sharing three primitive helpers
+    (`spawnRing`, `spawnBurstMotes`, `spawnDriftMotes`). Wired into **all
+    10 real cast call sites** in the scene: `castAbilityOn`,
+    `castSavingThrowAbilityOn`, `castHealSpellOn`, `castAreaAllySpell`,
+    `castAoeAtRangeSpell`, `castAoeAdjacentSpell`, `onAbilityButton`'s
+    duplicate Cleave-style path, `castTeleportSelfSpell`,
+    `castSummonSpell`, `castTerrainSpell` — every way this game ever
+    resolves a spell/ability cast. Respects `scaledDuration`/reduced-motion
+    exactly like every other tween in this scene.
+  - **`BattleScene.playEnemyDeathVisual(enemy)`** (new): replaces the old
+    INSTANT token removal on a real kill with a brief squash-and-fade on
+    the token itself plus a cause-specific flourish (`playDeathFlourish`,
+    reusing the same three primitive helpers — collapse/emberFade/shatter/
+    dissolve/wither/radiantBurst/sparkCrackle/arcaneFade, one shape per
+    `DeathCause`). Miniboss/boss/legendary tiers get a 1.5x bigger, slower
+    version, mirroring the existing boss-token-size precedent. An enemy
+    reaching the exit (a breach, not a death) is UNCHANGED — still its own
+    existing flash/removal, since escaping isn't dying.
+  - Tests: 1026 → **1036** (+10, new `tests/visualFxSystem.test.ts` —
+    shape selection against real ability fixtures including the
+    Thunderwave/Sacred-Flame priority-order edge cases, determinism, color
+    distinctness, death-cause mapping, and a "never throws for any real
+    ability" sweep). Typecheck, all 1036 tests, and the production build
+    all pass. Module count: **113**, up from 112 (the new
+    `VisualFxSystem.ts`). `npm run dev` serves HTTP 200 (checked this
+    session).
+- **What's NOT done, and why:** no per-spell hand-authored bespoke
+  animation — the whole point of this session's scoping question was that
+  198 of those isn't realistic; the data-driven library IS the
+  deliverable. No new verified damage-type field added to
+  `AbilityDefinition`/`SpellDefinition` — the keyword inference stays a
+  cosmetic-only guess layered on existing name/description text, not a new
+  mechanical field (that would be a much bigger, separately-scoped
+  content-verification pass). No change to Extra Attack's second/third
+  swing or the off-hand attack — those still play only D-121's basic-attack
+  lunge, unchanged, since they're mundane attacks, not spell casts.
+- **A real limitation of this environment, stated plainly:** this is a
+  large batch of new visual motion across ~198 spells, and none of it has
+  been seen by Kevin yet — no browser is available here. See **KI-078**.
+- **Recommended next step:** Kevin should play a battle with a caster hero,
+  cast a variety of spells, and kill a few enemies with different sources
+  (a fire spell, a cold spell, a plain weapon attack, a burning tick) —
+  KI-078 has the full checklist, but the two things most worth his own eyes
+  are (1) whether two same-shape spells actually read as distinguishable in
+  motion, not just technically-different-but-visually-identical, and (2)
+  whether the color-guessing heuristic embarrasses itself on any spell he
+  cares about (the module comment already flags this as a known, disclosed
+  limitation, not a verified mechanic). Separately, KI-077 (D-121's lunge),
+  KI-076 (D-120's dialogue skip controls), KI-075 (D-119's dialogue box),
+  and KI-074 (D-117's playtest fixes, now SIX sessions overdue) all remain
+  unconfirmed and worth surfacing directly.
+- **Last complete milestone:** Phase 6 (`v0.1.1`) through Phase 25
+  (D-116); D-117 through D-120; D-121 (basic-attack lunge); D-122 (this
+  session — spell-cast and death animations). Phase 12 still has no live
+  board sync.
 - **Git branch:** no git in this environment; Kevin manages branching in
-  GitHub Desktop. This session's changed files:
-  `src/game/data/structures.ts`, `src/game/data/enemies.ts`,
-  `src/game/systems/WaveSystem.ts`, `src/game/systems/BuildSystem.ts`,
-  `src/game/scenes/BattleScene.ts`; updated test files
-  `tests/building.test.ts`, `tests/enemyRoster.test.ts`; new test file
-  `tests/enemyMechanicsPhase25.test.ts`; docs (`DECISIONS.md`,
-  `PROJECT_STATUS.md`, `CHANGELOG.md`, `KNOWN_ISSUES.md`,
-  `CONTENT_SOURCES.md`, this file). No git commit/tag made here.
-- **Date:** August 6, 2026
+  GitHub Desktop. This session's changed files: `src/game/scenes/BattleScene.ts`,
+  `src/game/entities/Enemy.ts`; new files `src/game/systems/VisualFxSystem.ts`,
+  `tests/visualFxSystem.test.ts`; docs (`DECISIONS.md`, `PROJECT_STATUS.md`,
+  `CHANGELOG.md`, `KNOWN_ISSUES.md`, this file). No git commit/tag made
+  here.
+- **Date:** August 10, 2026
 
 ## Why this batch was chosen
-Kevin asked directly for all three pieces of this batch in one message,
-explicitly picking cost tiers over an upgrade system first (resolving the
-one real design fork up front), then describing the siege-AI and trap-
-disarm mechanics in enough behavioral detail ("personality," "opportunity,"
-"improve the enemies' odds") that this session could design the concrete
-rules itself rather than needing to ask more scoping questions — all three
-asks are additive to existing, well-understood systems.
+Kevin asked directly for this, in the same message that picked up from
+D-121's own recommendation to eventually build spell-cast animations. The
+scale (~198 castable spells, "no two the same") made a literal per-spell
+approach impractical, so the session's real work was designing a
+mechanism that achieves genuine variety WITHOUT hand-authoring — a shape
+taxonomy driven by each ability's own real mechanical fields, a color
+guess driven by its name/description text with a verified-school
+fallback, and hashed secondary variation — then wiring that mechanism into
+literally every cast call site and every kill path in one pass, matching
+this project's own precedent for big content batches (Phase 15/16/20/21).
 
 ## What works now
-- Everything from every prior phase, unchanged in behavior for any
-  hero/enemy/map/campaign/structure that doesn't touch one of this
-  session's new fields.
-- **New: ten structures** — Wicket Gate, Portcullis, Snare Wire, Mangler
-  Trap, Net Snare, Storm Lance, Sparring Post, War Dais, Low Perch, Sky
-  Bastion — all immediately buildable via the Build shop (now paginated).
-- **New: any ordinary melee enemy** bashes a destructible wall in its own
-  attack range with its own attack damage when no hero is reachable that
-  phase.
-- **New: Saboteur/Warren Stalker** detect and disarm/destroy a placed trap
-  within their sense range, at the same unconditional priority siege gives
-  walls.
-- **New: the Shop and Gear grids both paginate through one shared nav
-  control**, permanently capped at 4 rows each regardless of catalogue size.
+- Everything from every prior phase through D-121, unchanged in behavior.
+- **Every spell/ability cast in the game now plays a shape-and-color
+  flourish** distinguishing it from other spells, on top of any existing
+  hit-flash/log line.
+- **Every enemy killed by damage now plays a brief cause-specific death
+  flourish** (fire/frost/poison/necrotic/radiant/lightning/physical/
+  arcane) instead of vanishing instantly — pending Kevin's own visual
+  confirmation (KI-078).
 
 ## What changed
-- **One new source file this session**: `tests/enemyMechanicsPhase25.test.ts`.
-- Every other change is an edit to an existing file (see "Git branch" above
-  for the full list).
-- **Docs**: `DECISIONS.md` (new D-116), `PROJECT_STATUS.md` (new Phase 25
-  section), `CHANGELOG.md` (new entry), `KNOWN_ISSUES.md` (new KI-073;
-  KI-017 moved to Resolved), `CONTENT_SOURCES.md` (new Phase 25 row), this
-  file (rewritten).
+- **Two files edited**: `src/game/scenes/BattleScene.ts` (11 new draw
+  methods, 3 shared primitives, 2 dispatchers, 10 cast-call-site wire-ups,
+  `awardKillGold`'s token-removal call swapped), `src/game/entities/Enemy.ts`
+  (new `lastDeathCause?` field).
+- **One new source file**: `src/game/systems/VisualFxSystem.ts`.
+- **One new test file**: `tests/visualFxSystem.test.ts`.
+- **Docs**: `DECISIONS.md` (new D-122), `PROJECT_STATUS.md` (new top
+  section), `CHANGELOG.md` (new entry), `KNOWN_ISSUES.md` (new KI-078),
+  this file (rewritten).
 
 ## Important files
-- **`DECISIONS.md`'s D-116** — the full method: every new structure's
-  bracketing rationale, the shop-pagination generalization, the
-  opportunistic wall-bash's exact gating conditions, and the trap-disarm
-  mechanic's priority tier and one-shot-removal semantics.
-- **`src/game/data/structures.ts`** — the ten new structure definitions and
-  the updated `SHOP_ORDER`. **`src/game/data/enemies.ts`** — the
-  `trapSense` field and the Saboteur/Warren Stalker entries.
-  **`src/game/systems/WaveSystem.ts`'s `tickEnemyPhase`** — both new AI
-  branches, plus the new `findTrapInRange` helper and `TrapDisarmEvent`.
-  **`src/game/systems/BuildSystem.ts`'s `disarmTrap`** — the one-shot trap
-  removal. **`src/game/scenes/BattleScene.ts`** — `ITEM_GRID_PAGE_SIZE`/
-  `refreshPageNav`/`turnGridPage` (the generalized pagination), the new
-  `trapInstanceAt`/`disarmTrap` context wiring, and `showTrapDisarm`.
-- **`KNOWN_ISSUES.md`'s KI-073** — the full in-browser verification
-  checklist for this phase's ten structures, the wall-bash AI, the
-  trap-disarm AI, and the new pagination.
+- **`DECISIONS.md`'s D-122** — the full method, including the exact
+  shape-priority order and the radiant-before-fire color-priority fix.
+- **`src/game/systems/VisualFxSystem.ts`** — read this before adding a
+  new spell mechanic field that should affect its cast visual (add to
+  `shapeForAbility`'s priority chain) or before touching the element-
+  keyword lists (color only, no mechanical effect).
+- **`src/game/scenes/BattleScene.ts`'s `playCastVisual`/
+  `playEnemyDeathVisual`** (near `lungeToward`) — the single entry point
+  each; every new cast call site should route through `playCastVisual`
+  rather than drawing something bespoke.
+- **`KNOWN_ISSUES.md`'s KI-078** — the full in-browser verification
+  checklist for this session.
 
 ## Commands verified
 - `npm run typecheck` — pass.
-- `npm test` — pass, **983/983**.
-- `npm run build` — pass, 109 modules (unchanged — one new test file only,
-  no new src files).
+- `npm test` — pass, **1036/1036** (+10 from last session).
+- `npm run build` — pass, **113 modules** (up from 112).
 - `npm run dev` — serves HTTP 200 (checked this session).
 
 ## Manual tests completed
-**None** — same standing limitation as every content/mechanics phase, now
-the NINTH in a row (KI-065 through KI-073). See KNOWN_ISSUES **KI-073** for
-the full checklist.
+**None** — no browser is available in this environment. This session added
+a large batch of new visual motion across nearly every spell in the game,
+so this matters more than usual — see **KI-078** for the exact checklist.
 
 ## Known issues
-- **KI-073** — this entire phase not yet confirmed by a human in a browser;
-  full checklist listed there.
-- **KI-072**/**KI-071**/**KI-070**/**KI-069**/**KI-068**/**KI-067**/
-  **KI-066**/**KI-065** — Phases 24/23/22/21/20/19/18/17, also still not yet
-  confirmed in a browser (unrelated to this session specifically, but still
-  open — NINE stacked, unplayed content/mechanics phases now).
-- **KI-017 resolved** this session (see DECISIONS D-116 / KNOWN_ISSUES'
-  Resolved section) — it had gone stale since Phase 20 actually shipped the
-  siege mechanic it described as "unimplemented."
-- Unchanged: every other issue in `KNOWN_ISSUES.md` — none of those systems
-  were touched this session.
+- **KI-078** (new this session) — spell-cast and death animations not yet
+  confirmed by Kevin in a browser; full checklist in `KNOWN_ISSUES.md`.
+- **KI-077** — D-121's basic-attack lunge, still open.
+- **KI-076** — D-120's dialogue skip controls, still open.
+- **KI-075** — D-119's dialogue box/preview tab, still open.
+- **KI-074** — D-117's playtest fixes, still open, now SIX sessions
+  without Kevin's confirmation.
+- **KI-065** through **KI-073** — nine consecutive earlier content/
+  mechanics phases, still not yet confirmed in a browser.
+- Unchanged: every other issue in `KNOWN_ISSUES.md`.
 
 ## Deferred items
-- **An in-browser feel/balance pass** covering Phase 17-25 together — by a
-  very wide margin the highest-value next step at this point; see
-  "Recommended next step" above.
-- **A third Watchtower-style `"any"`-audience platform tier** — not asked
-  for this session (the ask was specifically brackets around the two
-  EXISTING specialist platforms).
-- **Trap HP/upgrade system** — Kevin explicitly chose cost tiers over this
-  at the start of the session; a clean future reversal if he changes his
-  mind, but not LOCKED.
-- **Wiring Saboteur/Warren Stalker into a specific campaign wave** —
-  reachable via Free Play/Bestiary only for now, same precedent several
-  Phase 20/21 enemies set.
-- Everything already deferred from earlier phases (Phase 12's
-  result-broadcast/live sync, rules-test verification blocked on JDK 21+, a
-  third subclass per class, map-draft resizing while preserving paint,
-  platform bonuses on abilities, multiclassing, upcasting, ammunition
-  tracking, per-class weapon-mastery gating, Strength-gated movement
-  penalty for heavy armor, cross-run level persistence for Epic Boons,
-  Skilled's skill-proficiency system, a player-facing Magic Initiate spell
-  picker, a visual indicator for a Shielded enemy's remaining ward or a
-  Multi-Phase Boss's phase change, an endless/infinite wave-generator mode,
-  a "found but not equipped" loot inventory/browsing UI, ability-score-
-  setting magic items, any charge-based active item, a bigger board, a
-  dynamic-terrain authoring UI in the Map Builder, enemy-pushes-hero
-  interaction with pits, a defensive/AC-granting platform) — untouched this
-  session.
+- **A verified damage-type field on spells** — the color guess stays
+  cosmetic-only, layered on existing text; a real mechanical damage-type
+  system would be a separately-scoped, much bigger verification pass.
+- **Cast-visual coverage on Extra Attack's extra swings, the off-hand
+  attack, or Cleave's second target** — unchanged from D-121's own
+  deferral; those remain basic-attack lunges, not spell casts, on purpose.
+- Everything already deferred from D-117 through D-121 and earlier
+  phases — untouched this session.
 
 ## Decisions made
-- **D-116** — Phase 25, ten new structure tiers, an opportunistic wall-bash
-  AI, and a trap-disarming Saboteur archetype. See `DECISIONS.md` for the
-  full method.
+- **D-122** — spell-cast and death animations via a data-driven shape+
+  color library. See `DECISIONS.md` for the full method.
 
 ## Content or license additions
-- **This phase's content is entirely ORIGINAL, not SRD-derived** — all ten
-  structures, the two new enemies, and the `opportunistic`/`trapSense`
-  mechanics are invented for this project. See `CONTENT_SOURCES.md`'s new
-  Phase 25 row.
+- **None.** This session added presentation/animation code and one
+  cosmetic-only inference layer, not game content. `CONTENT_SOURCES.md`
+  unchanged.
 
 ## Next chat instructions
-1. **Strongly consider recommending the in-browser feel/balance pass**
-   covering Phase 17-25 (KI-065 through KI-073, all still open) before
-   building anything further — nine consecutive content/mechanics phases
-   have now shipped with zero human playtesting.
-2. **If Kevin wants to keep building instead**, there is NO pre-scoped
-   "Phase 26 candidate" this time — ask him directly what's next rather
-   than assuming or inventing new scope.
-3. Boundaries unchanged from before this session, plus this session's own:
-   no third "any"-audience platform, no trap upgrade/HP system, Saboteur/
-   Warren Stalker not yet wave-assigned.
+1. **Ask Kevin if he's played a battle since this session** (KI-078) —
+   confirm spell casts and enemy deaths both animate, and specifically
+   whether the variety reads as genuinely distinct rather than
+   samey-with-minor-tweaks.
+2. **Ask about KI-077, KI-076, KI-075, and KI-074 too** — all still open,
+   and KI-074 is now six sessions overdue; worth surfacing directly.
+3. **If Kevin wants more animation work**: the natural follow-ups are (a)
+   extending cast-visual coverage to Extra Attack/off-hand/Cleave's second
+   target, or (b) a verified damage-type field if the color-guessing
+   heuristic bothers him on a specific spell — don't build either
+   speculatively, ask which (if either) he actually wants.
+4. Boundaries unchanged from before this session, plus this session's own:
+   no verified damage typing, no cast-visual coverage beyond the 10 real
+   cast call sites.
 
 ## Suggested git steps (not run here; use GitHub Desktop)
-1. This session's diff touches structures.ts/enemies.ts/WaveSystem.ts/
-   BuildSystem.ts/BattleScene.ts, plus two updated test files, one new test
-   file, and docs — a small-to-medium, mechanically coherent diff, safe as
-   its own commit, same as every prior phase.
-2. Not deployed anywhere — this is all local/headless work, same as every
-   prior data/content phase.
+1. This session's diff touches `BattleScene.ts`, `Enemy.ts`, one new
+   source file, one new test file, and docs — larger than D-121's diff but
+   still a single coherent unit (one new system plus its wiring), safe as
+   its own commit.
+2. Not deployed anywhere from this session directly — Kevin's existing
+   GitHub Actions workflow deploys automatically on push to `main`. This
+   change is visible in every ordinary battle with any spellcasting hero,
+   so a deploy would surface it immediately.
 
 ## Handoff package contents
 - [x] Source files (see "What changed" above)
 - [x] package.json / package-lock.json (unchanged — no new deps)
 - [x] README.md (unchanged)
-- [x] PROJECT_STATUS.md (updated — new Phase 25 section)
-- [x] DECISIONS.md (updated — new D-116)
-- [x] KNOWN_ISSUES.md (updated — new KI-073, KI-017 resolved)
+- [x] PROJECT_STATUS.md (updated — new top section)
+- [x] DECISIONS.md (updated — new D-122)
+- [x] KNOWN_ISSUES.md (updated — new KI-078)
 - [x] CHANGELOG.md (updated — new entry)
-- [x] CONTENT_SOURCES.md (updated — new Phase 25 row)
-- [x] ASSET_PLAN.md (unchanged)
+- [x] CONTENT_SOURCES.md (unchanged — no new content)
+- [x] ASSET_PLAN.md (unchanged — not touched this session)
 - [x] SOURCE_OF_TRUTH.md (unchanged)
 - [x] FIREBASE_SETUP.md (unchanged)
-- [x] PHASE_12_MULTIPLAYER_FEASIBILITY.md (unchanged — this session didn't
-      touch Phase 12)
+- [x] PHASE_12_MULTIPLAYER_FEASIBILITY.md (unchanged)
+- [x] CAMPAIGN_STORY_DESIGN.md (unchanged)
 - [x] PHASE_HANDOFF.md (this file, rewritten)
-- [x] Tests (983, +23 this session)
+- [x] Tests (1036, +10 this session)
 - [x] No node_modules, dist, secrets, or service-account credentials

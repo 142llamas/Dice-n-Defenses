@@ -2,6 +2,208 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Spell-Cast and Death Animations (D-122)
+
+Kevin asked to build "a whole host" of spell-cast and death animations,
+wanting every spell to feel unique when cast, no two the same. With ~198
+castable spells, a shared data-driven library replaces the impossible
+"198 bespoke animations" reading. See **D-122** in `DECISIONS.md`.
+
+Added:
+- **`systems/VisualFxSystem.ts`** (new, pure, tested): picks a cast
+  SHAPE structurally from an ability's own mechanical fields
+  (teleportSelf/summonsId/altersTerrainId/areaAllies/targetsAlly/
+  forcedMoveTiles/kind/savingThrow/autoHit), a COLOR from a best-effort
+  name/description keyword guess (fire/frost/lightning/poison/necrotic/
+  radiant/psychic/force/shadow/water/earth) falling back to the spell's
+  real SRD school, and secondary variation (particle count/size/rotation/
+  duration) from a deterministic hash of the ability's own id.
+- **11 new cast-flourish draw methods in `BattleScene`** (bolt, homingOrb,
+  fallingJudgment, novaBurst, ringPulse, gustCone, sparkleRise,
+  radiantPulse, groundRune, conjureCircle, blink), wired into all 10 real
+  spell/ability cast call sites in the scene.
+- **`Enemy.lastDeathCause?: DeathCause`**: a same-tick rendering hint,
+  8 values (physical/fire/frost/poison/necrotic/radiant/lightning/arcane),
+  tagged by whichever cast/status code just dealt the killing blow.
+- **`BattleScene.playEnemyDeathVisual()`**: replaces the old instant token
+  removal on a kill with a squash-and-fade plus a cause-specific flourish
+  (collapse/emberFade/shatter/dissolve/wither/radiantBurst/sparkCrackle/
+  arcaneFade) — bigger and slower for miniboss/boss/legendary tiers.
+  Breach removal (an enemy escaping, not dying) is unchanged.
+
+Tests: 1026 → 1036 (+10, `tests/visualFxSystem.test.ts`). Typecheck, all
+tests, and the production build all pass (113 modules, up from 112). `npm
+run dev` serves HTTP 200.
+
+Not built this pass: no per-spell hand-authored bespoke animation (the
+data-driven library is the deliverable); no new verified damage-type field
+on spells (the color guess stays cosmetic-only).
+
+## [Unreleased] — 0.2.0-dev — Basic-Attack Lunge (D-121)
+
+Kevin asked to start building the tween animations D-120's handoff had
+discussed but deliberately left unbuilt. Offered a choice of which
+concrete animation to prototype first, he picked the basic-attack lunge.
+See **D-121** in `DECISIONS.md`.
+
+Added:
+- **`BattleScene.lungeToward()`**: the attacker's own token (hero or
+  enemy) nudges a short distance toward its target and springs back, via
+  one relative `yoyo` tween, layered on top of the existing hit-flash.
+  Respects the existing animation-speed/reduced-motion setting.
+- Wired into both existing basic-attack directions: `tryBasicAttack` (a
+  hero attacking an enemy) and `showEnemyAttack` (an enemy attacking a
+  hero).
+
+Not built this pass: no lunge on Extra Attack's extra swings, the off-hand
+attack, Cleave's second target, or any spell/ability attack — deliberately
+scoped to one concrete instance, not a sweep of every attack call site.
+
+Tests: unchanged at 1026 (pure Phaser presentation code, no new pure logic
+to test). Typecheck, all tests, and the production build all pass (112
+modules, unchanged). `npm run dev` serves HTTP 200.
+
+## [Unreleased] — 0.2.0-dev — Dialogue Skip Controls (D-120)
+
+Kevin asked for a "skip the whole talking section" control (only when no
+decision is pending) and a "skip past the current line" control (for fast
+readers), plus a future-audio interrupt seam. See **D-120** in
+`DECISIONS.md`.
+
+Added:
+- **`DialogueLine.hasDecision?: boolean`** — a forward-compatible gating
+  flag (no choice UI exists yet); `canSkipSequence(lines)` is false the
+  instant any line in the sequence sets it.
+- **Advancing past a line is now available several ways at once**: the
+  Continue/Close button, clicking anywhere on the panel/scrim, or
+  Space/Enter.
+- **A dedicated "Skip ▶▶" button** jumps straight to the end of the whole
+  sequence — shown only when no line anywhere in it requires a decision.
+- **`interruptCurrentLinePlayback()`**: a no-op today, but the one seam a
+  future text-reveal animation or voice-over-audio-stop call will hook
+  into — every skip path already funnels through it.
+- A second Compendium preview button demonstrating the Skip button
+  correctly disappearing on a sequence with a pending decision.
+
+Fixed (architecture): `DialogueLine`/`canSkipSequence` were first written
+directly in `scenes/dialogueBox.ts`, which broke unit testing (that file's
+top-level Phaser import touches `window`, unavailable in this project's
+Node test environment). Moved to a new, Phaser-free
+`systems/DialogueSystem.ts`, per this project's own "pure rules live in
+systems/" architecture rule.
+
+Tests: 1021 → 1026 (+5, `tests/dialogueSystem.test.ts`). Typecheck, all
+tests, and the production build all pass (112 modules, up from 111). `npm
+run dev` serves HTTP 200.
+
+## [Unreleased] — 0.2.0-dev — Stylized Parchment Dialogue Box, NPC-Only Portraits (D-119)
+
+Kevin asked for the dialogue-box presentation itself: text on a stylized
+parchment background, plus a 2D front-facing portrait of whichever
+character is speaking, resolved to NPC-only (companions/bosses/narration —
+the player's own PC has no portrait). See **D-119** in `DECISIONS.md`.
+
+Added:
+- **`scenes/dialogueBox.ts`**: a reusable parchment-panel dialogue renderer
+  (`DialogueLine`/`showDialogue`). An NPC line gets a framed portrait + name
+  plate (real image once loaded, else a drawn placeholder silhouette); a
+  PC/narration line (no `speakerName`) renders full-width text with no
+  portrait. The panel itself is drawn with Phaser `Graphics` (base fill +
+  aged mottling + a frame border) — no image asset needed to look finished.
+- **`data/portraitManifest.ts`**: a new, currently-EMPTY `PORTRAIT_MANIFEST`
+  — separate from the existing `spriteManifest.ts` (different image
+  category/aspect ratio). Drop a real portrait file in later; no rendering
+  code needs to change.
+- Five new `config.ts` `COLORS` entries for the parchment/placeholder look.
+- **A "Dialogue" preview tab in `CompendiumScene`**: a "Show Sample
+  Dialogue" button demonstrating both speaker styles in-browser, since no
+  real chapter/story content exists yet to trigger this naturally.
+
+Tests: unchanged at 1021 (pure presentation code, no new pure logic).
+Typecheck, all tests, and the production build all pass (111 modules, up
+from 109 — this session IS wired into a real scene, unlike D-118). `npm run
+dev` serves HTTP 200.
+
+## [Unreleased] — 0.2.0-dev — Campaign Engine Scaffolding: Chapters, World-Flags, Companion Roster (D-118)
+
+`CAMPAIGN_STORY_DESIGN.md` (a design-only doc for a six-region campaign
+story, "The Unremembering") flagged an engine gap in its own §7: no chapter
+concept, no world-flag store, no companion-catalogue/roster model. Offered a
+choice between writing that story's companion dialogue, building this engine
+scaffolding, or designing its bonus-choice pool numbers, Kevin chose the
+engine scaffolding. See **D-118** in `DECISIONS.md` for the full method.
+
+Added:
+- **`ChapterDefinition`** (`data/campaigns.ts`): an optional `chapters?`
+  field on `CampaignDefinition` for a future 4-chapter "region" campaign,
+  plus `isChapteredCampaign`/`totalChapters`/`getChapter` helpers giving one
+  consistent access pattern for both flat and chaptered campaigns. Both
+  existing campaigns (Emberford Reach, Saltmere Shallows) stay flat, zero
+  behavior change.
+- **Per-chapter completion tracking** (`systems/CampaignProgressSystem.ts`):
+  `CampaignProgress.completedChapters`, `markChapterCompleted`,
+  `getHighestCompletedChapter`, `isChapterCompleted` — additive, backward
+  compatible with any progress blob saved before this change.
+- **`systems/WorldFlagSystem.ts`** (new): a generic, persisted per-choice
+  flag store for story branches that need to be read much later (which
+  miniboss was spared, a companion's branch outcome, etc.).
+- **`data/companions.ts`** + **`systems/CompanionRosterSystem.ts`** (new): a
+  `CompanionDefinition` type (a named `CharacterBuild` wrapper) and a pure
+  active/benched/lost roster system (`MAX_ACTIVE_COMPANIONS = 3`, matching
+  the existing 1-PC + 3-companion party size). `COMPANIONS` itself stays an
+  EMPTY registry — the six named companions the design doc describes are a
+  separate, not-yet-done writing pass.
+- Two new `config.ts` storage keys: `WORLD_FLAG_STORAGE_KEY`,
+  `COMPANION_ROSTER_STORAGE_KEY`.
+
+Not built this pass, and why: no scene/UI wiring for any of the above — none
+of it has real content (companions, authored regional chapters, bonus
+pools) to display yet. Pure, headless, fully tested engine scaffolding only,
+matching D-101's (Phase 12.1) precedent of building a capability ahead of
+its content/UI integration.
+
+Tests: 976 → 1021 (+45). Typecheck, all tests, and the production build all
+pass; module count unchanged at 109 (nothing new is wired into `main.ts`'s
+dependency graph yet, as intended). `npm run dev` serves HTTP 200.
+
+## [Unreleased] — 0.2.0-dev — Playtest Fixes, Classic Roster Removal, Hero-Sprite Plumbing (D-117)
+
+Kevin's first in-browser pass of the deployed build reported the canvas
+looked off-center and buttons/text overlapped. Also asked to remove the
+original classic fixed 4-hero roster and its flat Vigor/Might level-up
+choice now that D&D-style character creation/real class leveling has fully
+superseded them, and to lay the groundwork (loading/rendering plumbing only
+— no art exists yet) for real hero/enemy/structure sprites. See **D-117** in
+`DECISIONS.md` for the full method.
+
+Fixed:
+- **The canvas was centered twice** (Phaser's `scale.autoCenter` fighting
+  `index.html`'s own flex centering) — Phaser's centering is now disabled;
+  the CSS handles it alone.
+- **KI-033**: the Gear button could overlap the "Wave N / M · Phase" banner
+  on a long string. The banner now shrinks its own font, using its real
+  measured width, to whatever fits — guaranteed correct regardless of font
+  metrics or future label text.
+
+Removed:
+- **The classic fixed 4-hero roster** (Ash/Wren/Bram/Mira) and its flat
+  Vigor/Might level-up choice. Every hero is now built via the D&D-style
+  character-creation flow; `MainMenuScene`'s old START button is gone, and
+  "Create Party" (renamed "New Game") is the only way into a battle.
+
+Added:
+- **Hero-sprite loading plumbing**: `HeroDefinition.assetKey`, a new (empty)
+  `SPRITE_MANIFEST`, `BattleScene.preload()`, and a sprite-or-shape fallback
+  for hero tokens — ready for real art to be dropped in later with no
+  rendering rewrite, per `ASSET_PLAN.md`.
+- **`CharacterBuildSystem.defaultPartyBuilds`**: a small deterministic
+  starter party, now Co-op's default (it had silently depended on the
+  removed classic roster for this).
+
+Tests: 983 → 976 (a classic-roster-only test file removed, several others'
+fixtures untangled from `data/heroes.ts`). Typecheck, all tests, and the
+production build all pass. `npm run dev` serves HTTP 200.
+
 ## [Unreleased] — 0.2.0-dev — Phase 25: Cheap/Expensive Structure Tiers, Opportunistic Wall-Bash AI, Trap-Disarming Saboteurs (D-116)
 
 Kevin asked for more cheap/expensive structure tiers, a real siege AI where

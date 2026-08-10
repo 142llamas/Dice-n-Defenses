@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Hero, MAX_ATTUNEMENTS } from "../src/game/entities/Hero";
-import { getHeroDefinition } from "../src/game/data/heroes";
+import type { HeroDefinition } from "../src/game/data/heroes";
 import { heroDefinitionFromBuild, type CharacterBuild } from "../src/game/systems/CharacterBuildSystem";
 import {
   getEquipmentDefinition,
@@ -18,15 +18,26 @@ import {
  * never leave a stale bonus behind — same guarantee as Phase 7's single-slot
  * model, now summed across seven slots.
  *
- * Phase 13.1 (D-086): `defense` is renamed `armorClass`. The fixed roster's
- * `baseArmorClass` is 10 (unarmored, no Dex bonus modeled — see
- * `data/heroes.ts`), so an unequipped hero's `armorClass` is 10, not 0
+ * Phase 13.1 (D-086): `defense` is renamed `armorClass`. `baseArmorClass` 10
+ * means an unequipped, unarmored hero's `armorClass` is 10, not 0
  * (KNOWN_ISSUES KI-013's old "no BASE defense" framing no longer applies —
  * every hero now has the standard unarmored AC).
  */
 
+const WREN_TEST_HERO_DEF: HeroDefinition = {
+  id: "hero-wren-test",
+  name: "Test Hero",
+  movementTiles: 3,
+  maxHealth: 8,
+  attackDamage: 3, // 3 base attack dmg
+  attackRangeTiles: 3,
+  attackBonus: 4,
+  baseArmorClass: 10,
+  abilityId: "piercing-shot",
+};
+
 function wren(): Hero {
-  return new Hero(getHeroDefinition("hero-wren"), { x: 0, y: 0 }); // 3 base attack dmg
+  return new Hero(WREN_TEST_HERO_DEF, { x: 0, y: 0 }); // 3 base attack dmg
 }
 
 describe("Hero equipment", () => {
@@ -437,7 +448,7 @@ describe("Magic-item expansion (Phase 22)", () => {
  */
 describe("Hero starting equipment (Phase 13.11, D-096)", () => {
   function heroWithStartingGear(startingEquipmentId?: string): Hero {
-    return new Hero({ ...getHeroDefinition("hero-wren"), startingEquipmentId }, { x: 0, y: 0 });
+    return new Hero({ ...WREN_TEST_HERO_DEF, startingEquipmentId }, { x: 0, y: 0 });
   }
 
   it("is unaffected when no starting item was picked", () => {

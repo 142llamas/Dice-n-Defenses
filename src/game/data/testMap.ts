@@ -40,10 +40,10 @@ import type { GridPosition } from "../systems/GridSystem";
  *
  * All content here is original placeholder data — no third-party IP.
  *
- * Phase 7: the roster grew from two heroes to four (see data/heroes.ts), so
- * this map now carries four H tiles instead of two — one per hero, in
- * HERO_DEFINITIONS order (see BattleScene.buildHeroes). Two more H's were
- * added flanking the existing pair rather than changing the map's shape.
+ * Phase 7: the roster grew from two heroes to four, so this map now carries
+ * four H tiles instead of two — one per party slot, in build order (see
+ * BattleScene.buildHeroes). Two more H's were added flanking the existing
+ * pair rather than changing the map's shape.
  *
  * Phase 11.7 (D-071): the map system grew terrain types (cliff/water/fire/
  * acid), shop/treasure tiles, and support for multiple spawns/exits — this

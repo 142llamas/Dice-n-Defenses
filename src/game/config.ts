@@ -65,6 +65,15 @@ export const CAMPAIGN_PROGRESS_STORAGE_KEY = "fantasy-td:campaign-progress";
 // same local-only storage treatment, its own key since a save slot's shape
 // (a whole party + party size + difficulty) is unrelated to the other three.
 export const SAVE_STORAGE_KEY = "fantasy-td:saves";
+// D-118: per-choice campaign-story flags (see systems/WorldFlagSystem.ts) —
+// same local-only storage treatment, its own key since a flag's shape
+// (an arbitrary boolean/string/number keyed by flag id) is unrelated to the
+// above. Not yet written by any scene — see WorldFlagSystem's own comment.
+export const WORLD_FLAG_STORAGE_KEY = "fantasy-td:world-flags";
+// D-118: the companion active/benched/lost roster (see
+// systems/CompanionRosterSystem.ts) — same local-only storage treatment, its
+// own key for the same reason. Not yet written by any scene.
+export const COMPANION_ROSTER_STORAGE_KEY = "fantasy-td:companion-roster";
 
 // A small, readable colour palette for placeholder art (all original, no IP).
 export const COLORS = {
@@ -99,4 +108,14 @@ export const COLORS = {
   buildValid: 0x6ad08a, // ghost preview on a legal build tile
   buildInvalid: 0xd06a6a, // ghost preview on an illegal build tile
   trapFlash: 0xffb0c8, // brief flash when a trap hurts an enemy
+  // D-119 (dialogue box): a stylized parchment-look panel for chapter-
+  // boundary story text, drawn with Graphics rather than an image asset
+  // (matches Phase 22's Cape of Billowing precedent — real drawing code
+  // when no art tool/asset exists).
+  parchmentBase: 0xe8d8ae, // the paper's base fill
+  parchmentMottle: 0xc8ab7a, // low-alpha "aged" blotches over the base
+  parchmentBorder: 0x5a3a20, // the frame border and inner rule line
+  // An NPC speaker's portrait slot, before real art exists for it.
+  portraitPlaceholderBg: 0x3a3628,
+  portraitPlaceholderFg: 0x8a8270,
 } as const;

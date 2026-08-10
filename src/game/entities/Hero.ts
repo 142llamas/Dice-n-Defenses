@@ -278,10 +278,10 @@ export interface HeroSnapshot {
  * Bonus Action + Reaction is the full D&D turn) plus four class-gated
  * features that spend it — Second Wind and Action Surge (Fighter), Cunning
  * Action's Dash (Rogue), and Uncanny Dodge (Rogue, a reaction). A hero only
- * qualifies if `classId` (also new this phase) matches, so the classic
- * Ash/Wren/Bram/Mira roster and the two caster classes (Wizard/Cleric) never
- * see any of these buttons. Cunning Action and Uncanny Dodge have no rest
- * limit in the SRD, so they're gated only by their own per-turn resource
+ * qualifies if `classId` (also new this phase) matches, so the two caster
+ * classes (Wizard/Cleric) never see any of these buttons. Cunning Action
+ * and Uncanny Dodge have no rest limit in the SRD, so they're gated only by
+ * their own per-turn resource
  * (the bonus action slot, or the reaction, both of which reset every turn).
  *
  * Phase 13.4 (D-088): Second Wind/Action Surge's real "once per rest" SRD
@@ -292,15 +292,11 @@ export interface HeroSnapshot {
  * opts into one between waves. `secondWindUsed`/`actionSurgeUsed` are no
  * longer reset by anything else — only an actual rest clears them.
  *
- * Phase 13.3 (D-089): real per-class leveling for a D&D-built hero
- * (`classId`/`abilityScores` both set). `levelUpClass()` advances `level` by
- * one and recomputes `maxHealth`/`attackDamage`/`attackBonus`/
+ * Phase 13.3 (D-089): real per-class leveling. `levelUpClass()` advances
+ * `level` by one and recomputes `maxHealth`/`attackDamage`/`attackBonus`/
  * `attacksPerAction` from `CharacterSystem.combatStatsForClassLevel` — the
  * SAME formula `CharacterBuildSystem.heroDefinitionFromBuild` used once at
- * creation. The classic fixed roster (no `classId`/`abilityScores`) never
- * calls this; it keeps the flat `grantVigor`/`grantMight` choice instead —
- * the two leveling mechanisms are deliberately unreconciled, exactly like
- * `CharacterSystem`'s own doc comment always said they eventually would be.
+ * creation.
  *
  * Phase 13.5 (D-090): `spellSaveDC` exposes the DC a caster hero's
  * save-based effects (e.g. Sacred Flame) target — the one real gameplay
@@ -315,7 +311,8 @@ export interface HeroSnapshot {
  * `combatStatsForClassLevel` formula `levelUpClass` uses — both now share the
  * private `applyLeveledStats` helper. `grantFeat` records a chosen feat;
  * Tough's HP bonus (`featHitPointBonus`) folds into `effectiveMaxHealth`
- * alongside the classic roster's `bonusMaxHealth`, and Lucky's fixed reroll
+ * alongside `bonusMaxHealth` (a general flat max-HP bonus slot — nothing
+ * grants it today), and Lucky's fixed reroll
  * pool (`luckyPointsRemaining`) is spent automatically on this hero's basic
  * attacks (no interrupt-prompt UI exists — same auto-apply precedent as
  * Uncanny Dodge, D-087) and recharges only on a Long Rest, matching the SRD.
@@ -1272,13 +1269,7 @@ export class Hero implements Combatant {
     return def;
   }
 
-  /** Level-up choice: raise max HP and heal the hero for the same amount. */
-  grantVigor(amount: number): void {
-    this.bonusMaxHealth += amount;
-    this.health += amount;
-  }
-
-  /** Level-up choice: raise basic-attack damage. */
+  /** Flat basic-attack damage bonus for the rest of the battle (an "attackBuff" potion effect, e.g. Vigor Tonic). */
   grantMight(amount: number): void {
     this.bonusAttackDamage += amount;
   }

@@ -6,6 +6,7 @@ import {
   type ActiveStatus,
   type StatusEffectId,
 } from "../data/statusEffects";
+import type { DeathCause } from "../systems/VisualFxSystem";
 
 /**
  * Phase 21 (D-112): the Swarm archetype's real SRD condition immunities
@@ -91,6 +92,14 @@ export class Enemy implements Combatant {
   health: number;
   /** True once this enemy has reached an exit and dealt its breach damage. */
   breached = false;
+  /**
+   * D-122: a same-tick rendering hint only — set by `BattleScene` right
+   * before it deals damage from a spell/status whose cause differs from the
+   * "physical" default, read once if this hit is lethal to pick the death
+   * animation, then irrelevant. Never persisted in `EnemySnapshot` — it has
+   * no meaning outside the instant of the kill that set it.
+   */
+  lastDeathCause?: DeathCause;
   private activeStatuses: ActiveStatus[] = [];
   private revealed = false;
   /** Phase 21 (D-112): the Shielded archetype's remaining ward — see `absorbDamage`. */

@@ -1,6 +1,290 @@
 # Project Status
 
-## Phase 25 — Cheap/Expensive Structure Tiers, Opportunistic Wall-Bash AI, Trap-Disarming Saboteurs (D-116) — DONE this session
+## Spell-Cast and Death Animations (D-122) — DONE this session
+
+Right after D-121's lunge, Kevin asked to build "a whole host of spell
+casting animations and death animations," wanting every spell to feel
+unique when cast, no two the same. With ~198 castable spells, three
+scoping questions were answered toward the data-driven mechanism: a
+shared shape+color library with per-ability hashed variation (not 198
+bespoke implementations), wire ALL castable abilities this session (not a
+first slice), and vary death animations by CAUSE. See **D-122** in
+`DECISIONS.md` for the full method.
+
+- **`systems/VisualFxSystem.ts`** (new, pure, tested, no Phaser import):
+  the whole selection mechanism. Cast SHAPE is picked structurally from an
+  ability's own real mechanical fields (11 shapes: bolt, homingOrb,
+  fallingJudgment, novaBurst, ringPulse, gustCone, sparkleRise,
+  radiantPulse, groundRune, conjureCircle, blink). Cast/death COLOR comes
+  from a best-effort keyword match against the ability's name/description
+  text, falling back to its real SRD `school`, then to a generic arcane
+  default — a cosmetic guess, explicitly NOT verified SRD damage-typing
+  (this game has no damage-type field on spells at all). Secondary
+  variation (particle count/size/rotation/duration) comes from a
+  deterministic hash of the ability's own id, not randomness — the same
+  spell always looks the same way twice.
+- **`Enemy.lastDeathCause?: DeathCause`** (8 values): a same-tick
+  rendering hint tagged by whichever cast/status code dealt the killing
+  blow, defaulting to "physical" for every ordinary weapon/trap/explosion
+  kill that never sets it. Not persisted in save snapshots — meaningless
+  outside the instant of a kill.
+- **`BattleScene.playCastVisual()`**: 11 new small Phaser draw methods
+  (Graphics/Arc/Rectangle + Tweens, the same technique the Cape of
+  Billowing and D-121's lunge already use), wired into all 10 real spell/
+  ability cast call sites in the scene — every way this game resolves a
+  cast.
+- **`BattleScene.playEnemyDeathVisual()`**: replaces the old instant token
+  removal on a real kill with a squash-and-fade plus a cause-specific
+  flourish, bigger/slower for miniboss/boss/legendary. An enemy reaching
+  the exit (a breach, not a death) is unchanged.
+- Tests: 1026 → **1036** (+10, new `tests/visualFxSystem.test.ts`).
+  Typecheck, all 1036 tests, and the production build all pass (113
+  modules, up from 112 — the new `VisualFxSystem.ts`). `npm run dev`
+  serves HTTP 200.
+- **Not built this pass, and why**: no per-spell hand-authored bespoke
+  animation — the whole point of this session's scoping question was that
+  198 of those isn't realistic; the data-driven library is the
+  deliverable. No new verified damage-type field on spells — the keyword
+  guess stays cosmetic-only, layered on existing text, not a new
+  mechanical field. See **KI-078** for the full in-browser checklist.
+
+## Basic-Attack Lunge (D-121) — DONE previous session
+
+Kevin asked to start on "the tween animation things" D-120's handoff had
+discussed (spellcasting/attack/movement animations via Phaser Tweens) but
+deliberately left unbuilt, recommending picking ONE concrete animation to
+prototype first rather than a speculative generic system. Offered a
+choice — basic-attack lunge, spell-cast flash, or a death/defeat animation
+— Kevin picked the basic-attack lunge. See **D-121** in `DECISIONS.md`.
+
+- **`BattleScene.lungeToward(token, from, to)`** (new, private): a short
+  relative-displacement `yoyo` tween — the attacker's token nudges 28% of
+  a tile toward its target and springs back — layered on top of the
+  existing hit-flash on the target tile. Uses `x: '+=N'`/`y: '+=N'`
+  (relative, not absolute) so it works regardless of the token's current
+  position. Respects the existing `scaledDuration`/reduced-motion setting
+  exactly like every other tween in this scene.
+- **Wired into both directions a basic attack already had a hit-flash
+  for**: `tryBasicAttack` (hero → enemy) and `showEnemyAttack` (enemy →
+  hero) — one call each, at the point where the attacker/target pair is
+  already known.
+- Tests: unchanged at **1026** — pure Phaser presentation code (a tween),
+  no new pure logic to test, same standing limitation as `moveEnemyToken`/
+  `flashTile`. Typecheck, all 1026 tests, and the production build all
+  pass (112 modules, unchanged — no new source files). `npm run dev`
+  serves HTTP 200.
+- **Not built this pass, and why**: no lunge on Extra Attack's extra
+  swings, the off-hand attack, Cleave's second target, or any spell/
+  ability attack — Kevin picked ONE animation to prototype; generalizing
+  to every attack call site is a natural follow-up once this one is
+  confirmed in-browser (see **KI-077**), not before. No spell-cast flash
+  or death/defeat animation — the other two options offered, not chosen
+  this pass.
+
+## Dialogue Skip Controls (D-120) — DONE previous session
+
+Right after D-119, Kevin asked for a "skip the whole talking section"
+control (only when no player decision is pending) and a "skip past the
+current line" control (for fast readers), plus flagged that future
+voice-over audio would need to be interruptible by both. See **D-120** in
+`DECISIONS.md` for the full method.
+
+- **`DialogueLine.hasDecision?: boolean`**: a forward-compatible gating
+  flag — no choice-rendering UI exists yet, nothing sets this today.
+  `canSkipSequence(lines)` is false the instant any line anywhere in the
+  sequence sets it (checked once, against the whole sequence, not just
+  remaining lines).
+- **Advancing past a line now works several ways at once**: the existing
+  Continue/Close button, clicking anywhere on the panel/scrim, or pressing
+  Space/Enter — all funneling through the same `advance()` method.
+- **A dedicated "Skip ▶▶" button** (top-left of the panel) jumps straight
+  to the end of the whole sequence — shown only when `canSkipSequence` is
+  true.
+- **`interruptCurrentLinePlayback()`**: a deliberately empty method every
+  advance/skip path calls first. No-op today (nothing plays out over time
+  yet); this is the one seam a future text-reveal animation or
+  voice-over-stop call will hook into.
+- **A real architecture fix found while building this**: `DialogueLine`/
+  `canSkipSequence` were first written inside `scenes/dialogueBox.ts`,
+  which broke unit testing outright (`ReferenceError: window is not
+  defined` — that file's top-level Phaser import runs Phaser's own
+  module-init code). Moved to a new, Phaser-free `systems/DialogueSystem.ts`,
+  correctly following this project's "pure rules live in `systems/`, no
+  Phaser dependency" architecture rule; `dialogueBox.ts` now imports from
+  it and re-exports both for existing callers.
+- **A second Compendium preview button** ("Show Sample (with a decision)")
+  demonstrates the Skip button correctly disappearing when a line requires
+  a decision.
+- Tests: 1021 → **1026** (+5, new `tests/dialogueSystem.test.ts`).
+  Typecheck, all 1026 tests, and the production build all pass at **112
+  modules** (up from 111). `npm run dev` serves HTTP 200.
+- **Not built this pass, and why**: no actual text-reveal animation or
+  voice-over audio — Kevin flagged these as a later addition, not asked
+  for now; this session builds the interrupt seam they'll need, not the
+  features themselves. No keyboard shortcut for "skip the whole
+  sequence" — button-only, on purpose (an accidental keypress skipping an
+  entire story beat is worse than a slightly less convenient click).
+
+## Stylized Parchment Dialogue Box, NPC-Only Portraits (D-119) — DONE previous session
+
+Right after D-118, Kevin asked for the dialogue-box presentation itself:
+stylized text on a parchment background, plus a 2D front-facing portrait of
+whichever character is speaking — resolved to NPC-only (the player's own PC
+gets no portrait). See **D-119** in `DECISIONS.md` for the full method.
+
+- **`scenes/dialogueBox.ts`** (new): a reusable `DialogueBoxController`/
+  `showDialogue` renderer any scene can call. An NPC line (`speakerName`
+  set) shows a framed portrait + name plate — a real image once one loads
+  for `portraitKey`, else a drawn placeholder silhouette; a PC/narration
+  line (no `speakerName`) is full-width text with no portrait at all. The
+  parchment panel is drawn with Phaser `Graphics` (base fill + aged
+  mottling + a frame border) — no art asset needed for the panel itself to
+  look finished, same treatment Phase 22's Cape of Billowing got.
+- **`data/portraitManifest.ts`** (new): a currently-EMPTY
+  `PORTRAIT_MANIFEST`, separate from the existing token-sprite
+  `spriteManifest.ts` (different image category/aspect ratio). Same
+  "declared, not yet consumed" treatment as D-117's `assetKey`/
+  `SPRITE_MANIFEST` — drop a real portrait file in later, no rendering code
+  changes.
+- **Five new `config.ts` `COLORS` entries** for the parchment/placeholder
+  look.
+- **A "Dialogue" preview tab in `CompendiumScene`**: a "Show Sample
+  Dialogue" button demonstrating both speaker styles (narrator/PC vs. NPC
+  with a placeholder-silhouette fallback) in-browser, since no real
+  chapter/story content exists yet to trigger this naturally — resolves
+  this session's own "how do I see this before I have images" fork.
+- Tests: unchanged at **1021** — pure Phaser presentation code, no new pure
+  logic to test. Typecheck, all 1021 tests, and the production build all
+  pass at **111 modules** (up from 109 — this session IS wired into a real
+  scene, `CompendiumScene`, unlike D-118's still-unwired scaffolding). `npm
+  run dev` serves HTTP 200.
+- **Not built this pass, and why**: no `BattleScene`/chapter-transition
+  wiring (`ChapterDefinition.introText`/`outroText` from D-118 still aren't
+  read by anything — no real chapter content exists yet to trigger this
+  from); no text-typewriter animation or sound; no portrait art itself —
+  that's Kevin's own follow-up once he has images to supply.
+
+## Campaign Engine Scaffolding: Chapters, World-Flags, Companion Roster (D-118) — DONE previous session
+
+The session after D-117 produced `CAMPAIGN_STORY_DESIGN.md` — a design-only
+doc (no D-NNN of its own) for a six-region campaign story ("The
+Unremembering"), each region a 4-chapter 1-20 arc, a 6-companion catalogue
+with recruit/bench/lose branching, and a world-flag-driven capstone ending.
+Its own §7 flagged the real engine gap: `CampaignDefinition` is flat,
+`CampaignProgressSystem` tracks only a completed/not-completed boolean, and
+no companion-catalogue/world-flag code exists anywhere. Offered a choice
+between writing that story's companion dialogue, building this engine
+scaffolding, or designing its bonus-choice pool numbers, Kevin chose the
+engine scaffolding. See **D-118** in `DECISIONS.md` for the full method.
+
+- **`ChapterDefinition` + chapter helpers** (`data/campaigns.ts`):
+  `CampaignDefinition` gains an optional `chapters?: ChapterDefinition[]` —
+  untouched by both existing campaigns, which stay flat with zero behavior
+  change. `isChapteredCampaign`/`totalChapters`/`getChapter` give every
+  caller ONE access pattern regardless of whether a campaign is chaptered —
+  `getChapter(def, 0)` on a flat campaign synthesizes a single chapter from
+  its existing top-level fields.
+- **Per-chapter completion tracking** (`systems/CampaignProgressSystem.ts`):
+  a new `completedChapters` map (highest chapter index completed per
+  campaign id), tracked independently from the existing whole-campaign
+  `completedIds` boolean. Backward compatible — a progress blob saved before
+  this session loads cleanly with no chapter progress recorded.
+- **`systems/WorldFlagSystem.ts`** (new, pure): a generic, persisted
+  per-choice flag store (`boolean | string | number`, by flag id) for story
+  branches a later region or the capstone needs to read — e.g. which
+  miniboss was spared, or a companion's branch outcome. No story content
+  writes to it yet.
+- **`data/companions.ts`** (new) + **`systems/CompanionRosterSystem.ts`**
+  (new, pure): `CompanionDefinition` wraps a full `CharacterBuild` (the same
+  shape a player-built hero uses) with story metadata; `COMPANIONS` is a
+  deliberately EMPTY registry — the six named companions
+  `CAMPAIGN_STORY_DESIGN.md` describes are a separate, not-yet-done writing
+  pass, same "declared, not yet consumed" treatment `data/spriteManifest.ts`
+  got in D-117. `CompanionRosterSystem` models active (one of 3 bench
+  slots)/benched/lost roster states with recruit/bench/activate/lose
+  mutators, plus its own load/save persistence.
+- **Two new `config.ts` storage keys**: `WORLD_FLAG_STORAGE_KEY`,
+  `COMPANION_ROSTER_STORAGE_KEY` — declared, not yet written by any scene.
+- Tests: 976 → **1021** (+45). Typecheck, all 1021 tests, and the production
+  build all pass. Module count unchanged at 109 — none of this session's
+  new/extended systems are wired into `main.ts`'s dependency graph yet,
+  exactly as intended for engine-only scaffolding. `npm run dev` serves HTTP
+  200.
+- **Not built this pass, and why**: no scene/UI wiring at all (no
+  recruitment screen, no chapter-boundary text panel, no bonus-choice-pool
+  UI, no `SaveSystem`/`BattleScene` integration for either new system) —
+  none of it has real content to display or a read/write site to wire into
+  yet (no companions, no authored chapters for any region, no bonus pools).
+  No migration of the two existing flat campaigns into the region structure
+  — that's a future content-authoring decision, not an engine concern.
+  Mirrors D-101 (Phase 12.1)'s precedent exactly: build the capability
+  headless and fully tested, defer integration until real content/UI needs
+  it.
+
+## Playtest Fixes, Classic Roster Removal, Hero-Sprite Plumbing (D-117) — DONE previous session
+
+Kevin's first in-browser pass of the deployed build (nine unplayed content
+phases deep) found the canvas looked off-center and buttons/text overlapped
+"all over the place." Also asked to remove the original classic fixed
+4-hero roster (Ash/Wren/Bram/Mira) and its flat Vigor/Might level-up choice
+now that D&D-style character creation/real class leveling has fully
+superseded them, and asked about a full visual rework — scoped down, since
+this environment has no image-generation tool and no art exists yet, to
+just the loading/rendering PLUMBING, with real art explicitly deferred. See
+**D-117** in `DECISIONS.md` for the full method.
+
+- **Two concrete, traceable layout bugs found and fixed, not a diffuse
+  rewrite**: the canvas was being centered TWICE (Phaser's own
+  `scale.autoCenter` fighting `index.html`'s flex centering — `main.ts` now
+  disables Phaser's, letting the CSS do it alone), and **KI-033** (the Gear
+  button could overlap the "Wave N / M · Phase" banner) is fixed with a
+  measured-width approach — the banner shrinks its own font, using its real
+  Phaser-measured width, to whatever provably fits, rather than another
+  guessed padding number. Other HUD rows and `CharacterCreationScene`'s
+  column stacking were audited by hand against their real current
+  coordinates; no other confirmed overlap found.
+- **The classic fixed 4-hero roster and its Vigor/Might choice are gone.**
+  Every hero is now built via `CharacterBuildSystem.heroDefinitionFromBuild`
+  — `data/heroes.ts` no longer exports `HERO_DEFINITIONS`/`HERO_COLORS`/
+  `getHeroDefinition`. `MainMenuScene`'s old bare-`scene.start("BattleScene")`
+  START button is gone; "Create Party" is promoted into its old slot and
+  renamed "New Game," the only way into a battle now.
+  `BattleScene.init()`'s `heroDefinitions` is required, not optional, and
+  throws immediately if missing rather than silently falling back.
+  `ProgressionSystem` keeps its wave-clear CADENCE tracking (still drives
+  real per-class leveling) but loses the Vigor/Might CHOICE entirely.
+- **Co-op's hidden dependency on the classic roster, found while removing
+  it**: `CoopLobbyScene` had no hero-picker UI and silently relied on
+  `BattleScene`'s classic-roster fallback for its default party. Fixed with
+  a new `CharacterBuildSystem.defaultPartyBuilds(size)` — a small
+  deterministic starter party (Fighter/Wizard/Rogue/Cleric) Co-op now uses
+  explicitly.
+- **Hero-sprite loading plumbing, no art yet**: `HeroDefinition` gains an
+  `assetKey` (set by `heroDefinitionFromBuild` from the hero's class); a new,
+  currently-EMPTY `data/spriteManifest.ts` (`SPRITE_MANIFEST`);
+  `BattleScene.preload()` (this scene's first); and `createTokenSprite`,
+  which swaps a hero token's circle for a real sprite once one is loaded for
+  its `assetKey` — wired into hero tokens only, as the single demonstrated
+  instance of a pattern enemy/structure tokens (which already carry an
+  unused `assetKey`) can follow once real art actually exists. Nothing
+  visibly changes today — the manifest is empty, so every fallback branch is
+  the only one ever taken.
+- Tests: 983 → **976** (a classic-roster-only test file deleted, several
+  others' fixtures untangled from `data/heroes.ts`). Typecheck, all tests,
+  and the production build all pass. `npm run dev` serves HTTP 200.
+- **What's genuinely unverifiable this pass, and why**: none of this
+  session's visual work could be confirmed on-screen — no browser is
+  available in this environment. Both layout fixes are grounded in traceable
+  root causes, not guesses, but still need Kevin's own look.
+- **Not built this pass, and why**: enemy/structure token sprite rendering
+  (has real per-token mutation logic — stealth dimming, aura rings, boss-size
+  bump — worth reconciling with a sprite swap once real art exists to test
+  against, not speculatively); any UI-chrome/board/item/spell sprite
+  rendering (lower-priority per `ASSET_PLAN.md`, not asked for by name); any
+  rewrite of `CharacterCreationScene`'s fragile-but-not-currently-broken
+  manual row-stacking.
+
+## Phase 25 — Cheap/Expensive Structure Tiers, Opportunistic Wall-Bash AI, Trap-Disarming Saboteurs (D-116) — DONE previous session
 
 Kevin asked for three things in one message: more cheap/expensive versions
 of traps and buildings/walls; a real siege AI where any enemy can choose to

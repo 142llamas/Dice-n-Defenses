@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Hero } from "../src/game/entities/Hero";
-import { getHeroDefinition } from "../src/game/data/heroes";
+import type { HeroDefinition } from "../src/game/data/heroes";
 import { getPotionDefinition, POTION_ORDER } from "../src/game/data/potions";
 
 /**
@@ -10,8 +10,20 @@ import { getPotionDefinition, POTION_ORDER } from "../src/game/data/potions";
  * empties the slot, so it can never be used twice.
  */
 
+const WREN_TEST_HERO_DEF: HeroDefinition = {
+  id: "hero-wren-test",
+  name: "Test Hero",
+  movementTiles: 3,
+  maxHealth: 8,
+  attackDamage: 3, // 3 base attack dmg
+  attackRangeTiles: 3,
+  attackBonus: 4,
+  baseArmorClass: 10,
+  abilityId: "piercing-shot",
+};
+
 function wren(): Hero {
-  return new Hero(getHeroDefinition("hero-wren"), { x: 0, y: 0 }); // 3 base attack dmg
+  return new Hero(WREN_TEST_HERO_DEF, { x: 0, y: 0 }); // 3 base attack dmg
 }
 
 describe("potion catalogue", () => {

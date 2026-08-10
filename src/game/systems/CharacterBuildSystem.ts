@@ -5,11 +5,12 @@ import {
   type AbilityScoreId,
   type AbilityScores,
 } from "../data/abilityScores";
-import { getRaceDefinition } from "../data/races";
+import { getRaceDefinition, RACE_IDS } from "../data/races";
 import type { HeroDefinition, HeroControlMode } from "../data/heroes";
 import { getClassDefinition } from "../data/classes";
 import { subclassesForClass } from "../data/subclasses";
 import { attackStyleForAbility, combatStatsForClassLevel } from "./CharacterSystem";
+import { CREATABLE_CLASS_IDS, CHARACTER_NAME_POOL, signatureActionIdsForClass } from "../data/characterCreation";
 
 // Re-exported for existing callers/tests — this function now lives in
 // CharacterSystem.ts (Phase 13.3, D-089) alongside the rest of the pure
@@ -193,7 +194,36 @@ export function heroDefinitionFromBuild(build: CharacterBuild): HeroDefinition {
     // ability-modifier portion so a real equipped weapon can replace just
     // that portion later — see Hero.effectiveAttackDamage.
     classRiderDamage: stats.bonusRiderDamage,
+    // Rendering hint for a future real hero sprite — see HeroDefinition's own comment.
+    assetKey: `hero-${build.classId}`,
   };
+}
+
+/**
+ * A small, fixed party of fresh level-1 D&D builds — for a path with no real
+ * character-creation UI of its own yet (Co-op's lobby has no hero-picker,
+ * see `CoopLobbyScene`), so a battle still has something valid to play.
+ * Deterministic (first `size` entries of `CREATABLE_CLASS_IDS`, standard
+ * ability-score order, each class's first signature action, the default
+ * race) so two calls with the same `size` always produce the same ids — a
+ * caller that needs the roster twice (once for hero ids, once for the
+ * actual `HeroDefinition`s) can call this twice rather than caching it.
+ */
+export function defaultPartyBuilds(size: number): CharacterBuild[] {
+  return Array.from({ length: size }, (_, i) => {
+    const classId = CREATABLE_CLASS_IDS[i % CREATABLE_CLASS_IDS.length];
+    return {
+      id: `default-hero-${i}`,
+      name: CHARACTER_NAME_POOL[i % CHARACTER_NAME_POOL.length],
+      raceId: RACE_IDS[0],
+      classId,
+      level: 1,
+      abilityScores: new StandardArrayAllocator().scores(),
+      abilityId: signatureActionIdsForClass(classId)[0],
+      controlledBy: "human",
+      subclassId: subclassIdForNewBuild(classId),
+    };
+  });
 }
 
 /** True if two or more builds share a signature ability (each hero should feel distinct). */

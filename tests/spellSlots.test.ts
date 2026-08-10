@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Hero } from "../src/game/entities/Hero";
-import { getHeroDefinition } from "../src/game/data/heroes";
+import type { HeroDefinition } from "../src/game/data/heroes";
 import { heroDefinitionFromBuild, type CharacterBuild } from "../src/game/systems/CharacterBuildSystem";
 import { WIZARD_CANTRIP_IDS, WIZARD_LEVELED_SPELL_IDS, CLERIC_CANTRIP_IDS, CLERIC_LEVELED_SPELL_IDS } from "../src/game/data/characterCreation";
 
@@ -45,13 +45,25 @@ function heroFrom(build: CharacterBuild): Hero {
   return new Hero(heroDefinitionFromBuild(build), { x: 0, y: 0 });
 }
 
-function ash(): Hero {
-  return new Hero(getHeroDefinition("hero-ash"), { x: 0, y: 0 });
+const NO_CLASS_HERO_DEF: HeroDefinition = {
+  id: "hero-no-class",
+  name: "Test Hero",
+  movementTiles: 4,
+  maxHealth: 12,
+  attackDamage: 4,
+  attackRangeTiles: 1,
+  attackBonus: 4,
+  baseArmorClass: 10,
+  abilityId: "cleave",
+};
+
+function heroWithNoClass(): Hero {
+  return new Hero(NO_CLASS_HERO_DEF, { x: 0, y: 0 });
 }
 
 describe("Hero.knownSpellAbilityIds (Phase 13.7, D-092)", () => {
-  it("is empty for the classic fixed roster", () => {
-    expect(ash().knownSpellAbilityIds()).toEqual([]);
+  it("is empty for a hero with no classId (no known spell list)", () => {
+    expect(heroWithNoClass().knownSpellAbilityIds()).toEqual([]);
   });
 
   it("is empty for a non-caster D&D-built hero (Fighter/Rogue)", () => {
@@ -91,8 +103,8 @@ describe("Hero spell slots (Phase 13.7, D-092)", () => {
     expect(heroFrom(clericBuild()).spellSlotsRemainingAt(1)).toBe(2);
   });
 
-  it("the classic fixed roster and non-casters have 0 slots at every level", () => {
-    expect(ash().spellSlotsRemainingAt(1)).toBe(0);
+  it("a hero with no classId and non-casters have 0 slots at every level", () => {
+    expect(heroWithNoClass().spellSlotsRemainingAt(1)).toBe(0);
   });
 
   it("canCastSpell is always true for a cantrip (fire-bolt), regardless of slots", () => {
@@ -152,8 +164,8 @@ describe("Hero spell slots (Phase 13.7, D-092)", () => {
     expect(hero.spellSlotsRemainingAt(1)).toBe(2);
   });
 
-  it("a Long Rest is a no-op on slots for a non-caster/classic hero", () => {
-    const hero = ash();
+  it("a Long Rest is a no-op on slots for a non-caster hero", () => {
+    const hero = heroWithNoClass();
     hero.longRest();
     expect(hero.spellSlotsRemainingAt(1)).toBe(0);
   });

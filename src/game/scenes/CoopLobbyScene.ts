@@ -10,7 +10,15 @@ import {
   isCoopBattleActive,
   type CoopSessionRecord,
 } from "../systems/CoopSessionSystem";
-import { HERO_DEFINITIONS } from "../data/heroes";
+import { defaultPartyBuilds, heroDefinitionFromBuild } from "../systems/CharacterBuildSystem";
+import type { HeroDefinition } from "../data/heroes";
+
+// Co-op has no per-hero picker UI yet, so it needs SOME valid party to hand
+// to BattleScene — a small, fixed, deterministic set of fresh level-1 D&D
+// builds, the same shape a real character-creation run would produce.
+// Computed once at module load so `onStartBattle`'s hero-id list and
+// `enterBattle`'s `heroDefinitions` always agree on the same four ids.
+const DEFAULT_COOP_HERO_DEFINITIONS: HeroDefinition[] = defaultPartyBuilds(4).map(heroDefinitionFromBuild);
 
 /**
  * CoopLobbyScene — Phase 12.2 (D-102): create-or-join UI for a cooperative
@@ -23,9 +31,10 @@ import { HERO_DEFINITIONS } from "../data/heroes";
  *
  * Phase 12.3 (D-103) adds "Start Battle" (host-only, once the session is
  * full): assigns hero ownership (`CoopSessionSystem.startCoopBattle`, an
- * alternating-slot split across the classic fixed roster — no per-hero
- * picker UI yet, see that function's own comment) and flips the session to
- * `status: "battle"`. The guest's client detects that transition via its
+ * alternating-slot split across `DEFAULT_COOP_HERO_DEFINITIONS` — no
+ * per-hero picker UI yet, see that function's own comment) and flips the
+ * session to `status: "battle"`. The guest's client detects that transition
+ * via its
  * existing `subscribeToSession` and auto-navigates too. Both clients land
  * in `BattleScene` with a `coopSession` context that gates hero selection
  * to heroes you own — but the two clients' boards do NOT yet stay in sync
@@ -330,7 +339,7 @@ export class CoopLobbyScene extends Phaser.Scene {
     this.busy = true;
     this.statusMessage = "Starting battle…";
     this.refresh();
-    startBattle(this.session.id, HERO_DEFINITIONS.map((def) => def.id), Date.now())
+    startBattle(this.session.id, DEFAULT_COOP_HERO_DEFINITIONS.map((def) => def.id), Date.now())
       .then((record) => {
         this.busy = false;
         if (!record) {
@@ -356,6 +365,7 @@ export class CoopLobbyScene extends Phaser.Scene {
     this.unsubscribeSession?.();
     this.unsubscribeSession = null;
     this.scene.start("BattleScene", {
+      heroDefinitions: DEFAULT_COOP_HERO_DEFINITIONS,
       coopSession: {
         code: record.id,
         localUid,

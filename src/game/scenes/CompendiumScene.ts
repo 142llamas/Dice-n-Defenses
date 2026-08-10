@@ -11,6 +11,8 @@ import { POTION_DEFINITIONS, POTION_ORDER } from "../data/potions";
 import { STATUS_EFFECTS, STATUS_EFFECT_ORDER } from "../data/statusEffects";
 import { ABILITY_SCORE_NAMES } from "../data/abilityScores";
 import { SKILLS, SKILL_ORDER } from "../data/skills";
+import { PORTRAIT_MANIFEST } from "../data/portraitManifest";
+import { showDialogue, type DialogueBoxController, type DialogueLine } from "./dialogueBox";
 
 /**
  * CompendiumScene — Phase 11.5's in-game rules/spell/feat/equipment lookup
@@ -35,6 +37,13 @@ import { SKILLS, SKILL_ORDER } from "../data/skills";
  * Spells as a second exception: the catalogue grew from 14 curated entries
  * to 318 (a full SRD spell-list pass), so Spells now gets an analogous
  * per-level selector (Cantrip/1st/.../9th) plus the same Prev/Next paging.
+ *
+ * D-119 added a "Dialogue" tab — NOT a rules-lookup category like the rest
+ * of this scene, but a preview/demo entry point for the new
+ * `scenes/dialogueBox.ts` parchment-panel dialogue renderer, since no real
+ * chapter/story content exists yet to trigger it naturally. Lets Kevin see
+ * and tune the styling in-browser before any images or story content are
+ * ready.
  */
 
 type CategoryId =
@@ -46,7 +55,8 @@ type CategoryId =
   | "spells"
   | "equipment"
   | "potions"
-  | "statusEffects";
+  | "statusEffects"
+  | "dialoguePreview";
 
 const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: "classes", label: "Classes" },
@@ -58,6 +68,37 @@ const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: "equipment", label: "Equipment" },
   { id: "potions", label: "Potions" },
   { id: "statusEffects", label: "Status Effects" },
+  { id: "dialoguePreview", label: "Dialogue" },
+];
+
+/** D-119: a sample line of each dialogue style (narrator/PC vs. NPC), for the preview tab. */
+const DIALOGUE_PREVIEW_LINES: DialogueLine[] = [
+  {
+    text: "The chapter behind you fades, replaced by warm afternoon light and the smell of woodsmoke.",
+  },
+  {
+    speakerName: "Sample Companion",
+    portraitKey: "portrait-preview-demo",
+    text: "This is what an NPC line looks like: a framed portrait on the left — a placeholder silhouette until real art is dropped in — their name underneath, and their line here on the parchment.",
+  },
+  {
+    speakerName: "Sample Companion",
+    portraitKey: "portrait-preview-demo",
+    text: 'Multiple lines page through with the Continue button, or by clicking anywhere on the panel, or pressing Space/Enter. This is line 3 of 3 — notice the "Skip ▶▶" button up top: this whole sequence has no pending decision, so it’s available.',
+  },
+];
+
+/** D-120: same idea, but the last line requires a decision — demonstrates the Skip button correctly disappearing. */
+const DIALOGUE_PREVIEW_LINES_WITH_DECISION: DialogueLine[] = [
+  {
+    text: "This sequence is otherwise identical, but ends on a line that requires a decision.",
+  },
+  {
+    speakerName: "Sample Companion",
+    portraitKey: "portrait-preview-demo",
+    text: 'Notice the "Skip ▶▶" button is gone this time — skipping the whole sequence must never let a player miss a choice, even one they haven’t reached yet.',
+    hasDecision: true,
+  },
 ];
 
 const FEATURES_PER_PAGE = 6;
@@ -95,9 +136,17 @@ export class CompendiumScene extends Phaser.Scene {
   private nextButton!: Phaser.GameObjects.Rectangle;
   private prevLabel!: Phaser.GameObjects.Text;
   private nextLabel!: Phaser.GameObjects.Text;
+  private activeDialogue: DialogueBoxController | undefined;
 
   constructor() {
     super("CompendiumScene");
+  }
+
+  /** D-119: loads any real dialogue portraits once they exist — a no-op today, PORTRAIT_MANIFEST is empty. */
+  preload(): void {
+    for (const [key, path] of Object.entries(PORTRAIT_MANIFEST)) {
+      this.load.image(key, path);
+    }
   }
 
   create(): void {
@@ -112,6 +161,7 @@ export class CompendiumScene extends Phaser.Scene {
     this.tabLabels = [];
     this.subButtons = [];
     this.subLabels = [];
+    this.activeDialogue = undefined;
 
     this.cameras.main.setBackgroundColor("#0e0e14");
 
@@ -145,6 +195,8 @@ export class CompendiumScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.removeAllListeners();
       this.input.keyboard?.removeAllListeners();
+      this.activeDialogue?.destroy();
+      this.activeDialogue = undefined;
     });
 
     this.renderCategory();
@@ -259,6 +311,10 @@ export class CompendiumScene extends Phaser.Scene {
   private renderCategory(): void {
     this.refreshTabHighlights();
     this.clearSubButtons();
+    // Switching tabs while a preview dialogue is open shouldn't leave it
+    // dangling behind the newly-rendered category.
+    this.activeDialogue?.destroy();
+    this.activeDialogue = undefined;
 
     if (this.category === "classes") {
       this.buildClassSelector();
@@ -268,10 +324,46 @@ export class CompendiumScene extends Phaser.Scene {
       this.renderSpellsDetail();
     } else if (this.category === "equipment") {
       this.renderEquipmentDetail();
+    } else if (this.category === "dialoguePreview") {
+      this.hidePagination();
+      this.renderDialoguePreviewTab();
     } else {
       this.hidePagination();
       this.detailText.setText(this.flatCategoryText());
     }
+  }
+
+  /**
+   * D-119/D-120: not a rules lookup — a preview/demo entry point for
+   * `scenes/dialogueBox.ts`'s parchment-panel renderer, so the styling and
+   * the skip controls can be seen and tuned in-browser before any real
+   * chapter/story content or portrait art exists.
+   */
+  private renderDialoguePreviewTab(): void {
+    this.detailText.setText(
+      "Preview of the stylized dialogue box built for chapter-boundary story text " +
+        "(CAMPAIGN_STORY_DESIGN.md). Both samples show both speaker styles: a " +
+        "narrator/PC line (full-width text, no portrait) and an NPC line (framed " +
+        "portrait + name plate — a placeholder silhouette until real art exists for " +
+        'the "portrait-preview-demo" key). Advance with Continue, a click anywhere ' +
+        "on the panel, or Space/Enter. The first sample has no pending decision, so " +
+        'a "Skip ▶▶" button is offered; the second ends on a line that requires a ' +
+        "decision, so that button is correctly withheld.",
+    );
+    const showSample = (lines: DialogueLine[]) => {
+      this.activeDialogue?.destroy();
+      this.activeDialogue = showDialogue(this, lines, () => {
+        this.activeDialogue = undefined;
+      });
+    };
+    const a = this.buildButton(GAME_WIDTH / 2 - 150, 470, 280, 44, "Show Sample (skippable)", 0x4a6a9a, () =>
+      showSample(DIALOGUE_PREVIEW_LINES),
+    );
+    const b = this.buildButton(GAME_WIDTH / 2 + 150, 470, 280, 44, "Show Sample (with a decision)", 0x4a6a9a, () =>
+      showSample(DIALOGUE_PREVIEW_LINES_WITH_DECISION),
+    );
+    this.subButtons.push(a.rect, b.rect);
+    this.subLabels.push(a.label, b.label);
   }
 
   /** Dispatches Prev/Next to whichever category is currently paginated. */

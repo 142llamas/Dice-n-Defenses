@@ -5,8 +5,8 @@
  * these starting multipliers are a first pass, not a tuned result.
  *
  * A second multiplier source, party-size scaling, lives alongside these: the
- * game's wave data was authored and balanced around the classic FOUR-hero
- * roster (D-052/D-070), so a smaller freeform party fights proportionally
+ * game's wave data was authored and balanced around a FOUR-hero party
+ * (D-052/D-070), so a smaller freeform party fights proportionally
  * fewer/weaker enemies and a larger one (once maps support it — see D-071's
  * 11.7) would face proportionally more. `WaveSystem` combines both
  * multipliers (see `BattleScene`'s WaveSystem construction) — this file only
@@ -16,9 +16,9 @@
  * (`shortRestCharges`/`longRestCharges`, consumed by the new `RestSystem`) —
  * fewer charges at a harder tier, the same "harder = less recovery" lever
  * the enemy multipliers above already pull, first-pass/untuned like them.
- * The classic START roster (no difficulty picker) always resolves to
- * `"normal"` (see `BattleScene`'s `difficultyId` default), so it always gets
- * this tier's Rest budget too.
+ * A battle reached with no explicit difficulty (e.g. Co-op) always resolves
+ * to `"normal"` (see `BattleScene`'s `difficultyId` default), so it always
+ * gets this tier's Rest budget too.
  */
 
 export type DifficultyId = "easy" | "normal" | "hard" | "nightmare";

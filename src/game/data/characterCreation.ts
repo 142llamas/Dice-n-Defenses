@@ -5,9 +5,7 @@
  * classes. A short preset name pool, since this project has no free-text
  * input UI anywhere yet (Phaser has no native text field, and adding a DOM
  * text overlay would be a new UI pattern this small first pass doesn't
- * need). All names are original, no IP — deliberately NOT reusing
- * Ash/Wren/Bram/Mira, so a created character is never confused with the
- * existing fixed roster.
+ * need). All names are original, no IP.
  *
  * The four signature abilities available to a Fighter OR a Rogue are the
  * project's existing four (Cleave, Piercing Shot, Taunting Slam, Frost

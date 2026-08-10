@@ -52,44 +52,18 @@ export class MainMenuScene extends Phaser.Scene {
       )
       .setOrigin(0.5);
 
-    // A clickable Start button (a rectangle + label).
-    const button = this.add
-      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40, 220, 64, 0x4caf72)
-      .setInteractive({ useHandCursor: true });
-
-    const buttonLabel = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40, "START", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "28px",
-        color: "#0e0e14",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
-
-    button.on("pointerover", () => button.setFillStyle(0x66c98c));
-    button.on("pointerout", () => button.setFillStyle(0x4caf72));
-    button.on("pointerdown", () => this.scene.start("BattleScene"));
-
-    // Keyboard shortcut: Enter or Space also starts.
-    this.input.keyboard?.on("keydown-ENTER", () =>
-      this.scene.start("BattleScene"),
-    );
-    this.input.keyboard?.on("keydown-SPACE", () =>
-      this.scene.start("BattleScene"),
-    );
-
-    // Phase 11.1 (D-070/D-073): a SEPARATE entry point into the new freeform
-    // party builder. Deliberately not a replacement for START above — that
-    // button keeps using the original fixed 4-hero roster (Ash/Wren/Bram/
-    // Mira) unchanged, so it stays safe for Kevin's still-open browser
-    // checklist and the Phase 7 balance pass. Placed well below START with a
-    // comfortable gap so neither button's hit area can ever overlap.
+    // The freeform D&D-style party builder — now the ONLY way into a battle.
+    // The original classic fixed 4-hero roster (Ash/Wren/Bram/Mira) and its
+    // flat Vigor/Might level-up choice were removed once this builder (and
+    // the real per-class leveling it drives) was feature-complete; see
+    // DECISIONS.md for the removal record. Promoted into the START button's
+    // old slot, keeping every button below it at its same relative gap.
     const createPartyButton = this.add
-      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 130, 260, 50, 0x2a2a3a)
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40, 260, 50, 0x2a2a3a)
       .setStrokeStyle(1, 0x4a4a5a)
       .setInteractive({ useHandCursor: true });
     const createPartyLabel = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 130, "Create Party (new)", {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40, "New Game", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "18px",
         color: "#c8c8d8",
@@ -100,15 +74,23 @@ export class MainMenuScene extends Phaser.Scene {
     createPartyButton.on("pointerdown", () => this.scene.start("CharacterCreationScene"));
     createPartyLabel.setName("create-party-button-label");
 
+    // Keyboard shortcut: Enter or Space also starts a new game.
+    this.input.keyboard?.on("keydown-ENTER", () =>
+      this.scene.start("CharacterCreationScene"),
+    );
+    this.input.keyboard?.on("keydown-SPACE", () =>
+      this.scene.start("CharacterCreationScene"),
+    );
+
     // Phase 11.5 (D-078): a third, independent entry point — a read-only
     // rules/spell/feat/equipment lookup index. Placed below Create Party
     // with the same gap discipline, so it can't overlap either button above.
     const compendiumButton = this.add
-      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 200, 260, 50, 0x2a2a3a)
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 110, 260, 50, 0x2a2a3a)
       .setStrokeStyle(1, 0x4a4a5a)
       .setInteractive({ useHandCursor: true });
     const compendiumLabel = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 200, "Compendium", {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 110, "Compendium", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "18px",
         color: "#c8c8d8",
@@ -123,11 +105,11 @@ export class MainMenuScene extends Phaser.Scene {
     // unlock-on-encounter enemy log. Same gap discipline as Compendium below
     // it, so it can't overlap any button above.
     const bestiaryButton = this.add
-      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 270, 260, 50, 0x2a2a3a)
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 180, 260, 50, 0x2a2a3a)
       .setStrokeStyle(1, 0x4a4a5a)
       .setInteractive({ useHandCursor: true });
     const bestiaryLabel = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 270, "Bestiary", {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 180, "Bestiary", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "18px",
         color: "#c8c8d8",
@@ -142,11 +124,11 @@ export class MainMenuScene extends Phaser.Scene {
     // campaigns assembled from 11.6's roster and 11.7's maps. Same gap
     // discipline as Bestiary above it, so it can't overlap any button above.
     const campaignsButton = this.add
-      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 340, 260, 50, 0x2a2a3a)
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 250, 260, 50, 0x2a2a3a)
       .setStrokeStyle(1, 0x4a4a5a)
       .setInteractive({ useHandCursor: true });
     const campaignsLabel = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 340, "Campaigns", {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 250, "Campaigns", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "18px",
         color: "#c8c8d8",
@@ -161,11 +143,11 @@ export class MainMenuScene extends Phaser.Scene {
     // configurable wave count/boss/minion source/map/difficulty. Same gap
     // discipline as Campaigns above it, so it can't overlap any button above.
     const freePlayButton = this.add
-      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 410, 260, 50, 0x2a2a3a)
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 320, 260, 50, 0x2a2a3a)
       .setStrokeStyle(1, 0x4a4a5a)
       .setInteractive({ useHandCursor: true });
     const freePlayLabel = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 410, "Free Play", {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 320, "Free Play", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "18px",
         color: "#c8c8d8",
@@ -180,8 +162,8 @@ export class MainMenuScene extends Phaser.Scene {
       .text(
         GAME_WIDTH / 2,
         GAME_HEIGHT - 52,
-        "Move your heroes, spend gold to Build walls & traps, and survive five waves.\n" +
-          "Don't let the enemies breach your Stronghold. Click START or press Enter.",
+        "Move your heroes, spend gold to Build walls & traps, and survive the waves.\n" +
+          "Don't let the enemies breach your Stronghold. Click New Game or press Enter.",
         {
           fontFamily: "system-ui, Arial, sans-serif",
           fontSize: "18px",
@@ -191,9 +173,6 @@ export class MainMenuScene extends Phaser.Scene {
         },
       )
       .setOrigin(0.5);
-
-    // Keep a reference so linters see buttonLabel as used.
-    buttonLabel.setName("start-button-label");
 
     this.buildSettingsControl();
     this.buildLoadGameButton();

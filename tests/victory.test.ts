@@ -7,8 +7,20 @@ import { RandomService } from "../src/game/systems/RandomService";
 import { TurnSystem } from "../src/game/systems/TurnSystem";
 import { CombatSystem } from "../src/game/systems/CombatSystem";
 import { Hero } from "../src/game/entities/Hero";
-import { getHeroDefinition } from "../src/game/data/heroes";
+import type { HeroDefinition } from "../src/game/data/heroes";
 import type { WaveDefinition } from "../src/game/data/waves";
+
+const TEST_HERO_DEF: HeroDefinition = {
+  id: "hero-test",
+  name: "Test Hero",
+  movementTiles: 4,
+  maxHealth: 12,
+  attackDamage: 4,
+  attackRangeTiles: 1,
+  attackBonus: 4,
+  baseArmorClass: 10,
+  abilityId: "cleave",
+};
 
 /**
  * Phase 4 unlocks VICTORY. Phase 3's integration test proved that doing nothing
@@ -31,7 +43,7 @@ describe("victory is reachable once heroes can fight", () => {
     const turns = new TurnSystem();
 
     // One melee hero standing one tile from the spawn, holding the lane.
-    const hero = new Hero(getHeroDefinition("hero-ash"), { x: 1, y: 0 });
+    const hero = new Hero(TEST_HERO_DEF, { x: 1, y: 0 });
 
     ws.startWave(0);
     turns.advance(); // preparation -> player

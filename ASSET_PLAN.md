@@ -78,23 +78,34 @@ since that's where a viewer's eye spends the most time:
 
 ## Technical notes for whoever implements this later
 
-- Phaser loads real art via `this.load.image`/`this.load.atlas` in a scene's
-  `preload()` — none of the current scenes have one yet, since nothing is
-  loaded from a file. A texture atlas (one sheet, multiple frames) is the
-  standard way to keep many small sprites from bloating load time, and pairs
-  naturally with "replace tokens first" above (one hero atlas, one enemy
-  atlas, ...).
+- **The loading/rendering plumbing for hero tokens already exists (D-117),
+  with no real art yet.** `HeroDefinition.assetKey` is set by
+  `heroDefinitionFromBuild`; `data/spriteManifest.ts` exports the (currently
+  EMPTY) `SPRITE_MANIFEST: Record<assetKey, imagePath>`;
+  `BattleScene.preload()` loads whatever it lists via `this.load.image`; and
+  `createTokenSprite` swaps a token's circle for a real sprite once
+  `this.textures.exists(assetKey)` is true, hiding (not destroying) the
+  circle as the fallback. To add a real hero sprite: drop the image under
+  `public/assets/images/`, add one entry to `SPRITE_MANIFEST`, done — no
+  rendering code changes. Enemy/structure tokens already carry a populated
+  `assetKey` too but do NOT yet call `createTokenSprite` — each has its own
+  per-token mutation logic (stealth dimming, aura rings, boss-size variants)
+  worth reconciling with a sprite swap once real art exists to test against,
+  not speculatively (see KNOWN_ISSUES KI-074).
+- A texture atlas (one sheet, multiple frames) is the standard way to keep
+  many small sprites from bloating load time once there are enough of them
+  to matter, and pairs naturally with "replace tokens first" above (one hero
+  atlas, one enemy atlas, ...) — `SPRITE_MANIFEST`'s current one-image-per-key
+  shape would need to grow into `this.load.atlas` calls at that point, not a
+  rewrite of the fallback logic itself.
 - Watch the bundle-size ceiling noted in KNOWN_ISSUES (KI-005): the JS bundle
   is already ~1.5 MB before any art asset is added. Images are separate
   files served alongside the JS bundle (not inlined into it), so this mostly
   affects total page-weight/load time, not the `chunkSizeWarningLimit`
   itself — but it's worth remembering when choosing image resolution/format.
 - Data-driven content stays data-driven: an asset key belongs on the
-  relevant `data/*.ts` definition (heroes/enemies/structures already have
-  `assetKey`-shaped fields in places — e.g. `enemies.ts`'s `assetKey`), not
-  hardcoded in scene code. Swapping a placeholder circle for a sprite should
-  be a scene-rendering change plus a data lookup, not a rewrite of any rule
-  system.
+  relevant `data/*.ts` definition (heroes/enemies/structures/equipment all
+  have `assetKey`), not hardcoded in scene code.
 
 ## Sequencing
 

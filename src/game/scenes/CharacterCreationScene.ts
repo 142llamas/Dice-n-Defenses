@@ -43,13 +43,11 @@ import { pushSlot } from "../cloud/CloudSaveSync";
  * damage/range) is computed live via
  * `heroDefinitionFromBuild` and shown as a preview.
  *
- * Deliberately ADDITIVE, not a replacement: `MainMenuScene`'s original
- * START button still goes straight to `BattleScene` with the unchanged
- * fixed 4-hero roster (Ash/Wren/Bram/Mira) — that path is untouched so
- * Kevin's still-open browser-verification checklist (KI-036/KI-035/KI-034/
- * KI-031) and Phase 7 balance pass keep working exactly as before. This
- * scene is reached through a SEPARATE "Create Party" button, and hands
- * BattleScene a custom roster via `scene.start("BattleScene", { heroDefinitions })`.
+ * This scene is now the ONLY way into a battle (`MainMenuScene`'s original
+ * fixed 4-hero-roster START button and its flat Vigor/Might level-up choice
+ * were removed once this builder became feature-complete — see
+ * DECISIONS.md), reached via the "New Game" button, and hands BattleScene a
+ * built roster via `scene.start("BattleScene", { heroDefinitions })`.
  *
  * Phase 11.2 (D-074) added a second, pickable class: Wizard, a spellcaster
  * whose signature action is a cantrip (Fire Bolt or Ray of Frost) instead of

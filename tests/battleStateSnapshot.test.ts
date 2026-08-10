@@ -10,7 +10,6 @@ import { TurnSystem } from "../src/game/systems/TurnSystem";
 import { RandomService } from "../src/game/systems/RandomService";
 import { Hero } from "../src/game/entities/Hero";
 import { Enemy } from "../src/game/entities/Enemy";
-import { getHeroDefinition } from "../src/game/data/heroes";
 import { getEnemyDefinition } from "../src/game/data/enemies";
 import { heroDefinitionFromBuild, type CharacterBuild } from "../src/game/systems/CharacterBuildSystem";
 import type { WaveDefinition } from "../src/game/data/waves";
@@ -47,11 +46,10 @@ function makeBarbarianBuild(overrides: Partial<CharacterBuild> = {}): CharacterB
 }
 
 describe("Hero.toSnapshot / Hero.fromSnapshot — full round trip", () => {
-  it("round-trips the classic fixed roster after a mix of in-battle mutations", () => {
-    const hero = new Hero(getHeroDefinition("hero-ash"), { x: 0, y: 0 });
+  it("round-trips a hero after a mix of in-battle mutations", () => {
+    const hero = new Hero(heroDefinitionFromBuild(makeBarbarianBuild({ id: "build-mix" })), { x: 0, y: 0 });
     hero.moveTo({ x: 1, y: 0 });
     hero.markActed();
-    hero.grantVigor(5);
     hero.grantMight(2);
     hero.equippedItems.head = "leather-cap";
     hero.equippedPotions.general1 = "healing-draught";
@@ -155,9 +153,9 @@ function makeLaneBattle(): {
   turns.transitionTo("enemy");
   turns.transitionTo("resolution");
 
-  const heroA = new Hero(getHeroDefinition("hero-ash"), { x: 0, y: 0 });
+  const heroA = new Hero(heroDefinitionFromBuild(makeBarbarianBuild({ id: "build-a" })), { x: 0, y: 0 });
   heroA.moveTo({ x: 1, y: 0 });
-  heroA.grantVigor(4);
+  heroA.grantMight(4);
   heroA.equippedItems.head = "leather-cap";
 
   const heroB = new Hero(heroDefinitionFromBuild(makeBarbarianBuild()), { x: 2, y: 0 });

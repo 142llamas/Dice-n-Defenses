@@ -3,6 +3,11 @@ import {
   CAMPAIGNS,
   getCampaignDefinition,
   getCampaignMap,
+  getChapter,
+  isChapteredCampaign,
+  totalChapters,
+  type CampaignDefinition,
+  type ChapterDefinition,
 } from "../src/game/data/campaigns";
 import { getEnemyDefinition } from "../src/game/data/enemies";
 import { EMBERFORD_MAP } from "../src/game/data/emberfordMap";
@@ -118,5 +123,68 @@ describe("CAMPAIGNS", () => {
     expect(a.description.length).toBeGreaterThan(0);
     expect(b.description.length).toBeGreaterThan(0);
     expect(a.description).not.toBe(b.description);
+  });
+});
+
+/**
+ * D-118 — engine scaffolding for CAMPAIGN_STORY_DESIGN.md's "region"
+ * structure (4 chapters per region). Neither shipped campaign uses
+ * `chapters` yet — both must behave exactly as before (a flat, single
+ * "chapter" wrapping their existing waves/boss/loot).
+ */
+describe("Chapters (D-118)", () => {
+  it("neither existing campaign is chaptered", () => {
+    for (const campaign of CAMPAIGNS) {
+      expect(isChapteredCampaign(campaign)).toBe(false);
+      expect(totalChapters(campaign)).toBe(1);
+    }
+  });
+
+  it("getChapter synthesizes a flat campaign's own fields as chapter 0", () => {
+    const emberford = getCampaignDefinition("emberford-reach");
+    const chapter = getChapter(emberford, 0);
+    expect(chapter.waves).toBe(emberford.waves);
+    expect(chapter.bossEnemyId).toBe(emberford.bossEnemyId);
+    expect(chapter.lootPoolIds).toBe(emberford.lootPoolIds);
+  });
+
+  it("getChapter throws for any non-zero index on a flat campaign", () => {
+    const emberford = getCampaignDefinition("emberford-reach");
+    expect(() => getChapter(emberford, 1)).toThrow();
+  });
+
+  it("a chaptered campaign reports its real chapter count and resolves each by index", () => {
+    const chapters: ChapterDefinition[] = [
+      { id: "ch1", name: "Arrival", levelRange: [1, 5], waves: [], bossEnemyId: "grunt" },
+      { id: "ch2", name: "Escalation", levelRange: [6, 10], waves: [] },
+      { id: "ch3", name: "Branch Payoff", levelRange: [11, 15], waves: [] },
+      { id: "ch4", name: "Finale", levelRange: [16, 20], waves: [], bossEnemyId: "cinderlord" },
+    ];
+    const region: CampaignDefinition = {
+      id: "test-region",
+      name: "Test Region",
+      description: "A test region.",
+      mapId: "does-not-matter",
+      waves: chapters[3].waves,
+      bossEnemyId: "cinderlord",
+      chapters,
+    };
+    expect(isChapteredCampaign(region)).toBe(true);
+    expect(totalChapters(region)).toBe(4);
+    expect(getChapter(region, 0)).toBe(chapters[0]);
+    expect(getChapter(region, 3)).toBe(chapters[3]);
+  });
+
+  it("getChapter throws for an out-of-range index on a chaptered campaign", () => {
+    const region: CampaignDefinition = {
+      id: "test-region",
+      name: "Test Region",
+      description: "A test region.",
+      mapId: "does-not-matter",
+      waves: [],
+      bossEnemyId: "cinderlord",
+      chapters: [{ id: "ch1", name: "Arrival", levelRange: [1, 5], waves: [] }],
+    };
+    expect(() => getChapter(region, 1)).toThrow();
   });
 });

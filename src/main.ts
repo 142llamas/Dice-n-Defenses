@@ -28,7 +28,12 @@ const config: Phaser.Types.Core.GameConfig = {
   height: GAME_HEIGHT,
   scale: {
     mode: Phaser.Scale.FIT, // scale to fit while keeping aspect ratio.
-    autoCenter: Phaser.Scale.CENTER_BOTH,
+    // `#game-root` (index.html) is a flex container that already centers its
+    // child. Phaser's own CENTER_BOTH also centers the canvas via inline
+    // margin styles, assuming a plain block parent — stacking both centered
+    // the canvas twice, pushing it visibly off-center. The CSS flex box
+    // handles it alone now.
+    autoCenter: Phaser.Scale.NO_CENTER,
   },
   // Phase 12.2 (D-102): this project's FIRST-EVER free-text input (a coop
   // session join code) needs a real HTML <input> overlay — Phaser's DOM

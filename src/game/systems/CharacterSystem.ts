@@ -8,27 +8,16 @@ import { modifierFor, type AbilityScoreId, type AbilityScores } from "../data/ab
  * (Phase 11.1, DECISIONS D-071/D-072/D-073). No Phaser, no dependency on
  * `Hero` directly — `systems/CharacterBuildSystem.ts` is the seam that turns
  * this math into a `HeroDefinition` `BattleScene` can actually play (reached
- * via the new `CharacterCreationScene`, D-073).
- *
- * Distinct from the existing `ProgressionSystem`: that system grants simple
- * flat Vigor/Might bonuses every 2 cleared waves to today's fixed 4-hero
- * roster. THIS system computes what a D&D character LEVEL (1-20, tied to a
- * class) provides. The two remain UNRECONCILED by design: a character built
- * in `CharacterCreationScene` starts at level 1 and stays there — nothing
- * yet increments a class level, and `ProgressionSystem`'s wave-based
- * Vigor/Might still applies equally to every hero regardless of source. How
- * class levels and wave-based level-ups relate is a later Phase 11 decision.
+ * via `CharacterCreationScene`, D-073).
  *
  * Combat stays fully deterministic (D-030): HP-per-level uses the SRD's fixed
  * "average of the hit die, rounded up" option rather than rolling, matching
  * this project's existing no-dice philosophy.
  *
  * Phase 13.3 (D-089): `combatStatsForClassLevel` (near the bottom of this
- * file) answers the question this module's own doc comment above flagged as
- * "a later Phase 11 decision" — `ProgressionSystem`'s flat wave-based
- * Vigor/Might choice now applies ONLY to the classic fixed roster (no
- * `classId`); a D&D-built hero instead advances a REAL class level on the
- * same wave-clear cadence, via `Hero.levelUpClass()`, which calls this
+ * file) computes what a D&D character LEVEL (1-20, tied to a class)
+ * provides. Every hero advances a REAL class level on the wave-clear cadence
+ * `ProgressionSystem` tracks, via `Hero.levelUpClass()`, which calls this
  * function. It was moved/added here (rather than `CharacterBuildSystem.ts`,
  * which used to own this exact math for level 1 only) so `Hero` — an entity,
  * not a Phaser-touching scene — can reuse the identical formula at any later

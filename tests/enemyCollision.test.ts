@@ -5,8 +5,20 @@ import { PathfindingSystem } from "../src/game/systems/PathfindingSystem";
 import { WaveSystem } from "../src/game/systems/WaveSystem";
 import { RandomService } from "../src/game/systems/RandomService";
 import { Hero } from "../src/game/entities/Hero";
-import { getHeroDefinition } from "../src/game/data/heroes";
+import type { HeroDefinition } from "../src/game/data/heroes";
 import type { WaveDefinition } from "../src/game/data/waves";
+
+const TEST_HERO_DEF: HeroDefinition = {
+  id: "hero-test",
+  name: "Test Hero",
+  movementTiles: 4,
+  maxHealth: 12,
+  attackDamage: 4,
+  attackRangeTiles: 1,
+  attackBonus: 4,
+  baseArmorClass: 10,
+  abilityId: "cleave",
+};
 
 /**
  * Playtest fix: "Enemies are allowed to stack on top of each other." These
@@ -122,7 +134,7 @@ describe("D-067: enemies may walk THROUGH each other, but never share a landing 
     // Grunt (attackRangeTiles 1, movementTiles 2) reaches (4,0) after two
     // ticks, comes within range, and holds there permanently, giving a
     // deterministic, stationary occupant to test passage through.
-    const heroTargets = [new Hero(getHeroDefinition("hero-ash"), { x: 5, y: 0 })];
+    const heroTargets = [new Hero(TEST_HERO_DEF, { x: 5, y: 0 })];
 
     ws.tickEnemyPhase({ heroTargets }); // A: spawns (0,0) -> (2,0)
     ws.tickEnemyPhase({ heroTargets }); // A: (2,0) -> (4,0)

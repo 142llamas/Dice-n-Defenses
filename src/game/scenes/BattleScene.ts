@@ -12,6 +12,7 @@ import {
   BESTIARY_STORAGE_KEY,
   CAMPAIGN_PROGRESS_STORAGE_KEY,
 } from "../config";
+import { SPRITE_MANIFEST } from "../data/spriteManifest";
 import { GridSystem, type GridPosition } from "../systems/GridSystem";
 import { GameMap } from "../systems/GameMap";
 import { MovementSystem } from "../systems/MovementSystem";
@@ -39,11 +40,7 @@ import { SummonSystem } from "../systems/SummonSystem";
 import { RewardSystem } from "../systems/RewardSystem";
 import { rollLootDrop, isPotionId, type LootDropResult } from "../systems/LootSystem";
 import { averagePartyLevel, isRarityUnlockedAtLevel } from "../systems/ShopSystem";
-import {
-  ProgressionSystem,
-  LEVEL_UP_OPTIONS,
-  type LevelUpOptionId,
-} from "../systems/ProgressionSystem";
+import { ProgressionSystem } from "../systems/ProgressionSystem";
 import { RestSystem } from "../systems/RestSystem";
 import { asiFeatureGrantedAtLevel, subclassGrantedAtLevel } from "../systems/CharacterSystem";
 import { subclassesForClass, getSubclassDefinition } from "../data/subclasses";
@@ -59,7 +56,7 @@ import { WAVES, type WaveDefinition } from "../data/waves";
 import { getCampaignDefinition, getCampaignMap } from "../data/campaigns";
 import { getMapById } from "../data/maps";
 import { ENEMY_COLORS, getEnemyDefinition, type EnemyRole } from "../data/enemies";
-import { HERO_DEFINITIONS, HERO_COLORS, type HeroDefinition } from "../data/heroes";
+import type { HeroDefinition } from "../data/heroes";
 import { HeroAISystem } from "../systems/HeroAISystem";
 import { canActOnHero } from "../systems/CoopSessionSystem";
 import {
@@ -68,6 +65,14 @@ import {
   type DifficultyId,
 } from "../data/difficulty";
 import { getAbility, type AbilityDefinition } from "../data/abilities";
+import {
+  getCastVisual,
+  deathCauseForAbility,
+  getDeathVisual,
+  type CastVisualDescriptor,
+  type DeathCause,
+  type DeathShape,
+} from "../systems/VisualFxSystem";
 import {
   getStructureDefinition,
   SHOP_ORDER,
@@ -177,6 +182,10 @@ type Interaction =
 
 const ANIM_MS = 420;
 
+/** D-122: base durations for the cast-visual/death-visual flourishes, before each ability's own `durationScale`. */
+const CAST_FX_BASE_MS = 260;
+const DEATH_FX_BASE_MS = 320;
+
 /** Phase 11.7 (D-071): one-time gold bonus for a hero landing on a treasure tile. */
 const TREASURE_GOLD_BONUS = 10;
 
@@ -259,6 +268,14 @@ interface Token {
   circle: Phaser.GameObjects.Arc;
   label: Phaser.GameObjects.Text;
   hp: Phaser.GameObjects.Text;
+  /**
+   * A real sprite, drawn over the (hidden) circle above, once one exists for
+   * this token's `assetKey` — see `SPRITE_MANIFEST`/`createTokenSprite`.
+   * Always undefined today (the manifest is empty, ASSET_PLAN.md/KI-004);
+   * this field exists so the eventual real art only needs an entry added to
+   * the manifest, not a rendering rewrite.
+   */
+  sprite?: Phaser.GameObjects.Sprite;
 }
 
 /** A placed wall/trap's visual (a tile fill, an outline, and a glyph). */
@@ -325,6 +342,10 @@ export class BattleScene extends Phaser.Scene {
   private pendingRect!: Phaser.GameObjects.Rectangle;
 
   private bannerText!: Phaser.GameObjects.Text;
+  // The widest pixel width the banner may render at before it would reach
+  // the Gear button's left edge (KI-033) — set once in buildHud from the
+  // buttons' own real coordinates, consumed by fitBannerToWidth().
+  private bannerMaxWidth = 0;
   private integrityText!: Phaser.GameObjects.Text;
   private logText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
@@ -381,10 +402,6 @@ export class BattleScene extends Phaser.Scene {
    * doesn't rely solely on green-vs-red. */
   private buildGhostGlyph!: Phaser.GameObjects.Text;
   private endOverlay: Phaser.GameObjects.GameObject[] = [];
-  private levelUpOverlay: Phaser.GameObjects.GameObject[] = [];
-  private pendingAfterLevelUp: (() => void) | null = null;
-  /** True while the level-up overlay is up, so the board ignores input under it. */
-  private choosingLevelUp = false;
   /** Phase 13.4 (D-088): the between-waves Rest-choice overlay (Short/Long Rest/Continue). */
   private restOverlay: Phaser.GameObjects.GameObject[] = [];
   private pendingAfterRest: (() => void) | null = null;
@@ -477,49 +494,45 @@ export class BattleScene extends Phaser.Scene {
   private campaignProgress: CampaignProgress = DEFAULT_CAMPAIGN_PROGRESS;
 
   /**
-   * Phase 11.1 (D-070/D-073): an optional roster from `CharacterCreationScene`,
-   * passed via `scene.start("BattleScene", { heroDefinitions })`. `null` when
-   * reached the original way (MainMenuScene's START button, with no data),
-   * which keeps using the unchanged fixed 4-hero roster below.
+   * The party for this battle, built by `CharacterCreationScene` (or, for a
+   * Co-op battle with no hero-picker UI yet, `CoopLobbyScene`'s small
+   * built-in default party — see `CharacterBuildSystem.defaultPartyBuilds`).
+   * Always non-empty: every entry point into this scene now passes one — see
+   * `init()`.
    */
-  private customHeroDefinitions: HeroDefinition[] | null = null;
+  private heroDefinitions: HeroDefinition[] = [];
   /**
    * Phase 11.4 (D-077): the difficulty tier picked in `CharacterCreationScene`,
-   * or "normal" (1x/1x — behaviorally identical to before this phase) when
-   * reached via the classic START button, which passes no data.
+   * or "normal" (1x/1x) when omitted.
    */
   private difficultyId: DifficultyId = "normal";
   /**
    * Phase 11.8 (D-071): an optional campaign id, passed via
    * `scene.start("BattleScene", { campaignId })` (ultimately from
-   * `CampaignSelectScene` via `CharacterCreationScene`). `null` when omitted
-   * (the classic START button, or a campaign-less "Create Party" run), which
-   * keeps `create()` wiring up `TEST_MAP`/`WAVES` exactly as before this
-   * phase — this is the ONE chokepoint that changes based on this field.
+   * `CampaignSelectScene` via `CharacterCreationScene`). `null` for a
+   * campaign-less run (Free Play, Co-op, or a plain "Create Party" run),
+   * which keeps `create()` wiring up `TEST_MAP`/`WAVES` — this is the ONE
+   * chokepoint that changes based on this field.
    */
   private campaignId: string | null = null;
   /**
    * Phase 12.3 (D-103): an optional cooperative-battle context, passed via
    * `scene.start("BattleScene", { coopSession })` from `CoopLobbyScene`'s
-   * "Start Battle". `null` for every other path (classic START, a
-   * custom-party "Create Party" run, campaign, or free-play), which keeps
-   * every one of them byte-for-byte unaffected. `heroOwners` maps every
-   * hero id in the classic roster to the uid that controls it — coop v1 is
-   * classic-roster-only (no custom party creation yet, see this field's own
-   * assignment in `CoopSessionSystem.startCoopBattle`). Gates hero
-   * selection (`heroAt`'s callers) so a client can only act on heroes it
-   * owns; does NOT yet sync either client's board with the other's actions
-   * (no result-broadcast this sub-phase — see `PHASE_HANDOFF.md`).
+   * "Start Battle". `null` for every other path. `heroOwners` maps each
+   * hero id in `heroDefinitions` to the uid that controls it (see this
+   * field's own assignment in `CoopSessionSystem.startCoopBattle`). Gates
+   * hero selection (`heroAt`'s callers) so a client can only act on heroes
+   * it owns; does NOT yet sync either client's board with the other's
+   * actions (no result-broadcast this sub-phase — see `PHASE_HANDOFF.md`).
    */
   private coopSession: { code: string; localUid: string; heroOwners: Record<string, string>; partnerName: string } | null = null;
   /**
    * Phase 11.9 (D-071): an optional free-play map id, passed via
    * `scene.start("BattleScene", { freePlayMapId, freePlayWaves })`
    * (ultimately from `FreePlayScene` via `CharacterCreationScene`). `null`
-   * when omitted — the classic path, a campaign run, or a campaign-less
-   * custom party all leave this unset. Only consulted when `campaignId` is
-   * ALSO unset (campaigns always take priority — see the resolution
-   * chokepoint in `create()`).
+   * when omitted — a campaign run or a campaign-less custom party both leave
+   * this unset. Only consulted when `campaignId` is ALSO unset (campaigns
+   * always take priority — see the resolution chokepoint in `create()`).
    */
   private freePlayMapId: string | null = null;
   /**
@@ -553,8 +566,8 @@ export class BattleScene extends Phaser.Scene {
     super("BattleScene");
   }
 
-  init(data?: {
-    heroDefinitions?: HeroDefinition[];
+  init(data: {
+    heroDefinitions: HeroDefinition[];
     difficultyId?: DifficultyId;
     campaignId?: string;
     freePlayMapId?: string;
@@ -562,13 +575,31 @@ export class BattleScene extends Phaser.Scene {
     customMapData?: ParsedMap;
     coopSession?: { code: string; localUid: string; heroOwners: Record<string, string>; partnerName: string };
   }): void {
-    this.customHeroDefinitions = data?.heroDefinitions ?? null;
+    if (!data?.heroDefinitions?.length) {
+      throw new Error(
+        "BattleScene requires a non-empty heroDefinitions — every entry point must build a party first.",
+      );
+    }
+    this.heroDefinitions = data.heroDefinitions;
     this.difficultyId = data?.difficultyId ?? "normal";
     this.campaignId = data?.campaignId ?? null;
     this.freePlayMapId = data?.freePlayMapId ?? null;
     this.freePlayWaves = data?.freePlayWaves ?? null;
     this.customMapData = data?.customMapData ?? null;
     this.coopSession = data?.coopSession ?? null;
+  }
+
+  /**
+   * Loads whatever real art `SPRITE_MANIFEST` lists, keyed by the same
+   * `assetKey` a hero/enemy/structure definition already carries — see
+   * `createTokenSprite`. The manifest is empty today (ASSET_PLAN.md/KI-004,
+   * no art exists yet), so this loop makes zero requests; once an entry is
+   * added there, this is the only line that needs to run to load it.
+   */
+  preload(): void {
+    for (const [assetKey, path] of Object.entries(SPRITE_MANIFEST)) {
+      this.load.image(assetKey, path);
+    }
   }
 
   create(): void {
@@ -596,9 +627,6 @@ export class BattleScene extends Phaser.Scene {
     this.equipItemButtons = [];
     this.equipItemLabels = [];
     this.endOverlay = [];
-    this.levelUpOverlay = [];
-    this.pendingAfterLevelUp = null;
-    this.choosingLevelUp = false;
     this.restOverlay = [];
     this.pendingAfterRest = null;
     this.choosingRest = false;
@@ -626,16 +654,14 @@ export class BattleScene extends Phaser.Scene {
     this.campaignProgress = loadCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY);
 
     // Phase 11.8/11.9 (D-071): the ONE chokepoint that picks which map/wave-
-    // list this battle plays. `campaignId` omitted (the classic START
-    // button, or a campaign-less "Create Party" run) resolves to exactly the
-    // same TEST_MAP/WAVES this scene has always used — byte-for-byte
-    // unchanged. Free-play (`freePlayMapId`+`freePlayWaves`) is checked only
-    // when `campaignId` is ALSO unset — a campaign always wins if somehow
-    // both were passed — and falls back to TEST_MAP/WAVES exactly like the
-    // classic path if either free-play field is missing.
+    // list this battle plays. `campaignId` omitted (a campaign-less "Create
+    // Party" run, or Co-op) resolves to plain TEST_MAP/WAVES. Free-play
+    // (`freePlayMapId`+`freePlayWaves`) is checked only when `campaignId` is
+    // ALSO unset — a campaign always wins if somehow both were passed — and
+    // falls back to TEST_MAP/WAVES if either free-play field is missing.
     const campaign = this.campaignId ? getCampaignDefinition(this.campaignId) : null;
     // Phase 22 (magic-item expansion): a campaign's own curated loot pool
-    // (undefined for the classic 10-wave path, a campaign-less party, or
+    // (undefined for the plain 10-wave path, a campaign-less party, or
     // Free Play — all of which use LootSystem's full, unrestricted pool).
     this.currentLootPoolIds = campaign?.lootPoolIds;
     let mapData = campaign ? getCampaignMap(campaign.mapId) : TEST_MAP;
@@ -647,8 +673,8 @@ export class BattleScene extends Phaser.Scene {
     // Phase 11.10 (D-085): a map-builder draft (Playtest) or a fetched shared
     // map takes priority over the by-id free-play lookup above, when both a
     // custom map and a wave list are present — checked last so every earlier
-    // path (classic/campaign/campaign-less/free-play) is completely
-    // unaffected when this is unset (the common case).
+    // path (campaign/campaign-less/free-play) is completely unaffected when
+    // this is unset (the common case).
     if (!campaign && this.customMapData && this.freePlayWaves) {
       mapData = this.customMapData;
       waveList = this.freePlayWaves;
@@ -659,11 +685,8 @@ export class BattleScene extends Phaser.Scene {
     this.movement = new MovementSystem(this.map);
     this.pathfinding = new PathfindingSystem(this.map);
     this.heroAI = new HeroAISystem(this.movement);
-    // Phase 11.4 (D-077): the classic path (no data passed) always plays at
-    // party-size-4/Normal, i.e. both multipliers are exactly 1 — byte-for-byte
-    // the same WaveSystem behavior as before this phase.
     const difficulty = getDifficultyDefinition(this.difficultyId);
-    const heroCount = (this.customHeroDefinitions ?? HERO_DEFINITIONS).length;
+    const heroCount = this.heroDefinitions.length;
     this.random = RandomService.seeded();
     this.waveSystem = new WaveSystem(this.map, this.pathfinding, waveList, {
       startingIntegrity: STRONGHOLD_START,
@@ -874,11 +897,11 @@ export class BattleScene extends Phaser.Scene {
 
   private buildHeroes(): void {
     const starts = this.map.data.heroStarts;
-    const baseDefinitions = this.customHeroDefinitions ?? HERO_DEFINITIONS;
+    const baseDefinitions = this.heroDefinitions;
     // Phase 12.3 (D-103): a coop battle overrides `controlledBy` per hero,
     // from the session's `heroOwners` — "human" for whichever heroes THIS
     // client's uid owns, "remote" for the partner's (never "ai": coop v1
-    // assigns every classic-roster hero to one of the two participants).
+    // assigns every hero in the party to one of the two participants).
     const definitions = this.coopSession
       ? baseDefinitions.map((def) => ({
           ...def,
@@ -892,7 +915,7 @@ export class BattleScene extends Phaser.Scene {
       const hero = new Hero(def, start);
       this.heroes.push(hero);
       const c = this.grid.tileToWorldCenter(start);
-      const color = HERO_COLORS[def.id] ?? COLORS.hero;
+      const color = COLORS.hero;
       const circle = this.add.circle(c.x, c.y, TILE_SIZE * 0.34, color).setDepth(10);
       const label = this.add
         .text(c.x, c.y - 4, def.name[0], {
@@ -912,7 +935,8 @@ export class BattleScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setDepth(11);
-      const token: Token = { circle, label, hp };
+      const sprite = this.createTokenSprite(def.assetKey, circle, 10);
+      const token: Token = { circle, label, hp, sprite };
       this.heroTokens.set(def.id, token);
       this.updateHpText(token, hero.health, hero.effectiveMaxHealth);
       // Phase 21 (D-112): a hero can now carry enemy-inflicted statuses too
@@ -1230,6 +1254,16 @@ export class BattleScene extends Phaser.Scene {
     // overlapping Build. Build's left edge is `bbx - 75`; step the same gap
     // and half-width past THAT to get Gear's center.
     const gbx = bbx - 75 - gapBetweenButtons - 75;
+    // KI-033: the banner (centered on GAME_WIDTH/2) and this button (anchored
+    // to the right margin) are positioned independently, so a wide banner
+    // string ("Wave 10 / 10  ·  Between Waves") can reach right up to (or
+    // past) Gear's left edge. Rather than guess a padding number, record the
+    // real safe half-width here and have fitBannerToWidth() shrink the
+    // banner's font, using its ACTUAL measured width, to whatever fits —
+    // correct regardless of font metrics or future label-text changes.
+    const gearLeftEdge = gbx - 75;
+    const bannerSafetyGap = 12;
+    this.bannerMaxWidth = 2 * (gearLeftEdge - GAME_WIDTH / 2 - bannerSafetyGap);
     this.equipButton = this.add
       .rectangle(gbx, 34, 150, 44, 0x5a3a6a)
       .setInteractive({ useHandCursor: true })
@@ -1851,14 +1885,12 @@ export class BattleScene extends Phaser.Scene {
    * the player resolves any overlay, so neither can be skipped by the phase
    * machine racing ahead of it.
    *
-   * Phase 13.3 (D-089): a D&D-built party has no CHOICE to make on a level
-   * that ISN'T an Ability Score Improvement — real per-class leveling is
-   * automatic — so it skips `showLevelUpChoice`'s overlay entirely; each hero
-   * just levels up and the log says so, same "no modal needed" treatment
-   * already used elsewhere for automatic effects (e.g. Uncanny Dodge). Phase
-   * 13.6 (D-091): a level that DOES grant an ASI now queues
-   * `showAsiChoiceQueue` for every hero who just reached one, before moving
-   * on to any Rest choice.
+   * A hero has no CHOICE to make on a level that ISN'T an Ability Score
+   * Improvement — real per-class leveling is automatic; each hero just
+   * levels up and the log says so, same "no modal needed" treatment already
+   * used elsewhere for automatic effects (e.g. Uncanny Dodge). Phase 13.6
+   * (D-091): a level that DOES grant an ASI queues `showAsiChoiceQueue` for
+   * every hero who just reached one, before moving on to any Rest choice.
    */
   private afterWaveCleared(): void {
     const proceed = () => {
@@ -1871,25 +1903,16 @@ export class BattleScene extends Phaser.Scene {
       else this.showRestChoice(proceed);
     };
     if (this.progression.hasPendingLevelUp(this.wavesCleared)) {
-      if (this.isClassBasedParty()) {
-        const { asiHeroes, subclassHeroes } = this.applyClassLevelUps();
-        const afterSubclass = () => {
-          if (asiHeroes.length > 0) this.showAsiChoiceQueue(asiHeroes, afterLevelUp);
-          else afterLevelUp();
-        };
-        if (subclassHeroes.length > 0) this.showSubclassChoiceQueue(subclassHeroes, afterSubclass);
-        else afterSubclass();
-      } else {
-        this.showLevelUpChoice(afterLevelUp);
-      }
+      const { asiHeroes, subclassHeroes } = this.applyClassLevelUps();
+      const afterSubclass = () => {
+        if (asiHeroes.length > 0) this.showAsiChoiceQueue(asiHeroes, afterLevelUp);
+        else afterLevelUp();
+      };
+      if (subclassHeroes.length > 0) this.showSubclassChoiceQueue(subclassHeroes, afterSubclass);
+      else afterSubclass();
     } else {
       afterLevelUp();
     }
-  }
-
-  /** Phase 13.3 (D-089): true for a D&D-built party (every hero has `classId`) — never mixed with the classic roster. */
-  private isClassBasedParty(): boolean {
-    return this.heroes.some((h) => h.classId !== undefined);
   }
 
   /**
@@ -1933,11 +1956,29 @@ export class BattleScene extends Phaser.Scene {
     return { asiHeroes: needsAsi, subclassHeroes: needsSubclass };
   }
 
+  // KI-033 fix: shrink the banner's font size, using its real measured
+  // width, until it fits inside bannerMaxWidth (set in buildHud from the
+  // Gear button's actual left edge) — guaranteed never to reach the button
+  // row regardless of how long a future phase label or wave count gets.
+  // Reset to the base size first so a later SHORT string (e.g. "Victory")
+  // renders at full size again rather than staying shrunk from a prior long one.
+  private fitBannerToWidth(): void {
+    const baseFontSizePx = 20;
+    const minFontSizePx = 10;
+    this.bannerText.setFontSize(baseFontSizePx);
+    let size = baseFontSizePx;
+    while (this.bannerText.width > this.bannerMaxWidth && size > minFontSizePx) {
+      size -= 1;
+      this.bannerText.setFontSize(size);
+    }
+  }
+
   private updateHud(): void {
     const phase = this.turns.current;
     this.bannerText.setText(
       `Wave ${this.waveSystem.waveNumber} / ${this.waveSystem.totalWaves}  ·  ${PHASE_LABELS[phase]}`,
     );
+    this.fitBannerToWidth();
     const integ = this.waveSystem.integrity;
     const low = integ <= 5;
     // Phase 8: the low-integrity warning is also spelled out in text, not
@@ -2212,6 +2253,8 @@ export class BattleScene extends Phaser.Scene {
   /** An enemy strikes a hero: flash the hero and log it (HP synced by caller). */
   private showEnemyAttack(atk: EnemyAttackEvent): void {
     const verb = BattleScene.attackVerb(atk.result);
+    const enemyToken = this.enemyTokens.get(atk.enemy.instanceId);
+    if (enemyToken) this.lungeToward(enemyToken, atk.enemy.position, atk.target.position);
     if (BattleScene.didHit(atk.result)) {
       const c = this.grid.tileToWorldCenter(atk.target.position);
       this.flashTile(c.x, c.y, COLORS.heroHurtFlash, 0.6, 320);
@@ -2278,6 +2321,7 @@ export class BattleScene extends Phaser.Scene {
         token.circle.destroy();
         token.label.destroy();
         token.hp.destroy();
+        token.sprite?.destroy();
         this.heroTokens.delete(hero.id);
         this.heroStatusBadges.get(hero.id)?.destroy();
         this.heroStatusBadges.delete(hero.id);
@@ -2751,9 +2795,9 @@ export class BattleScene extends Phaser.Scene {
     this.input.keyboard?.addCapture(["UP", "DOWN", "LEFT", "RIGHT", "SPACE", "TAB"]);
 
     // Phase 8 ("keyboard support"): number-row hotkeys select a hero by its
-    // fixed roster position (1=Ash, 2=Wren, 3=Bram, 4=Mira), matching the
-    // order heroes appear in HERO_DEFINITIONS/heroStarts, so a key always
-    // means the same hero regardless of who else has fallen.
+    // party-slot position, matching the order heroes appear in
+    // heroDefinitions/heroStarts, so a key always means the same hero
+    // regardless of who else has fallen.
     ["ONE", "TWO", "THREE", "FOUR"].forEach((key, i) => {
       this.input.keyboard?.on(`keydown-${key}`, () => this.selectHeroByIndex(i));
     });
@@ -2984,7 +3028,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private handleEscape(): void {
-    if (this.choosingLevelUp || this.choosingAsi || this.choosingSubclass || this.choosingRest) return; // must resolve the choice, no Esc shortcut
+    if (this.choosingAsi || this.choosingSubclass || this.choosingRest) return; // must resolve the choice, no Esc shortcut
     if (this.tutorialOverlay.length > 0) {
       this.dismissTutorial(); // the tutorial is informational, not a forced choice
       return;
@@ -3077,6 +3121,8 @@ export class BattleScene extends Phaser.Scene {
       this.rejectAt(enemy.position, `${enemy.def.name} is out of range`);
       return;
     }
+    const heroToken = this.heroTokens.get(hero.id);
+    if (heroToken) this.lungeToward(heroToken, hero.position, enemy.position);
     if (usingLuck) {
       hero.spendLuckyPoint();
       this.logCombat(`${hero.name} spends a Lucky point (Advantage) — ${hero.luckyPointsAvailable} left`);
@@ -3498,7 +3544,8 @@ export class BattleScene extends Phaser.Scene {
         return;
       }
       hero.markActed();
-      this.applyHeroResults(hero, ability.name, results, ability.appliesStatus);
+      this.playCastVisual(ability, hero.position, hero.position);
+      this.applyHeroResults(hero, ability.name, results, ability.appliesStatus, deathCauseForAbility(ability));
       const clearedEarly = this.afterHeroDamage();
       if (!clearedEarly) this.setInteraction({ kind: "heroSelected", heroId: hero.id });
     } else {
@@ -3556,7 +3603,8 @@ export class BattleScene extends Phaser.Scene {
     }
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
-    this.applyHeroResults(hero, ability.name, [result], ability.appliesStatus);
+    this.playCastVisual(ability, hero.position, enemy.position);
+    this.applyHeroResults(hero, ability.name, [result], ability.appliesStatus, deathCauseForAbility(ability));
     // Phase 16 (D-106): a forced-movement spell shoves a surviving hit target
     // away from the caster, after damage/status but before the wave-clear
     // check (a pushed-then-dead enemy has nowhere to go, so this is skipped).
@@ -3656,6 +3704,8 @@ export class BattleScene extends Phaser.Scene {
     }
     const dc = hero.spellSaveDC ?? 10;
     this.spendSpellSlotIfNeeded(hero, ability);
+    this.playCastVisual(ability, hero.position, enemy.position);
+    enemy.lastDeathCause = deathCauseForAbility(ability);
     const result = SavingThrowSystem.applySaveOrDamage(enemy, ability.damage, dc, enemy.savingThrowBonus, this.random);
     hero.markActedForSpellCast();
     if (result.save.success) {
@@ -3698,6 +3748,7 @@ export class BattleScene extends Phaser.Scene {
     }
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
+    this.playCastVisual(ability, hero.position, target.position);
     const disciplineBonus = ability.healAmount ? hero.discipleOfLifeBonus : 0;
     if (ability.healAmount) {
       const healed = Math.min(ability.healAmount + disciplineBonus, target.effectiveMaxHealth - target.health);
@@ -3742,6 +3793,7 @@ export class BattleScene extends Phaser.Scene {
     }
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
+    this.playCastVisual(ability, hero.position, hero.position);
     const targets = this.livingAlliesInRange(hero.position, ability.rangeTiles);
     for (const target of targets) {
       if (ability.healAmount) {
@@ -3780,6 +3832,8 @@ export class BattleScene extends Phaser.Scene {
     }
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
+    this.playCastVisual(ability, hero.position, tile);
+    const aoeDeathCause = deathCauseForAbility(ability);
 
     if (ability.savingThrow) {
       // Phase 16 follow-up (D-106): an aoeAtRange spell may force a SAVE
@@ -3788,6 +3842,7 @@ export class BattleScene extends Phaser.Scene {
       // against the caster's spellSaveDC.
       const dc = hero.spellSaveDC ?? 10;
       for (const enemy of targets) {
+        enemy.lastDeathCause = aoeDeathCause;
         const result = SavingThrowSystem.applySaveOrDamage(enemy, ability.damage, dc, enemy.savingThrowBonus, this.random);
         if (result.save.success) {
           this.logCombat(`${enemy.def.name} resists ${hero.name}'s ${ability.name} (save ${result.save.total} vs DC ${dc})`);
@@ -3816,7 +3871,7 @@ export class BattleScene extends Phaser.Scene {
         { rangeTiles: radius, damage: ability.damage, attackBonus: hero.effectiveAttackBonus, autoHit: ability.autoHit },
         this.random,
       );
-      this.applyHeroResults(hero, ability.name, results, ability.appliesStatus);
+      this.applyHeroResults(hero, ability.name, results, ability.appliesStatus, aoeDeathCause);
       // Phase 16 follow-up (D-106): a forced-movement AoE (Thunderwave,
       // Gust of Wind, Reverse Gravity) previously never actually pushed
       // anyone — `forcedMoveTiles` was only wired into the single-target
@@ -3855,6 +3910,8 @@ export class BattleScene extends Phaser.Scene {
     }
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
+    const originPosition = { ...hero.position };
+    this.playCastVisual(ability, originPosition, tile);
     hero.position = { ...tile };
     const token = this.heroTokens.get(hero.id);
     if (token) this.placeToken(token, hero.position);
@@ -3879,6 +3936,7 @@ export class BattleScene extends Phaser.Scene {
     }
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
+    this.playCastVisual(ability, hero.position, tile);
     const summon = this.summonSystem.spawn(ability.summonsId, hero.id, tile, ability.summonDurationTurns ?? 3);
     this.spawnSummonToken(summon);
     this.logCombat(`${hero.name} summons ${summon.def.name} with ${ability.name}`);
@@ -3954,6 +4012,7 @@ export class BattleScene extends Phaser.Scene {
     }
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
+    this.playCastVisual(ability, hero.position, tile);
     this.temporaryStructures.push({
       instanceId: result.structure.instanceId,
       remainingTurns: ability.terrainDurationTurns ?? 3,
@@ -4177,7 +4236,8 @@ export class BattleScene extends Phaser.Scene {
     }
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
-    this.applyHeroResults(hero, ability.name, results, ability.appliesStatus);
+    this.playCastVisual(ability, hero.position, hero.position);
+    this.applyHeroResults(hero, ability.name, results, ability.appliesStatus, deathCauseForAbility(ability));
     const clearedEarly = this.afterHeroDamage();
     if (!clearedEarly) this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
@@ -4310,6 +4370,7 @@ export class BattleScene extends Phaser.Scene {
     abilityName: string,
     results: AttackResult[],
     appliesStatus?: { statusId: StatusEffectId; durationTurns: number },
+    deathCause?: DeathCause,
   ): void {
     for (const r of results) {
       const enemy = this.enemyById(r.targetId);
@@ -4318,6 +4379,7 @@ export class BattleScene extends Phaser.Scene {
       const suffix = BattleScene.didHit(r) ? ` for ${r.damageDealt}` : "";
       this.logCombat(`${hero.name}'s ${abilityName} ${verb} ${name}${suffix}`);
       if (enemy && BattleScene.didHit(r)) {
+        if (deathCause) enemy.lastDeathCause = deathCause;
         this.showHeroHit(enemy);
         // Phase 7 "spell-like abilities": an ability may chill/stun its target
         // in addition to damaging it, but only if the hit didn't kill it.
@@ -4415,7 +4477,7 @@ export class BattleScene extends Phaser.Scene {
     const gold = RewardSystem.killGold(removed);
     if (gold > 0) this.economy.award(gold);
     for (const enemy of removed) {
-      this.destroyEnemyToken(enemy.instanceId);
+      this.playEnemyDeathVisual(enemy);
       // Phase 20 (D-111): a treasure-laden enemy's bonus is called out on
       // its own, on top of its ordinary reward gold, RewardSystem.killGold
       // already totalled both into the `gold` awarded above.
@@ -4541,6 +4603,7 @@ export class BattleScene extends Phaser.Scene {
   /** A status effect resolving on an enemy during the enemy phase (Phase 7). */
   private showStatusTick(evt: StatusTickEvent): void {
     if (evt.effectId === "burning" && evt.result) {
+      evt.enemy.lastDeathCause = "fire";
       const c = this.grid.tileToWorldCenter(evt.enemy.position);
       this.flashTile(c.x, c.y, COLORS.trapFlash, 0.6, 260);
       const verb = evt.result.defeated ? "defeats" : "hits";
@@ -4924,9 +4987,8 @@ export class BattleScene extends Phaser.Scene {
    * `rare`/`veryRare`/`legendary` magic items this party's AVERAGE class
    * level has unlocked (`ShopSystem.isRarityUnlockedAtLevel`). Kevin's own
    * ask: "the shop should also have some magical items, but based on the
-   * level of the party." The classic fixed roster (no `classLevel` growth)
-   * averages to level 1 forever, so it only ever sees the always-unlocked
-   * common/uncommon tier — a real, documented boundary, not a bug.
+   * level of the party." A fresh level-1 party averages to level 1, so it
+   * only ever sees the always-unlocked common/uncommon tier until it levels.
    */
   private visibleGearCatalog(): string[] {
     const avgLevel = averagePartyLevel(this.heroes.map((h) => h.level));
@@ -5171,6 +5233,30 @@ export class BattleScene extends Phaser.Scene {
     token.circle.setPosition(c.x, c.y);
     token.label.setPosition(c.x, c.y - 4);
     token.hp.setPosition(c.x, c.y + TILE_SIZE * 0.2);
+    token.sprite?.setPosition(c.x, c.y);
+  }
+
+  /**
+   * If real art has been loaded for `assetKey` (see `SPRITE_MANIFEST`),
+   * create a sprite sized to match the given circle's diameter and hide
+   * that circle so it doesn't show through — the sprite becomes the token's
+   * visible face while the circle stays alive underneath for its existing
+   * role (depth ordering, and a same-shape fallback if the sprite is ever
+   * removed). Returns undefined when no art exists for this key (always
+   * true today — the manifest is empty).
+   */
+  private createTokenSprite(
+    assetKey: string | undefined,
+    circle: Phaser.GameObjects.Arc,
+    depth: number,
+  ): Phaser.GameObjects.Sprite | undefined {
+    if (!assetKey || !this.textures.exists(assetKey)) return undefined;
+    const diameter = circle.radius * 2;
+    circle.setVisible(false);
+    return this.add
+      .sprite(circle.x, circle.y, assetKey)
+      .setDisplaySize(diameter, diameter)
+      .setDepth(depth);
   }
 
   private updateHpText(token: Token, health: number, maxHealth: number): void {
@@ -5186,6 +5272,424 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
     this.tweens.add({ targets: flash, alpha: 0, duration, onComplete: () => flash.destroy() });
+  }
+
+  /**
+   * Phase 26 (D-121): a basic-attack lunge — the attacker's own token nudges
+   * a short distance toward its target and springs back (a `yoyo` tween),
+   * layered on top of the existing hit-flash on the target tile. The first
+   * tween-based ATTACK animation in this project (movement and the Cape of
+   * Billowing already used Phaser Tweens, but for repositioning/ambient
+   * effects, not a swing) — kept deliberately small and attacker-agnostic
+   * (works for a hero or an enemy token) rather than building a generic
+   * "animation system" speculatively; see PHASE_HANDOFF.md's own
+   * recommendation to prototype one concrete animation first.
+   */
+  private lungeToward(token: Token, from: GridPosition, to: GridPosition): void {
+    const duration = this.scaledDuration(140);
+    if (duration <= 0) return; // reduced motion: skip the lunge, the hit-flash alone still reads
+    const fromC = this.grid.tileToWorldCenter(from);
+    const toC = this.grid.tileToWorldCenter(to);
+    const dx = toC.x - fromC.x;
+    const dy = toC.y - fromC.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const offsetX = (dx / dist) * TILE_SIZE * 0.28;
+    const offsetY = (dy / dist) * TILE_SIZE * 0.28;
+    const targets = [token.circle, token.label, token.hp, token.sprite].filter(
+      (t): t is NonNullable<typeof t> => t !== undefined,
+    );
+    this.tweens.add({
+      targets,
+      x: `+=${offsetX}`,
+      y: `+=${offsetY}`,
+      duration: duration / 2,
+      yoyo: true,
+      ease: "Quad.easeOut",
+    });
+  }
+
+  // ----- Cast & death visual effects (D-122) ------------------------------
+
+  /**
+   * D-122: every spell/ability cast plays a flourish picked by
+   * `VisualFxSystem.getCastVisual` — a shape (from the ability's own
+   * mechanical fields) plus a color (from its real SRD school, refined by a
+   * best-effort name/description keyword guess) plus a small hashed
+   * variation, so two different spells sharing a shape+color family still
+   * don't animate identically. `casterPos` is always the caster's own tile;
+   * `focusPos` is whatever this cast is actually aimed at — an enemy, a
+   * chosen tile, an ally, or (for a caster-centered effect like Cleave or a
+   * party-wide buff) the caster's own tile again.
+   */
+  private playCastVisual(ability: AbilityDefinition, casterPos: GridPosition, focusPos: GridPosition): void {
+    const visual = getCastVisual(ability);
+    const duration = this.scaledDuration(Math.round(CAST_FX_BASE_MS * visual.durationScale));
+    if (duration <= 0) return; // reduced motion: skip the flourish, the existing hit-flash/log still reads
+    const from = this.grid.tileToWorldCenter(casterPos);
+    const to = this.grid.tileToWorldCenter(focusPos);
+    switch (visual.shape) {
+      case "bolt":
+        this.drawCastBolt(from, to, visual, duration);
+        break;
+      case "homingOrb":
+        this.drawCastHomingOrb(from, to, visual, duration);
+        break;
+      case "fallingJudgment":
+        this.drawCastFallingJudgment(to, visual, duration);
+        break;
+      case "novaBurst":
+        this.spawnRing(
+          to.x,
+          to.y,
+          TILE_SIZE * 0.5,
+          0.05,
+          Math.max(1, ability.radiusTiles ?? 1) * 2 * visual.sizeScale,
+          visual.color,
+          duration,
+        );
+        this.spawnBurstMotes(
+          to.x,
+          to.y,
+          visual.color,
+          visual.particleCount,
+          TILE_SIZE * (ability.radiusTiles ?? 1) * visual.sizeScale,
+          duration,
+          visual.rotationDir,
+        );
+        break;
+      case "ringPulse":
+      case "radiantPulse":
+        this.spawnRing(
+          from.x,
+          from.y,
+          TILE_SIZE * 0.5,
+          0.05,
+          Math.max(1, ability.rangeTiles) * 2 * visual.sizeScale,
+          visual.color,
+          duration,
+          5,
+        );
+        break;
+      case "gustCone":
+        this.drawCastGustCone(from, to, visual, duration);
+        break;
+      case "sparkleRise":
+        this.spawnDriftMotes(
+          to.x,
+          to.y + TILE_SIZE * 0.3,
+          visual.color,
+          visual.particleCount,
+          0,
+          -TILE_SIZE * 0.9 * visual.sizeScale,
+          duration,
+        );
+        break;
+      case "groundRune":
+        this.drawCastGroundRune(to, visual, duration);
+        break;
+      case "conjureCircle":
+        this.spawnRing(to.x, to.y, TILE_SIZE * 0.45, 0.05, 1.3 * visual.sizeScale, visual.color, duration, 4);
+        break;
+      case "blink":
+        this.drawCastBlink(from, to, visual, duration);
+        break;
+    }
+  }
+
+  /** A straight traveling mote, caster to target — the default for a plain attack-roll bolt spell. */
+  private drawCastBolt(
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    visual: CastVisualDescriptor,
+    duration: number,
+  ): void {
+    const r = TILE_SIZE * 0.14 * visual.sizeScale;
+    const mote = this.add.circle(from.x, from.y, r, visual.color, 0.95).setDepth(13);
+    this.tweens.add({
+      targets: mote,
+      x: to.x,
+      y: to.y,
+      duration,
+      ease: "Cubic.easeIn",
+      onComplete: () => {
+        this.tweens.add({ targets: mote, alpha: 0, scale: 1.6, duration: 120, onComplete: () => mote.destroy() });
+      },
+    });
+  }
+
+  /** A mote that curves toward its target instead of traveling straight — an `autoHit` spell's signature. */
+  private drawCastHomingOrb(
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    visual: CastVisualDescriptor,
+    duration: number,
+  ): void {
+    const r = TILE_SIZE * 0.16 * visual.sizeScale;
+    const orb = this.add.circle(from.x, from.y, r, visual.color, 0.95).setDepth(13).setStrokeStyle(2, 0xffffff, 0.5);
+    const midX = (from.x + to.x) / 2 - (to.y - from.y) * 0.25 * visual.rotationDir;
+    const midY = (from.y + to.y) / 2 + (to.x - from.x) * 0.25 * visual.rotationDir;
+    this.tweens.chain({
+      targets: orb,
+      tweens: [
+        { x: midX, y: midY, duration: duration * 0.5, ease: "Sine.easeOut" },
+        { x: to.x, y: to.y, duration: duration * 0.5, ease: "Sine.easeIn" },
+      ],
+      onComplete: () => {
+        this.tweens.add({ targets: orb, alpha: 0, scale: 1.8, duration: 120, onComplete: () => orb.destroy() });
+      },
+    });
+  }
+
+  /** A mote descending from above onto the target, then a flash — a saving-throw spell's signature. */
+  private drawCastFallingJudgment(
+    to: { x: number; y: number },
+    visual: CastVisualDescriptor,
+    duration: number,
+  ): void {
+    const r = TILE_SIZE * 0.18 * visual.sizeScale;
+    const mote = this.add.circle(to.x, to.y - TILE_SIZE * 2.2, r, visual.color, 0.95).setDepth(13);
+    this.tweens.add({
+      targets: mote,
+      y: to.y,
+      duration,
+      ease: "Cubic.easeIn",
+      onComplete: () => {
+        this.flashTile(to.x, to.y, visual.color, 0.6, 200);
+        mote.destroy();
+      },
+    });
+  }
+
+  /** A directional shockwave wedge from caster to target — any `forcedMoveTiles` spell's signature. */
+  private drawCastGustCone(
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    visual: CastVisualDescriptor,
+    duration: number,
+  ): void {
+    const angle = Math.atan2(to.y - from.y, to.x - from.x);
+    const length = Math.hypot(to.x - from.x, to.y - from.y) || TILE_SIZE;
+    const gust = this.add
+      .rectangle(from.x, from.y, length, TILE_SIZE * 0.7 * visual.sizeScale, visual.color, 0.35)
+      .setOrigin(0, 0.5)
+      .setRotation(angle)
+      .setDepth(13);
+    this.tweens.add({
+      targets: gust,
+      alpha: 0,
+      scaleY: 1.4,
+      duration,
+      ease: "Cubic.easeOut",
+      onComplete: () => gust.destroy(),
+    });
+  }
+
+  /** A diamond rune that snaps in then lingers briefly — any `altersTerrainId` spell's signature. */
+  private drawCastGroundRune(to: { x: number; y: number }, visual: CastVisualDescriptor, duration: number): void {
+    const size = TILE_SIZE * 0.7 * visual.sizeScale;
+    const rune = this.add
+      .rectangle(to.x, to.y, size, size, visual.color, 0)
+      .setStrokeStyle(3, visual.color, 0.9)
+      .setRotation(Math.PI / 4)
+      .setDepth(8)
+      .setScale(0.2)
+      .setAlpha(0);
+    this.tweens.add({
+      targets: rune,
+      scale: 1,
+      alpha: 0.85,
+      duration: duration * 0.6,
+      ease: "Back.easeOut",
+      onComplete: () => {
+        this.tweens.add({
+          targets: rune,
+          alpha: 0,
+          duration: duration * 0.6,
+          delay: 200,
+          onComplete: () => rune.destroy(),
+        });
+      },
+    });
+  }
+
+  /** A fade-out puff at the origin, then a fade-in puff at the destination — a `teleportSelf` spell's signature. */
+  private drawCastBlink(
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    visual: CastVisualDescriptor,
+    duration: number,
+  ): void {
+    const puff = (x: number, y: number, grow: boolean) => {
+      const c = this.add
+        .circle(x, y, TILE_SIZE * 0.32 * visual.sizeScale, visual.color, 0.7)
+        .setDepth(13)
+        .setScale(grow ? 0.2 : 1);
+      this.tweens.add({
+        targets: c,
+        scale: grow ? 1 : 0.1,
+        alpha: 0,
+        duration: duration * 0.6,
+        ease: grow ? "Back.easeOut" : "Cubic.easeIn",
+        onComplete: () => c.destroy(),
+      });
+    };
+    puff(from.x, from.y, false);
+    this.time.delayedCall(duration * 0.3, () => puff(to.x, to.y, true));
+  }
+
+  /**
+   * A ring outline that grows or shrinks between two scales while fading —
+   * shared by nova-burst/ring-pulse/conjure-circle casts and the
+   * dissolve/radiant-burst/arcane-fade death flourishes below.
+   */
+  private spawnRing(
+    x: number,
+    y: number,
+    baseRadius: number,
+    fromScale: number,
+    toScale: number,
+    color: number,
+    duration: number,
+    strokeWidth = 4,
+  ): void {
+    const ring = this.add
+      .circle(x, y, baseRadius, color, 0)
+      .setDepth(13)
+      .setStrokeStyle(strokeWidth, color, 0.85)
+      .setScale(fromScale);
+    this.tweens.add({
+      targets: ring,
+      scale: toScale,
+      alpha: 0,
+      duration,
+      ease: "Cubic.easeOut",
+      onComplete: () => ring.destroy(),
+    });
+  }
+
+  /** `count` motes flying straight outward from a point — shared by nova-burst and a couple of death flourishes. */
+  private spawnBurstMotes(
+    x: number,
+    y: number,
+    color: number,
+    count: number,
+    dist: number,
+    duration: number,
+    rotationDir: 1 | -1 = 1,
+  ): void {
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 * rotationDir;
+      const mote = this.add.circle(x, y, TILE_SIZE * 0.07, color, 0.9).setDepth(13);
+      this.tweens.add({
+        targets: mote,
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist,
+        alpha: 0,
+        duration,
+        ease: "Cubic.easeOut",
+        onComplete: () => mote.destroy(),
+      });
+    }
+  }
+
+  /** `count` motes drifting a fixed distance in one direction — shared by sparkle-rise and a couple of death flourishes. */
+  private spawnDriftMotes(
+    x: number,
+    y: number,
+    color: number,
+    count: number,
+    dx: number,
+    dy: number,
+    duration: number,
+  ): void {
+    for (let i = 0; i < count; i++) {
+      const offset = (i - (count - 1) / 2) * TILE_SIZE * 0.18;
+      const mote = this.add.circle(x + offset, y, TILE_SIZE * 0.07, color, 0.9).setDepth(13);
+      this.tweens.add({
+        targets: mote,
+        x: x + offset + dx,
+        y: y + dy,
+        alpha: 0,
+        duration,
+        delay: i * 40,
+        ease: "Sine.easeOut",
+        onComplete: () => mote.destroy(),
+      });
+    }
+  }
+
+  /**
+   * D-122: replaces the old instant token removal on a real kill (NOT a
+   * breach — an enemy reaching the exit still uses its own existing breach
+   * flash/removal, untouched) with a brief squash-and-fade plus a
+   * cause-specific flourish first. `enemy.lastDeathCause` is a same-tick
+   * hint set by whichever cast/status code just dealt the killing blow (see
+   * `VisualFxSystem`); it defaults to "physical" for every ordinary weapon/
+   * trap/explosion kill that never sets it.
+   */
+  private playEnemyDeathVisual(enemy: Enemy): void {
+    const token = this.enemyTokens.get(enemy.instanceId);
+    if (!token) {
+      this.destroyEnemyToken(enemy.instanceId);
+      return;
+    }
+    const cause: DeathCause = enemy.lastDeathCause ?? "physical";
+    const visual = getDeathVisual(cause);
+    const isBoss = BattleScene.isBossRole(enemy.def.role);
+    const duration = this.scaledDuration(Math.round(DEATH_FX_BASE_MS * (isBoss ? 1.5 : 1)));
+    if (duration <= 0) {
+      this.destroyEnemyToken(enemy.instanceId);
+      return;
+    }
+    const c = this.grid.tileToWorldCenter(enemy.position);
+    this.playDeathFlourish(c, visual.shape, visual.color, isBoss ? 1.5 : 1, duration);
+    const targets = [token.circle, token.label, token.hp, token.sprite].filter(
+      (t): t is NonNullable<typeof t> => t !== undefined,
+    );
+    this.tweens.add({
+      targets,
+      alpha: 0,
+      scaleY: 0.2,
+      scaleX: visual.shape === "collapse" ? 1.15 : 0.6,
+      duration,
+      onComplete: () => this.destroyEnemyToken(enemy.instanceId),
+    });
+  }
+
+  /** The cause-specific flourish half of a defeated enemy's animation — see `playEnemyDeathVisual`. */
+  private playDeathFlourish(
+    c: { x: number; y: number },
+    shape: DeathShape,
+    color: number,
+    sizeScale: number,
+    duration: number,
+  ): void {
+    switch (shape) {
+      case "collapse":
+        this.spawnBurstMotes(c.x, c.y, color, 3, TILE_SIZE * 0.3 * sizeScale, duration * 0.6);
+        break;
+      case "emberFade":
+        this.spawnDriftMotes(c.x, c.y, color, 5, 0, -TILE_SIZE * 0.8 * sizeScale, duration);
+        break;
+      case "shatter":
+        this.spawnBurstMotes(c.x, c.y, color, 6, TILE_SIZE * 0.7 * sizeScale, duration * 0.7, -1);
+        break;
+      case "dissolve":
+        this.spawnRing(c.x, c.y, TILE_SIZE * 0.42 * sizeScale, 1, 0.05, color, duration);
+        break;
+      case "wither":
+        this.spawnDriftMotes(c.x, c.y, color, 4, 0, TILE_SIZE * 0.4 * sizeScale, duration);
+        break;
+      case "radiantBurst":
+        this.spawnRing(c.x, c.y, TILE_SIZE * 0.35 * sizeScale, 0.2, 1.8 * sizeScale, color, duration, 5);
+        break;
+      case "sparkCrackle":
+        this.spawnBurstMotes(c.x, c.y, color, 7, TILE_SIZE * 0.5 * sizeScale, duration * 0.5, 1);
+        break;
+      case "arcaneFade":
+        this.spawnRing(c.x, c.y, TILE_SIZE * 0.4 * sizeScale, 0.8, 0.1, color, duration);
+        break;
+    }
   }
 
   private rejectAt(pos: GridPosition, message: string): void {
@@ -5259,77 +5763,9 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * Present the two level-up choices (Phase 7, ProgressionSystem) and pause
-   * the phase machine until the player picks one. `onDone` is whatever the
-   * caller would otherwise have done immediately (advance to Victory or
-   * Between Waves) — it fires once the choice is applied.
-   */
-  private showLevelUpChoice(onDone: () => void): void {
-    this.choosingLevelUp = true;
-    this.pendingAfterLevelUp = onDone;
-
-    const dim = this.add
-      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65)
-      .setDepth(40);
-    const title = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 120, "Level Up!", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "36px",
-        color: "#f0e070",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5)
-      .setDepth(41);
-    this.levelUpOverlay.push(dim, title);
-
-    LEVEL_UP_OPTIONS.forEach((opt, i) => {
-      const x = GAME_WIDTH / 2 + (i === 0 ? -170 : 170);
-      const y = GAME_HEIGHT / 2 - 10;
-      const btn = this.add
-        .rectangle(x, y, 320, 100, 0x3a5a8a)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(41);
-      const name = this.add
-        .text(x, y - 24, opt.name, {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "20px",
-          color: "#e8e8f0",
-          fontStyle: "bold",
-        })
-        .setOrigin(0.5)
-        .setDepth(42);
-      const desc = this.add
-        .text(x, y + 16, opt.description, {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "13px",
-          color: "#c8c8d8",
-          align: "center",
-          wordWrap: { width: 280 },
-        })
-        .setOrigin(0.5)
-        .setDepth(42);
-      btn.on("pointerover", () => btn.setFillStyle(0x4a6a9a));
-      btn.on("pointerout", () => btn.setFillStyle(0x3a5a8a));
-      btn.on("pointerdown", () => this.chooseLevelUp(opt.id));
-      this.levelUpOverlay.push(btn, name, desc);
-    });
-  }
-
-  private chooseLevelUp(optionId: LevelUpOptionId): void {
-    this.progression.applyChoice(optionId, this.livingHeroes());
-    this.syncHeroTokens(); // Vigor heals, so refresh HP labels immediately
-    for (const obj of this.levelUpOverlay) obj.destroy();
-    this.levelUpOverlay = [];
-    this.choosingLevelUp = false;
-    const proceed = this.pendingAfterLevelUp;
-    this.pendingAfterLevelUp = null;
-    proceed?.();
-  }
-
-  /**
    * Phase 13.4 (D-088): offer a Short/Long Rest between waves, opt-in — same
-   * "defer the transition until the player resolves it" pattern as
-   * `showLevelUpChoice`. Skips the overlay entirely (calls `onDone`
+   * "defer the transition until the player resolves it" pattern the
+   * ASI/subclass-choice overlays use. Skips the overlay entirely (calls `onDone`
    * immediately) if NEITHER rest type has a charge left, so the player is
    * never forced to click through a modal with nothing real to offer.
    */
@@ -5741,10 +6177,9 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  /** True while a modal (level-up choice, ASI/feat choice, subclass choice, rest choice, or the tutorial) should block board input. */
+  /** True while a modal (ASI/feat choice, subclass choice, rest choice, or the tutorial) should block board input. */
   private inputLocked(): boolean {
     return (
-      this.choosingLevelUp ||
       this.choosingAsi ||
       this.choosingSubclass ||
       this.choosingRest ||
