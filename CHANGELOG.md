@@ -2,6 +2,41 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Fantasy/Parchment UI Theme: Main Menu, Compendium, Bestiary (D-123)
+
+Kevin asked to "spruce up" the game's visuals — starting with the Main Menu
+and Compendium/Bestiary, a more professional/reorganized Main Menu layout,
+real hover/click feedback on every button, and an on-brand fantasy look, the
+same branding explicitly planned to carry through the rest of the game
+later. See **D-123** in `DECISIONS.md`.
+
+Added:
+- **`scenes/uiTheme.ts`** (new, shared): two Google Fonts (Cinzel display,
+  EB Garamond body — SIL OFL 1.1), `createOrnateButton` (idle/hover/
+  pressed/disabled/selected states, hover-lift and press-squish tweens —
+  every button in this project previously had no click feedback at all),
+  `drawScreenBackdrop`, `drawParchmentPanel`, `spawnAmbientMotes`,
+  `createSectionLabel`, `centeredRowX`. New themed `COLORS` in `config.ts`.
+- **`MainMenuScene.ts`** reorganized into named button groups ("Continue
+  Your Journey," "Know Your Foe," "Creator Tools") around one hero action
+  ("New Game"), plus a drawn tower-and-shield crest and ambient motes.
+- **`CompendiumScene.ts`/`BestiaryScene.ts`** restyled onto the same theme —
+  zero data/lookup-logic changes.
+- **Bestiary pagination** (new): a real pre-existing gap (94 roster entries,
+  never paginated) found and fixed with the same Prev/Next mechanism
+  `CompendiumScene` already used.
+- **`BootScene`** now waits (capped at 1.5s) for the two Google Fonts to
+  load before starting `MainMenuScene`.
+
+Tests: unchanged at 1036 — pure presentation code. Typecheck, all tests, and
+the production build all pass (114 modules, up from 113). `npm run dev`
+serves HTTP 200.
+
+Not built this pass: `BattleScene`'s HUD and every other scene (unchanged,
+scoped to this session's three screens only); no code fix for the reported
+spellbook/level-up issues, since no code defect was found in either
+mechanism (see D-123, KI-079).
+
 ## [Unreleased] — 0.2.0-dev — Spell-Cast and Death Animations (D-122)
 
 Kevin asked to build "a whole host" of spell-cast and death animations,

@@ -13,6 +13,15 @@ import { ABILITY_SCORE_NAMES } from "../data/abilityScores";
 import { SKILLS, SKILL_ORDER } from "../data/skills";
 import { PORTRAIT_MANIFEST } from "../data/portraitManifest";
 import { showDialogue, type DialogueBoxController, type DialogueLine } from "./dialogueBox";
+import {
+  createOrnateButton,
+  centeredRowX,
+  drawScreenBackdrop,
+  drawParchmentPanel,
+  FONT_DISPLAY,
+  FONT_BODY,
+  type OrnateButtonHandle,
+} from "./uiTheme";
 
 /**
  * CompendiumScene — Phase 11.5's in-game rules/spell/feat/equipment lookup
@@ -21,6 +30,12 @@ import { showDialogue, type DialogueBoxController, type DialogueLine } from "./d
  * status effects), it does not add or duplicate any content of its own — a
  * future class/spell/item needs no Compendium change, only its own
  * data-file entry.
+ *
+ * D-123: restyled with the shared fantasy/parchment UI theme (`uiTheme.ts`)
+ * — same rules-lookup data and paging logic as before, now presented as a
+ * bound tome (a parchment reading panel, ornate tab/selector buttons with
+ * real hover/click feedback) instead of a flat dark screen of plain grey
+ * rectangles. No category, pagination, or data-lookup behavior changed.
  *
  * Phase 13.5 (D-090) added the Skills tab — reference-only, same as most of
  * Feats/Races/Subclasses already were: nothing in this game calls a skill
@@ -120,22 +135,26 @@ const SPELL_LEVEL_LABELS = ["Cantrip", "1st", "2nd", "3rd", "4th", "5th", "6th",
  */
 const EQUIPMENT_PER_PAGE = 10;
 
+/** Detail panel bounds — a bound-tome reading pane every category renders into. */
+const PANEL_LEFT = 60;
+const PANEL_TOP = 190;
+const PANEL_WIDTH = GAME_WIDTH - PANEL_LEFT * 2;
+const PANEL_HEIGHT = 760;
+const TEXT_PAD_X = 42;
+const TEXT_PAD_Y = 30;
+
 export class CompendiumScene extends Phaser.Scene {
   private category: CategoryId = "classes";
   private classId: string = CLASS_DEFINITIONS[0].id;
   private spellLevel = 0;
   private page = 0;
 
-  private tabButtons: Phaser.GameObjects.Rectangle[] = [];
-  private tabLabels: Phaser.GameObjects.Text[] = [];
-  private subButtons: Phaser.GameObjects.Rectangle[] = [];
-  private subLabels: Phaser.GameObjects.Text[] = [];
+  private tabButtons: OrnateButtonHandle[] = [];
+  private subButtons: OrnateButtonHandle[] = [];
   private detailText!: Phaser.GameObjects.Text;
   private pageLabel!: Phaser.GameObjects.Text;
-  private prevButton!: Phaser.GameObjects.Rectangle;
-  private nextButton!: Phaser.GameObjects.Rectangle;
-  private prevLabel!: Phaser.GameObjects.Text;
-  private nextLabel!: Phaser.GameObjects.Text;
+  private prevButton!: OrnateButtonHandle;
+  private nextButton!: OrnateButtonHandle;
   private activeDialogue: DialogueBoxController | undefined;
 
   constructor() {
@@ -158,33 +177,36 @@ export class CompendiumScene extends Phaser.Scene {
     this.spellLevel = 0;
     this.page = 0;
     this.tabButtons = [];
-    this.tabLabels = [];
     this.subButtons = [];
-    this.subLabels = [];
     this.activeDialogue = undefined;
 
-    this.cameras.main.setBackgroundColor("#0e0e14");
+    drawScreenBackdrop(this);
 
     this.add
-      .text(GAME_WIDTH / 2, 40, "Compendium", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "36px",
-        color: "#e8e8f0",
+      .text(GAME_WIDTH / 2, 42, "Compendium", {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "34px",
+        color: "#f0dfa8",
         fontStyle: "bold",
+        letterSpacing: 2 as unknown as number,
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setShadow(0, 2, "#000000", 6, true, true)
+      .setDepth(1);
 
-    this.buildButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
+    createOrnateButton(this, 120, 42, 160, 44, "Back (Esc)", () => this.leave(), { variant: "tool", depth: 5 });
 
     this.buildTabs();
 
-    this.detailText = this.add.text(80, 210, "", {
-      fontFamily: "system-ui, Arial, sans-serif",
-      fontSize: "14px",
-      color: "#c8c8d8",
-      lineSpacing: 6,
-      wordWrap: { width: GAME_WIDTH - 160 },
-    });
+    drawParchmentPanel(this, GAME_WIDTH / 2, PANEL_TOP + PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT, 2);
+
+    this.detailText = this.add.text(PANEL_LEFT + TEXT_PAD_X, PANEL_TOP + TEXT_PAD_Y, "", {
+      fontFamily: FONT_BODY,
+      fontSize: "15px",
+      color: "#2a1a10",
+      lineSpacing: 7,
+      wordWrap: { width: PANEL_WIDTH - TEXT_PAD_X * 2 },
+    }).setDepth(3);
 
     this.buildPaginationControls();
 
@@ -206,105 +228,94 @@ export class CompendiumScene extends Phaser.Scene {
     this.scene.start("MainMenuScene");
   }
 
-  /** Small button+label pair, matching this project's simple rectangle-button style. */
-  private buildButton(
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    text: string,
-    color: number,
-    onClick: () => void,
-  ): { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text } {
-    const rect = this.add
-      .rectangle(x, y, w, h, color)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    const label = this.add
-      .text(x, y, text, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "14px",
-        color: "#e8e8f0",
-      })
-      .setOrigin(0.5);
-    rect.on("pointerdown", onClick);
-    return { rect, label };
-  }
-
   private buildTabs(): void {
-    const y = 100;
-    const w = 145;
-    const gap = 8;
-    const totalWidth = CATEGORIES.length * w + (CATEGORIES.length - 1) * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const y = 108;
+    const w = 138;
+    const gap = 6;
+    const xs = centeredRowX(CATEGORIES.length, w, gap, GAME_WIDTH / 2);
     CATEGORIES.forEach((cat, i) => {
-      const x = startX + i * (w + gap);
-      const { rect, label } = this.buildButton(x, y, w, 36, cat.label, 0x2a2a3a, () => {
-        this.category = cat.id;
-        this.page = 0;
-        this.renderCategory();
-      });
-      this.tabButtons.push(rect);
-      this.tabLabels.push(label);
+      const handle = createOrnateButton(
+        this,
+        xs[i],
+        y,
+        w,
+        34,
+        cat.label,
+        () => {
+          this.category = cat.id;
+          this.page = 0;
+          this.renderCategory();
+        },
+        { variant: "tab", depth: 5 },
+      );
+      this.tabButtons.push(handle);
     });
   }
 
   private buildPaginationControls(): void {
-    const y = GAME_HEIGHT - 60;
-    const prev = this.buildButton(GAME_WIDTH / 2 - 100, y, 120, 34, "◀ Prev", 0x2a2a3a, () => {
-      if (this.page > 0) {
-        this.page--;
-        this.renderPaginatedDetail();
-      }
-    });
-    this.prevButton = prev.rect;
-    this.prevLabel = prev.label;
+    const y = GAME_HEIGHT - 55;
+    this.prevButton = createOrnateButton(
+      this,
+      GAME_WIDTH / 2 - 110,
+      y,
+      130,
+      36,
+      "◀ Prev",
+      () => {
+        if (this.page > 0) {
+          this.page--;
+          this.renderPaginatedDetail();
+        }
+      },
+      { variant: "tool", depth: 5 },
+    );
 
     this.pageLabel = this.add
       .text(GAME_WIDTH / 2, y, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "14px",
-        color: "#c8c8d8",
+        fontFamily: FONT_BODY,
+        fontSize: "15px",
+        color: "#c8b888",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(5);
 
-    const next = this.buildButton(GAME_WIDTH / 2 + 100, y, 120, 34, "Next ▶", 0x2a2a3a, () => {
-      this.page++;
-      this.renderPaginatedDetail();
-    });
-    this.nextButton = next.rect;
-    this.nextLabel = next.label;
+    this.nextButton = createOrnateButton(
+      this,
+      GAME_WIDTH / 2 + 110,
+      y,
+      130,
+      36,
+      "Next ▶",
+      () => {
+        this.page++;
+        this.renderPaginatedDetail();
+      },
+      { variant: "tool", depth: 5 },
+    );
   }
 
   private hidePagination(): void {
-    this.prevButton.setVisible(false);
-    this.prevLabel.setVisible(false);
-    this.nextButton.setVisible(false);
-    this.nextLabel.setVisible(false);
+    this.prevButton.container.setVisible(false);
+    this.nextButton.container.setVisible(false);
     this.pageLabel.setVisible(false);
   }
 
   private showPagination(totalPages: number): void {
     const show = totalPages > 1;
-    this.prevButton.setVisible(show);
-    this.prevLabel.setVisible(show);
-    this.nextButton.setVisible(show);
-    this.nextLabel.setVisible(show);
+    this.prevButton.container.setVisible(show);
+    this.nextButton.container.setVisible(show);
     this.pageLabel.setVisible(show);
     if (show) this.pageLabel.setText(`Page ${this.page + 1}/${totalPages}`);
   }
 
   private clearSubButtons(): void {
     this.subButtons.forEach((b) => b.destroy());
-    this.subLabels.forEach((l) => l.destroy());
     this.subButtons = [];
-    this.subLabels = [];
   }
 
   private refreshTabHighlights(): void {
     CATEGORIES.forEach((cat, i) => {
-      const selected = cat.id === this.category;
-      this.tabButtons[i].setFillStyle(selected ? 0x4a6a9a : 0x2a2a3a);
+      this.tabButtons[i].setSelected(cat.id === this.category);
     });
   }
 
@@ -356,14 +367,23 @@ export class CompendiumScene extends Phaser.Scene {
         this.activeDialogue = undefined;
       });
     };
-    const a = this.buildButton(GAME_WIDTH / 2 - 150, 470, 280, 44, "Show Sample (skippable)", 0x4a6a9a, () =>
-      showSample(DIALOGUE_PREVIEW_LINES),
+    const xs = centeredRowX(2, 280, 20, GAME_WIDTH / 2);
+    this.subButtons.push(
+      createOrnateButton(this, xs[0], 480, 280, 46, "Show Sample (skippable)", () => showSample(DIALOGUE_PREVIEW_LINES), {
+        variant: "secondary",
+        depth: 5,
+      }),
+      createOrnateButton(
+        this,
+        xs[1],
+        480,
+        280,
+        46,
+        "Show Sample (with a decision)",
+        () => showSample(DIALOGUE_PREVIEW_LINES_WITH_DECISION),
+        { variant: "secondary", depth: 5 },
+      ),
     );
-    const b = this.buildButton(GAME_WIDTH / 2 + 150, 470, 280, 44, "Show Sample (with a decision)", 0x4a6a9a, () =>
-      showSample(DIALOGUE_PREVIEW_LINES_WITH_DECISION),
-    );
-    this.subButtons.push(a.rect, b.rect);
-    this.subLabels.push(a.label, b.label);
   }
 
   /** Dispatches Prev/Next to whichever category is currently paginated. */
@@ -379,20 +399,26 @@ export class CompendiumScene extends Phaser.Scene {
 
   private buildClassSelector(): void {
     const y = 150;
-    const w = 150;
-    const gap = 10;
-    const totalWidth = CLASS_DEFINITIONS.length * w + (CLASS_DEFINITIONS.length - 1) * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const w = 138;
+    const gap = 8;
+    const xs = centeredRowX(CLASS_DEFINITIONS.length, w, gap, GAME_WIDTH / 2);
     CLASS_DEFINITIONS.forEach((cls, i) => {
-      const x = startX + i * (w + gap);
-      const selected = cls.id === this.classId;
-      const { rect, label } = this.buildButton(x, y, w, 32, cls.name, selected ? 0x4a6a9a : 0x3a4a6a, () => {
-        this.classId = cls.id;
-        this.page = 0;
-        this.renderCategory();
-      });
-      this.subButtons.push(rect);
-      this.subLabels.push(label);
+      const handle = createOrnateButton(
+        this,
+        xs[i],
+        y,
+        w,
+        32,
+        cls.name,
+        () => {
+          this.classId = cls.id;
+          this.page = 0;
+          this.renderCategory();
+        },
+        { variant: "tab", depth: 5 },
+      );
+      handle.setSelected(cls.id === this.classId);
+      this.subButtons.push(handle);
     });
   }
 
@@ -422,20 +448,26 @@ export class CompendiumScene extends Phaser.Scene {
    */
   private buildSpellLevelSelector(): void {
     const y = 150;
-    const w = 76;
+    const w = 70;
     const gap = 6;
-    const totalWidth = SPELL_LEVEL_LABELS.length * w + (SPELL_LEVEL_LABELS.length - 1) * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const xs = centeredRowX(SPELL_LEVEL_LABELS.length, w, gap, GAME_WIDTH / 2);
     SPELL_LEVEL_LABELS.forEach((label, level) => {
-      const x = startX + level * (w + gap);
-      const selected = level === this.spellLevel;
-      const { rect, label: text } = this.buildButton(x, y, w, 32, label, selected ? 0x4a6a9a : 0x3a4a6a, () => {
-        this.spellLevel = level;
-        this.page = 0;
-        this.renderCategory();
-      });
-      this.subButtons.push(rect);
-      this.subLabels.push(text);
+      const handle = createOrnateButton(
+        this,
+        xs[level],
+        y,
+        w,
+        32,
+        label,
+        () => {
+          this.spellLevel = level;
+          this.page = 0;
+          this.renderCategory();
+        },
+        { variant: "tab", depth: 5 },
+      );
+      handle.setSelected(level === this.spellLevel);
+      this.subButtons.push(handle);
     });
   }
 

@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fantasy Tower Defense</title>
+    <!--
+      D-123: two Google Fonts for the fantasy/parchment UI theme (Main Menu,
+      Compendium, Bestiary) — Cinzel for display/headline text, EB Garamond
+      for body/button text. Both are SIL Open Font License 1.1; see
+      CONTENT_SOURCES.md. preconnect shaves the first-load handshake; if the
+      CDN is unreachable (offline dev), every fontFamily string in
+      src/game/scenes/uiTheme.ts lists a real serif fallback first, so the
+      page still renders readable text, not tofu/sans-serif mismatch.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400&display=swap"
+      rel="stylesheet"
+    />
     <style>
       html,
       body {

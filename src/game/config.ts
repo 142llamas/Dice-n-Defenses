@@ -118,4 +118,25 @@ export const COLORS = {
   // An NPC speaker's portrait slot, before real art exists for it.
   portraitPlaceholderBg: 0x3a3628,
   portraitPlaceholderFg: 0x8a8270,
+
+  // D-123: a shared fantasy/parchment UI theme for menu-and-reference
+  // screens (Main Menu, Compendium, Bestiary), rolled out ahead of the rest
+  // of the game per Kevin's own request. Deliberately separate from the
+  // battle-board palette above (tileFloor, hero, enemy, etc.) — those are
+  // gameplay-legibility colors and stay untouched; these are chrome/menu
+  // colors for screens with no board to read.
+  menuBgNear: 0x1c140c, // backdrop gradient, near edge (top)
+  menuBgFar: 0x0a0704, // backdrop gradient, far edge (bottom) — near-black
+  menuVignette: 0x000000, // corner-darkening overlay, low alpha
+  woodPanel: 0x2a1d12, // an ornate button/panel's idle fill (dark leather/wood)
+  woodPanelHover: 0x3d2a18, // ...on hover
+  woodPanelPressed: 0x1a1108, // ...while pressed
+  woodPanelDisabled: 0x22201c, // ...disabled, desaturated
+  bronze: 0x9a7a3e, // idle border / muted accent
+  bronzeDark: 0x5a4222, // inner rule line
+  gilt: 0xe8c25a, // hover/selected border, and headline text — brighter than `gold`
+  giltDim: 0x8a7038, // disabled text
+  menuInk: 0x2a1a10, // body text ON a parchment panel (matches dialogue box)
+  menuInkMuted: 0x6a4a2a, // secondary/caption text on parchment
+  menuParchmentShadow: 0x000000, // soft drop shadow under a raised panel
 } as const;

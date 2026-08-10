@@ -6,6 +6,83 @@
 
 ## Open items to verify
 
+- **KI-080 — D-123's fantasy/parchment restyle of Main Menu, Compendium, and
+  Bestiary is not yet confirmed by Kevin in a browser.** Built and verified
+  headless-only (typecheck, all 1036 tests, production build all pass — 114
+  modules, up from 113; `npm run dev` serves HTTP 200). This is the FIRST
+  visual/branding pass this project has done outside of small per-feature
+  presentation work (dialogue box, cast/death flourishes) — the in-browser
+  look matters more than usual here since "does it actually look good" isn't
+  something typecheck/tests can answer. To check:
+  - **The two Google Fonts actually load**: Main Menu's title/buttons should
+    render in a carved-serif display font (Cinzel) and body/caption text in
+    a manuscript-style serif (EB Garamond), not the plain sans-serif system
+    font every screen used before this session. If either looks like a
+    generic sans-serif, the CDN link in `index.html` may not be reachable —
+    worth a look at the browser's network tab.
+  - **Every button's hover and click feedback**: mouse over any button on
+    Main Menu/Compendium/Bestiary and confirm it brightens, its border gilds,
+    and it lifts very slightly; click one and confirm a quick press-down
+    "squish" plays before the action fires. Every button on all three
+    screens should behave identically — this was the literal, explicit ask
+    ("add behavior for the (stylized) buttons for when they are hovered and
+    when they are clicked").
+  - **Main Menu's new grouped layout**: "New Game" should read as the single
+    most prominent button; "Continue Your Journey" (Load Game/Campaigns/Free
+    Play/Co-op), "Know Your Foe" (Compendium/Bestiary), and "Creator Tools"
+    (Map Builder/Browse Shared Maps) should each read as a distinct labeled
+    group, not one undifferentiated list. Confirm nothing overlaps at the
+    canvas's native 1280x1080 and that the drawn tower-and-shield crest below
+    the button groups doesn't collide with anything.
+  - **Compendium's parchment reading panel**: confirm every one of the 10
+    category tabs is readable and clickable at its new smaller ornate-tab
+    size, and that long detail text (Classes/Spells/Equipment's paginated
+    pages especially) still wraps cleanly inside the parchment panel with no
+    text running past its border.
+  - **Bestiary's new pagination**: this session added Prev/Next paging to
+    Bestiary for the first time (see the note below) — confirm the roster
+    now reads as clean pages of ~10 entries with a group heading (Minions/
+    Miniboss/Bosses/Legendary) appearing wherever a group starts, rather
+    than one giant overflowing block.
+  - **Known, deliberate limit, not a bug**: `BattleScene`'s HUD and every
+    other scene are UNCHANGED — Kevin's own instruction was to start with
+    just these three screens, with the same branding explicitly planned to
+    carry through the rest of the game in a later session.
+
+- **KI-079 — Kevin's two playtest reports (no spellbook found to test
+  spell-cast animations; no level-up choice ever appeared) were investigated
+  in code this session (D-123) — no browser is available here, so this is a
+  code read, not a reproduction, and NEITHER is confirmed fixed or confirmed
+  as a real bug.** Both mechanisms read as correctly wired in
+  `BattleScene.ts`:
+  - **Spellbook**: any hero with a non-empty known-spell list (Wizard/
+    Cleric/Bard/Druid/Sorcerer/Warlock) shows a "Cast a Spell (Q)" button
+    the instant it's selected and can still act (`showAbilityButtonFor`/
+    `isCasterHero`), and pressing Q or clicking it opens the spellbook
+    (`onAbilityButton`). The likely explanation is a discoverability
+    problem (the button is one of several similarly-styled small rectangles
+    in the current, still-unrestyled `BattleScene` HUD — exactly the kind of
+    visual-clarity problem this session's restyle doesn't reach yet) or that
+    the party Kevin tested with had no caster hero selected — NOT a broken
+    code path.
+  - **Level-up choices**: a hero gains a real class level every 2 waves
+    cleared, but a CHOICE popup only appears at a level granting an Ability
+    Score Improvement (level 4 for most classes → wave 6+) or an in-battle
+    subclass pick (levels 1-3, and NEVER for Cleric/Sorcerer/Warlock, who
+    pick their subclass at character creation instead, by design). A
+    shorter playtest, or an all-Cleric/Sorcerer/Warlock party, would see
+    ordinary level-ups logged as plain text with no popup — this matches
+    Kevin's report exactly and is the most likely explanation, not a defect.
+  - **What would actually confirm or refute this**: Kevin playing again and
+    reporting (a) which class(es) he built, (b) how many waves he reached,
+    and (c) whether he selected a caster hero and pressed Q (or clicked the
+    purple "Cast a Spell" button) while it could still act. If he clears
+    wave 6+ with a non-Cleric/Sorcerer/Warlock party and STILL sees no ASI
+    popup, or presses Q on a confirmed caster and nothing opens, that's a
+    real, reproducible bug worth its own dedicated session — this entry
+    should be updated (or promoted to "Open bugs") with those exact repro
+    details rather than re-investigated blind again.
+
 - **KI-078 — D-122's spell-cast and death animations are not yet confirmed
   by Kevin in a browser.** Built and verified headless-only (typecheck, all
   1036 tests, production build all pass — 113 modules, up from 112; `npm

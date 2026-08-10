@@ -1,6 +1,53 @@
 # Project Status
 
-## Spell-Cast and Death Animations (D-122) — DONE this session
+## A Fantasy/Parchment UI Theme for Main Menu, Compendium, Bestiary (D-123) — DONE this session
+
+Kevin said the game "is in a bad spot" visually and asked to "spruce it up
+quite a bit," starting with the Main Menu and Compendium/Bestiary (the same
+branding is explicitly planned to carry through the rest of the game in a
+later session): a real fantasy/D&D-on-brand look, a reorganized, more
+professional Main Menu layout, and real hover/click feedback on every
+button. The same message reported two playtest findings (no spellbook found,
+no level-up choice seen) — investigated in code this session; see D-123 in
+`DECISIONS.md` and KI-079 in `KNOWN_ISSUES.md` for the full findings (no code
+defect found; most likely explanations documented, Kevin's confirmation
+needed either way).
+
+- **`scenes/uiTheme.ts`** (new, shared, Phaser-dependent presentation
+  module): two Google Fonts (Cinzel display, EB Garamond body — SIL OFL 1.1,
+  see `CONTENT_SOURCES.md`), `createOrnateButton` (a carved-wood-and-bronze
+  plaque button with real idle/hover/pressed/disabled/selected states and
+  hover-lift/press-squish tweens — every button in this project previously
+  had, at most, a flat fill-color swap on hover and NO click feedback at
+  all), `drawScreenBackdrop` (a gradient/vignette/framed backdrop replacing
+  every restyled scene's flat dark background), `drawParchmentPanel` (the
+  same aged-parchment technique `dialogueBox.ts` already established,
+  generalized to any rectangle), `spawnAmbientMotes`, `createSectionLabel`,
+  `centeredRowX`. New themed `COLORS` entries in `config.ts`, kept separate
+  from the existing battle-board palette.
+- **`MainMenuScene.ts`** reorganized: one hero action ("New Game"), then
+  three named button groups by purpose ("Continue Your Journey," "Know Your
+  Foe," "Creator Tools") instead of one flat stack of ten identical-looking
+  buttons plus six more scattered across the corners — plus a drawn
+  tower-and-shield crest and drifting ember motes for atmosphere. Every
+  `scene.start` target and keyboard shortcut is unchanged.
+- **`CompendiumScene.ts`/`BestiaryScene.ts`** restyled onto the same theme —
+  zero data/lookup-logic changes, every category/filter/page computation is
+  identical to before.
+- **A real pre-existing gap found and fixed in Bestiary**: the enemy roster
+  grew to 94 entries over nine content phases with no pagination ever added
+  — the old flat text block had been silently overflowing past the bottom
+  of the canvas. Fixed with the same Prev/Next paging `CompendiumScene`
+  already had, applied to a flattened, role-grouped list.
+- Tests: unchanged at **1036** — pure presentation code, no new pure logic.
+  Typecheck, all 1036 tests, and the production build all pass (114 modules,
+  up from 113 — the new `uiTheme.ts`). `npm run dev` serves HTTP 200.
+- **Not built this pass, and why**: `BattleScene`'s HUD and every other
+  scene are unchanged — Kevin's own instruction scoped this session to Main
+  Menu + Compendium/Bestiary only. No code fix for the spellbook/level-up
+  reports, since no code defect was found in either mechanism — see D-123.
+
+## Spell-Cast and Death Animations (D-122) — DONE previous session
 
 Right after D-121's lunge, Kevin asked to build "a whole host of spell
 casting animations and death animations," wanting every spell to feel
