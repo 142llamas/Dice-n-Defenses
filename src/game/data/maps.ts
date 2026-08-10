@@ -2,6 +2,10 @@ import type { ParsedMap } from "./testMap";
 import { TEST_MAP } from "./testMap";
 import { EMBERFORD_MAP } from "./emberfordMap";
 import { SALTMERE_MAP } from "./saltmereMap";
+import { CAUSEWAY_MAP } from "./causewayMap";
+import { DROWNING_VALE_MAP } from "./drowningValeMap";
+import { CINDERFALL_RIFT_MAP } from "./cinderfallRiftMap";
+import { FROSTBOUND_HOLLOW_MAP } from "./frostboundHollowMap";
 
 /**
  * MAPS — a general-purpose "map id -> ParsedMap" registry (Phase 11.9,
@@ -16,11 +20,19 @@ import { SALTMERE_MAP } from "./saltmereMap";
  * widening `getCampaignMap`'s job. `BattleScene`'s free-play branch reads
  * `getMapById` from here; the classic and campaign paths are untouched and
  * keep using `TEST_MAP`/`getCampaignMap` directly, exactly as before.
+ *
+ * Phase 23 (D-114): four new maps join here, immediately playable via Free
+ * Play with no campaign of their own needed (avoiding dead scaffolding) —
+ * Shattered Causeway, The Drowning Vale, Cinderfall Rift, Frostbound Hollow.
  */
 export const MAPS: Record<string, ParsedMap> = {
   [TEST_MAP.id]: TEST_MAP,
   [EMBERFORD_MAP.id]: EMBERFORD_MAP,
   [SALTMERE_MAP.id]: SALTMERE_MAP,
+  [CAUSEWAY_MAP.id]: CAUSEWAY_MAP,
+  [DROWNING_VALE_MAP.id]: DROWNING_VALE_MAP,
+  [CINDERFALL_RIFT_MAP.id]: CINDERFALL_RIFT_MAP,
+  [FROSTBOUND_HOLLOW_MAP.id]: FROSTBOUND_HOLLOW_MAP,
 };
 
 /** Look up any known map by id, throwing on an unknown id — matches `getEnemyDefinition`'s convention. */

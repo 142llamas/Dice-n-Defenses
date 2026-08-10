@@ -3,6 +3,10 @@ import { GAME_WIDTH, CAMPAIGN_PROGRESS_STORAGE_KEY } from "../config";
 import { TEST_MAP } from "../data/testMap";
 import { EMBERFORD_MAP } from "../data/emberfordMap";
 import { SALTMERE_MAP } from "../data/saltmereMap";
+import { CAUSEWAY_MAP } from "../data/causewayMap";
+import { DROWNING_VALE_MAP } from "../data/drowningValeMap";
+import { CINDERFALL_RIFT_MAP } from "../data/cinderfallRiftMap";
+import { FROSTBOUND_HOLLOW_MAP } from "../data/frostboundHollowMap";
 import { getEnemyDefinition } from "../data/enemies";
 import { getCampaignDefinition } from "../data/campaigns";
 import { loadCampaignProgress, isCampaignCompleted } from "../systems/CampaignProgressSystem";
@@ -43,6 +47,12 @@ const MAP_OPTIONS: GatedOption[] = [
   { id: TEST_MAP.id, name: TEST_MAP.name, unlockCampaignId: null },
   { id: EMBERFORD_MAP.id, name: EMBERFORD_MAP.name, unlockCampaignId: "emberford-reach" },
   { id: SALTMERE_MAP.id, name: SALTMERE_MAP.name, unlockCampaignId: "saltmere-shallows" },
+  // Phase 23 (D-114): four new maps, none with a campaign of their own yet —
+  // always unlocked, same staging every prior boss/enemy got before it had one.
+  { id: CAUSEWAY_MAP.id, name: CAUSEWAY_MAP.name, unlockCampaignId: null },
+  { id: DROWNING_VALE_MAP.id, name: DROWNING_VALE_MAP.name, unlockCampaignId: null },
+  { id: CINDERFALL_RIFT_MAP.id, name: CINDERFALL_RIFT_MAP.name, unlockCampaignId: null },
+  { id: FROSTBOUND_HOLLOW_MAP.id, name: FROSTBOUND_HOLLOW_MAP.name, unlockCampaignId: null },
 ];
 
 const BOSS_OPTIONS: GatedOption[] = [

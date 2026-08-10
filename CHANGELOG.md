@@ -2,6 +2,127 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Phase 25: Cheap/Expensive Structure Tiers, Opportunistic Wall-Bash AI, Trap-Disarming Saboteurs (D-116)
+
+Kevin asked for more cheap/expensive structure tiers, a real siege AI where
+any enemy can choose to attack a structure based on personality/opportunity,
+and enemies/skills that detect and disarm traps. See **D-116** in
+`DECISIONS.md` for the full method.
+
+Added:
+- **Ten new structures** (`data/structures.ts`), each bracketing an existing
+  item's cost/effect: **Wicket Gate**/**Portcullis** (gate curve), **Snare
+  Wire**/**Mangler Trap** (ground-trap curve), **Net Snare**/**Storm Lance**
+  (the first flying-trap brackets — closes the deferred "no anti-air trap
+  tier" item), **Sparring Post**/**War Dais** (melee-platform curve), **Low
+  Perch**/**Sky Bastion** (ranged-platform curve — Low Perch trades range
+  for damage, Sky Bastion grants both). `SHOP_ORDER` grows from 12 to 22.
+- **Opportunistic wall bash**: any ordinary melee enemy now bashes a
+  destructible wall in its own attack range (plain `attackDamage`, no siege
+  multiplier) when no hero is reachable this phase — a dedicated siege
+  enemy's own unconditional priority is unaffected.
+- **Trap disarm — Saboteur archetype**: a new `trapSense` field lets an
+  enemy detect and disarm/destroy a placed trap outright, at the same
+  unconditional priority siege already gives walls. Two new enemies:
+  **Saboteur** and **Warren Stalker**.
+
+Changed:
+- **Shop grid pagination**: the Gear grid's existing page-nav mechanism
+  (Phase 17/D-108) is generalized to also paginate the Shop grid, which
+  outgrew a single page this phase — both grids now permanently cap at 4
+  rows regardless of catalogue size.
+
+Tests: 960 → 983. Typecheck, all tests, and the production build all pass
+(109 modules, unchanged). `npm run dev` serves HTTP 200.
+
+## [Unreleased] — 0.2.0-dev — Phase 24: A "Sand" Build-Restricted Tile, Five New Structures/Traps (D-115)
+
+Kevin asked for a sand tile that behaves like normal terrain except that
+nothing can be built on it, integrated into existing maps, plus more
+buildings and traps generally — explicit design freedom invited ("be
+creative and continue using good game design theory"). See **D-115** in
+`DECISIONS.md` for the full method.
+
+Added:
+- **A "sand" terrain tile** (`data/testMap.ts`, char `D`): walkable exactly
+  like plain floor, no terrain effect — the only difference is a new
+  `GameMap.isBuildable` check that `BuildSystem.canPlace` now enforces,
+  which sand fails and every other walkable tile passes.
+- **Sand integrated into three existing maps**: Shattered Causeway (canyon
+  dunes past the chasm), Cinderfall Rift (ash drifts at the connector
+  mouths), The Drowning Vale (mudflats bordering the water fringe) — each
+  denying a specific wall-cheese spot. Frostbound Hollow, Emberford,
+  Saltmere, and the classic Training Yard map were left untouched.
+- **Palisade** and **Bulwark**: a cheap/fragile and a pricier/tough wall,
+  bracketing Barricade into a real three-point cost/durability curve.
+- **Watchtower**: the first platform with an `"any"`-audience bonus (+1
+  basic-attack damage regardless of melee/ranged) — `PlatformAudience`
+  gains `"any"`.
+- **Frost Trap**: a buildable ground trap applying "restrained" (previously
+  only ever spell-placed via Web Patch).
+- **Bear Trap**: a heavy-damage, ground-only trap that's consumed and
+  removed after its first trigger — the first `singleUse` trap, a genuine
+  new risk/reward point on the trap curve.
+
+Fixed:
+- `BattleScene.showTrapTrigger` had logged every trap trigger as "Spike
+  Trap" since Phase 5, regardless of which trap (or terrain hazard)
+  actually fired. Now resolves and logs the real name.
+
+Tests: 937 → 960. Typecheck, all tests, and the production build all pass
+(109 modules, unchanged). `npm run dev` serves HTTP 200.
+
+## [Unreleased] — 0.2.0-dev — Phase 23: Expanded Maps and Terrains — a Pit Hazard, Hero-Affecting Terrain, Dynamic Terrain, Four New Maps (D-114)
+
+Kevin asked for expanded maps and terrains, explicitly inviting design
+judgment ("use the principles of good map design and game design... easy to
+learn, hard to master"). A research pass found only 3 built-in maps exist
+today, two of which are the same 16x9 skeleton with hazard tiles swapped —
+almost no real geometric variety. Three scoping questions answered toward
+the fuller option before any code: hero-affecting terrain as a new per-map
+opt-in flag (not retrofitting existing maps), a real "pit" hazard plus a
+genuine mid-battle dynamic-terrain system (not just more static hazard
+types), and staying within the Map Builder's existing 6-20 col / 6-9 row
+size ceiling (a real canvas/HUD constraint, not a guess). See **D-114** in
+`DECISIONS.md` for the full method.
+
+Added:
+- **A "pit" terrain tile** (`data/testMap.ts`, char `@`): impassable for
+  ground units like a cliff, but a unit forced onto one by a push effect
+  (a weapon-mastery Push, or a `forcedMoveTiles` spell) falls in and is
+  instantly defeated — the "holes" hazard the original Source of Truth
+  vision named but never built, resolved through the same death-trigger
+  funnel any other kill uses.
+- **Hero-affecting terrain**: a new `ParsedMap.hazardsAffectHeroes` flag —
+  when set, a hero standing on a hazardous tile suffers the exact same
+  terrain effect an enemy already does, ticked once per player phase.
+  Opt-in per map; Emberford/Saltmere are untouched.
+- **`systems/DynamicTerrainSystem.ts`** (new, pure): mid-battle terrain
+  changes keyed to a wave number, with a telegraphed warning ahead of time
+  — powers a cyclical tide (The Drowning Vale) and a one-way bridge
+  collapse (Cinderfall Rift) from the same generic, data-driven mechanism.
+- **Four new maps**, each a different map-design idea rather than another
+  reskin: **Shattered Causeway** (a single bridge across a chasm — the
+  pit's showcase), **The Drowning Vale** (a flood zone that rises at Wave 3
+  and recedes at Wave 6), **Cinderfall Rift** (a direct bridge that
+  permanently collapses at Wave 4, forcing a reroute), **Frostbound Hollow**
+  (a cliff ridge splitting the map, crossable only by flying units or a
+  long detour). All four are immediately playable via Free Play.
+- **Every terrain tile is now actually visible on the real battle board** —
+  a real, pre-existing gap fixed alongside this content: cliff/water/fire/
+  acid have been mechanically distinct since Phase 11.7 but silently
+  rendered as plain floor in `BattleScene` the entire time.
+- The Map Builder's Terrain palette gained the new "Pit" option.
+
+Fixed:
+- `BattleScene.buildBoard` now colors every tile by its real `TileType`
+  instead of only distinguishing floor vs. blocked.
+
+Tests: 900 → 937. Typecheck, all tests, and the production build all pass
+(109 modules, up from 104). `npm run dev` serves HTTP 200. Not yet confirmed
+by a human in a browser — the SEVENTH consecutive content/mechanics phase to
+ship this way — see **KI-071**.
+
 ## [Unreleased] — 0.2.0-dev — Phase 22: Magic-Item Expansion — Real SRD Magic Items, a `+1/+2/+3` Enchant Overlay, a Brand-New Loot System, and a Level-Scaled Shop (D-113)
 
 Kevin asked for "a more complete repertoire of items" — potions, `+1/+2/+3`

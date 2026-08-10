@@ -15,6 +15,152 @@
 
 ## Open items to verify
 
+- **KI-073 — Phase 25's ten new structure tiers, the opportunistic wall-bash
+  AI, and the trap-disarming Saboteur/Warren Stalker (D-116) are not yet
+  confirmed by a human in a browser.** Built and verified headless-only
+  (typecheck, all 983 tests, production build all pass — 109 modules,
+  unchanged; `npm run dev` serves HTTP 200). This is now the NINTH
+  consecutive content/mechanics phase to ship without a human playtest
+  (joining KI-065 through KI-072). Not yet verified:
+  - **All ten new shop items build correctly**: Wicket Gate/Portcullis let
+    heroes walk through like Gate does; Snare Wire/Mangler Trap/Net
+    Snare/Storm Lance damage the right movement type; Sparring Post/War
+    Dais/Low Perch/Sky Bastion grant the right bonus to the right hero type
+    standing on them (Low Perch and Sky Bastion especially — confirm Low
+    Perch does NOT grant range, only Sky Bastion grants both).
+  - **The Shop grid's new pagination**: with 22 items now spanning 2 pages,
+    confirm Prev/Next (and Tab/arrow-key paging) work the same way they
+    already do in the Gear grid, and that Build mode's Done button still
+    lands in the same place it always has.
+  - **A normal (non-siege) melee enemy bashing a wall**: block a lane with
+    a cheap wall, keep every hero out of that enemy's reach, and confirm the
+    combat log reads "`<enemy>`, unable to reach a hero, pounds/smashes the
+    `<wall>`" rather than the enemy just standing there or detouring around
+    when there's truly no other route.
+  - **Saboteur/Warren Stalker disarming a trap**: place a trap in a lane
+    these spawn in (Free Play/Bestiary — neither is wired into a campaign
+    wave yet) and confirm the trap's token vanishes with a "disarms the
+    `<trap>`" log line instead of ever triggering on that enemy.
+  - **Known, deliberate limits, not bugs**: Saboteur/Warren Stalker are not
+    placed in any existing campaign wave yet (same "reachable via Free
+    Play/Bestiary only" precedent Phase 20/21 set for several of their own
+    new enemies) — a future phase's job if Kevin wants them in a specific
+    wave.
+
+- **KI-072 — Phase 24's sand tile and five new structures/traps (D-115) is
+  not yet confirmed by a human in a browser.** Built and verified
+  headless-only (typecheck, all 960 tests, production build all pass — 109
+  modules, unchanged; `npm run dev` serves HTTP 200). This is now the
+  EIGHTH consecutive content/mechanics phase to ship without a human
+  playtest (joining KI-065 through KI-071). Not yet verified:
+  - **Sand actually refuses a build in the Build UI**: hover the ghost
+    preview over a sand tile on Shattered Causeway/Cinderfall Rift/The
+    Drowning Vale and confirm it shows the red "✗" invalid-placement cue
+    with a "too loose to build on" message, while a hero can still walk
+    across the same tile completely normally.
+  - **Sand's new board color**: confirm it reads as visually distinct (a
+    tan/sand color) from plain floor on the real battle board, and from the
+    Map Builder's own Terrain palette (new "Sand" button).
+  - **Palisade/Bulwark's actual durability difference**: place each next to
+    a siege enemy (Phase 20) and confirm Palisade breaks in only 1-2 hits
+    while Bulwark takes noticeably longer than even a plain Barricade.
+  - **Watchtower's bonus applying to BOTH hero types**: stand a melee hero
+    on it, confirm +1 damage; swap in a ranged hero, confirm the SAME +1
+    damage (not the Ranged Perch's range bonus) — this is the first
+    platform where that matters.
+  - **Frost Trap's restrain**: confirm an enemy that survives the hit
+    can't act or move on its very next phase, with a combat-log line
+    naming "Frost Trap" specifically (not "Spike Trap" — see the fix
+    below).
+  - **Bear Trap's single-use consumption**: confirm the trap deals its full
+    6 damage once, then its token actually disappears from the board and a
+    second enemy can walk straight over that tile untouched.
+  - **Every trap now logs its REAL name**: place a Sky Snare, Tangle Root,
+    Web Patch (via a terrain-shaping spell), and step something onto an
+    acid tile — confirm each produces its own distinct combat-log line
+    ("Sky Snare hits...", "Acid hits...", etc.) instead of every one of
+    them previously always reading "Spike Trap" regardless of source — a
+    real pre-existing bug from Phase 5, only just fixed.
+  - **The now-12-button Build shop grid**: confirm all twelve buttons
+    render cleanly with no overlap or clipping — checked the bounding-box
+    math headlessly (the equip grid has been the taller, dominant one since
+    Phase 17), but this is still the most shop buttons ever shown at once.
+  - **Known, deliberate limits, not bugs**: a single-use trap has no
+    automated coverage for its actual on-board removal (a scene-only
+    mechanic, like the pit's push-kill) — the pure `BuildSystem
+    .trapIsSingleUseAt` lookup it depends on IS tested. If two different
+    enemies enter the same single-use trap tile within the exact same enemy
+    phase, both trigger before it's removed — a rare, documented edge case,
+    not a bug to chase. No anti-air trap tier was added to mirror
+    Frost/Bear Trap (Sky Snare remains the only flyer counter). No
+    defensive (AC-granting) platform was built this pass.
+
+- **KI-071 — Phase 23's expanded maps and terrains (a "pit" hazard, hero-
+  affecting terrain, mid-battle dynamic terrain, four new maps, D-114) is
+  not yet confirmed by a human in a browser.** Built and verified
+  headless-only (typecheck, all 937 tests, production build all pass — 109
+  modules, up from 104; `npm run dev` serves HTTP 200). This is now the
+  SEVENTH consecutive content/mechanics phase to ship without a human
+  playtest (joining KI-065 through KI-070) — worth prioritizing an
+  in-browser pass soon. Not yet verified:
+  - **The pit's push-kill**: on Shattered Causeway (Free Play), land a Push
+    weapon-mastery hit or a forced-move spell (Thunderwave, Gust of Wind,
+    Reverse Gravity) on an enemy standing near the chasm edge and confirm
+    the combat log reads "`<Enemy>` is shoved into a pit and falls to its
+    doom!", the enemy is actually removed from the board, and its gold/
+    death-trigger effects (if any) still fire normally — this exercises a
+    brand-new branch inside `BattleScene.pushEnemyAway` that has never been
+    seen run.
+  - **Terrain is now actually VISIBLE on the real battle board for the
+    first time** — a real, pre-existing gap this phase fixed (previously
+    cliff/water/fire/acid all silently rendered as plain floor in
+    `BattleScene`, only the Map Builder's own palette ever colored them).
+    Confirm every tile type reads as visually distinct in an actual battle,
+    not just in the Map Builder — cliff (dark slate), water (blue), fire
+    (red), acid (green), pit (near-black with a small ✕ glyph).
+  - **Hero-affecting terrain** (Shattered Causeway/The Drowning Vale/
+    Cinderfall Rift/Frostbound Hollow, all opted in): confirm a HERO
+    standing on fire/water/acid now takes the same damage/status an enemy
+    would (burning/slowed/a flat acid hit), logged clearly, while
+    Emberford/Saltmere continue to leave heroes completely unaffected
+    exactly as before this phase.
+  - **The Drowning Vale's cyclical tide**: play a long-enough Free Play run
+    and confirm a warning appears at Wave 1 ("The tide rises..." — coming
+    at Wave 3"), the flood zone visibly turns to water at Wave 3 with its
+    own combat-log line, a similar warning appears before Wave 6, and the
+    zone visibly recedes back to floor at Wave 6 — confirm the crossing
+    stays usable throughout (slower/riskier, never impassable).
+  - **Cinderfall Rift's one-way bridge collapse**: confirm a warning
+    appears at Wave 2, the middle bridge span visibly turns to pit (with
+    the ✕ glyph) at Wave 4 with its own combat-log line, and that enemies
+    (and any hero still trying to use that lane) genuinely reroute onto the
+    longer north/south paths afterward, rather than getting stuck.
+  - **Frostbound Hollow's verticality**: confirm a flying enemy crosses the
+    central cliff ridge directly while a ground enemy is forced to detour
+    via the top or bottom row — this exercises PathfindingSystem's existing
+    `ignoreWalls` mechanism on a map actually designed to make the
+    difference visible, rather than incidental.
+  - **The Map Builder's new "Pit" palette option**: confirm it appears in
+    the Terrain tab, paints correctly, and that `validateDraft`'s existing
+    spawn-can-reach-exit check correctly flags a draft where every route is
+    sealed off by pit tiles, the same way it already does for `blocked`/
+    `cliff`.
+  - **The Free Play map row**: now 7 buttons, up from 3 — confirm all seven
+    render without visual overflow/clipping (the row's width is already
+    computed, not hardcoded, but this is the narrowest per-button width the
+    row has ever been asked to render, and several new map names are long).
+  - **Known, deliberate limits, not bugs**: the pit's push-kill mechanic
+    itself has NO automated test coverage (it lives in a Phaser scene
+    method, not a pure system, like every other weapon-mastery/forced-move
+    mechanic in this project) — everything pure it depends on IS tested
+    (see `tests/terrain.test.ts`, `tests/dynamicTerrainSystem.test.ts`,
+    `tests/newMapsPhase23.test.ts`). No enemy attack currently pushes a
+    hero, so a hero cannot yet be shoved into a pit by an enemy — only the
+    hero's OWN push effects against enemies can trigger a fall. Dynamic
+    terrain events are built-in-map-only; the Map Builder cannot author one
+    yet (a documented boundary, not a gap). The map size ceiling (6-20
+    cols/6-9 rows) was deliberately NOT raised this pass — see D-114.
+
 - **KI-070 — Phase 22's magic-item expansion (a real SRD magic-item
   catalog, a `+1/+2/+3` enchant overlay, a brand-new loot-drop system, and a
   level-scaled shop, D-113) is not yet confirmed by a human in a browser.**
@@ -1524,11 +1670,6 @@
   temporarily leave an enemy with no route (it simply holds that phase, as in
   Phase 4), which resolves when the hero moves. A dedicated shop phase can be
   added later.
-- **KI-017 — Structure destruction is still OPEN.** Enemies never attack walls;
-  they route around them (safe because a wall can never seal the only path). If a
-  future design wants enemies to break through walls, that behaviour is
-  unimplemented by design.
-
 - **KI-022 — Flying and its counter now exist; balance and terrain are still
   open.** Phase 7 added the flying *capability* (D-048), an anti-air counter
   (the **Sky Snare**, D-049), and one `wisp` in wave 5 so flying shows up in
@@ -1572,6 +1713,17 @@
 
 ## Resolved since Phase 3
 
+- **KI-017 (structure destruction was "unimplemented by design" — enemies
+  never attacked walls, only routed around them) — RESOLVED, in two steps.**
+  This entry was never updated when it actually became false: Phase 20
+  (D-111) gave dedicated SIEGE enemies (Siegebreaker, Battering Brute,
+  Juggernaut, Ashen Sovereign) an unconditional priority attack against a
+  destructible wall in their own range. Phase 25 (D-116) generalized this
+  further — any ordinary melee enemy (not siege, not a pure runner) now
+  opportunistically bashes a wall in range with its own plain attack damage
+  when no hero is reachable that phase. Enemies still route around a wall
+  whenever that's the more useful option; only these specific cases attack
+  one instead.
 - **KI-038 (the Character Creation screen's class-cycle button, D-074/Phase
   11.2, needed a human's browser pass) — CONFIRMED.** Kevin confirmed the
   class-cycle button works in-browser. The rest of KI-037's original

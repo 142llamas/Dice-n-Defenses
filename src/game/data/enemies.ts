@@ -164,6 +164,15 @@ import type { StatusEffectId } from "./statusEffects";
  * All ORIGINAL content, no D&D/SRD-derived names or lore, EXCEPT the Swarm
  * archetype's verified real-SRD mechanical rules themselves (see
  * CONTENT_SOURCES.md's new Phase 21 row).
+ *
+ * Phase 25 (D-116): a Saboteur archetype — the counter to the player's own
+ * trap investment. `trapSense` (see its own comment on `EnemyDefinition`)
+ * detects a placed trap within reach and disarms/destroys it outright
+ * instead of attacking or advancing that phase, at the same unconditional
+ * priority tier the existing siege mechanic already established for walls.
+ * Two roster entries: Saboteur (a fast, fragile ground scout, short
+ * `rangeTiles`) and Warren Stalker (tougher, longer `rangeTiles`, so it can
+ * clear a trap from one tile further out). All ORIGINAL content.
  */
 
 export type MovementType = "ground" | "flying";
@@ -408,6 +417,20 @@ export interface EnemyDefinition {
     radiusTiles: number;
     healAmount: number;
   };
+  /**
+   * Phase 25 (D-116), Saboteur: this enemy detects a placed trap within
+   * `rangeTiles` (Manhattan) of its own position and, before considering
+   * anything else this phase (the same unconditional-priority tier siege's
+   * `siegeDamageMultiplier` uses), disarms/destroys ONE such trap instead of
+   * attacking a hero or advancing (`WaveSystem.tickEnemyPhase`'s
+   * `trapInstanceAt`/`disarmTrap` context, `BuildSystem.disarmTrap`). A trap
+   * has no HP to whittle down (D-039: it always hits), so this always
+   * removes it outright in a single phase — no partial damage. Absent means
+   * this enemy never notices or touches a trap at all, unchanged from every
+   * enemy before this phase (it simply walks onto one and eats the hit, like
+   * always).
+   */
+  trapSense?: { rangeTiles: number };
 }
 
 export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
@@ -1804,6 +1827,51 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "boss",
     loreText: "The Sundered King doesn't fight harder when he's winning. He waits until he's losing, and THEN he stops holding back.",
   },
+
+  // ===== Phase 25 (D-116): Saboteur archetype (trapSense) =====
+  // A fast, fragile scout that clears a trap in its path instead of ever
+  // fighting or advancing through it — the counter to the player's own trap
+  // investment, the same way a siege enemy counters walls.
+  saboteur: {
+    id: "saboteur",
+    name: "Saboteur",
+    maxHealth: 7,
+    armorClass: 11,
+    attackBonus: 3,
+    savingThrowBonus: 3,
+    movementTiles: 3,
+    breachDamage: 2,
+    attackDamage: 2,
+    attackRangeTiles: 1,
+    movementType: "ground",
+    rewardGold: 5,
+    trapSense: { rangeTiles: 1 },
+    abilities: [],
+    assetKey: "enemy-saboteur",
+    role: "minion",
+    loreText: "A Saboteur has never once stepped on a trap it didn't mean to. It has stepped on plenty it meant to disarm first.",
+  },
+  // WARREN STALKER: a tougher trapSense minion with a longer sense range —
+  // it clears a trap from one tile further out than a Saboteur can.
+  "warren-stalker": {
+    id: "warren-stalker",
+    name: "Warren Stalker",
+    maxHealth: 11,
+    armorClass: 12,
+    attackBonus: 4,
+    savingThrowBonus: 3,
+    movementTiles: 2,
+    breachDamage: 3,
+    attackDamage: 3,
+    attackRangeTiles: 1,
+    movementType: "ground",
+    rewardGold: 6,
+    trapSense: { rangeTiles: 2 },
+    abilities: [],
+    assetKey: "enemy-warren-stalker",
+    role: "minion",
+    loreText: "The Warren Stalker smells a snare before it ever sees one, and it has never once been in a hurry to find out the hard way.",
+  },
 };
 
 /** Look up a definition, throwing on an unknown id so typos fail loudly. */
@@ -1900,6 +1968,10 @@ export const ENEMY_COLORS: Record<string, number> = {
   "rat-swarm": 0x7a6a4a,
   "locust-swarm": 0x6a7a3a,
   "sundered-king": 0x7a1a4a,
+  // Phase 25 roster (D-116): the Saboteur archetype — a muted, sneaky
+  // brown-green pair, distinct from every existing family.
+  saboteur: 0x6a7a4a,
+  "warren-stalker": 0x4a5a3a,
 };
 
 /** Re-export so callers can type positions without reaching into GridSystem. */

@@ -23,6 +23,7 @@ import {
   type TrapTrigger,
   type StatusTickEvent,
   type StructureAttackEvent,
+  type TrapDisarmEvent,
 } from "../systems/WaveSystem";
 import {
   CombatSystem,
@@ -52,7 +53,8 @@ import { FEAT_IDS, getFeat } from "../data/feats";
 import { Hero, BARDIC_INSPIRATION_BONUS, MAX_ATTUNEMENTS, type MagicInitiateListId } from "../entities/Hero";
 import { Enemy } from "../entities/Enemy";
 import type { Summon } from "../entities/Summon";
-import { TEST_MAP, type ParsedMap } from "../data/testMap";
+import { TEST_MAP, type ParsedMap, type TileType } from "../data/testMap";
+import { DynamicTerrainSystem } from "../systems/DynamicTerrainSystem";
 import { WAVES, type WaveDefinition } from "../data/waves";
 import { getCampaignDefinition, getCampaignMap } from "../data/campaigns";
 import { getMapById } from "../data/maps";
@@ -121,6 +123,25 @@ import {
 } from "../systems/CampaignProgressSystem";
 
 /**
+ * Phase 23 (D-114): the actual battle board's per-tile color. Every non-
+ * floor/blocked type (cliff/water/fire/acid, and now pit) previously
+ * rendered as plain floor here — mechanically distinct but visually
+ * invisible, a real pre-existing gap. Kept separate from
+ * `MapBuilderScene`'s own `TERRAIN_COLORS` (that scene has its own
+ * debug/editing palette needs) rather than sharing one constant.
+ */
+const BOARD_TERRAIN_COLORS: Record<TileType, number> = {
+  floor: COLORS.tileFloor,
+  blocked: COLORS.tileBlocked,
+  cliff: 0x4a4a5a,
+  water: 0x2a4a6a,
+  fire: 0x6a2a2a,
+  acid: 0x4a6a2a,
+  pit: 0x14141c,
+  sand: 0xc2a878,
+};
+
+/**
  * BattleScene — Phase 4: Combat MVP.
  *
  * Builds on Phase 3 (waves + enemy pathfinding). Heroes can now act: a basic
@@ -183,10 +204,17 @@ const ALL_GEAR_CATALOG_IDS: string[] = [...EQUIPMENT_ORDER, ...POTION_ORDER];
  * design) would now run many rows past the canvas. `showEquipUI` shows only
  * one page's worth (4 cols x 4 rows) at a time, keyed off the SAME
  * `gridFocusIndex` keyboard/mouse selection already tracks (its page is
- * just `floor(index / GEAR_GRID_PAGE_SIZE)`) — no separate page field needed,
+ * just `floor(index / ITEM_GRID_PAGE_SIZE)`) — no separate page field needed,
  * and arrow-key navigation across a page boundary "just works" for free.
+ *
+ * Phase 25 (D-116): renamed from `GEAR_GRID_PAGE_SIZE` — the shop grid grew
+ * past 20 structures this phase and now paginates through the exact same
+ * mechanism (`showShopUI`/`turnGridPage`, sharing one nav control with the
+ * Gear grid since the two are never shown at once). This caps BOTH grids at
+ * a fixed 4 rows regardless of catalogue size, so neither can ever grow past
+ * the canvas again.
  */
-const GEAR_GRID_PAGE_SIZE = 16;
+const ITEM_GRID_PAGE_SIZE = 16;
 
 interface GearCatalogEntry {
   id: string;
@@ -265,6 +293,10 @@ export class BattleScene extends Phaser.Scene {
   /** Phase 22: this battle's own curated loot pool (a campaign's `lootPoolIds`), or undefined for the full unrestricted pool (classic/campaign-less/Free Play) — see `LootSystem.rollLootDrop`. */
   private currentLootPoolIds: readonly string[] | undefined;
   private enemyTokens = new Map<string, Token>();
+  /** Phase 23 (D-114): each board tile's rectangle, keyed "x,y" — kept so a dynamic terrain event can recolor just the tiles it changes without rebuilding the whole board. */
+  private tileRects = new Map<string, Phaser.GameObjects.Rectangle>();
+  /** Phase 23 (D-114): indexes into `this.map.data.dynamicTerrainEvents` that have already fired this battle. */
+  private firedDynamicTerrainEvents = new Set<number>();
   /** Phase 16 (D-106): temporary ally combatants a summon spell places on the field. */
   private summonSystem = new SummonSystem();
   private summonTokens = new Map<string, Token>();
@@ -327,10 +359,15 @@ export class BattleScene extends Phaser.Scene {
   private shopLabels: Phaser.GameObjects.Text[] = [];
   private equipItemButtons: Phaser.GameObjects.Rectangle[] = [];
   private equipItemLabels: Phaser.GameObjects.Text[] = [];
-  /** Phase 17 (D-108): the Gear grid's page nav — its own page is derived from `gridFocusIndex`, no separate page field. */
-  private gearPagePrevButton!: Phaser.GameObjects.Text;
-  private gearPageNextButton!: Phaser.GameObjects.Text;
-  private gearPageLabel!: Phaser.GameObjects.Text;
+  /**
+   * Phase 17 (D-108): page nav for whichever item grid is active — its page
+   * is derived from `gridFocusIndex`, no separate page field. Phase 25
+   * (D-116): shared between the Gear AND Shop grids (renamed from
+   * `gearPage*`) since the two are never shown at once.
+   */
+  private pageNavPrevButton!: Phaser.GameObjects.Text;
+  private pageNavNextButton!: Phaser.GameObjects.Text;
+  private pageNavLabel!: Phaser.GameObjects.Text;
   private doneButton!: Phaser.GameObjects.Rectangle;
   private doneLabel!: Phaser.GameObjects.Text;
   /** Phase 11.7 (D-071): shown instead of the Gear grid when no living hero
@@ -683,16 +720,26 @@ export class BattleScene extends Phaser.Scene {
   // ----- Board -----------------------------------------------------------
 
   private buildBoard(): void {
+    this.tileRects.clear();
     for (let y = 0; y < this.map.rows; y++) {
       for (let x = 0; x < this.map.cols; x++) {
         const pos = { x, y };
         const tl = this.grid.tileToWorldTopLeft(pos);
-        const color = this.map.isBlocked(pos)
-          ? COLORS.tileBlocked
-          : COLORS.tileFloor;
-        this.add
-          .rectangle(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, TILE_SIZE, TILE_SIZE, color, 1)
+        const type = this.map.getTileType(pos) ?? "floor";
+        const rect = this.add
+          .rectangle(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, TILE_SIZE, TILE_SIZE, BOARD_TERRAIN_COLORS[type], 1)
           .setDepth(0);
+        this.tileRects.set(`${x},${y}`, rect);
+        if (type === "pit") {
+          this.add
+            .text(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, "✕", {
+              fontFamily: "system-ui, Arial, sans-serif",
+              fontSize: "20px",
+              color: "#6a3a3a",
+            })
+            .setOrigin(0.5)
+            .setDepth(1);
+        }
       }
     }
 
@@ -711,6 +758,46 @@ export class BattleScene extends Phaser.Scene {
 
     for (const pos of this.map.data.spawns) this.drawMarker(pos, "IN", COLORS.spawn);
     for (const pos of this.map.data.exits) this.drawMarker(pos, "OUT", COLORS.exit);
+  }
+
+  /**
+   * Phase 23 (D-114): fire any dynamic terrain events due at the wave just
+   * entered, and log a one-time warning for any whose window just opened.
+   * Called once per `betweenWave` transition, right after the wave number
+   * advances — no-op for the vast majority of maps, which set no events.
+   */
+  private tickDynamicTerrain(): void {
+    const events = this.map.data.dynamicTerrainEvents;
+    if (!events || events.length === 0) return;
+    const wave = this.waveSystem.waveNumber;
+
+    for (const { event } of DynamicTerrainSystem.newWarningsAt(events, wave, this.firedDynamicTerrainEvents)) {
+      this.logCombat(`⚠ ${event.label} — coming at Wave ${event.atWave}`);
+    }
+
+    for (const { index, event } of DynamicTerrainSystem.dueEvents(events, wave, this.firedDynamicTerrainEvents)) {
+      // Mutate the SAME GameMap instance in place (see `GameMap.setTiles`'s
+      // doc comment) rather than swapping `this.map` for a new one — every
+      // other system holds its own reference to this exact object.
+      this.map.setTiles(DynamicTerrainSystem.applyEvent(this.map.data, event).tiles);
+      this.firedDynamicTerrainEvents.add(index);
+      this.logCombat(event.label);
+      for (const pos of event.positions) {
+        const rect = this.tileRects.get(`${pos.x},${pos.y}`);
+        if (rect) rect.setFillStyle(BOARD_TERRAIN_COLORS[event.toTileType], 1);
+        if (event.toTileType === "pit") {
+          const tl = this.grid.tileToWorldTopLeft(pos);
+          this.add
+            .text(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, "✕", {
+              fontFamily: "system-ui, Arial, sans-serif",
+              fontSize: "20px",
+              color: "#6a3a3a",
+            })
+            .setOrigin(0.5)
+            .setDepth(1);
+        }
+      }
+    }
   }
 
   private drawMarker(pos: GridPosition, label: string, color: number): void {
@@ -1184,6 +1271,8 @@ export class BattleScene extends Phaser.Scene {
     // a single row of fixed slots (the Phase 5 layout) no longer fits; this is
     // a small, generic grid instead, verified by the same bounding-box math as
     // D-046 (see the GAME_HEIGHT comment in config.ts for the room it needs).
+    // Phase 25 (D-116): the shop catalogue passed the one-page limit, so it
+    // now paginates via `ITEM_GRID_PAGE_SIZE` exactly like the Gear grid does.
     const shopItems = SHOP_ORDER.map((defId) => ({
       id: defId,
       label: `${getStructureDefinition(defId).name} (${getStructureDefinition(defId).cost}g)`,
@@ -1193,6 +1282,7 @@ export class BattleScene extends Phaser.Scene {
       shopItems,
       (id) => this.selectShopItem(id),
       (id) => this.setHoveredItem(id),
+      ITEM_GRID_PAGE_SIZE,
     );
     this.shopButtons = shop.buttons;
     this.shopLabels = shop.labels;
@@ -1206,7 +1296,7 @@ export class BattleScene extends Phaser.Scene {
       equipItems,
       (id) => this.selectEquipItem(id),
       (id) => this.setHoveredItem(id),
-      GEAR_GRID_PAGE_SIZE,
+      ITEM_GRID_PAGE_SIZE,
     );
     this.equipItemButtons = equip.buttons;
     this.equipItemLabels = equip.labels;
@@ -1226,22 +1316,28 @@ export class BattleScene extends Phaser.Scene {
       .setVisible(false);
 
     // One Done button shared by both modes, positioned below the TALLER of
-    // the two grids. Phase 17 (D-108): the Gear catalogue's real ROW COUNT
-    // now caps at one page (GEAR_GRID_PAGE_SIZE / cols = 4 rows) regardless
-    // of the underlying catalogue's total size, since it's paginated —
-    // otherwise the ~90-item weapon/armor catalogue would make this grid
-    // dozens of rows tall.
+    // the two grids. Phase 17 (D-108)/Phase 25 (D-116): BOTH the Gear and
+    // Shop catalogues' real ROW COUNTs now cap at one page (
+    // `ITEM_GRID_PAGE_SIZE` / cols = 4 rows) regardless of the underlying
+    // catalogue's total size, since both are paginated — otherwise either
+    // the ~90-item weapon/armor catalogue or the now-22-item shop would make
+    // this grid dozens of rows tall.
     const cols = 4;
-    const shopRows = Math.ceil(SHOP_ORDER.length / cols);
-    const gearRows = Math.min(Math.ceil(this.visibleGearCatalog().length / cols), GEAR_GRID_PAGE_SIZE / cols);
+    const shopRows = Math.min(Math.ceil(SHOP_ORDER.length / cols), ITEM_GRID_PAGE_SIZE / cols);
+    const gearRows = Math.min(Math.ceil(this.visibleGearCatalog().length / cols), ITEM_GRID_PAGE_SIZE / cols);
     const rows = Math.max(shopRows, gearRows);
     const rowHeight = 38; // button height (30) + vertical gap (8)
-    const gearPageCount = Math.ceil(this.visibleGearCatalog().length / GEAR_GRID_PAGE_SIZE);
-    // The page nav row sits just under the (capped) gear grid; Done sits
-    // under THAT, so it never collides with a wider grid on another page.
-    const gearNavY = cy + gearRows * rowHeight + 14;
-    this.gearPagePrevButton = this.add
-      .text(GAME_WIDTH / 2 - 90, gearNavY, "◀ Prev", {
+    const shopPageCount = Math.ceil(SHOP_ORDER.length / ITEM_GRID_PAGE_SIZE);
+    const gearPageCount = Math.ceil(this.visibleGearCatalog().length / ITEM_GRID_PAGE_SIZE);
+    // The page nav row sits just under the (capped) taller of the two grids;
+    // Done sits under THAT, so it never collides with a wider grid on
+    // another page. Only one of shop/gear nav is ever actually visible at a
+    // time (`refreshPageNav` decides which, from `this.ui.kind`), but both
+    // share this one Y position since `rows` already accounts for whichever
+    // grid is taller.
+    const navY = cy + rows * rowHeight + 14;
+    this.pageNavPrevButton = this.add
+      .text(GAME_WIDTH / 2 - 90, navY, "◀ Prev", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "14px",
         color: "#8ad0f0",
@@ -1251,9 +1347,9 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(31)
       .setInteractive({ useHandCursor: true })
       .setVisible(false);
-    this.gearPagePrevButton.on("pointerdown", () => this.turnGearPage(-1));
-    this.gearPageLabel = this.add
-      .text(GAME_WIDTH / 2, gearNavY, "", {
+    this.pageNavPrevButton.on("pointerdown", () => this.turnGridPage(-1));
+    this.pageNavLabel = this.add
+      .text(GAME_WIDTH / 2, navY, "", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "13px",
         color: "#c8c8d8",
@@ -1261,8 +1357,8 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(31)
       .setVisible(false);
-    this.gearPageNextButton = this.add
-      .text(GAME_WIDTH / 2 + 90, gearNavY, "Next ▶", {
+    this.pageNavNextButton = this.add
+      .text(GAME_WIDTH / 2 + 90, navY, "Next ▶", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "14px",
         color: "#8ad0f0",
@@ -1272,8 +1368,8 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(31)
       .setInteractive({ useHandCursor: true })
       .setVisible(false);
-    this.gearPageNextButton.on("pointerdown", () => this.turnGearPage(1));
-    const navRowHeight = gearPageCount > 1 ? 30 : 0;
+    this.pageNavNextButton.on("pointerdown", () => this.turnGridPage(1));
+    const navRowHeight = gearPageCount > 1 || shopPageCount > 1 ? 30 : 0;
     const doneY = cy + rows * rowHeight + navRowHeight + 6;
     this.doneButton = this.add
       .rectangle(GAME_WIDTH / 2, doneY, 120, 30, 0x7a5a3a)
@@ -1379,6 +1475,33 @@ export class BattleScene extends Phaser.Scene {
             }
           }
         }
+        // Phase 23 (D-114): on a map that opts in (`hazardsAffectHeroes`), a
+        // hero standing on a hazardous tile suffers the same terrain effect
+        // an enemy already does — same cadence as the status tick just
+        // above. Every existing map leaves this undefined/false, so heroes
+        // stay completely unaffected exactly as before this phase.
+        for (const hero of this.heroes) {
+          if (!hero.isAlive()) continue;
+          const effect = this.map.heroTerrainEffectAt(hero.position);
+          if (!effect) continue;
+          const tileType = this.map.getTileType(hero.position);
+          if (effect.profile) {
+            const result = CombatSystem.applyAttack(hero, effect.profile, this.random);
+            if (result.damageDealt > 0) {
+              this.logCombat(`${hero.name} takes ${result.damageDealt} damage from the ${tileType}`);
+            }
+          }
+          if (effect.status && hero.isAlive()) {
+            hero.applyStatus(effect.status.statusId, effect.status.durationTurns);
+            this.logCombat(
+              `${hero.name} is ${getStatusEffectDefinition(effect.status.statusId).name.toLowerCase()} by the ${tileType}`,
+            );
+          }
+          if (!hero.isAlive()) {
+            this.logCombat(`${hero.name} has fallen`);
+            statusDefeat = true;
+          }
+        }
         this.syncHeroTokens();
         // D-068's party-wipe check normally only runs after an enemy phase
         // (hero death was previously only possible there) — a status tick
@@ -1403,6 +1526,7 @@ export class BattleScene extends Phaser.Scene {
         break;
       case "betweenWave":
         this.waveSystem.advanceToNextWave();
+        this.tickDynamicTerrain();
         for (const hero of this.heroes) hero.resetForNewTurn();
         this.time.delayedCall(650, () => this.turns.transitionTo("player"));
         break;
@@ -1529,10 +1653,34 @@ export class BattleScene extends Phaser.Scene {
         return s && s.hp !== undefined ? { instanceId: s.instanceId, defId: s.defId } : null;
       },
       damageWall: (instanceId, damage) => this.buildSystem.damageStructure(instanceId, damage).destroyed,
+      // Phase 25 (D-116): a Saboteur/Warren Stalker's own sense-range scan
+      // for a placed trap to disarm, and the callback that actually removes
+      // one.
+      trapInstanceAt: (p) => {
+        const s = this.buildSystem.trapAt(p);
+        return s ? { instanceId: s.instanceId, defId: s.defId } : null;
+      },
+      disarmTrap: (instanceId) => this.buildSystem.disarmTrap(instanceId),
     });
     this.lastReport = report;
     this.applyUncannyDodges(report);
     this.applyDamageResistanceBuffs(report);
+    // Phase 24 (D-115): resolve each trap trigger's REAL name (and whether
+    // it's single-use) while the structure is still on the tile — the
+    // structure may be removed (single-use) or the terrain fallback has no
+    // structure at all (only acid carries an instant-damage profile among
+    // water/fire/acid, so that's the one case this can reach), so it can't
+    // be looked up lazily inside the delayedCall below. Previously this
+    // always logged "Spike Trap" regardless of which trap (or terrain
+    // hazard) actually fired — a real pre-existing bug this pass's new trap
+    // variety made worth fixing.
+    const trapTriggerInfo = report.trapTriggers.map((t) => {
+      const s = this.buildSystem.trapAt(t.position);
+      const def = s ? getStructureDefinition(s.defId) : null;
+      const terrainType = s ? null : this.map.getTileType(t.position);
+      const name = def?.name ?? (terrainType ? terrainType.charAt(0).toUpperCase() + terrainType.slice(1) : "Trap");
+      return { name, instanceId: s?.instanceId, singleUse: def?.singleUse === true };
+    });
 
     for (const enemy of report.spawned) {
       this.spawnEnemyToken(enemy);
@@ -1565,9 +1713,19 @@ export class BattleScene extends Phaser.Scene {
           this.updateGoldHud();
         }
       }
-      for (const trip of report.trapTriggers) this.showTrapTrigger(trip);
+      report.trapTriggers.forEach((trip, i) => {
+        const info = trapTriggerInfo[i];
+        this.showTrapTrigger(trip, info.name);
+        // Phase 24 (D-115): a single-use trap (Bear Trap) is spent after its
+        // first trigger — remove it and its token right after the flash.
+        if (info.singleUse && info.instanceId) {
+          this.buildSystem.remove(info.instanceId);
+          this.destroyStructureToken(info.instanceId);
+        }
+      });
       for (const evt of report.statusEvents) this.showStatusTick(evt);
       for (const sa of report.structureAttacks) this.showStructureAttack(sa);
+      for (const td of report.trapDisarms) this.showTrapDisarm(td);
       for (const breach of report.breaches) this.breachEnemyToken(breach.enemy);
       // Phase 21 (D-112): render every new mechanic's events this phase.
       for (const evt of report.lifedrinks) {
@@ -2183,6 +2341,7 @@ export class BattleScene extends Phaser.Scene {
     this.buildGhostGlyph.setVisible(false);
     this.showShopUI(next.kind === "building", next.kind === "building" ? next.defId : undefined);
     this.showEquipUI(next.kind === "equipping", next.kind === "equipping" ? next.itemId : undefined);
+    this.refreshPageNav();
     const modeActive = next.kind === "building" || next.kind === "equipping";
     this.doneButton.setVisible(modeActive);
     this.doneLabel.setVisible(modeActive);
@@ -2812,6 +2971,7 @@ export class BattleScene extends Phaser.Scene {
   private refreshGridFocusVisual(): void {
     if (this.ui.kind === "building") this.showShopUI(true, this.ui.defId);
     else if (this.ui.kind === "equipping") this.showEquipUI(true, this.ui.itemId);
+    this.refreshPageNav();
   }
 
   /** Phase 8 keyboard hotkey: select the hero at this fixed roster index. */
@@ -3025,9 +3185,11 @@ export class BattleScene extends Phaser.Scene {
       case "push": {
         if (!landedDamage || !enemy.isAlive()) return;
         this.pushEnemyAway(hero.position, enemy, 2);
-        const token = this.enemyTokens.get(enemy.instanceId);
-        if (token) this.placeToken(token, enemy.position);
-        this.logCombat(`${hero.name}'s ${masteryName} mastery shoves ${enemy.def.name} back`);
+        if (enemy.isAlive()) {
+          const token = this.enemyTokens.get(enemy.instanceId);
+          if (token) this.placeToken(token, enemy.position);
+          this.logCombat(`${hero.name}'s ${masteryName} mastery shoves ${enemy.def.name} back`);
+        }
         return;
       }
       case "sap": {
@@ -3400,8 +3562,10 @@ export class BattleScene extends Phaser.Scene {
     // check (a pushed-then-dead enemy has nowhere to go, so this is skipped).
     if (ability.forcedMoveTiles && BattleScene.didHit(result) && enemy.isAlive()) {
       this.pushEnemyAway(hero.position, enemy, ability.forcedMoveTiles);
-      const token = this.enemyTokens.get(enemy.instanceId);
-      if (token) this.placeToken(token, enemy.position);
+      if (enemy.isAlive()) {
+        const token = this.enemyTokens.get(enemy.instanceId);
+        if (token) this.placeToken(token, enemy.position);
+      }
     }
     const clearedEarly = this.afterHeroDamage();
     if (!clearedEarly) this.setInteraction({ kind: "heroSelected", heroId: hero.id });
@@ -3425,7 +3589,20 @@ export class BattleScene extends Phaser.Scene {
     let pos = { ...enemy.position };
     for (let i = 0; i < tiles; i++) {
       const next = { x: pos.x + stepX, y: pos.y + stepY };
-      if (!this.map.isInBounds(next) || !this.map.isWalkable(next)) break;
+      if (!this.map.isInBounds(next)) break;
+      // Phase 23 (D-114): a pit is the one exception to "stop before an
+      // unwalkable tile" — a unit shoved onto one falls in and is instantly
+      // defeated, resolved through the same death-trigger funnel as any
+      // other kill (gold, Splitter/Carrier, Explosive, etc.), rather than
+      // just being stopped short like a wall or cliff would.
+      if (this.map.isPit(next)) {
+        enemy.position = next;
+        enemy.health = 0;
+        this.logCombat(`${enemy.def.name} is shoved into a pit and falls to its doom!`);
+        this.resolveDeaths(this.waveSystem.removeDefeated());
+        return;
+      }
+      if (!this.map.isWalkable(next)) break;
       if (this.buildSystem.isWallAt(next)) break;
       if (this.isLivingHeroAt(next) || this.enemyAt(next)) break;
       pos = next;
@@ -3624,8 +3801,10 @@ export class BattleScene extends Phaser.Scene {
           }
           if (ability.forcedMoveTiles && enemy.isAlive()) {
             this.pushEnemyAway(tile, enemy, ability.forcedMoveTiles);
-            const token = this.enemyTokens.get(enemy.instanceId);
-            if (token) this.placeToken(token, enemy.position);
+            if (enemy.isAlive()) {
+              const token = this.enemyTokens.get(enemy.instanceId);
+              if (token) this.placeToken(token, enemy.position);
+            }
           }
         }
       }
@@ -3648,8 +3827,10 @@ export class BattleScene extends Phaser.Scene {
         for (const enemy of targets) {
           if (!enemy.isAlive()) continue;
           this.pushEnemyAway(tile, enemy, ability.forcedMoveTiles);
-          const token = this.enemyTokens.get(enemy.instanceId);
-          if (token) this.placeToken(token, enemy.position);
+          if (enemy.isAlive()) {
+            const token = this.enemyTokens.get(enemy.instanceId);
+            if (token) this.placeToken(token, enemy.position);
+          }
         }
       }
     }
@@ -4340,13 +4521,20 @@ export class BattleScene extends Phaser.Scene {
     this.flashTile(c.x, c.y, COLORS.hitFlash, 0.7, 260);
   }
 
-  /** A trap strikes an enemy that entered its tile: flash the tile and log it. */
-  private showTrapTrigger(trip: TrapTrigger): void {
+  /**
+   * A trap (or terrain hazard) strikes an enemy that entered its tile: flash
+   * the tile and log it. Phase 24 (D-115): `trapName` is the ACTUAL
+   * structure's name (previously hardcoded to "Spike Trap" regardless of
+   * which trap — or terrain hazard — actually fired, a real pre-existing
+   * bug this pass's new trap variety made worth fixing), resolved by the
+   * caller via `trapTriggerInfo` before the structure could be removed.
+   */
+  private showTrapTrigger(trip: TrapTrigger, trapName: string): void {
     const c = this.grid.tileToWorldCenter(trip.position);
     this.flashTile(c.x, c.y, COLORS.trapFlash, 0.7, 300);
     const verb = trip.result.defeated ? "defeats" : "hits";
     this.logCombat(
-      `Spike Trap ${verb} ${trip.enemy.def.name} for ${trip.result.damageDealt}`,
+      `${trapName} ${verb} ${trip.enemy.def.name} for ${trip.result.damageDealt}`,
     );
   }
 
@@ -4368,8 +4556,22 @@ export class BattleScene extends Phaser.Scene {
     if (token) this.flashTile(token.rect.x, token.rect.y, COLORS.hitFlash, 0.6, 300);
     const structureName = getStructureDefinition(evt.structureDefId).name;
     const verb = evt.destroyed ? "smashes apart" : "pounds";
-    this.logCombat(`${evt.enemy.def.name} ${verb} the ${structureName} for ${evt.damage}`);
+    // Phase 25 (D-116): an opportunistic (non-siege) wall bash reads as a
+    // stuck enemy taking a swing, not a dedicated siege enemy's specialty.
+    const lead = evt.opportunistic
+      ? `${evt.enemy.def.name}, unable to reach a hero,`
+      : evt.enemy.def.name;
+    this.logCombat(`${lead} ${verb} the ${structureName} for ${evt.damage}`);
     if (evt.destroyed) this.destroyStructureToken(evt.structureInstanceId);
+  }
+
+  /** Phase 25 (D-116): a trapSense enemy (Saboteur/Warren Stalker) disarms/destroys a placed trap instead of attacking a hero or advancing. */
+  private showTrapDisarm(evt: TrapDisarmEvent): void {
+    const token = this.structureTokens.get(evt.structureInstanceId);
+    if (token) this.flashTile(token.rect.x, token.rect.y, COLORS.hitFlash, 0.6, 300);
+    const structureName = getStructureDefinition(evt.structureDefId).name;
+    this.logCombat(`${evt.enemy.def.name} disarms the ${structureName}`);
+    this.destroyStructureToken(evt.structureInstanceId);
   }
 
   // ----- Building / shop (Phase 5) ---------------------------------------
@@ -4389,12 +4591,20 @@ export class BattleScene extends Phaser.Scene {
     this.setInteraction({ kind: "building", defId });
   }
 
-  /** Show/hide the shop buttons and highlight the selected, affordable items. */
+  /**
+   * Show/hide the shop buttons and highlight the selected, affordable items.
+   * Phase 25 (D-116): only the current PAGE (`ITEM_GRID_PAGE_SIZE` slots) is
+   * shown, the same pagination `showEquipUI` already used — see
+   * `refreshPageNav` for the shared nav control both grids drive.
+   */
   private showShopUI(show: boolean, selectedDefId?: string): void {
+    const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
     this.shopButtons.forEach((btn, i) => {
-      btn.setVisible(show);
-      this.shopLabels[i].setVisible(show);
-      if (show) {
+      const onThisPage = Math.floor(i / ITEM_GRID_PAGE_SIZE) === page;
+      const visible = show && onThisPage;
+      btn.setVisible(visible);
+      this.shopLabels[i].setVisible(visible);
+      if (visible) {
         const defId = SHOP_ORDER[i];
         const selected = defId === selectedDefId;
         const affordable = this.economy.canAfford(getStructureDefinition(defId).cost);
@@ -4422,10 +4632,9 @@ export class BattleScene extends Phaser.Scene {
     // and mouse selection already track), so opening the grid on a specific
     // item (or arrowing past a page boundary) lands on the right page for
     // free, with no separate page field to keep in sync.
-    const pageCount = Math.ceil(this.visibleGearCatalog().length / GEAR_GRID_PAGE_SIZE);
-    const page = Math.floor(this.gridFocusIndex / GEAR_GRID_PAGE_SIZE);
+    const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
     this.equipItemButtons.forEach((btn, i) => {
-      const onThisPage = Math.floor(i / GEAR_GRID_PAGE_SIZE) === page;
+      const onThisPage = Math.floor(i / ITEM_GRID_PAGE_SIZE) === page;
       const visible = gridVisible && onThisPage;
       btn.setVisible(visible);
       this.equipItemLabels[i].setVisible(visible);
@@ -4438,21 +4647,38 @@ export class BattleScene extends Phaser.Scene {
         this.applyGridFocusRing(btn, "equipping", i);
       }
     });
-    const showNav = gridVisible && pageCount > 1;
-    this.gearPagePrevButton.setVisible(showNav).setColor(page > 0 ? "#8ad0f0" : "#555560");
-    this.gearPageNextButton.setVisible(showNav).setColor(page < pageCount - 1 ? "#8ad0f0" : "#555560");
-    this.gearPageLabel.setVisible(showNav).setText(`Page ${page + 1}/${pageCount}`);
   }
 
-  /** Phase 17 (D-108): jump the Gear grid's page by moving `gridFocusIndex` to the start of the adjacent page. */
-  private turnGearPage(direction: 1 | -1): void {
-    if (this.ui.kind !== "equipping") return;
-    const pageCount = Math.ceil(this.visibleGearCatalog().length / GEAR_GRID_PAGE_SIZE);
-    const page = Math.floor(this.gridFocusIndex / GEAR_GRID_PAGE_SIZE);
+  /**
+   * Phase 17 (D-108)/Phase 25 (D-116): the page-nav control shared by
+   * whichever item grid is active (Shop or Gear — never both), refreshed
+   * after any change to `gridFocusIndex` or mode. Hidden entirely when
+   * neither grid is showing, or when the active grid's whole catalogue fits
+   * on one page.
+   */
+  private refreshPageNav(): void {
+    const kind = this.ui.kind;
+    const gridVisible =
+      kind === "building" || (kind === "equipping" && this.isAnyHeroNearShop());
+    const items = kind === "building" ? SHOP_ORDER : kind === "equipping" ? this.visibleGearCatalog() : [];
+    const pageCount = Math.max(1, Math.ceil(items.length / ITEM_GRID_PAGE_SIZE));
+    const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
+    const showNav = gridVisible && pageCount > 1;
+    this.pageNavPrevButton.setVisible(showNav).setColor(page > 0 ? "#8ad0f0" : "#555560");
+    this.pageNavNextButton.setVisible(showNav).setColor(page < pageCount - 1 ? "#8ad0f0" : "#555560");
+    this.pageNavLabel.setVisible(showNav).setText(`Page ${page + 1}/${pageCount}`);
+  }
+
+  /** Phase 17 (D-108)/Phase 25 (D-116): jump the active grid's (Shop or Gear) page by moving `gridFocusIndex` to the start of the adjacent page. */
+  private turnGridPage(direction: 1 | -1): void {
+    if (this.ui.kind !== "building" && this.ui.kind !== "equipping") return;
+    const items = this.currentGridItems();
+    const pageCount = Math.max(1, Math.ceil(items.length / ITEM_GRID_PAGE_SIZE));
+    const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
     const nextPage = Math.max(0, Math.min(pageCount - 1, page + direction));
     if (nextPage === page) return;
-    this.gridFocusIndex = nextPage * GEAR_GRID_PAGE_SIZE;
-    this.setHoveredItem(this.visibleGearCatalog()[this.gridFocusIndex] ?? null);
+    this.gridFocusIndex = nextPage * ITEM_GRID_PAGE_SIZE;
+    this.setHoveredItem(items[this.gridFocusIndex] ?? null);
     this.refreshGridFocusVisual();
   }
 

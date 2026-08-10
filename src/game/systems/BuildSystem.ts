@@ -206,10 +206,12 @@ export class BuildSystem {
 
   /**
    * The basic-attack bonus a hero gets for standing on the platform at `pos`
-   * (Phase 7: a Melee Platform or Ranged Perch), or all-zero when there is no
-   * platform here or its bonus doesn't apply to this hero's category. Melee
-   * vs ranged is passed in by the caller (BattleScene knows the hero; this
-   * system only knows the tile) so BuildSystem stays entity-agnostic.
+   * (Phase 7: a Melee Platform or Ranged Perch; Phase 24, D-115: a
+   * Watchtower's `"any"` audience), or all-zero when there is no platform
+   * here or its bonus doesn't apply to this hero's category. Melee vs ranged
+   * is passed in by the caller (BattleScene knows the hero; this system only
+   * knows the tile) so BuildSystem stays entity-agnostic. `"any"` matches
+   * every hero regardless of `heroIsRanged`.
    */
   platformBonusFor(
     pos: GridPosition,
@@ -220,12 +222,25 @@ export class BuildSystem {
     if (!structure || structure.kind !== "platform") return none;
     const bonus = getStructureDefinition(structure.defId).heroBonus;
     if (!bonus) return none;
-    const matches = (bonus.appliesTo === "ranged") === heroIsRanged;
+    const matches = bonus.appliesTo === "any" || (bonus.appliesTo === "ranged") === heroIsRanged;
     if (!matches) return none;
     return {
       attackDamage: bonus.attackDamage ?? 0,
       attackRangeTiles: bonus.attackRangeTiles ?? 0,
     };
+  }
+
+  /**
+   * Phase 24 (D-115): true if the trap on this tile is single-use (e.g. a
+   * Bear Trap) — spent and removed the first time it triggers, unlike every
+   * other persistent trap. False for a tile with no trap, or a trap that
+   * omits the flag. `BattleScene` is the actual caller that removes the
+   * structure once it has triggered; this is the pure lookup it consults.
+   */
+  trapIsSingleUseAt(pos: GridPosition): boolean {
+    const trap = this.trapAt(pos);
+    if (!trap) return false;
+    return getStructureDefinition(trap.defId).singleUse ?? false;
   }
 
   // ----- Placement validation -------------------------------------------
@@ -255,6 +270,9 @@ export class BuildSystem {
 
     if (!this.map.isWalkable(pos)) {
       return { ok: false, reason: "You can only build on open floor." };
+    }
+    if (!this.map.isBuildable(pos)) {
+      return { ok: false, reason: "This sand is too loose to build on." };
     }
     const role = this.map.roleAt(pos);
     if (role === "spawn" || role === "exit") {
@@ -383,6 +401,21 @@ export class BuildSystem {
     if (structure.hp > 0) return { destroyed: false, structure };
     const removed = this.remove(instanceId);
     return { destroyed: true, structure: removed };
+  }
+
+  /**
+   * Phase 25 (D-116), Saboteur: destroy a trap outright by instance id — a
+   * trap has no HP to whittle down (D-039: it always hits, in full, every
+   * time), so a trapSense enemy that finds one always removes it completely
+   * in a single phase rather than damaging it toward zero. Returns false (no
+   * effect) if the id is unknown or the structure isn't a trap. Never
+   * refunds gold, same as `damageStructure`/`remove` — this is the enemy
+   * destroying the player's investment, not the player reclaiming it.
+   */
+  disarmTrap(instanceId: string): boolean {
+    const structure = this.placed.find((s) => s.instanceId === instanceId);
+    if (!structure || structure.kind !== "trap") return false;
+    return this.remove(instanceId) !== null;
   }
 
   // ----- Phase 12.1 (D-101): full state snapshot/restore ------------------

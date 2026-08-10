@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseMapRows } from "../src/game/data/testMap";
+import { parseMapRows, encodeMapRows } from "../src/game/data/testMap";
 import { GameMap } from "../src/game/systems/GameMap";
 
 /**
@@ -65,6 +65,124 @@ describe("GameMap.roleAt reports shop and treasure", () => {
 
   it("returns null for a plain floor tile", () => {
     expect(map.roleAt({ x: 4, y: 1 })).toBeNull();
+  });
+});
+
+describe("Phase 23 (D-114): pit — parsing and GameMap", () => {
+  const pitRows = ["S.@..X", "..@..."];
+  const pitParsed = parseMapRows("pit-tiny", "Pit Tiny", pitRows);
+  const pitMap = new GameMap(pitParsed);
+
+  it("parses '@' as a pit tile", () => {
+    expect(pitParsed.tiles[0][2]).toBe("pit");
+    expect(pitParsed.tiles[1][2]).toBe("pit");
+  });
+
+  it("treats pit as NOT walkable, same as cliff/blocked", () => {
+    expect(pitMap.isWalkable({ x: 2, y: 0 })).toBe(false);
+    expect(pitMap.isBlocked({ x: 2, y: 0 })).toBe(false); // pit is not "blocked" itself, its own type
+    expect(pitMap.getTileType({ x: 2, y: 0 })).toBe("pit");
+  });
+
+  it("isPit is true only for a pit tile", () => {
+    expect(pitMap.isPit({ x: 2, y: 0 })).toBe(true);
+    expect(pitMap.isPit({ x: 0, y: 0 })).toBe(false);
+    expect(pitMap.isPit({ x: -1, y: 0 })).toBe(false);
+  });
+
+  it("terrainEffectAt returns null for a pit (its mechanic is push-resolution, not a standing effect)", () => {
+    expect(pitMap.terrainEffectAt({ x: 2, y: 0 })).toBeNull();
+  });
+
+  it("describe() reports the pit hazard", () => {
+    expect(pitMap.describe({ x: 2, y: 0 })).toMatch(/pit/);
+  });
+
+  it("encodeMapRows round-trips '@' for pit", () => {
+    expect(encodeMapRows(pitParsed)).toEqual(pitRows);
+  });
+});
+
+describe("Phase 23 (D-114): GameMap.setTiles mutates in place", () => {
+  it("overwrites the live tile grid without replacing the ParsedMap object", () => {
+    const parsed = parseMapRows("mutate-tiny", "Mutate Tiny", ["..", ".."]);
+    const map = new GameMap(parsed);
+    expect(map.getTileType({ x: 1, y: 0 })).toBe("floor");
+    map.setTiles([
+      ["floor", "water"],
+      ["floor", "floor"],
+    ]);
+    expect(map.getTileType({ x: 1, y: 0 })).toBe("water");
+    // the SAME ParsedMap object was mutated, not swapped for a new one —
+    // this is what lets every other system holding this same GameMap
+    // reference see the change (see GameMap.setTiles's doc comment).
+    expect(map.data).toBe(parsed);
+  });
+});
+
+describe("Phase 23 (D-114): GameMap.heroTerrainEffectAt", () => {
+  const rows = ["S.~FA.X", "......."];
+
+  it("returns null when the map does not opt in via hazardsAffectHeroes", () => {
+    const parsed = parseMapRows("hero-terrain-off", "Hero Terrain Off", rows);
+    const map = new GameMap(parsed);
+    expect(map.heroTerrainEffectAt({ x: 2, y: 0 })).toBeNull(); // water
+    expect(map.heroTerrainEffectAt({ x: 3, y: 0 })).toBeNull(); // fire
+  });
+
+  it("returns the same effect an enemy would suffer when opted in", () => {
+    const parsed = parseMapRows("hero-terrain-on", "Hero Terrain On", rows, {
+      hazardsAffectHeroes: true,
+    });
+    const map = new GameMap(parsed);
+    expect(map.heroTerrainEffectAt({ x: 2, y: 0 })).toEqual(map.terrainEffectAt({ x: 2, y: 0 })); // water
+    expect(map.heroTerrainEffectAt({ x: 3, y: 0 })).toEqual(map.terrainEffectAt({ x: 3, y: 0 })); // fire
+    expect(map.heroTerrainEffectAt({ x: 4, y: 0 })).toEqual(map.terrainEffectAt({ x: 4, y: 0 })); // acid
+  });
+
+  it("still returns null for a tile with no terrain effect even when opted in", () => {
+    const parsed = parseMapRows("hero-terrain-on2", "Hero Terrain On 2", rows, {
+      hazardsAffectHeroes: true,
+    });
+    const map = new GameMap(parsed);
+    expect(map.heroTerrainEffectAt({ x: 0, y: 0 })).toBeNull(); // spawn/floor
+  });
+});
+
+describe("Phase 24 (D-115): sand — parsing and GameMap", () => {
+  const sandRows = ["S.D..X", "..D..."];
+  const sandParsed = parseMapRows("sand-tiny", "Sand Tiny", sandRows);
+  const sandMap = new GameMap(sandParsed);
+
+  it("parses 'D' as a sand tile", () => {
+    expect(sandParsed.tiles[0][2]).toBe("sand");
+    expect(sandParsed.tiles[1][2]).toBe("sand");
+  });
+
+  it("treats sand as WALKABLE, unlike cliff/pit/blocked", () => {
+    expect(sandMap.isWalkable({ x: 2, y: 0 })).toBe(true);
+  });
+
+  it("treats sand as NOT buildable, unlike plain floor", () => {
+    expect(sandMap.isBuildable({ x: 2, y: 0 })).toBe(false);
+    expect(sandMap.isBuildable({ x: 1, y: 0 })).toBe(true); // plain floor
+  });
+
+  it("isBuildable is false off-map or on a hard blocker too, same as isWalkable", () => {
+    expect(sandMap.isBuildable({ x: -1, y: 0 })).toBe(false);
+  });
+
+  it("terrainEffectAt returns null for sand (a build restriction, not a hazard)", () => {
+    expect(sandMap.terrainEffectAt({ x: 2, y: 0 })).toBeNull();
+  });
+
+  it("describe() reports sand as walkable but not buildable", () => {
+    expect(sandMap.describe({ x: 2, y: 0 })).toMatch(/sand/);
+    expect(sandMap.describe({ x: 2, y: 0 })).toMatch(/not buildable/);
+  });
+
+  it("encodeMapRows round-trips 'D' for sand", () => {
+    expect(encodeMapRows(sandParsed)).toEqual(sandRows);
   });
 });
 

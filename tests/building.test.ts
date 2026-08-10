@@ -300,6 +300,213 @@ describe("BuildSystem.damageStructure (siege)", () => {
   });
 });
 
+// ----- Phase 24 (D-115): sand tiles, and the five new structures ----------
+
+describe("BuildSystem: sand tiles cannot be built on", () => {
+  it("refuses to build on sand while still allowing a walk across it", () => {
+    const { build, map } = buildOn(["S.D.X"]);
+    expect(map.isWalkable({ x: 2, y: 0 })).toBe(true);
+    const check = build.canPlace("barricade", { x: 2, y: 0 });
+    expect(check.ok).toBe(false);
+    expect(check.reason).toMatch(/sand/i);
+    expect(build.place("spike-trap", { x: 2, y: 0 }).ok).toBe(false);
+  });
+
+  it("still allows building on plain floor right next to sand", () => {
+    // A detour row so a wall at (1,0) doesn't ALSO fail the separate
+    // route-seal check — this isolates the sand rule under test.
+    const { build } = buildOn(["S.D.X", "....."]);
+    expect(build.canPlace("barricade", { x: 1, y: 0 }).ok).toBe(true);
+  });
+});
+
+describe("Palisade / Bulwark: the cheap and tough ends of the wall curve", () => {
+  it("Palisade is cheap and fragile", () => {
+    const { build } = buildOn(["S.X", "..."]);
+    const placed = build.place("palisade", { x: 1, y: 0 }).structure!;
+    expect(placed.hp).toBe(4);
+    expect(build.isWallAt({ x: 1, y: 0 })).toBe(true);
+  });
+
+  it("Bulwark is pricier and far tougher", () => {
+    const { build } = buildOn(["S.X", "..."]);
+    const placed = build.place("bulwark", { x: 1, y: 0 }).structure!;
+    expect(placed.hp).toBe(25);
+    expect(build.isWallAt({ x: 1, y: 0 })).toBe(true);
+  });
+
+  it("both still obey the route-seal rule like any other wall", () => {
+    const { build } = buildOn(["S.X"]);
+    expect(build.canPlace("palisade", { x: 1, y: 0 }).ok).toBe(false);
+    expect(build.canPlace("bulwark", { x: 1, y: 0 }).ok).toBe(false);
+  });
+});
+
+describe("Watchtower: an 'any' audience platform bonus", () => {
+  it("grants its bonus to a melee hero", () => {
+    const { build } = buildOn(["S..X"]);
+    build.place("watchtower", { x: 1, y: 0 });
+    expect(build.platformBonusFor({ x: 1, y: 0 }, false)).toEqual({ attackDamage: 1, attackRangeTiles: 0 });
+  });
+
+  it("grants the SAME bonus to a ranged hero too", () => {
+    const { build } = buildOn(["S..X"]);
+    build.place("watchtower", { x: 1, y: 0 });
+    expect(build.platformBonusFor({ x: 1, y: 0 }, true)).toEqual({ attackDamage: 1, attackRangeTiles: 0 });
+  });
+
+  it("grants nothing off the tile", () => {
+    const { build } = buildOn(["S..X"]);
+    build.place("watchtower", { x: 1, y: 0 });
+    expect(build.platformBonusFor({ x: 2, y: 0 }, false)).toEqual({ attackDamage: 0, attackRangeTiles: 0 });
+  });
+
+  it("never blocks movement (not a wall)", () => {
+    const { build } = buildOn(["S.X"]);
+    expect(build.place("watchtower", { x: 1, y: 0 }).ok).toBe(true);
+    expect(build.isWallAt({ x: 1, y: 0 })).toBe(false);
+  });
+});
+
+describe("Frost Trap: a buildable ground trap applying 'restrained'", () => {
+  it("damages and restrains a ground enemy that steps on it", () => {
+    const map = new GameMap(parseMapRows("lane", "lane", ["S.......X"]));
+    const pf = new PathfindingSystem(map);
+    const build = new BuildSystem(map, pf);
+    build.place("frost-trap", { x: 1, y: 0 });
+
+    const ws = new WaveSystem(map, pf, [laneWave("runner")], { startingIntegrity: 20, random: RandomService.fixed() });
+    ws.startWave(0);
+    const t1 = ws.tickEnemyPhase({
+      trapAt: (p) => build.trapProfileAt(p),
+      trapTargets: (p) => build.trapTargetsAt(p),
+      trapStatusAt: (p) => build.trapStatusAt(p),
+    });
+
+    expect(t1.trapTriggers).toHaveLength(1);
+    const runner = t1.spawned[0];
+    expect(runner.hasStatus("restrained")).toBe(true);
+  });
+});
+
+describe("Bear Trap: single-use", () => {
+  it("is flagged singleUse, unlike every other trap", () => {
+    const { build } = buildOn(["S.X"]);
+    build.place("bear-trap", { x: 1, y: 0 });
+    expect(build.trapIsSingleUseAt({ x: 1, y: 0 })).toBe(true);
+  });
+
+  it("deals heavy damage like any other trap through the enemy phase", () => {
+    const map = new GameMap(parseMapRows("lane", "lane", ["S....X"]));
+    const pf = new PathfindingSystem(map);
+    const build = new BuildSystem(map, pf);
+    build.place("bear-trap", { x: 2, y: 0 });
+
+    const ws = new WaveSystem(map, pf, [laneWave("grunt")], { startingIntegrity: 20, random: RandomService.fixed() });
+    ws.startWave(0);
+    const t1 = ws.tickEnemyPhase({ trapAt: (p) => build.trapProfileAt(p) });
+    expect(t1.trapTriggers).toHaveLength(1);
+    expect(t1.trapTriggers[0].result.defeated).toBe(true); // grunt has 6 HP, bear trap deals 6
+  });
+
+  it("reports false for a plain trap and for an empty tile", () => {
+    const { build } = buildOn(["S.X"]);
+    build.place("spike-trap", { x: 1, y: 0 });
+    expect(build.trapIsSingleUseAt({ x: 1, y: 0 })).toBe(false);
+    expect(build.trapIsSingleUseAt({ x: 0, y: 0 })).toBe(false);
+  });
+});
+
+// ----- Phase 25 (D-116): cheap/expensive brackets --------------------------
+
+describe("Wicket Gate / Portcullis: the cheap and tough ends of the gate curve", () => {
+  it("Wicket Gate is cheap, fragile, and still lets heroes through", () => {
+    const { build } = buildOn(["S.X", "..."]);
+    const placed = build.place("wicket-gate", { x: 1, y: 0 }).structure!;
+    expect(placed.hp).toBe(5);
+    expect(build.isWallAt({ x: 1, y: 0 })).toBe(true);
+    expect(build.blocksHeroAt({ x: 1, y: 0 })).toBe(false);
+  });
+
+  it("Portcullis is pricier, far tougher, and still lets heroes through", () => {
+    const { build } = buildOn(["S.X", "..."]);
+    const placed = build.place("portcullis", { x: 1, y: 0 }).structure!;
+    expect(placed.hp).toBe(16);
+    expect(build.blocksHeroAt({ x: 1, y: 0 })).toBe(false);
+  });
+
+  it("both still obey the route-seal rule like any other wall-kind structure", () => {
+    const { build } = buildOn(["S.X"]);
+    expect(build.canPlace("wicket-gate", { x: 1, y: 0 }).ok).toBe(false);
+    expect(build.canPlace("portcullis", { x: 1, y: 0 }).ok).toBe(false);
+  });
+});
+
+describe("Snare Wire / Mangler Trap: the cheap and heavy ends of the ground-trap curve", () => {
+  it("Snare Wire deals light damage to a ground enemy through the enemy phase", () => {
+    const map = new GameMap(parseMapRows("lane", "lane", ["S....X"]));
+    const pf = new PathfindingSystem(map);
+    const build = new BuildSystem(map, pf);
+    build.place("snare-wire", { x: 2, y: 0 });
+    const ws = new WaveSystem(map, pf, [laneWave("grunt")], { startingIntegrity: 20, random: RandomService.fixed() });
+    ws.startWave(0);
+    const t1 = ws.tickEnemyPhase({ trapAt: (p) => build.trapProfileAt(p), trapTargets: (p) => build.trapTargetsAt(p) });
+    expect(t1.trapTriggers).toHaveLength(1);
+    expect(t1.trapTriggers[0].result.damageDealt).toBe(1);
+  });
+
+  it("Mangler Trap deals heavy damage and is NOT single-use, unlike Bear Trap", () => {
+    const { build } = buildOn(["S.X"]);
+    build.place("mangler-trap", { x: 1, y: 0 });
+    expect(build.trapProfileAt({ x: 1, y: 0 })?.damage).toBe(5);
+    expect(build.trapIsSingleUseAt({ x: 1, y: 0 })).toBe(false);
+  });
+});
+
+describe("Net Snare / Storm Lance: the first bracketed flying-trap curve", () => {
+  it("Net Snare only damages flying enemies, at low damage", () => {
+    const { build } = buildOn(["S.X"]);
+    build.place("net-snare", { x: 1, y: 0 });
+    expect(build.trapTargetsAt({ x: 1, y: 0 })).toBe("flying");
+    expect(build.trapProfileAt({ x: 1, y: 0 })?.damage).toBe(2);
+  });
+
+  it("Storm Lance only damages flying enemies, at high damage", () => {
+    const { build } = buildOn(["S.X"]);
+    build.place("storm-lance", { x: 1, y: 0 });
+    expect(build.trapTargetsAt({ x: 1, y: 0 })).toBe("flying");
+    expect(build.trapProfileAt({ x: 1, y: 0 })?.damage).toBe(7);
+  });
+});
+
+describe("Sparring Post / War Dais / Low Perch / Sky Bastion: bracketed platform bonuses", () => {
+  it("Sparring Post grants a small melee-only bonus", () => {
+    const { build } = buildOn(["S.X"]);
+    build.place("sparring-post", { x: 1, y: 0 });
+    expect(build.platformBonusFor({ x: 1, y: 0 }, false)).toEqual({ attackDamage: 1, attackRangeTiles: 0 });
+    expect(build.platformBonusFor({ x: 1, y: 0 }, true)).toEqual({ attackDamage: 0, attackRangeTiles: 0 });
+  });
+
+  it("War Dais grants a large melee-only bonus", () => {
+    const { build } = buildOn(["S.X"]);
+    build.place("war-dais", { x: 1, y: 0 });
+    expect(build.platformBonusFor({ x: 1, y: 0 }, false)).toEqual({ attackDamage: 4, attackRangeTiles: 0 });
+  });
+
+  it("Low Perch grants ranged DAMAGE, not range, unlike Ranged Perch", () => {
+    const { build } = buildOn(["S.X"]);
+    build.place("low-perch", { x: 1, y: 0 });
+    expect(build.platformBonusFor({ x: 1, y: 0 }, true)).toEqual({ attackDamage: 1, attackRangeTiles: 0 });
+    expect(build.platformBonusFor({ x: 1, y: 0 }, false)).toEqual({ attackDamage: 0, attackRangeTiles: 0 });
+  });
+
+  it("Sky Bastion grants BOTH a ranged damage and a range bonus at once", () => {
+    const { build } = buildOn(["S.X"]);
+    build.place("sky-bastion", { x: 1, y: 0 });
+    expect(build.platformBonusFor({ x: 1, y: 0 }, true)).toEqual({ attackDamage: 1, attackRangeTiles: 1 });
+  });
+});
+
 describe("Walls reroute enemies (route manipulation)", () => {
   it("forces an enemy to detour around a placed wall", () => {
     //  S . . X   <- straight lane on row 0

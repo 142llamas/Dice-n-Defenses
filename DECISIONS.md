@@ -5151,6 +5151,389 @@ creation; hero death destroys it.
   which would violate `Hero.effectiveMaxHealth`'s own documented "equipment
   does not affect max HP" invariant).
 
+### D-114 — Phase 23: expanded maps and terrains — a "pit" hazard, hero-affecting terrain, mid-battle dynamic terrain, four new maps
+
+Kevin asked for "expanded maps and terrains," explicitly inviting design
+judgment ("I haven't had a lot of time to really think about this... use
+the principles of good map design and game design"), with one steer:
+engaging/dynamic but "easy to learn, hard to master," not overbearing.
+Before any code, a research pass mapped the current system (Phase 11.7/
+D-071's `TileType` union, the Phase 11.10/D-085 Map Builder, and the two
+existing "showcase" maps) and found the real gap: only 3 built-in maps
+exist, and Emberford/Saltmere are the SAME 16x9 skeleton with hazard tiles
+swapped — almost no actual geometric variety. Terrain has been enemy-only
+since D-081 (a deliberate boundary), and the Source of Truth's own §2.3
+lists "holes" as a carried-forward vision concept never built. Three
+genuine scope forks were surfaced and confirmed, all toward the fuller
+option:
+
+1. **Hero-affecting terrain**: extend hazards to heroes too (not just
+   enemies), but as a new PER-MAP opt-in flag (`hazardsAffectHeroes`)
+   rather than retrofitting the existing enemy-only rule everywhere — so
+   Emberford/Saltmere's already-shipped, already-unverified balance doesn't
+   silently change; only the four brand-new maps below turn it on.
+2. **Terrain depth**: build the long-planned "pit" hazard AND a real
+   mid-battle dynamic-terrain system (a rising tide, a collapsing bridge),
+   not just more static hazard types.
+3. **Map size**: stay within the Map Builder's existing 6-20 col / 6-9 row
+   ceiling — a real fixed-canvas/HUD constraint from D-085's own bounding-box
+   math, not a guess — so this pass is pure content/systems risk, not also
+   a rendering-architecture risk.
+
+**The "pit" tile** (`data/testMap.ts`'s `TileType`, char `@`): mechanically
+identical to `cliff` for ordinary movement (ground-impassable, a flying unit
+crosses free via `PathfindingSystem`'s existing `ignoreWalls`) — but with
+one deliberate exception, its whole reason to exist: a unit forced onto a
+pit tile by a push effect (a weapon mastery Push, or a `forcedMoveTiles`
+spell — Thunderwave, Gust of Wind, Reverse Gravity) falls in and is
+INSTANTLY defeated, resolved through the exact same `resolveDeaths`/
+`resolveDeathTriggers` funnel any other kill uses (gold, Splitter/Carrier,
+Explosive, etc. all still fire correctly). This turns an existing mechanic
+(Push mastery, forced-move spells) into a genuine environmental-kill tool
+near a chasm — "easy to learn" (it's just a hole you get shoved into),
+"hard to master" (positioning enemies against a pit edge is a real tactic).
+`GameMap.isWalkable`/`isPit` are the only query-layer changes; no new
+pathfinding concept — `isWalkable`'s existing "unwalkable unless..." shape
+already generalizes for free.
+
+**Hero-affecting terrain** (`GameMap.heroTerrainEffectAt`): reads the exact
+same `TerrainEffect` an enemy would suffer (`data/terrain.ts`, unchanged),
+gated on the new `ParsedMap.hazardsAffectHeroes` flag and applied once per
+player phase in `BattleScene.onPhaseChange`'s `"player"` case, same cadence
+as the existing Phase 21 hero status-damage tick it sits right next to.
+Zero new mechanic — this is entirely a "who gets asked" change, not a "what
+happens" change.
+
+**`DynamicTerrainSystem.ts`** (new, pure, tested) — mid-battle terrain
+changes, kept fully data-driven and generic (one system serves both a
+cyclical tide AND a one-way collapse, rather than two bespoke mechanics):
+a `DynamicTerrainEvent` names a wave number (`atWave`, matching the "Wave N
+/ M" banner players already read), the tiles it changes, and what they
+become; `warningStartWave` computes when a telegraphed warning should first
+appear (`warnWavesBefore`, defaulting to 1). `BattleScene.tickDynamicTerrain`
+fires due events and logs new warnings once per `betweenWave` transition —
+right after the wave number advances, which is also always a moment with
+zero enemies on the board (a wave only reaches `betweenWave` once fully
+cleared), so a collapsing tile can never strand a live enemy mid-tile.
+**A real correctness bug caught before it shipped**: the first draft
+reassigned `BattleScene.map` to a brand-new `GameMap` instance when an event
+fired — but `WaveSystem`/`PathfindingSystem`/`BuildSystem`/`MovementSystem`
+each hold their OWN reference to the original `GameMap`, captured once at
+battle start, so only `BattleScene`'s own view would have updated. Fixed
+with a new `GameMap.setTiles()` that mutates the SAME instance's tile grid
+in place — every system sees the change immediately, since none of them
+cache tile data of their own.
+
+**A second, unrelated real gap found and fixed while building this**:
+`BattleScene.buildBoard` rendered every tile as either
+`COLORS.tileBlocked` or `COLORS.tileFloor` — cliff/water/fire/acid have
+been mechanically distinct since Phase 11.7 but were VISUALLY IDENTICAL to
+plain floor on the actual battle board the entire time (only the Map
+Builder's own editing palette ever colored them). Fixed with a
+`BOARD_TERRAIN_COLORS` map covering all 7 tile types plus a small glyph on
+pit tiles; each tile's `Rectangle` reference is now kept in a `tileRects`
+map so a dynamic terrain event can recolor just the tiles it changes.
+
+**Four new maps** (`data/causewayMap.ts`/`drowningValeMap.ts`/
+`cinderfallRiftMap.ts`/`frostboundHollowMap.ts`), each demonstrating a
+different map-design principle rather than another reskin of the existing
+16x9 skeleton:
+- **Shattered Causeway**: a single 2-tile bridge across a chasm is the
+  ONLY ground crossing — the pit's showcase (shove an enemy off the
+  causeway for an environmental kill).
+- **The Drowning Vale**: a wide flood zone that turns from floor to water
+  at Wave 3 (telegraphed from Wave 1) and recedes at Wave 6 — the cyclical
+  dynamic-terrain showcase; water stays walkable, so the route is never
+  actually severed, just slower/riskier.
+- **Cinderfall Rift**: three lanes (north/direct/south) joined only at the
+  map's east/west ends; the direct middle bridge permanently collapses
+  into a pit at Wave 4 (telegraphed from Wave 2) — the one-way
+  dynamic-terrain showcase, forcing a real mid-battle reroute onto the
+  longer, fire-lined paths. Connectivity verified BOTH before and after the
+  collapse in `tests/newMapsPhase23.test.ts`, not just assumed.
+- **Frostbound Hollow**: a solid cliff ridge splits the map in two, with
+  ground crossings only at the very top/bottom rows — the static
+  flying-vs-ground verticality showcase (no new code needed; cliffs already
+  cross free for flying units).
+
+All four join `data/maps.ts`'s `MAPS` registry and `FreePlayScene`'s
+`MAP_OPTIONS` immediately (`unlockCampaignId: null`, the same staging every
+prior boss/enemy got before it had a campaign of its own) — avoiding dead
+scaffolding, per this project's standing rule. No campaign of their own
+this pass.
+
+- Tests: 900 → **937** (+37: `tests/dynamicTerrainSystem.test.ts` [11, new],
+  `tests/newMapsPhase23.test.ts` [16, new], a new Phase 23 section in
+  `tests/terrain.test.ts` [+10] covering pit parsing/`isWalkable`/`isPit`/
+  `describe`/round-trip, `GameMap.setTiles`, and `heroTerrainEffectAt`'s
+  opt-in gating). Typecheck, all tests, and the production build all pass
+  (109 modules, up from 104 — five new files: `systems/DynamicTerrainSystem.ts`
+  and the four map files). `npm run dev` serves HTTP 200.
+- **What's genuinely untested by the automated suite, and why**: the pit's
+  actual push-into-death behavior lives in `BattleScene.pushEnemyAway` — a
+  scene method, not a pure system, so (like every other weapon-mastery/
+  forced-move mechanic in this project) it has no automated coverage and
+  needs a human's real swings to confirm. Every PURE piece it depends on
+  (`GameMap.isPit`/`isWalkable`, the death-trigger funnel) IS tested. See
+  KI-071 for the full in-browser checklist.
+- **Not built this pass, and why**: no bigger board (the 9-row/20-col
+  ceiling stays, per the confirmed scope fork above); no per-map terrain
+  authoring UI for dynamic events (the Map Builder gained the "pit" tile in
+  its palette, but `dynamicTerrainEvents` stays built-in-map-only — a
+  reasonable, documented boundary, not a gap); no hero-vs-hero or
+  enemy-vs-hero push interaction with pits (only the existing hero-cast
+  push effects can trigger a fall, since no enemy attack currently pushes a
+  hero); Emberford/Saltmere were NOT retrofitted with `hazardsAffectHeroes`
+  or the pit tile — their exact original behavior is preserved.
+
+### D-115 — Phase 24: a "sand" build-restricted tile, five new structures/traps (Palisade, Bulwark, Watchtower, Frost Trap, Bear Trap)
+
+Kevin asked directly for a sand tile ("acts like normal terrain except that
+it cannot have buildings built on top of it," integrated into existing maps
+"as I see fit") plus more buildings and traps generally, explicitly inviting
+design judgment ("be creative and continue using good game design theory").
+No scope fork needed asking — both asks are additive to an existing, well
+understood system (`TileType`/`GameMap`, `StructureDefinition`), so this
+session went straight to design-then-build rather than surfacing a
+choice first.
+
+**The "sand" tile** (`data/testMap.ts`'s `TileType`, char `D`): mechanically
+identical to plain floor for every existing system — walkable, no terrain
+effect, routes exactly the same (`GameMap.isWalkable` is unchanged). The one
+difference is a NEW, separate query, `GameMap.isBuildable`, which
+`BuildSystem.canPlace` now checks in addition to `isWalkable`: true for
+every walkable tile except sand. This is deliberately its own method rather
+than folded into `isWalkable` — movement/pathfinding must never see a
+difference, only building should, and keeping them separate makes that
+boundary explicit and independently testable. `data/terrain.ts` gets no new
+entry — sand is a build restriction, not a hazard.
+
+**Integration into existing maps**: the three Phase 23 maps that don't yet
+have a campaign of their own (Shattered Causeway, Cinderfall Rift, The
+Drowning Vale) each gained a small, thematically-placed sand patch — canyon
+dunes past Causeway's chasm (denying a wall-plus-fire inescapable kill box
+on the far bank), ash drifts at Cinderfall Rift's connector mouths, and
+mudflats bordering The Drowning Vale's permanent water fringe. Frostbound
+Hollow was deliberately left alone (an icy verticality map has no sand to
+plausibly place). Emberford/Saltmere and the classic `TEST_MAP` were NOT
+touched, for the same reason Phase 23 didn't retrofit them: preserve
+already-shipped, already-unverified balance rather than silently changing
+it. Since sand is walkable exactly like floor, none of this could break any
+existing connectivity test — verified anyway with new assertions in
+`tests/newMapsPhase23.test.ts`.
+
+**Five new structures** (`data/structures.ts`), each reusing an existing
+field wherever possible, plus two small, deliberate extensions:
+- **Palisade** (wall, cost 3, `maxHp` 4) and **Bulwark** (wall, cost 14,
+  `maxHp` 25) bracket Barricade's existing cost/durability on both ends —
+  a real low/mid/high durability CHOICE on the wall curve for the first
+  time, not just one wall stat block.
+- **Watchtower** (platform, cost 11, +1 basic-attack damage) is the first
+  platform with an `"any"`-audience bonus — `PlatformAudience` gains
+  `"any"` alongside `"melee"`/`"ranged"`, and `BuildSystem.platformBonusFor`
+  now matches every hero when a bonus declares it. Fills the gap between
+  the two existing specialist platforms with a generalist one.
+- **Frost Trap** (trap, cost 9, ground-only) reuses `appliesStatus`
+  ("restrained", the same status Web Patch already applies) — a harder
+  lockdown than Tangle Root's softer slow, on a buildable trap for the
+  first time (previously "restrained" was spell-placed only).
+- **Bear Trap** (trap, cost 10, ground-only, 6 damage) introduces the one
+  genuinely new field: `singleUse?: boolean`. Every trap before this
+  persists and re-triggers indefinitely; Bear Trap is consumed and removed
+  the FIRST time it triggers — a real new point on the trap design curve
+  (one heavy burst vs. a smaller sustained tick), resolved by
+  `BuildSystem.trapIsSingleUseAt` (pure, tested) and actually removed by
+  `BattleScene` right after the trigger's flash renders. Known, documented
+  edge case: if two different enemies enter the SAME single-use trap tile
+  within the identical enemy phase (before `BattleScene` gets a chance to
+  remove it), both trigger — `WaveSystem` has no "already fired this phase"
+  concept for a trap, and adding one for this one edge case was judged not
+  worth the risk to the existing, heavily-tested trap-resolution loop. Rare
+  in practice (a placed trap sits on one tile; enemies usually queue through
+  a tile one at a time).
+
+**A real pre-existing bug found and fixed while wiring Bear Trap's name into
+the combat log**: `BattleScene.showTrapTrigger` had hardcoded the string
+"Spike Trap" for EVERY trap trigger since Phase 5 — Sky Snare, Tangle Root,
+Web Patch, and even the acid-terrain fallback all logged as "Spike Trap
+hits/defeats `<enemy>`" regardless of what actually fired. Adding a
+FIFTH trap type made this impossible to ignore. Fixed by resolving each
+trigger's real structure (or, for the acid-terrain fallback, its tile type
+capitalized) into a name BEFORE the delayed render call — necessary because
+a single-use trap's structure may already be gone by the time the callback
+runs.
+
+- `SHOP_ORDER` grows from 7 to 12 entries. Checked the shop grid's own
+  bounding-box math (`BattleScene`'s `buildItemGrid`/the `cy`/`rows`
+  computation near the Done button): the equip/Gear grid has been the
+  dominant, page-capped grid (4 rows, `GEAR_GRID_PAGE_SIZE / cols`) since
+  Phase 17's weapon/armor expansion, and 12 shop items at 4 columns is only
+  3 rows — so this needed NO layout change at all, not even a recheck of
+  the Done button's position.
+- Tests: 937 → **960** (+23: a new Phase 24 section in `tests/terrain.test.ts`
+  covering sand's parsing/`isWalkable`/`isBuildable`/`describe`/round-trip;
+  new sections in `tests/building.test.ts` covering sand's build refusal,
+  Palisade/Bulwark's durability, Watchtower's `"any"` audience match, Frost
+  Trap's restrain, and Bear Trap's `singleUse` flag plus its damage through
+  a real `WaveSystem` tick; three new assertions in
+  `tests/newMapsPhase23.test.ts` confirming each touched map's sand tiles
+  are present, walkable, unbuildable, and don't break connectivity).
+  Typecheck, all tests, and the production build all pass (109 modules,
+  unchanged — no new source files, only edits). `npm run dev` serves HTTP
+  200 (checked this session).
+- **What's genuinely untested by the automated suite, and why**: a
+  single-use trap's actual removal-after-trigger lives in
+  `BattleScene.runEnemyPhase`'s delayed-render closure, a scene method, not
+  a pure system — same standing limitation as every other scene-only
+  mechanic in this project (the pit's push-kill, D-114). The pure piece it
+  depends on (`BuildSystem.trapIsSingleUseAt`) IS tested. A human's real
+  swings are needed to confirm the trap actually disappears from the board
+  after firing, and that the combat log now names every trap correctly.
+- **Not built this pass, and why**: no defensive (Armor-Class-granting)
+  platform — considered, but wiring a tile-based AC bonus into
+  enemy-attacks-hero resolution would need either a new `Hero` field kept
+  in sync by the scene on every hero move, or a new `WaveSystem` context
+  callback (the same shape `wallHpAt`/`damageWall` already established) —
+  judged disproportionate to add alongside everything else in this batch;
+  a clean future addition if wanted. No anti-air trap tier to mirror
+  Frost/Bear Trap's ground-side spread (Sky Snare stays the only flyer
+  counter) — flagged as a reasonable next step, not attempted here to keep
+  this batch's size in line with the rest of the project's "small, testable
+  changes" pattern. Emberford/Saltmere/`TEST_MAP` were NOT retrofitted with
+  sand, matching Phase 23's own precedent for those three maps.
+
+### D-116 — Phase 25: cheap/expensive structure tiers, an opportunistic wall-bash any melee enemy can now take, and a trap-disarming Saboteur archetype
+
+Kevin asked for three things in one message, explicitly framed as a
+follow-up to the Phase 24 discussion about upgrade systems vs. cost tiers
+(Kevin picked cost tiers): (1) more cheap/expensive versions of traps and
+buildings/walls, (2) a real siege AI — every enemy able to choose to attack
+a structure "if it makes sense based on their particular personality" and
+"the opportunity (no other option)" and if doing so "would improve the
+enemies' odds," and (3) enemies/enemy skills that detect and disarm/destroy
+traps. All three are additive to existing, well-understood systems
+(`StructureDefinition`, `WaveSystem.tickEnemyPhase`'s existing siege branch,
+`EnemyDefinition`'s existing per-mechanic-field pattern), so this session
+went straight to design-then-build.
+
+**Ten new structures** (`data/structures.ts`), every one bracketing an
+EXISTING item's cost/effect on the cheap or expensive end — no new fields at
+all, pure content, the same pattern Palisade/Bulwark already established
+for Barricade:
+- **Wicket Gate** (cost 4, `maxHp` 5) / **Portcullis** (cost 12, `maxHp`
+  16) bracket Gate, giving the gate curve its own low/mid/high tier to
+  match the wall curve.
+- **Snare Wire** (cost 4, 1 damage, ground) / **Mangler Trap** (cost 13, 5
+  damage, ground, persistent) bracket the ground-trap-damage curve below
+  Tangle Root/Spike Trap/Frost Trap and above Bear Trap respectively.
+  Mangler Trap is deliberately NOT `singleUse` — a smaller sustained hit
+  forever is a genuinely different choice from Bear Trap's one-big-hit.
+- **Net Snare** (cost 4, 2 damage, flying) / **Storm Lance** (cost 13, 7
+  damage, flying) bracket a flying-trap curve that, before this phase, was
+  just Sky Snare alone — this also closes KNOWN_ISSUES' long-deferred "no
+  anti-air trap tier" item from Phase 24.
+- **Sparring Post** (cost 5, +1 melee damage) / **War Dais** (cost 14, +4
+  melee damage) bracket Melee Platform.
+- **Low Perch** (cost 5, +1 ranged DAMAGE) / **Sky Bastion** (cost 14, +1
+  ranged damage AND +1 range) bracket Ranged Perch. Low Perch deliberately
+  trades Ranged Perch's range bonus for a smaller damage bonus rather than
+  being a strictly weaker copy of it; Sky Bastion is the one structure in
+  the roster granting both bonus types on one tile.
+
+`SHOP_ORDER` grows from 12 to 22 entries.
+
+**Shop grid pagination** (`BattleScene.ts`): 22 shop items at 4 columns is 6
+rows, which the concrete layout math showed would push the Done button (and
+the bottom rows of a large page) past `GAME_HEIGHT` (1080px) — the shop grid
+had never needed to paginate before, unlike the Gear/weapon-armor catalogue,
+which already solved exactly this problem in Phase 17 (D-108). Rather than
+duplicate a second, parallel paging system, the existing one was
+GENERALIZED: `GEAR_GRID_PAGE_SIZE` is renamed `ITEM_GRID_PAGE_SIZE` and now
+paginates the shop grid too (`showShopUI` gained the same page-slicing
+`showEquipUI` already had); the three nav-button fields (`gearPagePrevButton`
+etc.) are renamed to `pageNav*` and shared between both grids (never shown
+at once); `turnGearPage` is generalized to `turnGridPage`, branching on
+`this.ui.kind` via the already-existing `currentGridItems()` helper instead
+of hardcoding "equipping." A new `refreshPageNav()` computes nav visibility
+purely from `this.ui.kind`, called once after `setInteraction`'s two
+(mutually exclusive) `showShopUI`/`showEquipUI` calls — calling it from
+inside either method directly would have the second call's `show: false`
+branch clobber whichever one just set the nav correctly. Net effect: BOTH
+grids are now permanently capped at 4 rows regardless of catalogue size, so
+neither the shop nor Gear can ever again grow past the canvas.
+
+**Opportunistic wall bash** (`WaveSystem.tickEnemyPhase`): a NEW branch,
+inserted right after the existing hero-attack branch (so a reachable hero
+still always wins) and before the "advance" fallback. Any enemy that is NOT
+a dedicated siege enemy (`siegeDamageMultiplier`), NOT a pure runner
+(`ignoresHeroes` — unchanged, it still never attacks anything), and has
+`attackRangeTiles <= 1` (a melee "personality" — a ranged/caster enemy
+usually doesn't need a wall gone at all, since its range already reaches
+past one) now scans its own attack range for a destructible wall via the
+SAME `WaveSystem.findWallInRange` a siege enemy already uses, the moment no
+hero is reachable this phase (the "opportunity" — genuinely no other useful
+action). It deals its plain `attackDamage` (plus any aura/enrage bonus
+already in play) — no siege multiplier, since this is an improvised bash,
+not a dedicated demolition attack, and it "improves its odds" the same way
+a siege enemy's attack does: clearing a real obstacle instead of standing
+around uselessly. `StructureAttackEvent` gains an optional `opportunistic`
+flag so `BattleScene.showStructureAttack`'s combat-log line can read
+correctly ("Grunt, unable to reach a hero, pounds the Barricade for 2" vs.
+the unchanged siege phrasing). Existing siege behavior is completely
+unaffected — a siege enemy's own branch runs strictly earlier and always
+`continue`s if it finds a wall, so it never falls through to this one.
+
+**Trap disarm — the Saboteur archetype** (`data/enemies.ts`,
+`WaveSystem.tickEnemyPhase`, `BuildSystem.disarmTrap`): a new
+`EnemyDefinition.trapSense?: { rangeTiles }` field. An enemy carrying it
+scans within `rangeTiles` (Manhattan, INCLUDING its own tile — unlike a
+siege enemy's wall scan, an enemy standing on an already-placed,
+not-yet-triggered trap should still notice it) for a placed trap via a new
+`WaveSystem.findTrapInRange` helper, and — checked at the SAME unconditional
+priority tier siege already established for walls, so it wins over even a
+reachable hero — disarms/destroys it outright instead of attacking or
+advancing. A trap has no HP to whittle down (D-039: it always hits, in
+full, every time), so `BuildSystem.disarmTrap` is a one-shot removal (wraps
+`remove()`), never a partial-damage step like `damageStructure`; it also
+never refunds gold, same as `damageStructure`/`remove()` generally — this is
+the enemy destroying the player's investment, not the player reclaiming it.
+Two new roster entries: **Saboteur** (fast, fragile, `rangeTiles: 1`) and
+**Warren Stalker** (tougher, `rangeTiles: 2`, senses a trap one tile further
+out). New context fields `trapInstanceAt`/`disarmTrap` on
+`EnemyPhaseContext`, paired exactly like `wallHpAt`/`damageWall`; a new
+`TrapDisarmEvent`/`EnemyPhaseReport.trapDisarms`; `BattleScene` wires the
+context and renders a new `showTrapDisarm` (flash + "X disarms the Y" +
+unconditional token removal, since disarming always fully removes a trap).
+
+- Tests: 960 → **983** (+23: `tests/building.test.ts` gained four new
+  `describe` blocks covering all ten new structures' cost/`maxHp`/damage/
+  `heroBonus` values and the gate curve's route-seal rule; a new
+  `tests/enemyMechanicsPhase25.test.ts` behaviourally exercises the
+  opportunistic wall bash — including that a ranged enemy, a pure runner,
+  and a dedicated siege enemy are all correctly excluded/unaffected — and
+  the trap-disarm mechanic, including its priority over a reachable hero and
+  each enemy's own `rangeTiles`; `tests/enemyRoster.test.ts` gained a Phase
+  25 roster section plus an updated minion-count assertion). Typecheck, all
+  tests, and the production build all pass (109 modules, unchanged — no new
+  source files besides the one new test file). `npm run dev` serves HTTP
+  200 (checked this session).
+- **What's genuinely untested by the automated suite, and why**: the shop
+  grid's page-nav buttons are Phaser UI, exercised only by the same
+  bounding-box arithmetic check every prior grid-layout change in this
+  project has relied on (Phaser scenes have no unit tests here) — verified
+  by hand this session: at `GAME_HEIGHT` 1080px, `TEST_MAP`'s 9 rows put the
+  grid's `cy` around 848px, and with BOTH grids now capped at 4 rows the
+  Done button lands at the same Y as before this phase, regardless of how
+  large either catalogue grows in the future.
+- **Not built this pass, and why**: no additional Watchtower-style `"any"`-
+  audience platform tier — Watchtower already fills that generalist niche
+  alone, and the ask was specifically for brackets around the two EXISTING
+  specialist platforms, not a third audience category. No damage-scaling
+  or HP for traps (still indestructible/un-upgradeable beyond the D-115
+  "different cost tiers" decision this phase continues) — Kevin explicitly
+  chose cost tiers over an upgrade system for this exact reason at the start
+  of this session.
+
 ## Carried forward from the Source of Truth (not re-decided here)
 
 - **LOCKED:** "Stronghold Integrity" is the shared loss resource; "Breach Damage"

@@ -67,6 +67,8 @@ const TERRAIN_COLORS: Record<TileType, number> = {
   water: 0x2a4a6a,
   fire: 0x6a2a2a,
   acid: 0x4a6a2a,
+  pit: 0x14141c,
+  sand: 0xc2a878,
 };
 
 const TERRAIN_PALETTE: { tileType: TileType; label: string }[] = [
@@ -76,6 +78,8 @@ const TERRAIN_PALETTE: { tileType: TileType; label: string }[] = [
   { tileType: "water", label: "Water" },
   { tileType: "fire", label: "Fire" },
   { tileType: "acid", label: "Acid" },
+  { tileType: "pit", label: "Pit" },
+  { tileType: "sand", label: "Sand" },
 ];
 
 const ROLE_COLORS: Record<MarkerRole, number> = {

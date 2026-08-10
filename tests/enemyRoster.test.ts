@@ -24,7 +24,7 @@ describe("Enemy roster (D-095)", () => {
     expect(byRole.miniboss).toBe(5); // 2 pre-20 + juggernaut + bloodrage-warlord + the-husk (Phase 21)
     expect(byRole.boss).toBe(6); // 3 pre-20 + warlord-korrath + the-devourer + sundered-king (Phase 21)
     expect(byRole.legendary).toBe(2); // ashen-sovereign + the-hollow-empress
-    expect(byRole.minion).toBe(48); // 27 pre-21 + 21 new Phase 21 minions
+    expect(byRole.minion).toBe(50); // 27 pre-21 + 21 new Phase 21 minions + 2 new Phase 25 minions
   });
 
   it("the four new enemies resolve by id", () => {
@@ -267,5 +267,40 @@ describe("Enemy roster (D-112, Phase 21)", () => {
     expect(overrides.attackBonus!).toBeGreaterThan(king.attackBonus);
     expect(overrides.aoeAttack).toBe(true);
     expect(king.aoeAttack).toBeUndefined(); // not active until the phase change
+  });
+});
+
+/**
+ * Phase 25 (D-116): the Saboteur archetype (`trapSense`) — the counter to
+ * the player's own trap investment. Pure roster/data sanity checks — the
+ * mechanic itself is exercised behaviourally in
+ * tests/enemyMechanicsPhase25.test.ts.
+ */
+describe("Enemy roster (D-116, Phase 25)", () => {
+  const NEW_IDS = ["saboteur", "warren-stalker"];
+
+  it("both new enemies resolve by id and have a placeholder colour", () => {
+    for (const id of NEW_IDS) {
+      expect(() => getEnemyDefinition(id)).not.toThrow();
+      expect(ENEMY_COLORS[id], `${id} should have a colour entry`).toBeDefined();
+    }
+  });
+
+  it("both carry trapSense, and only these two do", () => {
+    for (const [id, def] of Object.entries(ENEMY_DEFINITIONS)) {
+      if (NEW_IDS.includes(id)) {
+        expect(def.trapSense, `${id} should carry trapSense`).toBeDefined();
+        expect(def.trapSense!.rangeTiles).toBeGreaterThan(0);
+      } else {
+        expect(def.trapSense, `${id} should not carry trapSense`).toBeUndefined();
+      }
+    }
+  });
+
+  it("Warren Stalker senses a trap from further away than Saboteur", () => {
+    const saboteur = getEnemyDefinition("saboteur");
+    const stalker = getEnemyDefinition("warren-stalker");
+    expect(stalker.trapSense!.rangeTiles).toBeGreaterThan(saboteur.trapSense!.rangeTiles);
+    expect(stalker.maxHealth).toBeGreaterThan(saboteur.maxHealth);
   });
 });

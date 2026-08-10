@@ -67,6 +67,13 @@ export interface StructureAttackEvent {
   structureDefId: string;
   damage: number;
   destroyed: boolean;
+  /**
+   * Phase 25 (D-116): true when an ORDINARY (non-siege) melee enemy bashed
+   * this wall out of opportunity — no hero was reachable this phase — rather
+   * than a dedicated siege enemy's unconditional priority attack. Absent/
+   * false for every siege attack, unchanged from before this field existed.
+   */
+  opportunistic?: boolean;
 }
 
 /**
@@ -108,6 +115,13 @@ export interface HealAuraEvent {
   healer: Enemy;
   ally: Enemy;
   healed: number;
+}
+
+/** Phase 25 (D-116), Saboteur: a `trapSense` enemy disarming/destroying a placed trap this phase, instead of attacking a hero or advancing. */
+export interface TrapDisarmEvent {
+  enemy: Enemy;
+  structureInstanceId: string;
+  structureDefId: string;
 }
 
 /** Phase 21 (D-112), Splitter/Carrier: spawns produced by a defeated enemy's `onDeathSpawns`. */
@@ -213,6 +227,24 @@ export interface EnemyPhaseContext {
    * both must be present for any siege enemy to act on a wall this phase.
    */
   damageWall?: (instanceId: string, damage: number) => boolean;
+  /**
+   * Phase 25 (D-116), Saboteur: the placed trap structure at a tile, if any
+   * — feeds a `trapSense` enemy's own sense-range scan for something to
+   * disarm. Returns null for an empty tile or a tile with no PLACED trap
+   * (e.g. a terrain hazard, which has no structure to disarm). Absent
+   * context = no trapSense enemy ever finds a trap, so it just behaves like
+   * an ordinary minion — every pre-Phase-25 caller/test (which never passes
+   * this) is unaffected.
+   */
+  trapInstanceAt?: (pos: GridPosition) => { instanceId: string; defId: string } | null;
+  /**
+   * Phase 25 (D-116): disarm/destroy a trap structure by instance id;
+   * returns true if it was found and removed. Paired with `trapInstanceAt`
+   * — both must be present for any trapSense enemy to act on a trap this
+   * phase. A trap has no HP (D-039: it always hits, in full), so this is a
+   * one-shot removal, never a partial-damage step like `damageWall`.
+   */
+  disarmTrap?: (instanceId: string) => boolean;
 }
 
 export interface EnemyPhaseReport {
@@ -239,6 +271,8 @@ export interface EnemyPhaseReport {
   phaseChanges: PhaseChangeEvent[];
   /** Phase 21 (D-112): Healer heals landing on wounded allies this phase. */
   healEvents: HealAuraEvent[];
+  /** Phase 25 (D-116): Saboteur/Warren Stalker disarming a placed trap this phase. */
+  trapDisarms: TrapDisarmEvent[];
   integrityBefore: number;
   integrityAfter: number;
   waveComplete: boolean;
@@ -459,6 +493,7 @@ export class WaveSystem {
     const mimicReveals: MimicRevealEvent[] = [];
     const phaseChanges: PhaseChangeEvent[] = [];
     const healEvents: HealAuraEvent[] = [];
+    const trapDisarms: TrapDisarmEvent[] = [];
 
     const heroTargets = context.heroTargets ?? [];
 
@@ -592,6 +627,21 @@ export class WaveSystem {
         }
       }
 
+      // Phase 25 (D-116): a Saboteur/Warren Stalker (`trapSense`) detects a
+      // placed trap within its own sense range and disarms/destroys it
+      // BEFORE considering anything else this phase — the same unconditional
+      // priority a siege enemy gives a wall in reach. A trap has no HP (it
+      // always hits, in full, every time — D-039), so this always removes it
+      // outright in one phase rather than damaging it down.
+      if (enemy.def.trapSense && context.trapInstanceAt && context.disarmTrap) {
+        const trap = WaveSystem.findTrapInRange(enemy, enemy.def.trapSense.rangeTiles, context.trapInstanceAt);
+        if (trap && context.disarmTrap(trap.instanceId)) {
+          trapDisarms.push({ enemy, structureInstanceId: trap.instanceId, structureDefId: trap.defId });
+          enemy.tickStatuses();
+          continue;
+        }
+      }
+
       // Phase 21 (D-112), Teleporter: every `teleportsEveryNTurns` phases,
       // jump straight toward the nearest exit instead of attacking or
       // advancing normally this phase — ignoring walls/blockers and the
@@ -701,6 +751,44 @@ export class WaveSystem {
         continue; // an attacking enemy does not also move this phase
       }
 
+      // Phase 25 (D-116): "opportunity" — no hero was reachable this phase,
+      // so a MELEE enemy (attackRangeTiles <= 1) with a destructible wall
+      // within that same reach takes a swing at the wall instead of just
+      // walking past/around it. This is every ordinary minion's "personality"
+      // (a ranged/caster enemy usually doesn't need the wall gone at all —
+      // its range already reaches past it — so this is scoped to melee); a
+      // dedicated siege enemy (`siegeDamageMultiplier`) is excluded because
+      // it already has its OWN unconditional priority tier above, checked
+      // before hero-targeting even runs — and a pure runner (`ignoresHeroes`)
+      // never attacks anything, wall included, unchanged from its existing
+      // "never thrown a punch" personality. Deals plain `attackDamage` (plus
+      // any aura/enrage bonus already in play) — no siege multiplier, since
+      // this is an improvised bash, not a dedicated demolition attack.
+      if (
+        !target &&
+        !enemy.def.ignoresHeroes &&
+        !enemy.def.siegeDamageMultiplier &&
+        enemy.attackRangeTiles <= 1 &&
+        context.wallHpAt &&
+        context.damageWall
+      ) {
+        const wall = WaveSystem.findWallInRange(enemy, context.wallHpAt);
+        if (wall) {
+          const damage = enemy.attackDamage + aura.damageBonus + enrage.damageBonus;
+          const destroyed = context.damageWall(wall.instanceId, damage);
+          structureAttacks.push({
+            enemy,
+            structureInstanceId: wall.instanceId,
+            structureDefId: wall.defId,
+            damage,
+            destroyed,
+            opportunistic: true,
+          });
+          enemy.tickStatuses();
+          continue;
+        }
+      }
+
       // Otherwise advance toward the exit, routing around walls and blockers.
       // D-067: an enemy may walk THROUGH another living enemy's current tile
       // (so a queue doesn't force a long detour) but may never END its move
@@ -772,6 +860,7 @@ export class WaveSystem {
       mimicReveals,
       phaseChanges,
       healEvents,
+      trapDisarms,
       integrityBefore,
       integrityAfter: this.integrityValue,
       waveComplete: this.isCurrentWaveComplete(),
@@ -994,6 +1083,30 @@ export class WaveSystem {
         if (dist === 0 || dist > range) continue;
         const wall = wallHpAt({ x: enemy.position.x + dx, y: enemy.position.y + dy });
         if (wall) return wall;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Phase 25 (D-116): the nearest placed trap (by scan order, not distance)
+   * within `rangeTiles` of a `trapSense` enemy's own position, or null if
+   * none. Unlike `findWallInRange`, `dist === 0` is NOT excluded — an enemy
+   * can be standing on an already-placed, not-yet-triggered trap (it only
+   * triggers when STEPPED ONTO, not while holding position), and it should
+   * still notice/disarm that one.
+   */
+  private static findTrapInRange(
+    enemy: Enemy,
+    rangeTiles: number,
+    trapInstanceAt: (pos: GridPosition) => { instanceId: string; defId: string } | null,
+  ): { instanceId: string; defId: string } | null {
+    for (let dx = -rangeTiles; dx <= rangeTiles; dx++) {
+      for (let dy = -rangeTiles; dy <= rangeTiles; dy++) {
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist > rangeTiles) continue;
+        const trap = trapInstanceAt({ x: enemy.position.x + dx, y: enemy.position.y + dy });
+        if (trap) return trap;
       }
     }
     return null;
