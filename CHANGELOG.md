@@ -2,6 +2,149 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — A Full UI-Layout Audit and Fix (D-126)
+
+Kevin reported real, current "clashing text boxes" and "boxes going over the
+edge of the screen" and asked for a full audit and fix. A general-purpose
+agent read every scene file and computed bounding-box math against the real
+canvas size and every real map/data-table's actual length; every finding was
+independently re-verified before fixing. See **D-126** in `DECISIONS.md` for
+the complete method and everything investigated and deliberately left alone.
+
+Fixed:
+- **`CompendiumScene`'s category tabs (10) and class selector (12)** rendered
+  more than half off-canvas on both edges on the screen's own default tab —
+  a deterministic bug on every visit. `uiTheme.ts`'s shared `centeredRowX`
+  now takes an optional `maxWidth` (default `GAME_WIDTH - 80`) and shrinks
+  item width to fit instead of letting a row grow unbounded past the canvas;
+  every call site now uses the returned (possibly shrunk) `itemWidth`.
+- **`MapBuilderScene`'s terrain palette (8 swatches)** had the identical
+  off-canvas bug on its own default tab — now routed through the same fixed
+  `centeredRowX` helper.
+- **`FreePlayScene`'s map (7) and boss (13) picker labels** overlapped their
+  neighbors — added `wordWrap` and a width-scaled font size to the label
+  text (only the locked-hint text below it had wrap before this fix).
+- **`BattleScene.buildHud`'s status line/combat log**: `wrapWidth` was tied
+  to the grid's own pixel width instead of the canvas's, so a full 4-hero
+  party's status line on Frostbound Hollow (the narrowest AND tallest
+  built-in map) already wrapped past the reserved height in ordinary play
+  (a hero simply selected), bleeding into the combat log below it — despite
+  this exact spot's own prior comment claiming word-wrap already made that
+  "impossible." `wrapWidth` now tracks the canvas width, decoupled from the
+  grid; `statusBlockHeight` bumped 60→78 as extra headroom (re-verified
+  against the item-grid/Done-button bounding-box math so nothing now runs
+  off the bottom instead); `combatLogText` gained `wordWrap` for the first
+  time (previously none at all — a long log line could clip off the canvas
+  edges).
+- **`BrowseSharedMapsScene`'s shared-map list**: rendered one row per
+  fetched map, uncapped, growing into the fixed Wave Count/Minion/
+  Difficulty/Start sections below it past ~6 published maps. Now a fixed
+  local page size (5 at a time) with its own Prev/Next controls; "Next"
+  past the last locally-loaded page fetches another remote page first.
+
+Investigated and deliberately left alone (see D-126 for the reasoning):
+`renderAsiPrompt`'s theoretical 15+-choice overlap (unreachable below
+character level 19); two momentary cosmetic VFX edge cases off no built-in
+map; a suspected status-badge-stacking overflow that turned out not to exist.
+
+## [Unreleased] — 0.2.0-dev — Five More Deferred Slices: Reckless Attack, Preserve Life, Skill Checks + Hero Stealth, Spell-Mastery Picker (D-125)
+
+Kevin asked to tackle five items straight off D-124's own deferred list,
+after two spell-model clarifying questions answered from existing code (no
+class here models learn→known→prepared as distinct states). See **D-125**
+in `DECISIONS.md` for the full method, including a real interaction only
+caught by writing tests (a Warlock's own Pact Magic slots refilling on a
+Short Rest can mask Mystic Arcanum's separate Long-Rest-only cadence).
+
+Added:
+- **Barbarian's Reckless Attack** (level 2+): a real per-turn toggle, no
+  action cost — Advantage on this hero's own attacks, Advantage to every
+  attack against it until its next turn. New `Combatant.grantsAttackerAdvantage?`.
+- **Cleric's Channel Divinity: Preserve Life** (Life Domain, level 2+): a
+  real AoE heal, up to 5 living allies at once, capped at half each one's
+  own max HP, limited uses recharging on a Short or Long Rest.
+- **A real Stealth check** (`systems/SkillCheckSystem.ts`, new) plus real
+  per-class skill proficiency (`data/skills.ts`'s new
+  `SKILL_PROFICIENCIES_BY_CLASS`/`skillCheckModifier`).
+- **Hero-side stealth**: `Hero.isHidden`/`.hide()`/`.reveal()` (mirrors
+  `Enemy.isRevealed`). Ranger's Vanish (level 14+) and Rogue's Cunning
+  Action: Hide (level 2+) both attempt the Stealth check above; Ranger's
+  Hide in Plain Sight (level 10+, a flat +10) and Thief's Supreme Sneak
+  (Advantage) auto-apply while stationary; Monk's Empty Body (level 18+)
+  hides outright, spending its whole Ki pool and the action, no check.
+- **Wizard's Spell Mastery (level 18)/Signature Spells (level 20), Warlock's
+  Mystic Arcanum (levels 11/13/15/17)**: a new one-time spell-picker overlay
+  (`BattleScene.showSpellPickChoiceQueue`), slotted into the existing
+  level-up choice chain (subclass → ASI → spell-pick → rest).
+
+Fixed (found only by writing tests, not by the original plan):
+- A Warlock's Pact Magic slots (D-093) fully refill on a Short Rest — a
+  Mystic Arcanum test that didn't account for this would have misread that
+  refill as Mystic Arcanum itself recharging early. No code defect; the
+  test was corrected to isolate the two mechanics.
+
+## [Unreleased] — 0.2.0-dev — A Batch of Inert Class Features Wired Real (D-124)
+
+Kevin asked to work through the "class features still listed as inert"
+backlog. An audit found ~30-40 features whose stated blocking reason (no
+saving throws, no rest resource pools, no Advantage/Disadvantage, diceless
+combat) had gone stale in later phases without looping back. See **D-124**
+in `DECISIONS.md` for the full method, including two real correctness catches
+made only by writing tests before merging (a Paladin spellbook leak; Life
+Domain's Domain Spells turning out to change nothing observable).
+
+Added:
+- **Fighter's Indomitable** (levels 9/13/17): reroll a failed forced saving
+  throw, once per tier, Long-Rest-only. New `Combatant.rerollFailedSave?()`
+  and `SavingThrowSystem.applySaveOrDamage`'s `rerollFailedSave` option.
+- **Barbarian's Danger Sense** (level 2+): Advantage on every forced saving
+  throw. New `Combatant.savingThrowAdvantage?`.
+- **Rogue's and Monk's Evasion** (level 7): a failed forced save now deals
+  half damage instead of full. New `Combatant.evasionHalvesFailedSave?` and
+  `SavingThrowSystem.applySaveOrDamage`'s `halveOnFail` option.
+- **Rogue's Elusive** (level 18+): no enemy attack against this hero may
+  roll with Advantage while it isn't incapacitated. New
+  `Combatant.deniesAttackerAdvantage?()`.
+- **The Fiend's Expanded Spell List** (Warlock): ten spells (Burning Hands
+  through Hallow) now actually appear in the spellbook as the Warlock's own
+  spell slots reach the matching level. New `subclassGrantedSpellIdsUpToLevel`
+  (`data/subclasses.ts`) + `Hero.subclassGrantedSpellAbilityIds`.
+- **"frightened" status effect** (`data/statusEffects.ts`, new): reuses
+  "blinded"/"sapped"/"toppled"'s exact disadvantage shape.
+- **Path of the Berserker's Intimidating Presence** (level 10+): a landed
+  basic-attack hit also frightens the target on a failed save.
+- **Path of the Berserker's Retaliation** (level 14+): a hero struck by an
+  adjacent enemy immediately strikes back, spending its reaction — this
+  game's first reaction to swing back rather than just reduce damage.
+- **College of Lore's Cutting Words** (level 3+): a Bard spends its own
+  reaction plus a Bardic Inspiration use to weaken a landed blow against any
+  ally. New `Hero.bardicInspirationUsesAvailable` getter.
+
+Fixed (found only by writing tests, not by the original plan):
+- **A real bug**: an early version of the subclass-spell-list gate checked
+  `classDef.spellcasting`, which Paladin also carries (for Divine Smite's
+  slot pool) despite having no spellbook at all — this let Oath of
+  Devotion's Oath Spells leak into a Paladin's known-spell list. Fixed by
+  gating on `knownSpellIdsForClass(...).length > 0` instead.
+- **A design correction**: Life Domain's Domain Spells were initially marked
+  `mechanicallyActive: true`, but every one of its eight nameable spells
+  (bar Revivify/Raise Dead) turned out to already be part of the base Cleric
+  spell list — the feature is real and wired but produces zero observable
+  difference. Reverted to `mechanicallyActive: false` with an honest reason.
+
+Deliberately deferred (see D-124 for the full list and why): Wizard's Spell
+Mastery/Signature Spells and Warlock's Mystic Arcanum (need a new spell
+picker UI); the Cleric/Paladin Channel Divinity family (Preserve Life needs
+a real AoE-ally-heal mode); a hero-side stealth mirror; Barbarian's Reckless
+Attack (needs a new toggle UI); skill proficiency + checks (no skill-check
+moment exists anywhere in this game to spend it on).
+
+Tests: **1088**, up from 1039 (49 new). Typecheck, all tests, and the
+production build all pass (114 modules, unchanged). Every BattleScene-only
+hookup (Intimidating Presence/Retaliation/Cutting Words) is not
+unit-tested, the same standing Phaser limitation every other in-battle
+auto-apply mechanic in this project already has.
+
 ## [Unreleased] — 0.2.0-dev — Fantasy/Parchment UI Theme: Main Menu, Compendium, Bestiary (D-123)
 
 Kevin asked to "spruce up" the game's visuals — starting with the Main Menu

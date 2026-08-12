@@ -265,6 +265,13 @@ export class FreePlayScene extends Phaser.Scene {
     const h = 56;
     const totalWidth = options.length * w + (options.length - 1) * gap;
     const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    // Playtest fix: the label had no wordWrap (only the locked hint below it
+    // did), so a real map/boss name ("Cinderfall Rift (volcanic, collapsing
+    // bridge)", "The Hollow Empress") rendered at a fixed 16px overflowed a
+    // narrow computed slot and visibly overlapped the neighboring buttons —
+    // wordWrap plus a width-scaled font size keeps every name inside its own
+    // button regardless of how many options a row now has.
+    const labelFontSize = w >= 300 ? 16 : w >= 180 ? 14 : w >= 110 ? 12 : 10;
 
     return options.map((option, i) => {
       const x = startX + i * (w + gap);
@@ -273,9 +280,11 @@ export class FreePlayScene extends Phaser.Scene {
       const label = this.add
         .text(x, y, option.name, {
           fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "16px",
+          fontSize: `${labelFontSize}px`,
           color: "#e8e8f0",
           fontStyle: "bold",
+          align: "center",
+          wordWrap: { width: w - 8 },
         })
         .setOrigin(0.5);
       let hint: Phaser.GameObjects.Text | undefined;

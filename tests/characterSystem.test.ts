@@ -108,8 +108,17 @@ describe("the Fighter class table", () => {
   });
 
   it("marks features this game still can't act on yet as mechanicallyActive: false", () => {
+    const archetypeFeature = FIGHTER.features.find((f) => f.level === 10 && f.name === "Martial Archetype Feature")!;
+    expect(archetypeFeature.mechanicallyActive).toBe(false);
+  });
+
+  it("marks Indomitable (all three use tiers) as mechanically active (D-124)", () => {
     const indomitable = FIGHTER.features.find((f) => f.name === "Indomitable")!;
-    expect(indomitable.mechanicallyActive).toBe(false);
+    const indomitable2 = FIGHTER.features.find((f) => f.name === "Indomitable (2 uses)")!;
+    const indomitable3 = FIGHTER.features.find((f) => f.name === "Indomitable (3 uses)")!;
+    expect(indomitable.mechanicallyActive).toBe(true);
+    expect(indomitable2.mechanicallyActive).toBe(true);
+    expect(indomitable3.mechanicallyActive).toBe(true);
   });
 
   it("marks Extra Attack as mechanically active — it's just a derived number today", () => {
@@ -128,7 +137,9 @@ describe("the Fighter class table", () => {
     const active20 = activeFeaturesUpToLevel(FIGHTER, 20);
     // Phase 13.6 (D-091): every "Ability Score Improvement" entry is now
     // mechanically active too (Fighter gets two bonus ones, at 6 and 14, on
-    // top of the standard 4/8/12/16/19 every class shares).
+    // top of the standard 4/8/12/16/19 every class shares). D-124: all three
+    // Indomitable tiers (9/13/17) are now active too — Action Surge's own
+    // "2 uses" tier (also 17) stays inert, a separate, smaller, still-deferred item.
     expect(active20.map((f) => f.name)).toEqual([
       "Second Wind",
       "Action Surge",
@@ -136,10 +147,13 @@ describe("the Fighter class table", () => {
       "Extra Attack",
       "Ability Score Improvement",
       "Ability Score Improvement",
+      "Indomitable",
       "Extra Attack (2)",
       "Ability Score Improvement",
+      "Indomitable (2 uses)",
       "Ability Score Improvement",
       "Ability Score Improvement",
+      "Indomitable (3 uses)",
       "Ability Score Improvement",
       "Extra Attack (3)",
     ]);
@@ -163,13 +177,19 @@ describe("the Wizard class table (Phase 11.2, D-074)", () => {
     expect(spellcasting.mechanicallyActive).toBe(true);
   });
 
-  it("marks the subclass/Spell Mastery/Signature Spells features as inert for now, but Ability Score Improvement as active (Phase 13.6, D-091)", () => {
+  it("marks the subclass placeholder features as inert for now, but Ability Score Improvement/Spell Mastery/Signature Spells as active (Phase 13.6 D-091, Phase 5 D-125)", () => {
     const others = WIZARD.features.filter(
-      (f) => f.name !== "Spellcasting" && f.name !== "Ability Score Improvement",
+      (f) =>
+        f.name !== "Spellcasting" &&
+        f.name !== "Ability Score Improvement" &&
+        f.name !== "Spell Mastery" &&
+        f.name !== "Signature Spells",
     );
     expect(others.every((f) => f.mechanicallyActive === false)).toBe(true);
-    const asi = WIZARD.features.filter((f) => f.name === "Ability Score Improvement");
-    expect(asi.every((f) => f.mechanicallyActive === true)).toBe(true);
+    const active = WIZARD.features.filter(
+      (f) => f.name === "Ability Score Improvement" || f.name === "Spell Mastery" || f.name === "Signature Spells",
+    );
+    expect(active.every((f) => f.mechanicallyActive === true)).toBe(true);
   });
 });
 
@@ -192,15 +212,18 @@ describe("the Rogue class table (Phase 11.3, D-075)", () => {
   it("marks Sneak Attack, Cunning Action, and Uncanny Dodge as mechanically active (Phase 13.2, D-087 wired the latter two)", () => {
     const active = activeFeaturesUpToLevel(ROGUE, 20);
     // Phase 13.6 (D-091): every "Ability Score Improvement" entry (4/8/10/12/16/19) is now active too.
+    // D-124: Evasion (7) and Elusive (18) are now active too.
     expect(active.map((f) => f.name)).toEqual([
       "Sneak Attack",
       "Cunning Action",
       "Ability Score Improvement",
       "Uncanny Dodge",
+      "Evasion",
       "Ability Score Improvement",
       "Ability Score Improvement",
       "Ability Score Improvement",
       "Ability Score Improvement",
+      "Elusive",
       "Ability Score Improvement",
     ]);
   });

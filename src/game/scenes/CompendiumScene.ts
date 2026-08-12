@@ -232,13 +232,13 @@ export class CompendiumScene extends Phaser.Scene {
     const y = 108;
     const w = 138;
     const gap = 6;
-    const xs = centeredRowX(CATEGORIES.length, w, gap, GAME_WIDTH / 2);
+    const { xs, itemWidth } = centeredRowX(CATEGORIES.length, w, gap, GAME_WIDTH / 2);
     CATEGORIES.forEach((cat, i) => {
       const handle = createOrnateButton(
         this,
         xs[i],
         y,
-        w,
+        itemWidth,
         34,
         cat.label,
         () => {
@@ -367,7 +367,7 @@ export class CompendiumScene extends Phaser.Scene {
         this.activeDialogue = undefined;
       });
     };
-    const xs = centeredRowX(2, 280, 20, GAME_WIDTH / 2);
+    const { xs } = centeredRowX(2, 280, 20, GAME_WIDTH / 2);
     this.subButtons.push(
       createOrnateButton(this, xs[0], 480, 280, 46, "Show Sample (skippable)", () => showSample(DIALOGUE_PREVIEW_LINES), {
         variant: "secondary",
@@ -401,13 +401,13 @@ export class CompendiumScene extends Phaser.Scene {
     const y = 150;
     const w = 138;
     const gap = 8;
-    const xs = centeredRowX(CLASS_DEFINITIONS.length, w, gap, GAME_WIDTH / 2);
+    const { xs, itemWidth } = centeredRowX(CLASS_DEFINITIONS.length, w, gap, GAME_WIDTH / 2);
     CLASS_DEFINITIONS.forEach((cls, i) => {
       const handle = createOrnateButton(
         this,
         xs[i],
         y,
-        w,
+        itemWidth,
         32,
         cls.name,
         () => {
@@ -450,13 +450,13 @@ export class CompendiumScene extends Phaser.Scene {
     const y = 150;
     const w = 70;
     const gap = 6;
-    const xs = centeredRowX(SPELL_LEVEL_LABELS.length, w, gap, GAME_WIDTH / 2);
+    const { xs, itemWidth } = centeredRowX(SPELL_LEVEL_LABELS.length, w, gap, GAME_WIDTH / 2);
     SPELL_LEVEL_LABELS.forEach((label, level) => {
       const handle = createOrnateButton(
         this,
         xs[level],
         y,
-        w,
+        itemWidth,
         32,
         label,
         () => {

@@ -59,6 +59,21 @@
  * heroes have no AI "attack an ally instead" concept to redirect into, so it
  * stays enemy-only, unconsumed on a hero (documented, not a bug).
  *
+ * D-124 adds one more, reusing the exact `attackRollDisadvantage` shape
+ * "blinded"/"sapped"/"toppled" already established rather than inventing a
+ * new flag — the mechanical stand-in for the SRD's real "Frightened"
+ * condition (whose other half, "can't willingly move closer to the source,"
+ * this game has no per-source tracking to model):
+ *   - "frightened": the same "its own attacks roll with disadvantage" shape,
+ *                   inflicted BY a hero ON an enemy (Barbarian's Path of the
+ *                   Berserker: Intimidating Presence, auto-applied on a
+ *                   landed basic-attack hit — see `BattleScene
+ *                   .applyIntimidatingPresence`, the same "rider on an
+ *                   existing landed hit" precedent Grappler's restrain
+ *                   (D-109) already established). Nothing in this game
+ *                   inflicts it ON a hero yet — a real future companion
+ *                   piece once an enemy archetype wants to.
+ *
  * All content here is ORIGINAL to this project — names and values are invented,
  * not copied or adapted from any published source. See CONTENT_SOURCES. The
  * WEAPON MASTERY NAMES that apply "sapped"/"toppled" (Sap/Topple) are real SRD
@@ -80,7 +95,8 @@ export type StatusEffectId =
   | "charmed"
   | "sapped"
   | "toppled"
-  | "silenced";
+  | "silenced"
+  | "frightened";
 
 export interface StatusEffectDefinition {
   id: StatusEffectId;
@@ -169,6 +185,12 @@ export const STATUS_EFFECTS: Record<StatusEffectId, StatusEffectDefinition> = {
     description: "Can't cast a spell or use its class ability while this lingers.",
     preventsCasting: true,
   },
+  frightened: {
+    id: "frightened",
+    name: "Frightened",
+    description: "Its own attacks this phase roll with disadvantage (the Barbarian's Intimidating Presence).",
+    attackRollDisadvantage: true,
+  },
 };
 
 /** A single active effect instance on an enemy: which one, and how long. */
@@ -201,4 +223,5 @@ export const STATUS_EFFECT_ORDER: readonly StatusEffectId[] = [
   "sapped",
   "toppled",
   "silenced",
+  "frightened",
 ];

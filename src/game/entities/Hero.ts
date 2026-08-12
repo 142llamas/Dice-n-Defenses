@@ -1,6 +1,7 @@
 import type { GridPosition } from "../systems/GridSystem";
 import type { HeroDefinition, HeroControlMode } from "../data/heroes";
 import type { Combatant } from "../systems/CombatSystem";
+import type { AdvantageMode } from "../systems/RandomService";
 import { modifierFor, type AbilityScoreId, type AbilityScores } from "../data/abilityScores";
 import { GEAR_SLOT_IDS, getEquipmentDefinition, type GearSlotId, type EquipmentDefinition } from "../data/equipment";
 import { weaponAttackDamage, weaponRangeTiles, weaponAbilityModifier, averageDiceDamage } from "../systems/WeaponSystem";
@@ -13,6 +14,7 @@ import {
 } from "../systems/CharacterSystem";
 import { spellSlotsForClassAtLevel } from "../systems/SpellcastingSystem";
 import { getClassDefinition, type CharacterClassDefinition } from "../data/classes";
+import { subclassGrantedSpellIdsUpToLevel } from "../data/subclasses";
 import { getFeat, hitPointBonusFromFeat, type FeatDefinition } from "../data/feats";
 import { getAbility } from "../data/abilities";
 import {
@@ -27,6 +29,7 @@ import {
 import { getSpell } from "../data/spells";
 import { getBuffEffectDefinition, type ActiveBuff, type BuffEffectId } from "../data/buffEffects";
 import { getStatusEffectDefinition, type ActiveStatus, type StatusEffectId } from "../data/statusEffects";
+import { skillCheckModifier } from "../data/skills";
 
 /**
  * Phase 13.2 (D-087): Second Wind's heal, flat and untuned (like every other
@@ -133,6 +136,55 @@ const SHADOWBLADE_FIRST_STRIKE_BONUS = 5;
  */
 const BOON_OF_FATE_ATTACK_BONUS = 3;
 
+/**
+ * D-124: wiring a batch of features whose blocking system (saving throws,
+ * advantage/disadvantage, rest resource pools) has existed since Phase
+ * 13.5/13.10/D-086 but was never looped back to unlock them. Flat, untuned
+ * level thresholds/constants, same treatment as every other balance number
+ * on this file.
+ */
+const FIGHTER_INDOMITABLE_LEVEL = 9;
+const FIGHTER_INDOMITABLE_2_USES_LEVEL = 13;
+const FIGHTER_INDOMITABLE_3_USES_LEVEL = 17;
+const BARBARIAN_DANGER_SENSE_LEVEL = 2;
+const ROGUE_EVASION_LEVEL = 7;
+const MONK_EVASION_LEVEL = 7;
+const ROGUE_ELUSIVE_LEVEL = 18;
+const BERSERKER_RETALIATION_LEVEL = 14;
+const BERSERKER_INTIMIDATING_PRESENCE_LEVEL = 10;
+const COLLEGE_OF_LORE_CUTTING_WORDS_LEVEL = 3;
+
+/**
+ * D-125: another batch of stale-blocking-reason features. Flat, untuned
+ * level thresholds/constants, same treatment as the D-124 block above.
+ */
+const BARBARIAN_RECKLESS_ATTACK_LEVEL = 2;
+const CLERIC_PRESERVE_LIFE_LEVEL = 2;
+const CLERIC_CHANNEL_DIVINITY_2_USES_LEVEL = 6;
+const CLERIC_CHANNEL_DIVINITY_3_USES_LEVEL = 18;
+/** Matches Cure Wounds' own flat approximation of the SRD's "2d8" (data/abilities.ts's `healAmount: 9` for that same spell) — Preserve Life's real SRD text is "2d8 + your Cleric level". */
+const PRESERVE_LIFE_BASE_HEAL = 9;
+const PRESERVE_LIFE_MAX_TARGETS = 5;
+const RANGER_HIDE_IN_PLAIN_SIGHT_LEVEL = 10;
+const RANGER_VANISH_LEVEL = 14;
+const MONK_EMPTY_BODY_LEVEL = 18;
+/**
+ * The SRD's real cost is 4 Ki, but this game's Ki pool is a flat
+ * `KI_POINTS_PER_REST` (3) rather than the SRD's level-scaled pool (equal
+ * to Monk level, so 18 at the level Empty Body unlocks) — 4 would be
+ * unreachable forever. Costs the hero's WHOLE pool instead: still a real,
+ * meaningful once-per-rest cost, just sized to what this game's simplified
+ * resource actually holds.
+ */
+const EMPTY_BODY_KI_COST = KI_POINTS_PER_REST;
+const THIEF_SUPREME_SNEAK_LEVEL = 9;
+/** Untuned, no passive-Perception equivalent exists for an enemy (no ability scores) — see `Hero.stealthCheckModifier`'s own comment. */
+const HIDE_IN_PLAIN_SIGHT_BONUS = 10;
+const WIZARD_SPELL_MASTERY_LEVEL = 18;
+const WIZARD_SIGNATURE_SPELLS_LEVEL = 20;
+/** Warlock's Mystic Arcanum: spell-level tier -> the hero level it unlocks at. */
+const WARLOCK_MYSTIC_ARCANUM_LEVELS: Record<number, number> = { 6: 11, 7: 13, 8: 15, 9: 17 };
+
 /** Magic Initiate's three SRD-legal spell lists — see `Hero.grantFeat`. */
 export type MagicInitiateListId = "cleric" | "druid" | "wizard";
 const MAGIC_INITIATE_CANTRIP_IDS: Record<MagicInitiateListId, string[]> = {
@@ -227,6 +279,24 @@ export interface HeroSnapshot {
   offHandAttackUsedThisTurn: boolean;
   /** Phase 21 (D-112): every active status effect an ENEMY has inflicted on this hero, mirroring `Enemy.activeStatuses`. */
   activeStatuses: ActiveStatus[];
+  /** D-124: Fighter's Indomitable — rerolls of a failed forced save remaining this Long Rest. */
+  indomitableUsesRemaining: number;
+  /** D-125: Barbarian's Reckless Attack — active for the rest of this turn. */
+  recklessAttackActive: boolean;
+  /** D-125: Cleric's Channel Divinity uses remaining this rest. */
+  channelDivinityUsesRemaining: number;
+  /** D-125: true while this hero is hidden from enemy targeting. */
+  hidden: boolean;
+  /** D-125: Wizard's Spell Mastery pick. */
+  spellMasterySpellId: string | null;
+  /** D-125: Wizard's Signature Spells picks. */
+  signatureSpellIds: string[];
+  /** D-125: Signature Spells' free-cast availability this rest, keyed by spell id. */
+  signatureSpellUsesRemaining: Record<string, boolean>;
+  /** D-125: Warlock's Mystic Arcanum picks, keyed by spell-level tier. */
+  mysticArcanumSpellIds: Partial<Record<number, string>>;
+  /** D-125: Mystic Arcanum's per-tier once-per-Long-Rest use flags. */
+  mysticArcanumUsedThisRest: Partial<Record<number, boolean>>;
 }
 
 /**
@@ -445,6 +515,22 @@ export class Hero implements Combatant {
   private offHandAttackUsedThisTurn = false;
   /** Phase 18 (D-109): Boon of Combat Prowess's once-per-turn miss-to-hit use — see `canUseCombatProwess`. */
   private combatProwessUsedThisTurn = false;
+  /** D-125: Barbarian's Reckless Attack — see `canUseRecklessAttack`. */
+  private recklessAttackActive = false;
+  /** D-125: Cleric's Channel Divinity uses remaining this rest — see `channelDivinityMaxUses`/`usePreserveLife`. */
+  private channelDivinityUsesRemaining = 0;
+  /** D-125: true while this hero is hidden from enemy targeting — see `isHidden`/`hide`/`reveal`. */
+  private hidden = false;
+  /** D-125: Wizard's Spell Mastery pick — null until chosen at level 18. See `needsSpellMasteryPick`/`chooseSpellMasterySpell`. */
+  private spellMasterySpellId: string | null = null;
+  /** D-125: Wizard's Signature Spells picks (exactly 2 once chosen at level 20). See `needsSignatureSpellsPick`/`chooseSignatureSpells`. */
+  private signatureSpellIds: string[] = [];
+  /** D-125: which Signature Spells still have an unspent free cast this rest, keyed by spell id. */
+  private signatureSpellUsesRemaining: Record<string, boolean> = {};
+  /** D-125: Warlock's Mystic Arcanum picks, keyed by spell-level tier (6/7/8/9). See `needsMysticArcanumPick`/`chooseMysticArcanumSpell`. */
+  private mysticArcanumSpellIds: Partial<Record<number, string>> = {};
+  /** D-125: whether each Mystic Arcanum tier's once-per-Long-Rest free cast has been used, keyed by tier. */
+  private mysticArcanumUsedThisRest: Partial<Record<number, boolean>> = {};
   /** Phase 18 (D-109): Boon of Fate's once-per-rest charge — see `canUseBoonOfFate`. */
   private boonOfFateChargeAvailable = false;
   /** Phase 18 (D-109): which ability Boon of Irresistible Offense raised, if this hero holds it. */
@@ -453,6 +539,8 @@ export class Hero implements Combatant {
   private magicInitiateGrants: MagicInitiateGrant[] = [];
   /** Phase 18 (D-109): remaining free casts of each grant's leveled spell, parallel to `magicInitiateGrants`. Refills on a Long Rest. */
   private magicInitiateSpellUsesRemaining: number[] = [];
+  /** D-124: Fighter's Indomitable — rerolls of a failed forced saving throw remaining this Long Rest. See `indomitableMaxUses`/`rerollFailedSave`. */
+  private indomitableUsesRemaining = 0;
 
   /** Current tile. Only changes when a move is COMMITTED via moveTo(). */
   position: GridPosition;
@@ -788,6 +876,17 @@ export class Hero implements Combatant {
    */
   get colossusSlayerBonus(): number {
     return this.assignedSubclassId === "hunter" ? COLOSSUS_SLAYER_BONUS_DAMAGE : 0;
+  }
+
+  /**
+   * D-124: Path of the Berserker only, level 10+ — Intimidating Presence.
+   * Read by `BattleScene.applyIntimidatingPresence`, which applies it as a
+   * rider on a landed basic-attack hit (simplified from the SRD's real
+   * stand-alone action, the same "auto-apply on a landed hit" precedent
+   * Grappler's restrain, D-109, already established).
+   */
+  get hasIntimidatingPresence(): boolean {
+    return this.assignedSubclassId === "path-of-the-berserker" && this.classLevel >= BERSERKER_INTIMIDATING_PRESENCE_LEVEL;
   }
 
   /**
@@ -1311,6 +1410,13 @@ export class Hero implements Combatant {
     this.applyLeveledStats(stats, flatHpBonusesBefore);
     const classDef = getClassDefinition(this.classId);
     if (classDef.spellcasting) this.growSpellSlots(classDef, oldLevel, this.classLevel);
+    // D-124: Indomitable's max use count grows at levels 9/13/17 — grant the
+    // newly-unlocked charge(s) immediately, the same "capacity gained right
+    // away" treatment `growSpellSlots` gives a caster's slots.
+    this.indomitableUsesRemaining = Math.max(this.indomitableUsesRemaining, this.indomitableMaxUses);
+    // D-125: Channel Divinity's max use count grows at levels 2/6/18 — same
+    // "capacity gained right away" treatment as Indomitable just above.
+    this.channelDivinityUsesRemaining = Math.max(this.channelDivinityUsesRemaining, this.channelDivinityMaxUses);
   }
 
   /**
@@ -1515,7 +1621,26 @@ export class Hero implements Combatant {
    */
   knownSpellAbilityIds(): string[] {
     if (!this.classId) return [];
-    return [...knownSpellIdsForClass(this.classId), ...this.magicInitiateSpellIds];
+    return [...knownSpellIdsForClass(this.classId), ...this.magicInitiateSpellIds, ...this.subclassGrantedSpellAbilityIds];
+  }
+
+  /**
+   * D-124: this hero's subclass-granted spells (Life Domain's Domain Spells,
+   * The Fiend's Expanded Spell List) that carry a real `abilityId` to cast
+   * with, gated to a class that already has a real SPELLBOOK — deliberately
+   * checking `knownSpellIdsForClass(...).length` rather than `classDef
+   * .spellcasting`: Paladin's class def DOES carry a `spellcasting`
+   * progression (it needs one to size Divine Smite's slot pool), but
+   * `knownSpellIdsForClass` correctly returns nothing for it (no spellbook
+   * in this game at all — see that function's own comment). Oath of
+   * Devotion's Oath Spells stay excluded even once assigned, for that
+   * still-open design conflict; see `data/subclasses.ts`'s own note.
+   */
+  private get subclassGrantedSpellAbilityIds(): string[] {
+    if (!this.classId || !this.assignedSubclassId || knownSpellIdsForClass(this.classId).length === 0) return [];
+    return subclassGrantedSpellIdsUpToLevel(this.assignedSubclassId, this.classLevel)
+      .map((id) => getSpell(id).abilityId)
+      .filter((id): id is string => !!id);
   }
 
   /** Phase 18 (D-109): every cantrip/spell id every Magic Initiate pick has granted, flattened across every list this hero has chosen. */
@@ -1533,11 +1658,14 @@ export class Hero implements Combatant {
     return this.spellSlotsRemaining[level - 1] ?? 0;
   }
 
-  /** True if this ability is castable right now — always true for a cantrip/mundane ability, slot-gated for a leveled spell (unless a Magic Initiate free use covers it). */
+  /** True if this ability is castable right now — always true for a cantrip/mundane ability, slot-gated for a leveled spell (unless a Magic Initiate/Spell Mastery/Signature Spells/Mystic Arcanum free use covers it). */
   canCastSpell(abilityId: string): boolean {
     const ability = getAbility(abilityId);
     if (!ability.spellSlotLevel) return true;
     if (this.hasMagicInitiateFreeUse(abilityId)) return true;
+    if (this.hasSpellMasteryFreeUse(abilityId)) return true;
+    if (this.hasSignatureSpellFreeUse(abilityId)) return true;
+    if (this.hasMysticArcanumFreeUse(abilityId)) return true;
     return this.spellSlotsRemainingAt(ability.spellSlotLevel) > 0;
   }
 
@@ -1566,6 +1694,17 @@ export class Hero implements Combatant {
     if (this.hasMagicInitiateFreeUse(abilityId)) {
       const idx = this.magicInitiateGrants.findIndex((g) => g.spellId === abilityId);
       this.magicInitiateSpellUsesRemaining[idx] -= 1;
+      return;
+    }
+    // D-125: Spell Mastery is unlimited — nothing to spend, ever.
+    if (this.hasSpellMasteryFreeUse(abilityId)) return;
+    if (this.hasSignatureSpellFreeUse(abilityId)) {
+      this.signatureSpellUsesRemaining[abilityId] = false;
+      return;
+    }
+    const arcanumTier = this.mysticArcanumTierFor(abilityId);
+    if (arcanumTier !== undefined && !this.mysticArcanumUsedThisRest[arcanumTier]) {
+      this.mysticArcanumUsedThisRest[arcanumTier] = true;
       return;
     }
     this.spendSpellSlotWithRecallRoll(level, recallRoll);
@@ -1683,6 +1822,347 @@ export class Hero implements Combatant {
     this.reactionAvailable = false;
   }
 
+  // ----- D-124: saving-throw/advantage features, wired now that dice/rest/advantage systems exist -----
+
+  /** Fighter's Indomitable — the max rerolls available per Long Rest at this hero's current level (0 below level 9). */
+  private get indomitableMaxUses(): number {
+    if (this.classId !== "fighter") return 0;
+    if (this.classLevel >= FIGHTER_INDOMITABLE_3_USES_LEVEL) return 3;
+    if (this.classLevel >= FIGHTER_INDOMITABLE_2_USES_LEVEL) return 2;
+    if (this.classLevel >= FIGHTER_INDOMITABLE_LEVEL) return 1;
+    return 0;
+  }
+
+  /** Fighter's Indomitable rerolls remaining this Long Rest. 0 below level 9 or for any other class. */
+  get indomitableUsesAvailable(): number {
+    return this.indomitableUsesRemaining;
+  }
+
+  /**
+   * `Combatant.rerollFailedSave` — Fighter's Indomitable. Called by
+   * `SavingThrowSystem.applySaveOrDamage` only after this hero has already
+   * FAILED a forced saving throw; consumes one charge and tells the caller
+   * to roll again, unconditionally (the SRD's own "you must use the new
+   * roll" wording — no judgment call needed here about whether it's worth
+   * it).
+   */
+  rerollFailedSave(): boolean {
+    if (this.indomitableUsesRemaining <= 0) return false;
+    this.indomitableUsesRemaining -= 1;
+    return true;
+  }
+
+  /**
+   * `Combatant.savingThrowAdvantage` — Barbarian's Danger Sense (level 2+):
+   * Advantage on every forced saving throw. Every forced save this game
+   * gives a hero today rolls DEX (`WaveSystem.resolveSavingThrowAttack`),
+   * matching Danger Sense's real SRD scope exactly, so no per-ability check
+   * is needed here.
+   */
+  get savingThrowAdvantage(): AdvantageMode {
+    return this.classId === "barbarian" && this.classLevel >= BARBARIAN_DANGER_SENSE_LEVEL ? "advantage" : "normal";
+  }
+
+  /**
+   * `Combatant.evasionHalvesFailedSave` — Rogue's and Monk's Evasion (both
+   * level 7): a failed forced save deals HALF damage instead of full (a
+   * successful save already takes 0, unchanged).
+   */
+  get evasionHalvesFailedSave(): boolean {
+    return (
+      (this.classId === "rogue" && this.classLevel >= ROGUE_EVASION_LEVEL) ||
+      (this.classId === "monk" && this.classLevel >= MONK_EVASION_LEVEL)
+    );
+  }
+
+  /**
+   * `Combatant.deniesAttackerAdvantage` — Rogue's Elusive (level 18+): no
+   * attack roll against this hero may have Advantage, as long as it isn't
+   * incapacitated (stunned/restrained-family status) — the SRD's own
+   * carve-out.
+   */
+  deniesAttackerAdvantage(): boolean {
+    return this.classId === "rogue" && this.classLevel >= ROGUE_ELUSIVE_LEVEL && this.isAlive() && !this.isIncapacitatedByStatus;
+  }
+
+  /**
+   * Barbarian only: Reckless Attack — a free choice made alongside an
+   * attack (no action/bonus-action cost), not while already active this
+   * turn. Grants Advantage on this hero's own attacks
+   * (`BattleScene.attackProfileFor` reads `recklessAttackAdvantage`) in
+   * exchange for Advantage on every attack against it
+   * (`Combatant.grantsAttackerAdvantage` below) until the start of its next
+   * turn (cleared in `resetForNewTurn`).
+   */
+  canUseRecklessAttack(): boolean {
+    return (
+      this.classId === "barbarian" &&
+      this.classLevel >= BARBARIAN_RECKLESS_ATTACK_LEVEL &&
+      this.canAct() &&
+      !this.recklessAttackActive
+    );
+  }
+
+  activateRecklessAttack(): void {
+    this.recklessAttackActive = true;
+  }
+
+  /** True while Reckless Attack grants Advantage on this hero's own attacks — read by `BattleScene.attackProfileFor`. */
+  get recklessAttackAdvantage(): boolean {
+    return this.recklessAttackActive;
+  }
+
+  /** `Combatant.grantsAttackerAdvantage` — Reckless Attack's other half: every attack against this hero rolls with Advantage while active. */
+  get grantsAttackerAdvantage(): boolean {
+    return this.recklessAttackActive;
+  }
+
+  /**
+   * Cleric's Channel Divinity — the max uses available per rest at this
+   * hero's current level (0 below level 2). Every Cleric has SOME Channel
+   * Divinity option in the real SRD (Turn Undead at minimum), but Preserve
+   * Life specifically is Life Domain's own option — gated on subclass, same
+   * as `channelDivinityUsesRemaining`'s one real consumer today.
+   */
+  private get channelDivinityMaxUses(): number {
+    if (this.classId !== "cleric" || this.subclassId !== "life-domain") return 0;
+    if (this.classLevel >= CLERIC_CHANNEL_DIVINITY_3_USES_LEVEL) return 3;
+    if (this.classLevel >= CLERIC_CHANNEL_DIVINITY_2_USES_LEVEL) return 2;
+    if (this.classLevel >= CLERIC_PRESERVE_LIFE_LEVEL) return 1;
+    return 0;
+  }
+
+  /** Channel Divinity uses remaining this rest. 0 below level 2, for a non-Cleric, or a non-Life-Domain Cleric. */
+  get channelDivinityUsesAvailable(): number {
+    return this.channelDivinityUsesRemaining;
+  }
+
+  /** Life Domain Cleric only, from level 2: Channel Divinity: Preserve Life, spending one of a limited number of uses per rest. */
+  canUsePreserveLife(): boolean {
+    return this.classId === "cleric" && this.subclassId === "life-domain" && this.canAct() && this.channelDivinityUsesRemaining > 0;
+  }
+
+  // ----- D-125: hero-side stealth (mirrors Enemy.isRevealed/.reveal(), inverted) -----
+
+  /** True while this hero is hidden from enemy targeting (`BattleScene`'s `heroTargets` filtering) — mirrors `Enemy.isRevealed`. */
+  get isHidden(): boolean {
+    return this.hidden;
+  }
+
+  hide(): void {
+    this.hidden = true;
+  }
+
+  /** Breaks this hero's own hidden state — called the instant it makes a basic attack or casts a spell, mirroring a stealthed enemy's own "first strike reveals it" rule. */
+  reveal(): void {
+    this.hidden = false;
+  }
+
+  /**
+   * This hero's Stealth check modifier: ability modifier, plus proficiency
+   * bonus if its class is proficient (`data/skills.ts`), plus Ranger's Hide
+   * in Plain Sight (level 10+, only while it hasn't moved this turn — the
+   * SRD's own "camouflage" carve-out, a flat +10). No ability scores exist
+   * to derive a real passive-Perception DC from an enemy, so the DC side of
+   * this check is a flat, documented simplification supplied by the caller
+   * (`BattleScene`'s stealth-DC table by nearby enemy role).
+   */
+  stealthCheckModifier(): number {
+    if (!this.abilityScores) return 0;
+    const base = skillCheckModifier(this.abilityScores, "stealth", this.classId, this.classLevel);
+    const hidingInPlainSight =
+      this.classId === "ranger" && this.classLevel >= RANGER_HIDE_IN_PLAIN_SIGHT_LEVEL && !this.hasMoved;
+    return base + (hidingInPlainSight ? HIDE_IN_PLAIN_SIGHT_BONUS : 0);
+  }
+
+  /** Thief's Supreme Sneak (subclass level 9+): Advantage on the Stealth check above, while it hasn't moved this turn (the SRD's own "moving at full speed" carve-out). */
+  get stealthCheckAdvantage(): AdvantageMode {
+    return this.subclassId === "thief" && this.level >= THIEF_SUPREME_SNEAK_LEVEL && !this.hasMoved ? "advantage" : "normal";
+  }
+
+  /** Ranger only, from level 14: Vanish — a bonus action attempting a Stealth check (rolled by the caller — see `stealthCheckModifier`/`stealthCheckAdvantage`); the bonus action is spent regardless of the roll's outcome, matching the SRD's own Hide action. */
+  canUseVanish(): boolean {
+    return this.classId === "ranger" && this.classLevel >= RANGER_VANISH_LEVEL && this.canUseBonusAction() && !this.hidden;
+  }
+
+  useVanish(): void {
+    this.bonusActed = true;
+  }
+
+  /**
+   * Rogue only, from level 2: Cunning Action's Hide option (the SRD's real
+   * Cunning Action offers Dash, Disengage, OR Hide — this game's existing
+   * Cunning Action button only ever offered Dash, so Hide gets its own
+   * button here rather than a picker over three options for one bonus
+   * action). Same Stealth-check shape as Vanish above — this is Thief's
+   * Supreme Sneak's own real consumer.
+   */
+  canUseCunningActionHide(): boolean {
+    return this.classId === "rogue" && this.classLevel >= 2 && this.canUseBonusAction() && !this.hidden;
+  }
+
+  useCunningActionHide(): void {
+    this.bonusActed = true;
+  }
+
+  /** Ki points remaining this rest. 0 for a non-Monk. */
+  get kiPointsAvailable(): number {
+    return this.kiPointsRemaining;
+  }
+
+  /** Monk only, from level 18: Empty Body — spends 4 Ki and the action to become hidden outright, no check (the SRD's own guaranteed invisibility). */
+  canUseEmptyBody(): boolean {
+    return this.classId === "monk" && this.classLevel >= MONK_EMPTY_BODY_LEVEL && this.canAct() && this.kiPointsRemaining >= EMPTY_BODY_KI_COST && !this.hidden;
+  }
+
+  useEmptyBody(): void {
+    this.kiPointsRemaining -= EMPTY_BODY_KI_COST;
+    this.acted = true;
+    this.hidden = true;
+  }
+
+  // ----- D-125: Wizard's Spell Mastery/Signature Spells, Warlock's Mystic Arcanum -----
+  // Each is a ONE-TIME pick made the moment the feature is gained (like the
+  // ASI/subclass/feat choices `BattleScene` already queues at level-up),
+  // not a per-cast decision — `canCastSpell`/`spendSpellSlotFor` below check
+  // whether a cast targets one of these picks before falling through to a
+  // normal spell slot, the same short-circuit shape `hasMagicInitiateFreeUse`
+  // already established.
+
+  /** True once this hero has reached level 18 but hasn't yet picked its Spell Mastery spell. */
+  needsSpellMasteryPick(): boolean {
+    return this.classId === "wizard" && this.classLevel >= WIZARD_SPELL_MASTERY_LEVEL && this.spellMasterySpellId === null;
+  }
+
+  /** Every known spell eligible for Spell Mastery — SRD text: "a favorite lower-level spell," modeled as any known spell of level 1-5. */
+  eligibleSpellMasterySpells(): string[] {
+    return this.knownSpellAbilityIds().filter((id) => {
+      const lvl = getAbility(id).spellSlotLevel;
+      return lvl !== undefined && lvl <= 5;
+    });
+  }
+
+  /** Permanently grants unlimited free casts of this spell (no slot ever spent again for it). */
+  chooseSpellMasterySpell(spellId: string): void {
+    this.spellMasterySpellId = spellId;
+  }
+
+  private hasSpellMasteryFreeUse(abilityId: string): boolean {
+    return this.spellMasterySpellId === abilityId;
+  }
+
+  /** True once this hero has reached level 20 but hasn't yet picked its 2 Signature Spells. */
+  needsSignatureSpellsPick(): boolean {
+    return this.classId === "wizard" && this.classLevel >= WIZARD_SIGNATURE_SPELLS_LEVEL && this.signatureSpellIds.length === 0;
+  }
+
+  /** Every known 3rd-level spell — the SRD's real Signature Spells tier. */
+  eligibleSignatureSpells(): string[] {
+    return this.knownSpellAbilityIds().filter((id) => getAbility(id).spellSlotLevel === 3);
+  }
+
+  /** Permanently grants two spells one free cast each per rest (SRD: recharges on a Short OR Long Rest, see `shortRest`/`longRest`). */
+  chooseSignatureSpells(spellIds: string[]): void {
+    this.signatureSpellIds = [...spellIds];
+    this.signatureSpellUsesRemaining = Object.fromEntries(spellIds.map((id) => [id, true]));
+  }
+
+  private hasSignatureSpellFreeUse(abilityId: string): boolean {
+    return this.signatureSpellIds.includes(abilityId) && (this.signatureSpellUsesRemaining[abilityId] ?? false);
+  }
+
+  /** True once this hero has reached this tier's unlock level but hasn't yet picked that tier's Mystic Arcanum spell. `tier` is the spell level (6/7/8/9). */
+  needsMysticArcanumPick(tier: number): boolean {
+    const unlockLevel = WARLOCK_MYSTIC_ARCANUM_LEVELS[tier];
+    return this.classId === "warlock" && unlockLevel !== undefined && this.classLevel >= unlockLevel && !this.mysticArcanumSpellIds[tier];
+  }
+
+  /** Every known spell of exactly this tier's spell level. */
+  eligibleMysticArcanumSpells(tier: number): string[] {
+    return this.knownSpellAbilityIds().filter((id) => getAbility(id).spellSlotLevel === tier);
+  }
+
+  /** Permanently grants one free cast of this spell per Long Rest only (the SRD's real Mystic Arcanum cadence — unlike Signature Spells above). */
+  chooseMysticArcanumSpell(tier: number, spellId: string): void {
+    this.mysticArcanumSpellIds[tier] = spellId;
+    this.mysticArcanumUsedThisRest[tier] = false;
+  }
+
+  private mysticArcanumTierFor(abilityId: string): number | undefined {
+    return Object.keys(this.mysticArcanumSpellIds)
+      .map(Number)
+      .find((tier) => this.mysticArcanumSpellIds[tier] === abilityId);
+  }
+
+  private hasMysticArcanumFreeUse(abilityId: string): boolean {
+    const tier = this.mysticArcanumTierFor(abilityId);
+    return tier !== undefined && !this.mysticArcanumUsedThisRest[tier];
+  }
+
+  /**
+   * Spends one Channel Divinity use and heals up to `PRESERVE_LIFE_MAX_TARGETS`
+   * living allies (this game's roster is already ≤4, so in practice this
+   * covers the whole party — the same "whole party" simplification D-106's
+   * `areaAllies` spells already make). Each target regains
+   * `PRESERVE_LIFE_BASE_HEAL + this.classLevel` HP, capped so it never
+   * exceeds half its own max HP (the real SRD rule) — returns the actual
+   * amount applied to each so the caller can log/render it, skipping anyone
+   * already at or above half their max HP.
+   */
+  usePreserveLife(allies: Hero[]): { hero: Hero; amount: number }[] {
+    this.channelDivinityUsesRemaining -= 1;
+    this.acted = true;
+    const healed: { hero: Hero; amount: number }[] = [];
+    const targets = allies.filter((h) => h.isAlive()).slice(0, PRESERVE_LIFE_MAX_TARGETS);
+    for (const ally of targets) {
+      const halfMax = Math.floor(ally.effectiveMaxHealth / 2);
+      const cap = Math.max(0, halfMax - ally.health);
+      const amount = Math.min(PRESERVE_LIFE_BASE_HEAL + this.classLevel, cap);
+      if (amount <= 0) continue;
+      ally.health += amount;
+      healed.push({ hero: ally, amount });
+    }
+    return healed;
+  }
+
+  /**
+   * Path of the Berserker's Retaliation (level 14+): once per turn (spends
+   * the reaction), a hero that just took damage from an adjacent attacker
+   * may immediately strike back — see `BattleScene.applyRetaliations`, which
+   * calls this right alongside Uncanny Dodge's own auto-apply.
+   */
+  canUseRetaliation(): boolean {
+    return this.subclassId === "path-of-the-berserker" && this.level >= BERSERKER_RETALIATION_LEVEL && this.isAlive() && this.reactionAvailable;
+  }
+
+  /** Spends this turn's reaction on Retaliation's counter-attack. */
+  useRetaliation(): void {
+    this.reactionAvailable = false;
+  }
+
+  /**
+   * College of Lore's Cutting Words (level 3+): spends the reaction AND a
+   * Bardic Inspiration use (independent of the bonus action Bardic
+   * Inspiration itself spends — the SRD's real reaction, not a repeat of
+   * `canUseBardicInspiration`) to weaken a landed blow against any ally, not
+   * just this Bard. See `BattleScene.applyCuttingWords`.
+   */
+  canUseCuttingWords(): boolean {
+    return (
+      this.subclassId === "college-of-lore" &&
+      this.level >= COLLEGE_OF_LORE_CUTTING_WORDS_LEVEL &&
+      this.isAlive() &&
+      this.reactionAvailable &&
+      this.bardicInspirationUsesRemaining > 0
+    );
+  }
+
+  /** Spends this turn's reaction and one Bardic Inspiration use on Cutting Words. */
+  useCuttingWords(): void {
+    this.reactionAvailable = false;
+    this.bardicInspirationUsesRemaining -= 1;
+  }
+
   // ----- Phase 13.8 (D-093): the eight new classes' signature mechanics ---
 
   /**
@@ -1761,6 +2241,11 @@ export class Hero implements Combatant {
   /** Bard only: a bonus action, a limited number of times per rest, granting an ally (or itself) a flat attack/damage bonus — see `receiveInspiration`. */
   canUseBardicInspiration(): boolean {
     return this.classId === "bard" && this.canUseBonusAction() && this.bardicInspirationUsesRemaining > 0;
+  }
+
+  /** Bardic Inspiration uses remaining this rest. 0 for a non-Bard. Read by `BattleScene.applyCuttingWords` (D-124) to find an eligible Bard, independent of the bonus-action check above. */
+  get bardicInspirationUsesAvailable(): number {
+    return this.bardicInspirationUsesRemaining;
   }
 
   /** Spends the bonus action and a Bardic Inspiration use. The caller (BattleScene) picks the target and calls `receiveInspiration` on it. */
@@ -1858,6 +2343,12 @@ export class Hero implements Combatant {
     this.damageResistanceTurnsRemaining = 0;
     if (this.classId === "monk") this.kiPointsRemaining = KI_POINTS_PER_REST;
     if (this.classId === "bard" && this.classLevel >= 5) this.bardicInspirationUsesRemaining = BARDIC_INSPIRATION_USES_PER_REST;
+    // D-125: Channel Divinity recharges on a Short OR Long Rest, the SRD's
+    // real cadence — matches Ki/Bardic Inspiration's dual-cadence treatment.
+    this.channelDivinityUsesRemaining = this.channelDivinityMaxUses;
+    // D-125: Signature Spells recharge on a Short OR Long Rest (the SRD's
+    // real cadence — Mystic Arcanum, below, is Long-Rest-only by contrast).
+    for (const id of this.signatureSpellIds) this.signatureSpellUsesRemaining[id] = true;
     // Pact Magic's real, distinctive cadence (D-093): a Warlock's spell
     // slots restore on a SHORT Rest, unlike every other caster class here.
     if (this.classId === "warlock" && this.abilityScores) {
@@ -1895,6 +2386,14 @@ export class Hero implements Combatant {
       const classDef = getClassDefinition(this.classId);
       if (classDef.spellcasting) this.spellSlotsRemaining = spellSlotsForClassAtLevel(classDef, this.classLevel);
     }
+    // D-124: Indomitable recharges on a Long Rest only, matching the SRD.
+    this.indomitableUsesRemaining = this.indomitableMaxUses;
+    // D-125: Channel Divinity also recharges on a Long Rest (see `shortRest`).
+    this.channelDivinityUsesRemaining = this.channelDivinityMaxUses;
+    // D-125: Signature Spells also recharge on a Long Rest (see `shortRest`).
+    for (const id of this.signatureSpellIds) this.signatureSpellUsesRemaining[id] = true;
+    // D-125: Mystic Arcanum recharges on a Long Rest ONLY, the SRD's real cadence.
+    for (const tier of Object.keys(this.mysticArcanumSpellIds)) this.mysticArcanumUsedThisRest[Number(tier)] = false;
   }
 
   /**
@@ -1936,6 +2435,11 @@ export class Hero implements Combatant {
     // Phase 18 (D-109): Grappler's/Boon of Combat Prowess's once-per-turn uses.
     this.grapplerRestrainUsedThisTurn = false;
     this.combatProwessUsedThisTurn = false;
+    // D-125: Reckless Attack's vulnerability lasts "until the start of your
+    // next turn" — this game's "turn" = one player phase, so clearing it
+    // here (this method's only call site is the start of a new player phase)
+    // matches that exactly.
+    this.recklessAttackActive = false;
     // Phase 19 (D-110): the off-hand attack's once-per-turn use.
     this.offHandAttackUsedThisTurn = false;
     // Phase 13.8 (D-093): Rage/Wild Shape's duration ticks down once per
@@ -2013,6 +2517,15 @@ export class Hero implements Combatant {
       magicInitiateSpellUsesRemaining: [...this.magicInitiateSpellUsesRemaining],
       offHandAttackUsedThisTurn: this.offHandAttackUsedThisTurn,
       activeStatuses: this.activeStatuses.map((s) => ({ ...s })),
+      indomitableUsesRemaining: this.indomitableUsesRemaining,
+      recklessAttackActive: this.recklessAttackActive,
+      channelDivinityUsesRemaining: this.channelDivinityUsesRemaining,
+      hidden: this.hidden,
+      spellMasterySpellId: this.spellMasterySpellId,
+      signatureSpellIds: [...this.signatureSpellIds],
+      signatureSpellUsesRemaining: { ...this.signatureSpellUsesRemaining },
+      mysticArcanumSpellIds: { ...this.mysticArcanumSpellIds },
+      mysticArcanumUsedThisRest: { ...this.mysticArcanumUsedThisRest },
     };
   }
 
@@ -2091,5 +2604,14 @@ export class Hero implements Combatant {
     this.magicInitiateSpellUsesRemaining = [...snapshot.magicInitiateSpellUsesRemaining];
     this.offHandAttackUsedThisTurn = snapshot.offHandAttackUsedThisTurn;
     this.activeStatuses = snapshot.activeStatuses.map((s) => ({ ...s }));
+    this.indomitableUsesRemaining = snapshot.indomitableUsesRemaining;
+    this.recklessAttackActive = snapshot.recklessAttackActive;
+    this.channelDivinityUsesRemaining = snapshot.channelDivinityUsesRemaining;
+    this.hidden = snapshot.hidden;
+    this.spellMasterySpellId = snapshot.spellMasterySpellId;
+    this.signatureSpellIds = [...snapshot.signatureSpellIds];
+    this.signatureSpellUsesRemaining = { ...snapshot.signatureSpellUsesRemaining };
+    this.mysticArcanumSpellIds = { ...snapshot.mysticArcanumSpellIds };
+    this.mysticArcanumUsedThisRest = { ...snapshot.mysticArcanumUsedThisRest };
   }
 }

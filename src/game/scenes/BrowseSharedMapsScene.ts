@@ -56,8 +56,20 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
   private selectedMapId: string | null = null;
 
   private mapRows: MapRow[] = [];
-  private loadMoreButton!: Phaser.GameObjects.Rectangle;
-  private loadMoreLabel!: Phaser.GameObjects.Text;
+  // Playtest fix: the list used to render ONE ROW PER FETCHED MAP, uncapped,
+  // stacking straight into the fixed Wave Count/Minion/Difficulty/Start
+  // sections below once more than ~6 maps were published — a real, growing
+  // problem as more maps get shared, not a one-off. A fixed local page size
+  // (`mapsPerPage`) keeps the rendered list's height constant regardless of
+  // how many maps exist; "Next" past the last locally-held page transparently
+  // fetches another remote page first.
+  private readonly mapsPerPage = 5;
+  private mapListPage = 0;
+  private prevPageButton!: Phaser.GameObjects.Rectangle;
+  private prevPageLabel!: Phaser.GameObjects.Text;
+  private nextPageButton!: Phaser.GameObjects.Rectangle;
+  private nextPageLabel!: Phaser.GameObjects.Text;
+  private pageInfoLabel!: Phaser.GameObjects.Text;
   private emptyLabel!: Phaser.GameObjects.Text;
 
   private waveCountButtons: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; count: number }[] = [];
@@ -80,6 +92,7 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
     this.loading = false;
     this.selectedMapId = null;
     this.mapRows = [];
+    this.mapListPage = 0;
     this.waveCountButtons = [];
     this.minionButtons = [];
     this.selectedWaveCount = 7;
@@ -125,16 +138,36 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
     this.buildDifficultySection(610);
     this.buildStartButton(690);
 
-    this.loadMoreButton = this.add
-      .rectangle(GAME_WIDTH / 2, 380, 200, 36, 0x2a2a3a)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    this.loadMoreLabel = this.add
-      .text(GAME_WIDTH / 2, 380, "Load more", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#e8e8f0" })
+    // Fixed position, independent of how many maps have loaded — see the
+    // `mapsPerPage` comment on the field declarations.
+    const navY = 150 + this.mapsPerPage * 44 + 20;
+    const prev = this.buildSmallButton(GAME_WIDTH / 2 - 130, navY, 130, 36, "◀ Prev", 0x2a2a3a, () => {
+      if (this.mapListPage > 0) {
+        this.mapListPage--;
+        this.renderMapList();
+      }
+    });
+    this.prevPageButton = prev.rect;
+    this.prevPageLabel = prev.label;
+    this.pageInfoLabel = this.add
+      .text(GAME_WIDTH / 2, navY, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "13px", color: "#c8c8d8" })
       .setOrigin(0.5);
-    this.loadMoreButton.on("pointerdown", () => this.loadPage());
-    this.loadMoreButton.setVisible(false);
-    this.loadMoreLabel.setVisible(false);
+    const next = this.buildSmallButton(GAME_WIDTH / 2 + 130, navY, 130, 36, "Next ▶", 0x2a2a3a, () => {
+      const totalPages = Math.max(1, Math.ceil(this.maps.length / this.mapsPerPage));
+      if (this.mapListPage + 1 < totalPages) {
+        this.mapListPage++;
+        this.renderMapList();
+      } else if (this.hasMore) {
+        this.mapListPage++;
+        this.loadPage();
+      }
+    });
+    this.nextPageButton = next.rect;
+    this.nextPageLabel = next.label;
+    this.prevPageButton.setVisible(false);
+    this.prevPageLabel.setVisible(false);
+    this.nextPageButton.setVisible(false);
+    this.nextPageLabel.setVisible(false);
 
     this.refreshBottomSections();
     this.loadPage();
@@ -168,7 +201,7 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
   private loadPage(): void {
     if (this.loading || !this.hasMore) return;
     this.loading = true;
-    this.loadMoreLabel.setText("Loading…");
+    this.nextPageLabel.setText("Loading…");
     listSharedMaps(PAGE_SIZE, this.lastDoc ?? undefined)
       .then((page) => {
         this.maps = [...this.maps, ...page.maps];
@@ -180,7 +213,8 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
       .catch((err) => {
         console.error("Failed to load shared maps:", err);
         this.loading = false;
-        this.loadMoreLabel.setText("Load more");
+        this.mapListPage = Math.max(0, this.mapListPage - 1);
+        this.renderMapList();
       });
   }
 
@@ -197,7 +231,12 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
     const top = 150;
     const rowHeight = 44;
     const w = 900;
-    this.maps.forEach((record, i) => {
+    const totalPages = Math.max(1, Math.ceil(this.maps.length / this.mapsPerPage));
+    this.mapListPage = Math.min(this.mapListPage, totalPages - 1);
+    const pageStart = this.mapListPage * this.mapsPerPage;
+    const pageMaps = this.maps.slice(pageStart, pageStart + this.mapsPerPage);
+
+    pageMaps.forEach((record, i) => {
       const y = top + i * rowHeight;
       const rect = this.add
         .rectangle(GAME_WIDTH / 2, y, w, rowHeight - 6, 0x2a2a3a)
@@ -226,12 +265,18 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
       this.mapRows.push({ rect, label, meta, record });
     });
 
-    const loadMoreY = top + this.maps.length * rowHeight + 20;
-    this.loadMoreButton.setPosition(GAME_WIDTH / 2, loadMoreY);
-    this.loadMoreLabel.setPosition(GAME_WIDTH / 2, loadMoreY);
-    this.loadMoreButton.setVisible(this.hasMore);
-    this.loadMoreLabel.setVisible(this.hasMore);
-    this.loadMoreLabel.setText("Load more");
+    const showNav = this.maps.length > 0;
+    this.prevPageButton.setVisible(showNav);
+    this.prevPageLabel.setVisible(showNav);
+    this.nextPageButton.setVisible(showNav);
+    this.nextPageLabel.setVisible(showNav);
+    if (showNav) {
+      this.pageInfoLabel.setText(`Page ${this.mapListPage + 1}/${totalPages}${this.hasMore ? "+" : ""}`);
+      this.nextPageLabel.setText(this.loading ? "Loading…" : "Next ▶");
+      const canGoNext = this.mapListPage + 1 < totalPages || this.hasMore;
+      this.nextPageButton.setFillStyle(canGoNext ? 0x2a2a3a : 0x1c1c26);
+      this.prevPageButton.setFillStyle(this.mapListPage > 0 ? 0x2a2a3a : 0x1c1c26);
+    }
 
     this.refreshMapHighlight();
   }

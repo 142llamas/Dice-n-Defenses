@@ -55,6 +55,13 @@ export class SavingThrowSystem {
    * throw against `dc`; full `damage` on a failed save, none on a success.
    * MUTATES only the target's health, exactly like `CombatSystem.applyAttack`
    * — an already-defeated target takes no damage and rolls no save.
+   *
+   * D-124: `options.halveOnFail` (Evasion) takes HALF damage instead of full
+   * on a failed save; `options.rerollFailedSave` (Indomitable) is offered
+   * the chance to reroll a failed save once — if it returns true, a fresh
+   * roll REPLACES the first outright (even if worse), matching the SRD's own
+   * "you must use the new roll" wording, and only that final roll is
+   * reflected in the returned `save`.
    */
   static applySaveOrDamage(
     target: Combatant,
@@ -63,13 +70,17 @@ export class SavingThrowSystem {
     savingThrowBonus: number,
     random: RandomService,
     advantage: AdvantageMode = "normal",
+    options?: { halveOnFail?: boolean; rerollFailedSave?: () => boolean },
   ): SavingThrowAttackResult {
     const healthBefore = target.health;
-    const save = SavingThrowSystem.rollSave(savingThrowBonus, dc, random, advantage);
+    let save = SavingThrowSystem.rollSave(savingThrowBonus, dc, random, advantage);
+    if (!save.success && options?.rerollFailedSave?.()) {
+      save = SavingThrowSystem.rollSave(savingThrowBonus, dc, random, advantage);
+    }
     if (healthBefore <= 0 || save.success) {
       return { targetId: target.id, rawDamage: damage, damageDealt: 0, healthBefore, healthAfter: healthBefore, defeated: false, save };
     }
-    const damageDealt = Math.max(0, damage);
+    const damageDealt = Math.max(0, options?.halveOnFail ? Math.floor(damage / 2) : damage);
     const healthAfter = Math.max(0, healthBefore - damageDealt);
     target.health = healthAfter;
     return {

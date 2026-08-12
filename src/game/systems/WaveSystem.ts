@@ -726,6 +726,17 @@ export class WaveSystem {
         // (see `Enemy.attacksWithDisadvantage`); a still-hidden stealth
         // enemy's ambush overrides that with Advantage instead (see
         // `advantage`, computed above).
+        // D-124: Rogue's Elusive denies the ATTACKER's Advantage against
+        // this specific target (an ambush/blinded-enemy Advantage downgrades
+        // to Normal; a Disadvantage source is untouched) — computed per
+        // target, unlike `advantage` above, since only this branch resolves
+        // a single known target.
+        // D-125: Barbarian's Reckless Attack grants the ATTACKER Advantage
+        // against this specific target while active — folded in before the
+        // Elusive check above so Elusive can still deny it.
+        const baseAdvantage: AdvantageMode = advantage === "advantage" || target.grantsAttackerAdvantage ? "advantage" : advantage;
+        const targetAdvantage: AdvantageMode =
+          baseAdvantage === "advantage" && target.deniesAttackerAdvantage?.() ? "normal" : baseAdvantage;
         const result = enemy.def.savingThrowAttackDC
           ? WaveSystem.resolveSavingThrowAttack(
               enemy,
@@ -740,7 +751,7 @@ export class WaveSystem {
                 rangeTiles: enemy.attackRangeTiles,
                 damage: enemy.attackDamage + aura.damageBonus + enrage.damageBonus,
                 attackBonus: enemy.attackBonus + aura.attackBonus + enrage.attackBonus,
-                advantage,
+                advantage: targetAdvantage,
               },
               this.random,
             );
@@ -887,6 +898,11 @@ export class WaveSystem {
    *
    * Phase 20 (D-111): `damageBonus` folds in a nearby aura buff's
    * `damageBonus` (default 0, so every pre-Phase-20 caller is unaffected).
+   *
+   * D-124: also reads the target's own `savingThrowAdvantage` (Danger
+   * Sense), `evasionHalvesFailedSave` (Evasion), and `rerollFailedSave`
+   * (Indomitable) — every one of them optional on `Combatant`, so an enemy
+   * target (no such hooks) behaves exactly as before this decision.
    */
   private static resolveSavingThrowAttack(
     enemy: Enemy,
@@ -901,6 +917,8 @@ export class WaveSystem {
       dc,
       target.savingThrowBonus ?? 2,
       random,
+      target.savingThrowAdvantage ?? "normal",
+      { halveOnFail: target.evasionHalvesFailedSave, rerollFailedSave: target.rerollFailedSave?.bind(target) },
     );
     return {
       targetId: outcome.targetId,

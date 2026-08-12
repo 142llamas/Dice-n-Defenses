@@ -1,4 +1,5 @@
 import { modifierFor, type AbilityScoreId, type AbilityScores } from "./abilityScores";
+import { proficiencyBonusForLevel } from "../systems/CharacterSystem";
 
 /**
  * Skills — Phase 13.5 (DECISIONS D-086 item scope, D-090). SRD 5.2.1 has 18
@@ -91,11 +92,60 @@ export function getSkillDefinition(id: string): SkillDefinition {
 }
 
 /**
- * A skill check's ability-modifier contribution — this game doesn't model
- * per-character skill PROFICIENCY yet (no skill-picker UI exists, and no
- * skill check exists in actual gameplay to spend one on), so this is just
- * the raw ability modifier, framework-only like the rest of this file.
+ * A skill check's ability-modifier contribution alone, with no proficiency
+ * — kept for any existing caller that only wants the raw modifier (e.g. the
+ * Compendium's reference display, which has no notion of a specific hero's
+ * level/proficiency to apply).
  */
 export function skillModifier(abilityScores: AbilityScores, skillId: string): number {
   return modifierFor(abilityScores, getSkillDefinition(skillId).ability);
+}
+
+/**
+ * D-125: real per-class skill proficiency, finally with a real consumer
+ * (the Stealth check behind hero-side stealth — see `SkillCheckSystem` and
+ * `Hero.canAttemptHide`). Each class's real SRD skill list offers a CHOICE
+ * of several ("choose 2 from: ..."); this game has no proficiency-picker UI,
+ * so each class gets a fixed, representative subset of its real options,
+ * filtered to whichever of those options exist in this file's own slim
+ * `SKILL_ORDER` (8 of the SRD's 18 skills) — same "framework, not the full
+ * list" simplification the rest of this file already makes. Every class not
+ * listed here is proficient in none of these 8 (still a real SRD gap, not a
+ * fabrication — its real proficiencies just don't fall inside this slim
+ * set).
+ */
+export const SKILL_PROFICIENCIES_BY_CLASS: Record<string, string[]> = {
+  barbarian: ["athletics", "intimidation"],
+  bard: ["persuasion", "insight", "investigation"],
+  cleric: ["insight", "persuasion"],
+  druid: ["insight", "perception"],
+  fighter: ["athletics", "perception"],
+  monk: ["acrobatics", "stealth"],
+  paladin: ["athletics", "persuasion"],
+  ranger: ["stealth", "perception"],
+  rogue: ["stealth", "acrobatics", "perception", "investigation"],
+  sorcerer: ["persuasion", "intimidation"],
+  warlock: ["intimidation", "investigation"],
+  wizard: ["investigation", "insight"],
+};
+
+/** True if a character of this class is proficient in this skill (see `SKILL_PROFICIENCIES_BY_CLASS`). */
+export function isProficientInSkill(classId: string | undefined, skillId: string): boolean {
+  return !!classId && (SKILL_PROFICIENCIES_BY_CLASS[classId]?.includes(skillId) ?? false);
+}
+
+/**
+ * The full skill-check modifier: ability modifier, plus proficiency bonus
+ * only if this class is proficient in this skill — the exact formula
+ * `CharacterSystem.savingThrowBonus` already uses for saving throws, applied
+ * to skills instead.
+ */
+export function skillCheckModifier(
+  abilityScores: AbilityScores,
+  skillId: string,
+  classId: string | undefined,
+  level: number,
+): number {
+  const base = skillModifier(abilityScores, skillId);
+  return base + (isProficientInSkill(classId, skillId) ? proficiencyBonusForLevel(level) : 0);
 }

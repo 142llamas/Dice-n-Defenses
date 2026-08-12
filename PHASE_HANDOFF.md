@@ -1,326 +1,324 @@
 # Phase Handoff
 
 ## Version and phase
+
 - **Version:** 0.2.0-dev. Every phase through Phase 25 (D-116) is complete;
-  D-117 through D-122 (playtest fixes, campaign scaffolding, dialogue box,
+  D-117 through D-125 (playtest fixes, campaign scaffolding, dialogue box,
   dialogue skip controls, the basic-attack lunge, spell-cast/death
-  animations) are complete. **This session ran D-123**: a shared fantasy/
-  parchment UI theme for Main Menu, Compendium, and Bestiary — real ornate
-  buttons with hover/click feedback, a reorganized Main Menu layout, two
-  Google Fonts, and a Bestiary pagination gap found and fixed along the
-  way. Also investigated (not fixed — no code defect found) two playtest
-  reports Kevin raised in the same message.
-- **Why this ran this session:** Kevin said the game "is in a bad spot"
-  visually and asked to "spruce it up quite a bit," explicitly scoping this
-  pass to Main Menu + Compendium/Bestiary only, with the same branding
-  planned to carry through the rest of the game (including `BattleScene`'s
-  HUD) in a later session. He asked for: an on-brand fantasy/D&D look, a
-  more professional/reorganized Main Menu, and real stylized hover/click
-  button feedback — and said explicitly to take as much time as needed. The
-  same message also reported two playtest findings: he couldn't find a
-  spellbook to test spell-cast animations, and never saw a level-up choice
-  prompt. Both were investigated in code this session (no browser available
-  here) — see below.
-- **Completed this session:**
-  - **`src/game/scenes/uiTheme.ts`** (new, shared, Phaser-dependent
-    presentation module — same "one renderer, not duplicated per scene"
-    precedent `dialogueBox.ts` already established):
-    - **Two Google Fonts**: Cinzel (display/headline) and EB Garamond
-      (body/button), both SIL Open Font License 1.1, loaded via a `<link>`
-      in `index.html` with `preconnect` hints. Every `fontFamily` string
-      lists a real serif fallback (Georgia, Times New Roman, serif) first,
-      so an offline/CDN-unreachable load still renders readable text.
-      `BootScene.create()` now waits for `document.fonts.ready` (capped at
-      1.5s so a slow/offline connection can never stall the menu) before
-      starting `MainMenuScene`, since Phaser doesn't re-layout Text objects
-      that were already rendered against the fallback font.
-    - **`createOrnateButton(scene, x, y, w, h, label, onClick, opts)`**: a
-      carved-wood-and-bronze plaque button drawn with `Graphics` (rounded
-      double border, corner diamond accents), with real idle/hover/
-      pressed/disabled/selected states — a hover brighten+lift tween, a
-      press-down "squish" tween on click. Every button in this project
-      previously used a plain `add.rectangle().setStrokeStyle()` with, at
-      most, a flat `setFillStyle` swap on `pointerover` and ZERO click
-      feedback — this was the literal, explicit ask. Four size variants
-      (`primary`/`secondary`/`tool`/`tab`) cover everything from the Main
-      Menu's big "New Game" button down to Compendium's 10-wide category
-      tab row.
-    - **`drawScreenBackdrop(scene)`**: a wood/stone vertical gradient +
-      four-corner vignette + a double gold/bronze frame with corner
-      diamonds, replacing every restyled scene's old flat
-      `setBackgroundColor("#0e0e14")`.
-    - **`drawParchmentPanel(scene, x, y, w, h, depth)`**: the same
-      base-fill + low-alpha "aged" mottling + double-border technique
-      `dialogueBox.ts` already established for its fixed 900x280 dialogue
-      box, generalized here to an arbitrary rectangle (Compendium's detail
-      pane, Bestiary's roster pane).
-    - **`spawnAmbientMotes`** (drifting ember/dust particles, deterministic
-      golden-angle placement, not randomized), **`createSectionLabel`** (a
-      small-caps flanked label for grouping buttons), **`centeredRowX`**
-      (the centering arithmetic `CompendiumScene` had already hand-rolled
-      three times, pulled out to one shared formula).
-    - **New `COLORS` entries in `config.ts`** (`menuBgNear/Far`,
-      `menuVignette`, `woodPanel*`, `bronze*`, `gilt*`, `menuInk*`) —
-      deliberately separate from the existing battle-board palette
-      (`tileFloor`, `hero`, `enemy`, etc.), which is completely untouched.
-  - **`MainMenuScene.ts`** rewritten: the old flat vertical stack of five
-    identical buttons (New Game/Compendium/Bestiary/Campaigns/Free Play)
-    plus six more scattered across the four corners (Load Game, Account,
-    Settings, Map Builder, Browse Shared Maps, Co-op) is now grouped by
-    purpose — one hero action ("New Game," big, gold-accented), a
-    "Continue Your Journey" row (Load Game/Campaigns/Free Play, +Co-op if
-    Firebase is configured), a "Know Your Foe" row (Compendium/Bestiary),
-    and a visually quieter "Creator Tools" row (Map Builder, +Browse Shared
-    Maps if Firebase is configured) — plus a drawn tower-and-shield crest
-    (pure `Graphics`, no image asset) filling the space below the button
-    groups, drifting ember motes for atmosphere, and a small version tag.
-    Settings and the optional Account control stay in the top-right corner.
-    Every `scene.start` target and the Enter/Space keyboard shortcut are
-    byte-for-byte unchanged — this is a presentation-only pass.
-  - **`CompendiumScene.ts`/`BestiaryScene.ts`** restyled onto the same
-    theme: tabs, sub-selectors (class/spell-level pickers), and pagination
-    controls now use `createOrnateButton`; the detail text renders inside a
-    `drawParchmentPanel` in ink-on-parchment color with the EB Garamond
-    body font. **Zero data or lookup-logic changes** — every category,
-    filter, and page computation is identical to before.
-  - **A real pre-existing gap found and fixed in `BestiaryScene`, not part
-    of the original ask**: the enemy roster grew from a handful of entries
-    at this scene's Phase 11.6 debut to 94 by Phase 25, but nobody ever
-    added pagination — the old flat, unpaginated text block had been
-    silently overflowing well past the bottom of the canvas for many
-    phases. Fixed with the same Prev/Next paging `CompendiumScene` already
-    established (`ENTRIES_PER_PAGE = 10`), applied to a flattened,
-    role-grouped enemy list with a heading rendered wherever a role group
-    starts on the current page. See **KI-080** for the in-browser checklist
-    and **KI-079** below for why this was found now.
-  - **The two playtest reports Kevin raised, investigated in code (no
-    browser available, so this is a code read, not a reproduction — see
-    KI-079 for the full writeup)**:
-    - **Spellbook access**: `BattleScene.onAbilityButton`/
-      `showAbilityButtonFor`/`isCasterHero` are all correctly wired — any
-      hero with a non-empty known-spell list (Wizard/Cleric/Bard/Druid/
-      Sorcerer/Warlock) shows a "Cast a Spell (Q)" button the instant it's
-      selected and can still act. No code defect found. Most likely
-      explanation: the button is easy to miss among the still-unrestyled
-      `BattleScene` HUD's visual noise (exactly the class of problem this
-      session's restyle doesn't reach yet — that scene is explicitly next,
-      not this session), or the test party had no caster hero selected.
-    - **Level-up choices**: `afterWaveCleared`/`applyClassLevelUps`/
-      `showAsiChoiceQueue`/`showSubclassChoiceQueue` are all correctly
-      wired — a hero levels up every 2 waves cleared, but a CHOICE popup
-      only appears at an Ability-Score-Improvement level (4 for most
-      classes → wave 6+) or an in-battle subclass-pick level (1-3, and
-      NEVER for Cleric/Sorcerer/Warlock, who pick their subclass at
-      character creation instead, by design). No code defect found. Most
-      likely explanation: a playtest shorter than 6 waves, or an
-      all-Cleric/Sorcerer/Warlock party, would see ordinary level-ups
-      (logged as plain text) but genuinely no choice popup — this matches
-      Kevin's report exactly.
-    - **Neither is fixed, because neither was found broken.** Both need
-      Kevin's own confirmation (which class(es), how many waves, whether a
-      caster was selected when Q was pressed) before any further code
-      change — see "Next chat instructions" below.
-  - Tests: unchanged at **1036** — pure presentation code (fonts, colors,
-    `Graphics` drawing, button tweens), no new pure logic to test, same
-    standing limitation as every other Phaser-scene-only visual change in
-    this project. Typecheck, all 1036 tests, and the production build all
-    pass. Module count: **114**, up from 113 (the new `uiTheme.ts`). `npm
-    run dev` serves HTTP 200 (checked this session).
-- **What's NOT done, and why:** `BattleScene`'s HUD, `CharacterCreationScene`,
-  and every other scene are completely UNCHANGED — Kevin's own instruction
-  was to start with just Main Menu + Compendium/Bestiary, with the same
-  branding explicitly planned to carry through the rest of the game later,
-  not this session. No actual code fix for the spellbook/level-up reports,
-  since no code defect was found in either mechanism this session — see
-  above and KI-079.
-- **A real limitation of this environment, stated plainly:** this is a
-  large visual/branding change and none of it has been seen by Kevin yet —
-  no browser is available here. See **KI-080**. Separately, the spellbook/
-  level-up investigation above is a code read, not a reproduction — it
-  could be wrong; treat it as a hypothesis pending Kevin's own confirmation,
-  not a closed case.
-- **Recommended next step:** Kevin should open the Main Menu, Compendium,
-  and Bestiary in a browser and confirm the fonts load, every button's
-  hover/click feedback works, the new grouped Main Menu layout doesn't
-  overlap anything, and Bestiary's new pagination reads as clean pages
-  rather than one overflowing block (KI-080 has the full checklist).
-  Separately, he should report back on the spellbook/level-up questions
-  above (KI-079) — which class(es) he built, how many waves he reached, and
-  whether he selected a caster hero before pressing Q — so either can be
-  confirmed working-as-designed or turned into a real, reproducible bug
-  report. KI-078 (D-122's spell-cast/death animations), KI-077 (D-121's
-  lunge), KI-076/075 (dialogue skip controls/box), and KI-074 (D-117's
-  playtest fixes, now SEVEN sessions overdue) all remain unconfirmed too and
-  are worth surfacing directly.
+  animations, the Main Menu/Compendium/Bestiary UI theme, an inert-class-
+  feature batch, and five more deferred slices — Reckless Attack, Preserve
+  Life, hero-side stealth, Wizard/Warlock's spell-mastery picker) are
+  complete. **This session ran D-126**: a full UI-layout audit and fix
+  across the whole game, not a new content/mechanics phase.
+- **Why this ran this session:** Kevin said he's actively gathering images
+  for different aspects of the game, but that right now there are "a lot of
+  problems with clashing text boxes, boxes going over the edge of the
+  screen, etc." and asked for a full audit and fix of these UI issues — an
+  explicit, broad ask, not a narrow bug report about one screen. Given the
+  scope, a general-purpose agent was used to read every scene file in full
+  and compute real bounding-box math (against the 1280x1080 canvas and every
+  real map/data-table's actual current size) rather than guessing which
+  screens might be affected or fixing only what a quick look would surface.
+  Every finding was independently re-verified against the actual source
+  before any fix was made — the audit's own numbers were checked, not taken
+  on faith.
+- **Completed this session (D-126):**
+  - **`CompendiumScene`'s category tabs (10 items) and class selector (12
+    items)** rendered more than half off-canvas on BOTH edges, on the
+    screen's own default tab — a deterministic bug present on literally
+    every visit, not an edge case. Root cause: the shared `centeredRowX`
+    helper (`uiTheme.ts`) computed positions for the requested item width
+    unconditionally, with no ceiling on the row's total width. Fixed at the
+    helper itself: `centeredRowX` now takes an optional `maxWidth` (default
+    `GAME_WIDTH - 80`) and shrinks item width evenly to fit instead of
+    letting the row grow past the canvas. All 7 call sites across
+    `CompendiumScene`/`MainMenuScene` now destructure the returned
+    `{ xs, itemWidth }` and size their buttons off the (possibly shrunk)
+    `itemWidth`, not the original request.
+  - **`MapBuilderScene`'s terrain palette** (8 swatches, shown by default on
+    open): the identical off-canvas failure, hand-rolled separately rather
+    than routed through `centeredRowX`. Now imports and uses the same fixed
+    helper.
+  - **`FreePlayScene`'s map (7 options) and boss (13 options) picker
+    labels**: the button WIDTH already correctly shrinks to fit the option
+    count, but the label TEXT had no word-wrap (only the locked-hint text
+    below it did) and stayed at a fixed 16px font — a real map/boss name
+    ("Cinderfall Rift (volcanic, collapsing bridge)", "The Hollow Empress")
+    rendered far wider than its slot and visibly overlapped neighboring
+    buttons. Fixed with `wordWrap` at the slot's own width plus a
+    width-scaled font size (16px down to 10px as a row gets more crowded).
+  - **The core Battle HUD's status line/combat log** (`BattleScene.buildHud`)
+    — the single most-used screen in the game, and the one most likely to
+    be what Kevin is actually hitting: `wrapWidth` was `this.map.cols *
+    TILE_SIZE`, the GRID's own pixel width, not the canvas's — despite this
+    exact spot's own prior comment claiming word-wrap already made a
+    collision "impossible regardless of content length" (wrapping bounds
+    line WIDTH, not the fixed 60px HEIGHT it was meant to protect).
+    Computed against the REAL `refreshStatus` format (a full 4-hero party's
+    status plus the `heroSelected`/`equipping` hint, using real hero-name/
+    gear-description lengths from `data/`, not synthetic worst cases) on
+    Frostbound Hollow — the narrowest built-in map at 14 columns, which is
+    ALSO the tallest at 9 rows — the status line already reaches ~4-5
+    wrapped lines in completely ordinary play (a hero simply selected, no
+    item hover needed), bleeding into the combat log directly below it.
+    Fixed at the root: `wrapWidth` is now `GAME_WIDTH - 80`, decoupled from
+    the grid entirely (nothing else shares that row horizontally). Also
+    bumped `statusBlockHeight` 60→78 as extra headroom, re-verified against
+    `buildShopHud`'s own item-grid/Done-button bounding-box math to confirm
+    it still clears `GAME_HEIGHT` on Frostbound Hollow's 9 rows (1069px vs.
+    1080 — an 11px margin, tight but real and checked, not assumed).
+    `combatLogText` also gained its own `wordWrap` for the first time — it
+    had none at all before this session, so a single long combat-log line
+    could render wider than the canvas and clip off both edges.
+  - **`BrowseSharedMapsScene`'s shared-map list**: rendered one row per
+    FETCHED map with no ceiling — grew into the fixed Wave Count/Minion/
+    Difficulty/Start sections below it once more than ~6 maps were loaded
+    (`Load more` fetches 10 at a time). A real, growing failure mode given
+    Kevin is actively building out map-sharing content this cycle, not a
+    hypothetical one. Fixed with a fixed local page size (5 maps at a time)
+    and its own Prev/Next pagination, matching the pattern this project
+    already uses elsewhere (Gear/Shop grids, Compendium's Spells tab); "Next"
+    past the last locally-held page transparently fetches another remote
+    page first.
+  - **Investigated and deliberately left alone, with the reasoning recorded
+    rather than silently dropped** (all in D-126): `renderAsiPrompt`'s
+    title can mathematically overlap its own first button row at 15+
+    simultaneous choices, but that's reachable only by the Epic Boon feat's
+    ability-picker at character level 19+, which no run in this game
+    currently reaches (10 waves max per run — same gap as KI-066). An
+    aura-ring enemy's buff radius and the falling-judgment spell-cast VFX
+    can both theoretically render a few pixels above the canvas top, but
+    only for a spawn/target on row 0-1, which no built-in map has, and both
+    are momentary self-correcting cosmetic effects. A suspected
+    status-badge-stacking overflow (poisoned+silenced+hidden+… all active
+    at once) turned out not to exist — both hero and enemy status badges
+    render as ONE Text object with every active code concatenated into a
+    single short string, not separate stacked boxes.
+  - **Screens read and confirmed already sound, no changes needed**:
+    `MainMenuScene`'s three `centeredRowX` rows (all well under the new
+    `maxWidth` ceiling already), `BestiaryScene`'s pagination (already
+    correctly capped at 10/page against 94 real entries),
+    `CharacterCreationScene`, `CoopLobbyScene`, `CampaignSelectScene`,
+    `LoadGameScene`, and `dialogueBox.ts`.
+  - Tests: **unchanged at 1130** — every fix this session is Phaser-only
+    presentation/layout code, the same standing "scene code isn't
+    unit-tested" boundary every other visual-only fix in this project has.
+    Typecheck, all 1130 tests, and the production build all pass unchanged
+    (115 modules).
+- **What's NOT done, and why:** `BattleScene`'s full HUD visual RESTYLE
+  (carried forward since D-123, Kevin's own stated next step) still hasn't
+  happened — this session fixed concrete overlap/overflow BUGS in the
+  existing layout, it did not redesign that layout's look. If Kevin's next
+  playtest still finds the HUD visually cluttered/flat (as opposed to
+  literally overlapping), that's the restyle work, not more of this
+  session's fixes.
+- **A real limitation of this environment, stated plainly:** every fix this
+  session lives inside Phaser scene code with no browser available here —
+  the bounding-box arithmetic behind each fix was verified by hand against
+  real constants and real data-table lengths (shown in D-126's own writeup),
+  not assumed, but none of it has actually been SEEN rendered. See **KI-083**
+  for the exact in-browser checklist.
+- **Recommended next step:** Kevin should open Compendium and Map Builder
+  first (both were broken on their own DEFAULT tab, so this is the fastest
+  possible confirmation), then play at least one battle on Frostbound Hollow
+  specifically with a full 4-hero party (the narrowest+tallest built-in map,
+  and the exact case the Battle HUD fix targets) — see **KI-083** for the
+  full checklist, including what's still knowingly NOT fixed (the ASI-prompt
+  edge case) and why.
 - **Last complete milestone:** Phase 6 (`v0.1.1`) through Phase 25 (D-116);
-  D-117 through D-122; D-123 (this session — the Main
-  Menu/Compendium/Bestiary UI theme). Phase 12 still has no live board sync.
-  `BattleScene`'s own visual restyle has not started yet.
+  D-117 through D-125; D-126 (this session — UI-layout audit and fix, no new
+  content/mechanics). Phase 12 still has no live board sync. `BattleScene`'s
+  own visual restyle (carried forward from D-123) still has not started.
 - **Git branch:** no git in this environment; Kevin manages branching in
-  GitHub Desktop. This session's changed files: `index.html`,
-  `src/game/config.ts`, `src/game/scenes/BootScene.ts`,
-  `src/game/scenes/MainMenuScene.ts`, `src/game/scenes/CompendiumScene.ts`,
-  `src/game/scenes/BestiaryScene.ts`; new file
-  `src/game/scenes/uiTheme.ts`; docs (`DECISIONS.md`, `PROJECT_STATUS.md`,
-  `CHANGELOG.md`, `KNOWN_ISSUES.md`, `CONTENT_SOURCES.md`, this file). No
+  GitHub Desktop. This session's changed files: `src/game/scenes/
+  uiTheme.ts` (shared `centeredRowX` helper), `src/game/scenes/
+  CompendiumScene.ts`, `src/game/scenes/MainMenuScene.ts`, `src/game/
+  scenes/MapBuilderScene.ts`, `src/game/scenes/FreePlayScene.ts`,
+  `src/game/scenes/BattleScene.ts`, `src/game/scenes/
+  BrowseSharedMapsScene.ts`; docs (`DECISIONS.md`, `PROJECT_STATUS.md`,
+  `CHANGELOG.md`, `KNOWN_ISSUES.md`, this file). No test file changed. No
   git commit/tag made here.
-- **Date:** August 10, 2026
+- **Date:** August 12, 2026
 
 ## Why this batch was chosen
-Kevin asked directly for this, unprompted, as a fresh top-level request
-("Visually I think the game is in a bad spot right now. Let's spruce it up
-quite a bit"), separate from any prior phase's own recommended next step.
-He explicitly scoped it to Main Menu + Compendium/Bestiary for now, with
-the same branding planned for the rest of the game later — so this session
-built a REUSABLE shared theme module (`uiTheme.ts`) rather than three
-one-off restyles, specifically so the next visual pass (`BattleScene` and
-beyond) can reuse the same fonts/colors/button component instead of
-re-inventing them a fourth time.
+
+Kevin's ask was explicitly broad ("a full audit and fix," not "fix the thing
+I noticed") and came while he's investing in real art assets for the game —
+a reasonable moment to also want the surrounding UI to actually hold
+together, since new art dropped into a layout that's already clashing would
+just clash differently. Given `BattleScene`'s HUD has never had a layout
+pass despite 25+ phases of purely additive changes, and several menu
+screens' button rows are sized off data tables (class list, category list,
+terrain palette, map/boss options) that have grown well past their
+original design point, this was treated as a real systemic sweep rather
+than a guess-and-check pass over whichever screen came to mind first.
 
 ## What works now
-- Everything from every prior phase through D-122, unchanged in behavior —
-  this session touched presentation only, no game rule changed.
-- **Main Menu, Compendium, and Bestiary now share one fantasy/parchment
-  visual theme**: real fonts (Cinzel/EB Garamond), a textured backdrop, and
-  ornate buttons with genuine hover/click feedback, in place of the flat
-  dark-gray-rectangle look every screen had before.
-- **Main Menu is reorganized into named, purpose-grouped button clusters**
-  instead of one long undifferentiated list.
-- **Bestiary now paginates its 94-entry roster** instead of silently
-  overflowing past the bottom of the canvas.
-- Pending Kevin's own visual confirmation (KI-080).
+
+- Everything from every prior phase through D-125, unchanged in gameplay
+  behavior — this session touched ONLY layout/positioning code in scene
+  files, no game rule, data value, or mechanic changed.
+- Compendium's category tabs and class selector, Map Builder's terrain
+  palette, Free Play's map/boss picker labels, the core Battle HUD's status
+  line/combat log, and Browse Shared Maps' list are all now correct by the
+  verified arithmetic in D-126 — pending Kevin's own in-browser confirmation
+  (KI-083).
 
 ## What changed
-- **Six files edited**: `index.html` (Google Fonts `<link>`), `src/game/
-  config.ts` (new themed `COLORS`), `src/game/scenes/BootScene.ts` (waits
-  for fonts before starting the menu), `src/game/scenes/MainMenuScene.ts`
-  (full rewrite), `src/game/scenes/CompendiumScene.ts` (restyle, same
-  logic), `src/game/scenes/BestiaryScene.ts` (restyle + new pagination).
-- **One new source file**: `src/game/scenes/uiTheme.ts`.
-- **No new test files** — presentation-only, nothing new to unit-test.
-- **Docs**: `DECISIONS.md` (new D-123), `PROJECT_STATUS.md` (new top
-  section), `CHANGELOG.md` (new entry), `KNOWN_ISSUES.md` (new KI-079,
-  KI-080), `CONTENT_SOURCES.md` (new Google Fonts row), this file
-  (rewritten).
+
+- **Six scene files edited, no new files, no test file changed**:
+  `src/game/scenes/uiTheme.ts` (`centeredRowX` gained an optional
+  `maxWidth` and now returns `{ xs, itemWidth }` instead of a plain array),
+  `src/game/scenes/CompendiumScene.ts` (4 call sites updated to the new
+  `centeredRowX` shape), `src/game/scenes/MainMenuScene.ts` (3 call sites,
+  same update, no behavior change since none of its rows exceeded the new
+  ceiling), `src/game/scenes/MapBuilderScene.ts` (now imports and uses
+  `centeredRowX` for its terrain/marker palette instead of hand-rolled
+  math), `src/game/scenes/FreePlayScene.ts` (`buildOptionRow`'s label text
+  gained `wordWrap` and a width-scaled font size), `src/game/scenes/
+  BattleScene.ts` (`buildHud`'s `wrapWidth`/`statusBlockHeight`,
+  `combatLogText` gained `wordWrap`), `src/game/scenes/
+  BrowseSharedMapsScene.ts` (the map list gained a fixed local page size and
+  its own Prev/Next controls, replacing the old uncapped "Load more"-only
+  list).
+- **Docs**: `DECISIONS.md` (new D-126), `PROJECT_STATUS.md` (new top
+  section), `CHANGELOG.md` (new entry), `KNOWN_ISSUES.md` (new KI-083),
+  this file (rewritten). No `CONTENT_SOURCES.md` change — no new content of
+  any kind this session, purely layout-code fixes.
 
 ## Important files
-- **`DECISIONS.md`'s D-123** — the full method, including exactly what was
-  investigated (and NOT fixed) for the spellbook/level-up reports.
-- **`src/game/scenes/uiTheme.ts`** — read this before restyling any other
-  scene (`BattleScene` is the obvious next target); every helper here is
-  meant to be reused, not re-implemented.
-- **`KNOWN_ISSUES.md`'s KI-080** — the full in-browser verification
-  checklist for this session's visual work.
-- **`KNOWN_ISSUES.md`'s KI-079** — the full spellbook/level-up
-  investigation writeup and exactly what repro details would turn either
-  into a real, actionable bug report.
+
+- **`DECISIONS.md`'s D-126** — the full method: every deterministic bug
+  found with its exact arithmetic, the core-HUD fix's real-data
+  verification (not a synthetic worst case), and the complete list of what
+  was investigated and deliberately left alone with the reasoning for each.
+- **`src/game/scenes/uiTheme.ts`'s `centeredRowX`** — the one shared fix
+  point for the off-canvas button-row bug class; any FUTURE screen that
+  hand-rolls its own centered-row math instead of using this helper is at
+  risk of the same bug recurring.
+- **`KNOWN_ISSUES.md`'s KI-083** — the full in-browser verification
+  checklist for every fix this session, including exactly which screen to
+  open first for the fastest possible confirmation (Compendium/Map Builder,
+  both broken on their own default tab before this session).
 
 ## Commands verified
+
 - `npm run typecheck` — pass.
-- `npm test` — pass, **1036/1036** (unchanged from last session).
-- `npm run build` — pass, **114 modules** (up from 113).
-- `npm run dev` — serves HTTP 200 (checked this session).
+- `npm test` — pass, **1130/1130** (unchanged from last session — no test
+  file touched, this session is layout-code only).
+- `npm run build` — pass, **115 modules** (unchanged).
+- `npm run dev` — not re-checked this session (no `main.ts`/`config.ts`/
+  `index.html` file touched; last confirmed serving HTTP 200 in an earlier
+  session).
 
 ## Manual tests completed
-**None** — no browser is available in this environment. This session is a
-significant visual/branding change to three screens Kevin will see
-immediately on next launch, so his own look matters more than usual — see
-**KI-080** for the exact checklist, and **KI-079** for the two playtest
-questions still needing his answer.
+
+**None** — no browser is available in this environment, and this entire
+session is visual/layout-only code that needs a real screen to actually
+confirm. Every fix's correctness was verified by re-deriving the exact
+bounding-box arithmetic against real constants and real data (shown in
+D-126), not assumed — but "the math says it fits" and "Kevin saw it render
+correctly" are different claims, and only the first one is true right now.
+See **KI-083** for the exact checklist.
 
 ## Known issues
-- **KI-080** (new this session) — the Main Menu/Compendium/Bestiary
-  fantasy-theme restyle not yet confirmed by Kevin in a browser; full
-  checklist in `KNOWN_ISSUES.md`.
-- **KI-079** (new this session) — Kevin's spellbook-access and level-up-
-  choice playtest reports, investigated in code, no defect found; needs his
-  own confirmation/repro details either way.
-- **KI-078** — D-122's spell-cast/death animations, still open.
-- **KI-077** — D-121's basic-attack lunge, still open.
-- **KI-076** — D-120's dialogue skip controls, still open.
-- **KI-075** — D-119's dialogue box/preview tab, still open.
-- **KI-074** — D-117's playtest fixes, still open, now SEVEN sessions
-  without Kevin's confirmation.
+
+- **KI-083** (new this session) — every D-126 layout fix not yet confirmed
+  by Kevin in a browser; full checklist in `KNOWN_ISSUES.md`, including the
+  one edge case (`renderAsiPrompt` at 15+ choices) that was found but
+  deliberately NOT fixed since it has no reachable path in the game today.
+- **KI-082** — D-125's five slices, still open.
+- **KI-081** — D-124's batch of wired-real class/subclass features, still
+  open.
+- **KI-080** — D-123's Main Menu/Compendium/Bestiary restyle, still open.
+- **KI-079** — Kevin's spellbook-access/level-up-choice playtest reports,
+  investigated in code, no defect found, still needs his own confirmation.
+- **KI-074** through **KI-078** — five earlier content/mechanics/UI phases,
+  still not yet confirmed in a browser (KI-074 now TEN sessions overdue).
 - **KI-065** through **KI-073** — nine consecutive earlier content/
   mechanics phases, still not yet confirmed in a browser.
 - Unchanged: every other issue in `KNOWN_ISSUES.md`.
 
 ## Deferred items
-- **`BattleScene`'s HUD restyle** — the same fantasy theme, deliberately
-  NOT built this session per Kevin's own scoping ("just start with the main
-  menu and compendium/bestiary for now"). This is the natural next step
-  once Kevin confirms this session's three screens look right, and would
-  also be the moment to directly address the spellbook button's
-  discoverability (KI-079's likely explanation).
-- **`CharacterCreationScene`, `FreePlayScene`, `CampaignSelectScene`,
-  `CoopLobbyScene`, `MapBuilderScene`, `LoadGameScene`,
-  `BrowseSharedMapsScene`** — every other scene, all still on the old flat
-  dark/plain-rectangle look. Not restyled this session, same reasoning.
-- Everything already deferred from D-117 through D-122 and earlier
-  phases — untouched this session.
+
+- **`BattleScene`'s full HUD visual restyle** (carried forward from D-123) —
+  this session fixed overlap/overflow BUGS in the existing layout, it is
+  still not a visual redesign. Still the other major standing to-do.
+- **`renderAsiPrompt`'s 15+-choice title overlap** — real by the math, but
+  unreachable below character level 19 (no run currently reaches it, same
+  gap as KI-066) — not worth fixing until a run can actually reach that many
+  simultaneous choices.
+- Everything already deferred from D-117 through D-125 and earlier phases —
+  untouched this session (no gameplay/mechanic code changed at all).
 
 ## Decisions made
-- **D-123** — a shared fantasy/parchment UI theme for Main Menu, Compendium,
-  and Bestiary. See `DECISIONS.md` for the full method.
+
+- **D-126** — a full UI-layout audit and fix: `uiTheme.ts`'s `centeredRowX`
+  gained a max-width shrink-to-fit; Compendium/Map Builder's off-canvas
+  button rows, Free Play's overlapping picker labels, the core Battle HUD's
+  status/combat-log wrap-width bug, and Browse Shared Maps' uncapped list
+  were all fixed; several other spots were investigated and deliberately
+  left alone with reasoning recorded. See `DECISIONS.md` for the full method.
 
 ## Content or license additions
-- **Two Google Fonts** (Cinzel, EB Garamond — SIL Open Font License 1.1),
-  logged in `CONTENT_SOURCES.md`. This is the first font this project has
-  ever added — every prior phase's own `CONTENT_SOURCES.md` entries note
-  "no new art, audio, or fonts."
+
+None this session — no new SRD text, fonts, art, or audio; no new game
+content, mechanics, or data of any kind. Purely layout/positioning fixes in
+existing Phaser scene code.
 
 ## Next chat instructions
-1. **Ask Kevin whether he's looked at the new Main Menu/Compendium/Bestiary
-   in a browser yet** (KI-080) — confirm the fonts loaded, every button's
-   hover/click feedback works, the new grouped layout reads well, and
-   Bestiary's new pagination works.
-2. **Ask Kevin the three specific follow-up questions KI-079 needs**: which
-   class(es) did he build, how many waves did he reach, and did he select a
-   caster hero before pressing Q/looking for the spellbook button? His
-   answers will show whether the spellbook/level-up "bugs" are actually
-   working-as-designed (the likely case) or genuinely broken (in which case
-   this becomes a real bug-fix session with an exact repro, not more code
-   archaeology).
-3. **If Kevin confirms this session's three screens look good**: the
-   natural next step is extending the SAME `uiTheme.ts` module to
-   `BattleScene`'s HUD — Kevin's own stated plan ("the same branding will
-   need to be carried through the whole game"). That's a bigger, riskier
-   pass than this one (a live battle board has far more interactive state
-   than a static menu), so scope it as its own session rather than folding
-   it into a quick follow-up.
-4. Also ask about KI-078, KI-077, KI-076, KI-075, and KI-074 — all still
-   open, and KI-074 is now seven sessions overdue.
-5. Boundaries unchanged from before this session, plus this session's own:
-   `BattleScene` and every other scene are still unrestyled; no code fix
-   was made for the spellbook/level-up reports, since none was confirmed
-   necessary.
+
+1. **Ask Kevin to open Compendium and Map Builder first** — both had a
+   bug reachable on their own DEFAULT tab before this session, so these are
+   the fastest possible confirmation that the fix actually landed.
+2. **Ask Kevin to play at least one battle on Frostbound Hollow** with a
+   full 4-hero party — the specific narrowest+tallest built-in map the core
+   Battle HUD fix targets — and report whether the status line/combat log
+   ever visually collide, in both ordinary play and while hovering a long
+   item description in Build/Gear mode.
+3. **If Kevin confirms this session's fixes hold**: the `BattleScene` HUD
+   visual restyle (carried forward from D-123, Kevin's own stated next
+   step) is still the other major standing to-do, separate from this
+   session's bug-fixing work entirely — worth asking directly whether he
+   wants that tackled next, especially now that the layout underneath it no
+   longer has known overlap bugs to fight during a restyle.
+4. Also ask about the long tail of still-unconfirmed content phases
+   (KI-065 through KI-082) if there's time — KI-074 is now ten sessions
+   overdue.
+5. **If Kevin reports a NEW clashing/off-canvas spot this session's audit
+   didn't catch**: check first whether it's in a screen this session marked
+   "read and confirmed already sound" (`MainMenuScene`, `BestiaryScene`,
+   `CharacterCreationScene`, `CoopLobbyScene`, `CampaignSelectScene`,
+   `LoadGameScene`, `dialogueBox.ts`) — if so, the data driving it may have
+   grown since this session's read, the same pattern that caused this
+   session's Compendium/Map Builder bugs in the first place.
 
 ## Suggested git steps (not run here; use GitHub Desktop)
-1. This session's diff touches six existing files plus one new source file
-   and docs — a coherent single unit (one new shared module plus its
-   application to three scenes), safe as its own commit.
+
+1. This session's diff touches six existing scene files and docs — no new
+   source file, no test file — a coherent single unit (one decision, D-126),
+   safe as its own commit.
 2. Not deployed anywhere from this session directly — Kevin's existing
-   GitHub Actions workflow deploys automatically on push to `main`. This
-   change is visible the instant the game loads (the Main Menu is the very
-   first screen), so a deploy would surface it immediately — likely worth
-   doing before the next session so Kevin can react to it in the live
-   build, same as he does for every other visual change.
+   GitHub Actions workflow deploys automatically on push to `main`. Very low
+   risk to deploy (pure layout/positioning fixes, no gameplay logic touched,
+   all 1130 existing tests still pass unchanged) — probably worth deploying
+   promptly given the fixes directly address bugs Kevin is actively hitting.
 
 ## Handoff package contents
+
 - [x] Source files (see "What changed" above)
 - [x] package.json / package-lock.json (unchanged — no new deps)
 - [x] README.md (unchanged)
 - [x] PROJECT_STATUS.md (updated — new top section)
-- [x] DECISIONS.md (updated — new D-123)
-- [x] KNOWN_ISSUES.md (updated — new KI-079, KI-080)
+- [x] DECISIONS.md (updated — new D-126)
+- [x] KNOWN_ISSUES.md (updated — new KI-083)
 - [x] CHANGELOG.md (updated — new entry)
-- [x] CONTENT_SOURCES.md (updated — new Google Fonts row, the project's
-  first font addition)
+- [x] CONTENT_SOURCES.md (unchanged — no new content this session)
 - [x] ASSET_PLAN.md (unchanged — not touched this session)
 - [x] SOURCE_OF_TRUTH.md (unchanged)
 - [x] FIREBASE_SETUP.md (unchanged)
 - [x] PHASE_12_MULTIPLAYER_FEASIBILITY.md (unchanged)
 - [x] CAMPAIGN_STORY_DESIGN.md (unchanged)
 - [x] PHASE_HANDOFF.md (this file, rewritten)
-- [x] Tests (1036, unchanged from last session — presentation-only pass)
+- [x] Tests (1130, unchanged — no test file touched this session)
 - [x] No node_modules, dist, secrets, or service-account credentials

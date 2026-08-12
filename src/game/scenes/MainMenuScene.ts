@@ -180,9 +180,9 @@ export class MainMenuScene extends Phaser.Scene {
     if (firebaseReady) entries.push({ label: "Co-op", onClick: () => this.scene.start("CoopLobbyScene") });
 
     const width = 220;
-    const xs = centeredRowX(entries.length, width, 20, GAME_WIDTH / 2);
+    const { xs, itemWidth } = centeredRowX(entries.length, width, 20, GAME_WIDTH / 2);
     entries.forEach((entry, i) => {
-      createOrnateButton(this, xs[i], 412, width, 58, entry.label, entry.onClick, {
+      createOrnateButton(this, xs[i], 412, itemWidth, 58, entry.label, entry.onClick, {
         variant: "secondary",
         depth: 5,
       });
@@ -198,9 +198,9 @@ export class MainMenuScene extends Phaser.Scene {
       { label: "Bestiary", onClick: () => this.scene.start("BestiaryScene") },
     ];
     const width = 260;
-    const xs = centeredRowX(entries.length, width, 24, GAME_WIDTH / 2);
+    const { xs, itemWidth } = centeredRowX(entries.length, width, 24, GAME_WIDTH / 2);
     entries.forEach((entry, i) => {
-      createOrnateButton(this, xs[i], 546, width, 58, entry.label, entry.onClick, {
+      createOrnateButton(this, xs[i], 546, itemWidth, 58, entry.label, entry.onClick, {
         variant: "secondary",
         depth: 5,
       });
@@ -223,9 +223,9 @@ export class MainMenuScene extends Phaser.Scene {
       entries.push({ label: "Browse Shared Maps", onClick: () => this.scene.start("BrowseSharedMapsScene") });
     }
     const width = 220;
-    const xs = centeredRowX(entries.length, width, 20, GAME_WIDTH / 2);
+    const { xs, itemWidth } = centeredRowX(entries.length, width, 20, GAME_WIDTH / 2);
     entries.forEach((entry, i) => {
-      createOrnateButton(this, xs[i], y + 76, width, 46, entry.label, entry.onClick, {
+      createOrnateButton(this, xs[i], y + 76, itemWidth, 46, entry.label, entry.onClick, {
         variant: "tool",
         depth: 5,
       });

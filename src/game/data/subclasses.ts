@@ -93,13 +93,30 @@ import type { ClassFeature } from "./classes";
  * are now recorded, verified against SRD 5.1 rather than assumed (see
  * D-105), each carrying real `grantedSpellIds` referencing `data/spells.ts`
  * (all 318 of whose entries already covered every spell needed — no new
- * spell had to be added for this). All four stay `mechanicallyActive:
- * false`: Life Domain/Oath of Devotion/The Fiend because this game's
- * known-spell list is fixed per CLASS, not extended per subclass, and none
- * of these specific spells (bar Cure Wounds, already known regardless of
- * domain) have a real abilityId yet; Circle of the Land for the additional,
- * bigger reason that its terrain CHOICE has no UI to make at all yet — see
- * `CIRCLE_OF_THE_LAND_SPELLS` below for its full reference table.
+ * spell had to be added for this). Originally all four stayed
+ * `mechanicallyActive: false` for two combined reasons: this game's
+ * known-spell list was fixed per CLASS, not extended per subclass, and most
+ * of these specific spells had no real `abilityId` yet.
+ *
+ * D-124 fixes the first reason generically (`subclassGrantedSpellIdsUpToLevel`
+ * + `Hero.subclassGrantedSpellAbilityIds`, gated to a class that already has
+ * a spellbook at all) and the second reason turned out to be STALE for
+ * nearly every spell — Phase 16 (D-106) had already wired real `abilityId`s
+ * onto 15 of the 19 named across Life Domain/The Fiend by the time this was
+ * re-audited. The Fiend's features are now `mechanicallyActive: true` — a
+ * real, verified (by test) new addition to a Warlock's spellbook. Life
+ * Domain's stay `false` for a THIRD, narrower reason discovered only once
+ * the mechanism was built and tested: every one of its named spells (bar
+ * Revivify/Raise Dead, still no abilityId) turned out to ALREADY be part of
+ * `CLERIC_LEVELED_SPELL_IDS` — this game's full casters already have
+ * comprehensive access to their whole SRD spell list (Phase 15/16), so a
+ * Life Domain Cleric's spellbook is identical to any other domain's; see
+ * that subclass's own Domain Spells comments for the detail. Oath of
+ * Devotion's stay `false` for the ORIGINAL, still-true reason: Paladin has
+ * no spellbook in this game at all (a separate design conflict — see that
+ * subclass's own comment). Circle of the Land's Circle Spells stays `false`
+ * for its own bigger reason: its terrain CHOICE has no UI to make at all
+ * yet — see `CIRCLE_OF_THE_LAND_SPELLS` below for its full reference table.
  */
 
 export interface SubclassDefinition {
@@ -208,8 +225,8 @@ export const THIEF: SubclassDefinition = {
     {
       level: 9,
       name: "Supreme Sneak",
-      description: "Moves at full speed and still stays hidden. Inert — this game has no stealth/hidden-state mechanic.",
-      mechanicallyActive: false,
+      description: "Advantage on a Stealth check (Cunning Action's Hide option) made while at full movement remaining.",
+      mechanicallyActive: true,
     },
     {
       level: 13,
@@ -240,52 +257,65 @@ export const LIFE_DOMAIN: SubclassDefinition = {
     },
     // Phase 15 follow-up (D-105): the real "Domain Spells" feature — always
     // prepared, granted for free, verified against SRD 5.1 (two independent
-    // mirrors agreed). Inert: this game's known-spell list is fixed per
-    // CLASS (`characterCreation.ts`'s knownSpellIdsForClass), not extended
-    // per subclass, and every one of these spells except Cure Wounds still
-    // has no real abilityId to cast with — Cure Wounds itself changes
-    // nothing here since a Cleric already knows it via the base class
-    // regardless of domain (see data/characterCreation.ts).
+    // mirrors agreed). D-124 built the real mechanism this needed (`Hero
+    // .subclassGrantedSpellAbilityIds`, generic across any subclass) and
+    // proved it genuinely works — see The Fiend's Expanded Spell List below,
+    // which DOES add real new castable spells to a Warlock. Life Domain
+    // itself, though, turns out to produce ZERO observable difference: every
+    // one of these eight spells (bar Revivify/Raise Dead, which have no
+    // abilityId at all) is ALREADY in `CLERIC_LEVELED_SPELL_IDS`
+    // (`characterCreation.ts`) — Phase 15/16 gave every full caster
+    // comprehensive access to its entire SRD spell list, so a Life Domain
+    // Cleric's spellbook is byte-for-byte identical to a Zeal Domain
+    // Cleric's. All five tiers stay `mechanicallyActive: false` for this
+    // specific, narrower reason (confirmed by a failing test that expected
+    // "no different") rather than the original "no known-spell-list
+    // extension mechanism" reason, which D-124 resolved.
     {
       level: 1,
       name: "Domain Spells (1st level)",
-      description: "Bless and Cure Wounds are always prepared, free of any spell known-slot. Inert — see the note above this feature.",
+      description:
+        "Bless and Cure Wounds are always prepared, free of any spell known-slot. Still inert — see the note above this feature: both are already in the base Cleric spell list regardless of domain, so this feature changes nothing observable.",
       mechanicallyActive: false,
       grantedSpellIds: ["bless", "cure-wounds"],
     },
     {
       level: 3,
       name: "Domain Spells (3rd level)",
-      description: "Lesser Restoration and Spiritual Weapon are always prepared, free of any spell known-slot. Inert — same reason as the 1st-level Domain Spells above.",
+      description:
+        "Lesser Restoration and Spiritual Weapon are always prepared, free of any spell known-slot. Still inert — same reason as the 1st-level Domain Spells above.",
       mechanicallyActive: false,
       grantedSpellIds: ["lesser-restoration", "spiritual-weapon"],
     },
     {
       level: 5,
       name: "Domain Spells (5th level)",
-      description: "Beacon of Hope and Revivify are always prepared, free of any spell known-slot. Inert — same reason as the 1st-level Domain Spells above.",
+      description:
+        "Beacon of Hope and Revivify are always prepared, free of any spell known-slot. Still inert — Beacon of Hope for the same reason as the 1st-level Domain Spells above; Revivify additionally has no real abilityId at all (no resurrection/death-reversal mechanic exists).",
       mechanicallyActive: false,
       grantedSpellIds: ["beacon-of-hope", "revivify"],
     },
     {
       level: 7,
       name: "Domain Spells (7th level)",
-      description: "Death Ward and Guardian of Faith are always prepared, free of any spell known-slot. Inert — same reason as the 1st-level Domain Spells above.",
+      description:
+        "Death Ward and Guardian of Faith are always prepared, free of any spell known-slot. Still inert — same reason as the 1st-level Domain Spells above.",
       mechanicallyActive: false,
       grantedSpellIds: ["death-ward", "guardian-of-faith"],
     },
     {
       level: 9,
       name: "Domain Spells (9th level)",
-      description: "Mass Cure Wounds and Raise Dead are always prepared, free of any spell known-slot. Inert — same reason as the 1st-level Domain Spells above.",
+      description:
+        "Mass Cure Wounds and Raise Dead are always prepared, free of any spell known-slot. Still inert — Mass Cure Wounds for the same reason as the 1st-level Domain Spells above; Raise Dead additionally has no real abilityId (same reason as Revivify above).",
       mechanicallyActive: false,
       grantedSpellIds: ["mass-cure-wounds", "raise-dead"],
     },
     {
       level: 2,
       name: "Channel Divinity: Preserve Life",
-      description: "Spends a limited-use divine effect to heal several injured allies at once. Still inert — a limited-use resource is real now (Phase 13.4's Rest system) and a heal effect exists now (Cure Wounds), but this game's healing only ever targets ONE ally at a time; a real AoE-ally-heal targeting mode doesn't exist yet.",
-      mechanicallyActive: false,
+      description: "Spends one of a limited number of uses per rest to heal up to five injured allies at once, each capped at half their own max HP.",
+      mechanicallyActive: true,
     },
     {
       level: 6,
@@ -324,20 +354,23 @@ export const PATH_OF_THE_BERSERKER: SubclassDefinition = {
     {
       level: 6,
       name: "Mindless Rage",
-      description: "Can't be frightened or charmed while raging. Inert — this game has no fear/charm status effect.",
+      description:
+        "Can't be frightened or charmed while raging. D-124 adds a real \"frightened\" status (see this Path's own Intimidating Presence, below) — but it only flows hero-to-enemy today (nothing inflicts it, or \"charmed,\" on a hero), so there is nothing yet for this hero to actually resist. Still inert, for a different, narrower reason than before.",
       mechanicallyActive: false,
     },
     {
       level: 10,
       name: "Intimidating Presence",
-      description: "Frighten a creature as an action. Inert — this game has no fear status effect.",
-      mechanicallyActive: false,
+      description:
+        "Frighten a creature as an action. Mechanically active as of D-124, reusing the new \"frightened\" status effect — simplified from a stand-alone action to a rider on a landed basic-attack hit (a failed save frightens the target for 2 phases), the same auto-apply precedent Grappler's restrain (D-109) already established. See BattleScene.applyIntimidatingPresence.",
+      mechanicallyActive: true,
     },
     {
       level: 14,
       name: "Retaliation",
-      description: "A reaction attack against whoever just hit you. Inert — this game has no reaction-triggered-attack mechanic (Uncanny Dodge's reaction only reduces damage, it doesn't swing back).",
-      mechanicallyActive: false,
+      description:
+        "A reaction attack against whoever just hit you. Mechanically active as of D-124: once per turn, spends this hero's reaction to strike back at an adjacent attacker for its own basic-attack damage — the first reaction in this game to swing back rather than just reduce damage (Uncanny Dodge's own reaction). See BattleScene.applyRetaliations.",
+      mechanicallyActive: true,
     },
   ],
 };
@@ -356,8 +389,9 @@ export const COLLEGE_OF_LORE: SubclassDefinition = {
     {
       level: 3,
       name: "Cutting Words",
-      description: "A reaction, spending Bardic Inspiration, to weaken a nearby enemy's roll. Inert — this game has no reaction-triggered roll-modification mechanic to hook a spent Inspiration die into.",
-      mechanicallyActive: false,
+      description:
+        "A reaction, spending Bardic Inspiration, to weaken a nearby enemy's roll. Mechanically active as of D-124 — reimagined as weakening a landed BLOW against any ally instead (this game's attack rolls already happened by the time a reaction fires; a retroactive damage reduction is the same simplification Uncanny Dodge's own reaction already uses), spending this Bard's own reaction and one Bardic Inspiration use for a flat reduction. See Hero.canUseCuttingWords/BattleScene.applyCuttingWords.",
+      mechanicallyActive: true,
     },
     {
       level: 6,
@@ -690,42 +724,44 @@ export const THE_FIEND: SubclassDefinition = {
     // (FULL_CASTER_SPELL_SLOTS_BY_LEVEL in `data/classes.ts`: 1st-level
     // slots at level 1, 2nd at level 3, 3rd at level 5, 4th at level 7, 5th
     // at level 9). Verified against SRD 5.1 (three independent mirrors
-    // agreed). Inert: none of these ten spells have a real abilityId yet,
-    // so even though Warlock DOES have a spellbook in this game (unlike
-    // Paladin/Ranger), there is nothing here it could actually cast.
+    // agreed). D-124: mechanically active now — all ten of these spells
+    // turned out to already have a real abilityId (Phase 16, D-106), so
+    // `Hero.subclassGrantedSpellAbilityIds` adds every one of them to this
+    // Warlock's spellbook, for free, the instant its own spell slots reach
+    // the matching level.
     {
       level: 1,
       name: "Expanded Spell List (1st-level spells)",
-      description: "Burning Hands and Command are always available to be known, without using a spell known-slot. Inert — see the note above this feature.",
-      mechanicallyActive: false,
+      description: "Burning Hands and Command are always available to be known, without using a spell known-slot. Mechanically active as of D-124 — see the note above this feature.",
+      mechanicallyActive: true,
       grantedSpellIds: ["burning-hands", "command"],
     },
     {
       level: 3,
       name: "Expanded Spell List (2nd-level spells)",
-      description: "Blindness/Deafness and Scorching Ray are always available to be known, without using a spell known-slot. Inert — same reason as the 1st-level Expanded Spell List above.",
-      mechanicallyActive: false,
+      description: "Blindness/Deafness and Scorching Ray are always available to be known, without using a spell known-slot. Mechanically active as of D-124 — same as the 1st-level Expanded Spell List above.",
+      mechanicallyActive: true,
       grantedSpellIds: ["blindness-deafness", "scorching-ray"],
     },
     {
       level: 5,
       name: "Expanded Spell List (3rd-level spells)",
-      description: "Fireball and Stinking Cloud are always available to be known, without using a spell known-slot. Inert — same reason as the 1st-level Expanded Spell List above.",
-      mechanicallyActive: false,
+      description: "Fireball and Stinking Cloud are always available to be known, without using a spell known-slot. Mechanically active as of D-124 — same as the 1st-level Expanded Spell List above.",
+      mechanicallyActive: true,
       grantedSpellIds: ["fireball", "stinking-cloud"],
     },
     {
       level: 7,
       name: "Expanded Spell List (4th-level spells)",
-      description: "Fire Shield and Wall of Fire are always available to be known, without using a spell known-slot. Inert — same reason as the 1st-level Expanded Spell List above.",
-      mechanicallyActive: false,
+      description: "Fire Shield and Wall of Fire are always available to be known, without using a spell known-slot. Mechanically active as of D-124 — same as the 1st-level Expanded Spell List above.",
+      mechanicallyActive: true,
       grantedSpellIds: ["fire-shield", "wall-of-fire"],
     },
     {
       level: 9,
       name: "Expanded Spell List (5th-level spells)",
-      description: "Flame Strike and Hallow are always available to be known, without using a spell known-slot. Inert — same reason as the 1st-level Expanded Spell List above.",
-      mechanicallyActive: false,
+      description: "Flame Strike and Hallow are always available to be known, without using a spell known-slot. Mechanically active as of D-124 — same as the 1st-level Expanded Spell List above.",
+      mechanicallyActive: true,
       grantedSpellIds: ["flame-strike", "hallow"],
     },
     {
@@ -1070,4 +1106,21 @@ export function getSubclassDefinition(id: string): SubclassDefinition {
 /** Every modeled subclass for a class — two apiece as of Phase 14.2 (D-099), one SRD-derived and one original. */
 export function subclassesForClass(classId: string): SubclassDefinition[] {
   return SUBCLASS_DEFINITIONS.filter((s) => s.classId === classId);
+}
+
+/**
+ * D-124: every `grantedSpellIds` entry a subclass has unlocked by `level`
+ * (Life Domain's Domain Spells, The Fiend's Expanded Spell List, etc.),
+ * flattened in level order. Empty for a subclass with no `grantedSpellIds`
+ * features, or one not yet reached any of theirs. `Hero.knownSpellAbilityIds`
+ * is the one real consumer — this is what finally extends this game's
+ * known-spell list PER SUBCLASS, not just per class, for the two subclasses
+ * (Life Domain, The Fiend) whose granted spells already carry a real
+ * `abilityId` in `data/spells.ts`.
+ */
+export function subclassGrantedSpellIdsUpToLevel(subclassId: string, level: number): string[] {
+  const def = getSubclassDefinition(subclassId);
+  return def.features
+    .filter((f) => f.level <= level && f.grantedSpellIds)
+    .flatMap((f) => f.grantedSpellIds!);
 }

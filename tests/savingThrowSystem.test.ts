@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { SavingThrowSystem } from "../src/game/systems/SavingThrowSystem";
 import { RandomService } from "../src/game/systems/RandomService";
 import type { Combatant } from "../src/game/systems/CombatSystem";
@@ -69,5 +69,73 @@ describe("SavingThrowSystem.applySaveOrDamage", () => {
     expect(result.damageDealt).toBe(0);
     expect(result.defeated).toBe(false);
     expect(t.health).toBe(0);
+  });
+});
+
+/**
+ * D-124: two new options on a failed save — `halveOnFail` (Rogue's/Monk's
+ * Evasion) and `rerollFailedSave` (Fighter's Indomitable). Both are
+ * exercised end-to-end against a real `WaveSystem`/Blightcaller in
+ * `tests/combat.test.ts`; these focus on the pure function's own logic in
+ * isolation, mirroring every other block in this file.
+ */
+describe("SavingThrowSystem.applySaveOrDamage — halveOnFail (D-124)", () => {
+  it("halves (floored) the damage on a failed save when set", () => {
+    const t = target(10);
+    const result = SavingThrowSystem.applySaveOrDamage(t, 7, 15, 0, RandomService.fixed(1), "normal", { halveOnFail: true });
+    expect(result.save.success).toBe(false);
+    expect(result.damageDealt).toBe(3); // floor(7 / 2)
+    expect(t.health).toBe(7);
+  });
+
+  it("a successful save always deals 0 damage, halveOnFail or not", () => {
+    const t = target(10);
+    const result = SavingThrowSystem.applySaveOrDamage(t, 7, 15, 0, RandomService.fixed(20), "normal", { halveOnFail: true });
+    expect(result.save.success).toBe(true);
+    expect(result.damageDealt).toBe(0);
+    expect(t.health).toBe(10);
+  });
+
+  it("deals full damage on a failed save when the flag is absent (unchanged pre-D-124 behavior)", () => {
+    const t = target(10);
+    const result = SavingThrowSystem.applySaveOrDamage(t, 7, 15, 0, RandomService.fixed(1));
+    expect(result.damageDealt).toBe(7);
+  });
+});
+
+describe("SavingThrowSystem.applySaveOrDamage — rerollFailedSave (D-124)", () => {
+  it("is invoked only when the first roll fails, and the new roll replaces it outright", () => {
+    // Seed 5's first two d20 draws are 14 then 16 (verified against RandomService's
+    // own mulberry32 algorithm): with bonus 0 and DC 15, the first roll fails
+    // (14 < 15) and the second succeeds (16 >= 15).
+    const t = target(10);
+    const reroll = vi.fn(() => true);
+    const result = SavingThrowSystem.applySaveOrDamage(t, 6, 15, 0, RandomService.seeded(5), "normal", {
+      rerollFailedSave: reroll,
+    });
+    expect(reroll).toHaveBeenCalledTimes(1);
+    expect(result.save.d20).toBe(16);
+    expect(result.save.success).toBe(true);
+    expect(result.damageDealt).toBe(0);
+    expect(t.health).toBe(10);
+  });
+
+  it("is never invoked when the first roll already succeeds", () => {
+    const t = target(10);
+    const reroll = vi.fn(() => true);
+    SavingThrowSystem.applySaveOrDamage(t, 6, 15, 0, RandomService.fixed(20), "normal", { rerollFailedSave: reroll });
+    expect(reroll).not.toHaveBeenCalled();
+  });
+
+  it("declining the reroll (returns false) keeps the original failed result", () => {
+    const t = target(10);
+    const reroll = vi.fn(() => false);
+    const result = SavingThrowSystem.applySaveOrDamage(t, 6, 15, 0, RandomService.seeded(5), "normal", {
+      rerollFailedSave: reroll,
+    });
+    expect(reroll).toHaveBeenCalledTimes(1);
+    expect(result.save.d20).toBe(14); // the original roll, never replaced
+    expect(result.save.success).toBe(false);
+    expect(result.damageDealt).toBe(6);
   });
 });

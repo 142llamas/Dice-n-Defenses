@@ -212,8 +212,8 @@ export const FIGHTER: CharacterClassDefinition = {
       level: 9,
       name: "Indomitable",
       description:
-        "Reroll a failed saving throw once per rest. Inert until this game has a saving-throw/dice system (an explicit future item, KNOWN_ISSUES/D-047 addendum).",
-      mechanicallyActive: false,
+        "Reroll a failed saving throw once per rest. Mechanically active as of D-124, now that a real saving-throw/dice system exists (Phase 13.5/13.10, D-090) — see Hero.rerollFailedSave, consumed automatically the instant a forced saving throw fails (no interrupt-prompt UI, same auto-apply precedent as Uncanny Dodge/Lucky). Recharges on a Long Rest only, matching the SRD.",
+      mechanicallyActive: true,
     },
     {
       level: 10,
@@ -236,8 +236,8 @@ export const FIGHTER: CharacterClassDefinition = {
     {
       level: 13,
       name: "Indomitable (2 uses)",
-      description: "A second use of Indomitable per rest (see level 9).",
-      mechanicallyActive: false,
+      description: "A second use of Indomitable per rest (see level 9). Mechanically active as of D-124 — see Hero.indomitableMaxUses.",
+      mechanicallyActive: true,
     },
     {
       level: 14,
@@ -266,8 +266,8 @@ export const FIGHTER: CharacterClassDefinition = {
     {
       level: 17,
       name: "Indomitable (3 uses)",
-      description: "A third use of Indomitable per rest (see level 9).",
-      mechanicallyActive: false,
+      description: "A third use of Indomitable per rest (see level 9). Mechanically active as of D-124 — see Hero.indomitableMaxUses.",
+      mechanicallyActive: true,
     },
     {
       level: 18,
@@ -384,8 +384,8 @@ export const WIZARD: CharacterClassDefinition = {
       level: 18,
       name: "Spell Mastery",
       description:
-        "Pick a favorite lower-level spell to cast without spending a slot. Inert until this game has a spell-slot resource at all (see level 1's Spellcasting note).",
-      mechanicallyActive: false,
+        "Pick one known spell of level 1-5 (a one-time choice, offered the moment this level is reached) to cast at will, free, forever after.",
+      mechanicallyActive: true,
     },
     {
       level: 19,
@@ -397,8 +397,8 @@ export const WIZARD: CharacterClassDefinition = {
       level: 20,
       name: "Signature Spells",
       description:
-        "Pick two favorite 3rd-level spells to cast once each per rest without spending a slot. Inert for the same reason as Spell Mastery.",
-      mechanicallyActive: false,
+        "Pick two known 3rd-level spells (a one-time choice, offered the moment this level is reached); each casts free once per Short or Long Rest.",
+      mechanicallyActive: true,
     },
   ],
 };
@@ -503,8 +503,9 @@ export const ROGUE: CharacterClassDefinition = {
     {
       level: 7,
       name: "Evasion",
-      description: "Take no damage on a successful Dexterity save against an area effect. Inert — no saving-throw system.",
-      mechanicallyActive: false,
+      description:
+        "Take no damage on a successful Dexterity save against an area effect. Mechanically active as of D-124: a successful forced save already took 0 damage (SavingThrowSystem's existing rule); this hero's Evasion now also HALVES the damage on a FAILED one, instead of taking it in full — see Hero.evasionHalvesFailedSave.",
+      mechanicallyActive: true,
     },
     {
       level: 8,
@@ -545,7 +546,8 @@ export const ROGUE: CharacterClassDefinition = {
     {
       level: 14,
       name: "Blindsense",
-      description: "Senses hidden creatures nearby. Inert — no stealth/hidden-state mechanic exists yet.",
+      description:
+        "Senses hidden/stealthed ENEMIES nearby. Still inert (D-125) — a hero-side hidden state now exists (Ranger's Vanish, Monk's Empty Body), but this is the opposite direction: a stealth enemy's own `Enemy.isRevealed` (D-111) is a single global flag shared by every hero, not per-observer, so \"this Rogue specifically can see through it\" needs its own targeting-exception model, a real future slice.",
       mechanicallyActive: false,
     },
     {
@@ -569,8 +571,9 @@ export const ROGUE: CharacterClassDefinition = {
     {
       level: 18,
       name: "Elusive",
-      description: "Attacks against a steady Rogue rarely land clean. Inert — this game's combat has no advantage/disadvantage concept.",
-      mechanicallyActive: false,
+      description:
+        "Attacks against a steady Rogue rarely land clean. Mechanically active as of D-124, now that real Advantage/Disadvantage exists (Phase 13.1, D-086): while this Rogue isn't incapacitated, no enemy attack against it may roll with Advantage (an ambush or a blinded attacker's own Advantage downgrades to Normal) — see Hero.deniesAttackerAdvantage, consumed by WaveSystem's single-target enemy attack.",
+      mechanicallyActive: true,
     },
     {
       level: 19,
@@ -799,14 +802,15 @@ export const BARBARIAN: CharacterClassDefinition = {
       level: 2,
       name: "Reckless Attack",
       description:
-        "Attack with advantage, at the cost of granting advantage to attacks against you until your next turn. Inert — a real risk/reward toggle is a natural future slice, not built this pass.",
-      mechanicallyActive: false,
+        "A per-turn toggle (no action cost): attack with advantage this turn, at the cost of granting advantage to every attack against you until your next turn.",
+      mechanicallyActive: true,
     },
     {
       level: 2,
       name: "Danger Sense",
-      description: "Advantage on Dexterity saves against effects you can see. Inert — saving throws stay framework-only outside Sacred Flame's real hookup (D-090).",
-      mechanicallyActive: false,
+      description:
+        "Advantage on Dexterity saves against effects you can see. Mechanically active as of D-124: every forced saving throw this game gives a hero rolls DEX (WaveSystem.resolveSavingThrowAttack), matching this feature's real SRD scope exactly — see Hero.savingThrowAdvantage.",
+      mechanicallyActive: true,
     },
     {
       level: 3,
@@ -1302,8 +1306,9 @@ export const MONK: CharacterClassDefinition = {
     {
       level: 7,
       name: "Evasion",
-      description: "Take no damage on a successful Dexterity save against an area effect. Inert — no saving-throw system for area effects.",
-      mechanicallyActive: false,
+      description:
+        "Take no damage on a successful Dexterity save against an area effect. Mechanically active as of D-124 — see the Rogue's own level-7 Evasion note above; identical rule, same Hero.evasionHalvesFailedSave getter.",
+      mechanicallyActive: true,
     },
     {
       level: 7,
@@ -1374,8 +1379,9 @@ export const MONK: CharacterClassDefinition = {
     {
       level: 18,
       name: "Empty Body",
-      description: "Turn invisible; cast Astral Projection. Inert — no invisibility/stealth-state mechanic.",
-      mechanicallyActive: false,
+      description:
+        "Spends this hero's whole Ki pool (the SRD's real 4-point cost exceeds this game's flat 3-per-rest simplification) and the action to turn invisible outright, hidden from enemy targeting until it attacks or casts. (Astral Projection is not modeled — no plane-shifting mechanic exists.)",
+      mechanicallyActive: true,
     },
     {
       level: 19,
@@ -1640,8 +1646,8 @@ export const RANGER: CharacterClassDefinition = {
     {
       level: 10,
       name: "Hide in Plain Sight",
-      description: "Camouflage for a stealth bonus. Inert — no stealth/hidden-state mechanic.",
-      mechanicallyActive: false,
+      description: "A flat +10 to a Stealth check made while camouflaged and standing still — auto-applied to Vanish's check below.",
+      mechanicallyActive: true,
     },
     {
       level: 11,
@@ -1658,8 +1664,9 @@ export const RANGER: CharacterClassDefinition = {
     {
       level: 14,
       name: "Vanish",
-      description: "Hide as a bonus action; can't be tracked non-magically. Inert — no stealth/hidden-state mechanic.",
-      mechanicallyActive: false,
+      description:
+        "A bonus action attempting a Stealth check against nearby enemies; success hides this hero from enemy targeting until it attacks or casts. (\"Can't be tracked non-magically\" is not separately modeled — no tracking mechanic exists.)",
+      mechanicallyActive: true,
     },
     {
       level: 15,
@@ -1676,7 +1683,8 @@ export const RANGER: CharacterClassDefinition = {
     {
       level: 18,
       name: "Feral Senses",
-      description: "Sense invisible/hidden creatures nearby. Inert — no stealth/hidden-state mechanic.",
+      description:
+        "Senses invisible/hidden ENEMIES nearby. Still inert (D-125) — same reason as Rogue's Blindsense above: this is a hero detecting an enemy's hidden state, the opposite direction from the hero-side hidden state (Vanish/Empty Body) this session built.",
       mechanicallyActive: false,
     },
     {
@@ -1880,8 +1888,8 @@ export const WARLOCK: CharacterClassDefinition = {
     {
       level: 11,
       name: "Mystic Arcanum (6th level)",
-      description: "A once-per-day 6th-level spell. Inert — this game's spell-slot economy only goes as far as 1st-level slots are actually castable (see data/spells.ts).",
-      mechanicallyActive: false,
+      description: "Pick one known 6th-level spell (a one-time choice, offered the moment this level is reached) to cast free, once per Long Rest.",
+      mechanicallyActive: true,
     },
     {
       level: 12,
@@ -1892,8 +1900,8 @@ export const WARLOCK: CharacterClassDefinition = {
     {
       level: 13,
       name: "Mystic Arcanum (7th level)",
-      description: "A further once-per-day spell (see level 11). Still inert.",
-      mechanicallyActive: false,
+      description: "A further once-per-Long-Rest free spell pick (see level 11's 6th-level tier) — a known 7th-level spell this time.",
+      mechanicallyActive: true,
     },
     {
       level: 14,
@@ -1904,8 +1912,8 @@ export const WARLOCK: CharacterClassDefinition = {
     {
       level: 15,
       name: "Mystic Arcanum (8th level)",
-      description: "A further once-per-day spell (see level 11). Still inert.",
-      mechanicallyActive: false,
+      description: "A further once-per-Long-Rest free spell pick (see level 11's 6th-level tier) — a known 8th-level spell this time.",
+      mechanicallyActive: true,
     },
     {
       level: 16,
@@ -1916,8 +1924,8 @@ export const WARLOCK: CharacterClassDefinition = {
     {
       level: 17,
       name: "Mystic Arcanum (9th level)",
-      description: "A final once-per-day spell (see level 11). Still inert.",
-      mechanicallyActive: false,
+      description: "A final once-per-Long-Rest free spell pick (see level 11's 6th-level tier) — a known 9th-level spell this time.",
+      mechanicallyActive: true,
     },
     {
       level: 19,

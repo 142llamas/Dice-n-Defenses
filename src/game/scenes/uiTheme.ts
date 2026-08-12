@@ -204,11 +204,34 @@ function drawDiamond(g: Phaser.GameObjects.Graphics, x: number, y: number, r: nu
  * per-selector (`buildClassSelector`, `buildSpellLevelSelector`, `buildTabs`);
  * pulled out here so every restyled row (including MainMenuScene's new
  * grouped rows, which didn't have this at all before) shares one formula.
+ *
+ * Playtest fix: this used to return positions for the REQUESTED itemWidth
+ * unconditionally, so a row sized for a smaller roster silently ran off both
+ * edges of the canvas once the underlying data grew (12 Compendium classes
+ * at 138px each, 10 category tabs at 138px each — both well past 1280px
+ * wide). `maxWidth` (default: canvas width minus a 40px margin each side)
+ * shrinks every item evenly to fit instead; callers use the returned
+ * `itemWidth` to size their button/box so the drawn box always matches the
+ * positions actually used.
  */
-export function centeredRowX(count: number, itemWidth: number, gap: number, centerX: number): number[] {
-  const totalWidth = count * itemWidth + (count - 1) * gap;
-  const startX = centerX - totalWidth / 2 + itemWidth / 2;
-  return Array.from({ length: count }, (_, i) => startX + i * (itemWidth + gap));
+export function centeredRowX(
+  count: number,
+  itemWidth: number,
+  gap: number,
+  centerX: number,
+  maxWidth: number = GAME_WIDTH - 80,
+): { xs: number[]; itemWidth: number } {
+  let w = itemWidth;
+  if (count > 0) {
+    const requestedWidth = count * w + (count - 1) * gap;
+    if (requestedWidth > maxWidth) {
+      w = Math.max(1, (maxWidth - (count - 1) * gap) / count);
+    }
+  }
+  const totalWidth = count * w + (count - 1) * gap;
+  const startX = centerX - totalWidth / 2 + w / 2;
+  const xs = Array.from({ length: count }, (_, i) => startX + i * (w + gap));
+  return { xs, itemWidth: w };
 }
 
 /**

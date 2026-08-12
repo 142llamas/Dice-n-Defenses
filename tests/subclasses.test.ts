@@ -28,6 +28,7 @@ import {
   SUBCLASS_DEFINITIONS,
   getSubclassDefinition,
   subclassesForClass,
+  subclassGrantedSpellIdsUpToLevel,
 } from "../src/game/data/subclasses";
 import { isSpellId } from "../src/game/data/spells";
 import {
@@ -213,9 +214,16 @@ describe("every modeled subclass's mechanically-active features (D-096/D-097/D-0
     ]);
   });
 
-  it("Life Domain has exactly Disciple of Life (1) and Blessed Healer (6) active; nothing else", () => {
+  it("Life Domain has exactly Disciple of Life (1), Channel Divinity: Preserve Life (2, D-125), and Blessed Healer (6) active; nothing else", () => {
+    // D-124 built the generic subclass-granted-spell mechanism and proved it
+    // works (see The Fiend below), but Life Domain's own Domain Spells stay
+    // inert: every named spell (bar Revivify/Raise Dead) is already part of
+    // the base Cleric spell list, so granting it "for free" via this feature
+    // changes nothing observable — see data/subclasses.ts's own comments.
+    // D-125 wired Preserve Life itself real — see Hero.usePreserveLife.
     expect(activeFeaturesUpToLevel(LIFE_DOMAIN, 20).map((f) => f.name)).toEqual([
       "Disciple of Life",
+      "Channel Divinity: Preserve Life",
       "Blessed Healer",
     ]);
   });
@@ -224,8 +232,15 @@ describe("every modeled subclass's mechanically-active features (D-096/D-097/D-0
     expect(activeFeaturesUpToLevel(HUNTER, 20).map((f) => f.name)).toEqual(["Colossus Slayer"]);
   });
 
-  it("The Fiend has exactly Dark One's Blessing (1) active; nothing else", () => {
-    expect(activeFeaturesUpToLevel(THE_FIEND, 20).map((f) => f.name)).toEqual(["Dark One's Blessing"]);
+  it("The Fiend has Dark One's Blessing (1) and all five Expanded Spell List tiers (D-124) active", () => {
+    expect(activeFeaturesUpToLevel(THE_FIEND, 20).map((f) => f.name)).toEqual([
+      "Expanded Spell List (1st-level spells)",
+      "Dark One's Blessing",
+      "Expanded Spell List (2nd-level spells)",
+      "Expanded Spell List (3rd-level spells)",
+      "Expanded Spell List (4th-level spells)",
+      "Expanded Spell List (5th-level spells)",
+    ]);
   });
 
   it("Draconic Bloodline has exactly Draconic Resilience (1) active; nothing else", () => {
@@ -236,14 +251,26 @@ describe("every modeled subclass's mechanically-active features (D-096/D-097/D-0
     expect(activeFeaturesUpToLevel(CIRCLE_OF_THE_LAND, 20).map((f) => f.name)).toEqual(["Natural Recovery"]);
   });
 
-  it("School of Evocation and Thief stay fully inert — nothing in this game's cantrip/bonus-action kit hooks their features", () => {
+  it("School of Evocation stays fully inert — nothing in this game's cantrip/bonus-action kit hooks its features", () => {
     expect(activeFeaturesUpToLevel(SCHOOL_OF_EVOCATION, 20)).toEqual([]);
-    expect(activeFeaturesUpToLevel(THIEF, 20)).toEqual([]);
   });
 
-  it("the four SRD subclasses with no real hookup stay fully inert", () => {
-    expect(activeFeaturesUpToLevel(PATH_OF_THE_BERSERKER, 20)).toEqual([]);
-    expect(activeFeaturesUpToLevel(COLLEGE_OF_LORE, 20)).toEqual([]);
+  it("Thief has exactly Supreme Sneak (9) active (D-125); nothing else", () => {
+    expect(activeFeaturesUpToLevel(THIEF, 20).map((f) => f.name)).toEqual(["Supreme Sneak"]);
+  });
+
+  it("Path of the Berserker has Intimidating Presence (10) and Retaliation (14) active (D-124); nothing else", () => {
+    expect(activeFeaturesUpToLevel(PATH_OF_THE_BERSERKER, 20).map((f) => f.name)).toEqual([
+      "Intimidating Presence",
+      "Retaliation",
+    ]);
+  });
+
+  it("College of Lore has exactly Cutting Words (3) active (D-124); nothing else", () => {
+    expect(activeFeaturesUpToLevel(COLLEGE_OF_LORE, 20).map((f) => f.name)).toEqual(["Cutting Words"]);
+  });
+
+  it("Way of the Open Hand and Oath of Devotion stay fully inert — no real hookup exists for either yet", () => {
     expect(activeFeaturesUpToLevel(WAY_OF_THE_OPEN_HAND, 20)).toEqual([]);
     expect(activeFeaturesUpToLevel(OATH_OF_DEVOTION, 20)).toEqual([]);
   });
@@ -298,7 +325,7 @@ describe("subclass-granted spell lists (Phase 15 follow-up, D-105)", () => {
     }
   });
 
-  it("Life Domain grants exactly the SRD 5.1 Domain Spells at levels 1/3/5/7/9, all inert", () => {
+  it("Life Domain grants exactly the SRD 5.1 Domain Spells at levels 1/3/5/7/9, all still inert (D-124: mechanism works, but every named spell is already in the base Cleric list)", () => {
     const bySpells = LIFE_DOMAIN.features.filter((f) => f.grantedSpellIds);
     expect(bySpells.map((f) => [f.level, f.grantedSpellIds])).toEqual([
       [1, ["bless", "cure-wounds"]],
@@ -322,7 +349,7 @@ describe("subclass-granted spell lists (Phase 15 follow-up, D-105)", () => {
     expect(bySpells.every((f) => !f.mechanicallyActive)).toBe(true);
   });
 
-  it("The Fiend grants exactly the SRD 5.1 Expanded Spell List at levels 1/3/5/7/9 (1st-5th spell level), all inert", () => {
+  it("The Fiend grants exactly the SRD 5.1 Expanded Spell List at levels 1/3/5/7/9 (1st-5th spell level), all mechanically active (D-124)", () => {
     const bySpells = THE_FIEND.features.filter((f) => f.grantedSpellIds);
     expect(bySpells.map((f) => [f.level, f.grantedSpellIds])).toEqual([
       [1, ["burning-hands", "command"]],
@@ -331,7 +358,31 @@ describe("subclass-granted spell lists (Phase 15 follow-up, D-105)", () => {
       [7, ["fire-shield", "wall-of-fire"]],
       [9, ["flame-strike", "hallow"]],
     ]);
-    expect(bySpells.every((f) => !f.mechanicallyActive)).toBe(true);
+    expect(bySpells.every((f) => f.mechanicallyActive)).toBe(true);
+  });
+
+  describe("subclassGrantedSpellIdsUpToLevel (D-124)", () => {
+    it("is empty below the first grantedSpellIds feature's level", () => {
+      expect(subclassGrantedSpellIdsUpToLevel("life-domain", 0)).toEqual([]);
+    });
+
+    it("accumulates every tier reached so far, in level order", () => {
+      expect(subclassGrantedSpellIdsUpToLevel("life-domain", 1)).toEqual(["bless", "cure-wounds"]);
+      expect(subclassGrantedSpellIdsUpToLevel("life-domain", 3)).toEqual([
+        "bless",
+        "cure-wounds",
+        "lesser-restoration",
+        "spiritual-weapon",
+      ]);
+    });
+
+    it("is empty for a subclass with no grantedSpellIds features at all", () => {
+      expect(subclassGrantedSpellIdsUpToLevel("champion", 20)).toEqual([]);
+    });
+
+    it("throws on an unknown subclass id, same as getSubclassDefinition", () => {
+      expect(() => subclassGrantedSpellIdsUpToLevel("not-a-real-subclass", 20)).toThrow();
+    });
   });
 
   it("Circle of the Land's own feature list carries no grantedSpellIds directly (the terrain choice isn't made yet — see CIRCLE_OF_THE_LAND_SPELLS instead)", () => {

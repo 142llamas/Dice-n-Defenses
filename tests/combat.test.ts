@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { CombatSystem, type Combatant } from "../src/game/systems/CombatSystem";
 import { RandomService } from "../src/game/systems/RandomService";
 import { parseMapRows } from "../src/game/data/testMap";
@@ -230,6 +230,9 @@ const oneRunner: WaveDefinition[] = [
 const oneBlightcaller: WaveDefinition[] = [
   { id: "w", spawns: [{ enemyId: "blightcaller", count: 1, startTurn: 1, intervalTurns: 1 }], completionGold: 0 },
 ];
+const oneShadowfang: WaveDefinition[] = [
+  { id: "w", spawns: [{ enemyId: "shadowfang", count: 1, startTurn: 1, intervalTurns: 1 }], completionGold: 0 },
+];
 
 describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
   it("a melee Grunt attacks an adjacent hero and holds position", () => {
@@ -286,6 +289,128 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
     const strongHero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, savingThrowBonus: 3 };
     ws2.tickEnemyPhase({ heroTargets: [strongHero] });
     expect(strongHero.health).toBe(10); // 10+3=13 >= DC 12 -> succeeds, no damage
+  });
+
+  // D-124: a target's own savingThrowAdvantage/evasionHalvesFailedSave/
+  // rerollFailedSave hooks, consumed by resolveSavingThrowAttack — every one
+  // of them optional on `Combatant`, so a plain object (no real Hero needed)
+  // proves the wiring the exact way `savingThrowBonus` already is above.
+  it("Danger Sense's Advantage rolls the forced save with 'advantage' (Barbarian, D-124)", () => {
+    const random = RandomService.fixed(15);
+    const spy = vi.spyOn(random, "rollD20With");
+    const ws = laneSystem(["S...X"], oneBlightcaller, random);
+    const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, savingThrowAdvantage: "advantage" };
+    ws.tickEnemyPhase({ heroTargets: [hero] });
+    expect(spy).toHaveBeenCalledWith("advantage");
+  });
+
+  it("without Danger Sense, the same forced save rolls 'normal'", () => {
+    const random = RandomService.fixed(15);
+    const spy = vi.spyOn(random, "rollD20With");
+    const ws = laneSystem(["S...X"], oneBlightcaller, random);
+    const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10 };
+    ws.tickEnemyPhase({ heroTargets: [hero] });
+    expect(spy).toHaveBeenCalledWith("normal");
+  });
+
+  it("Evasion halves (instead of fully applying) a Blightcaller's damage on a FAILED save (Rogue/Monk, D-124)", () => {
+    const ws = laneSystem(["S...X"], oneBlightcaller, RandomService.fixed(1)); // nat 1 always fails
+    const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, evasionHalvesFailedSave: true };
+    ws.tickEnemyPhase({ heroTargets: [hero] });
+    expect(hero.health).toBe(9); // blightcaller attackDamage 3, halved (floored) to 1
+  });
+
+  it("without Evasion, the same failed save deals full damage", () => {
+    const ws = laneSystem(["S...X"], oneBlightcaller, RandomService.fixed(1));
+    const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10 };
+    ws.tickEnemyPhase({ heroTargets: [hero] });
+    expect(hero.health).toBe(7); // full 3 damage
+  });
+
+  it("Indomitable's rerollFailedSave is invoked on a failed save and rerolls it (Fighter, D-124)", () => {
+    const random = RandomService.fixed(1); // nat 1 always fails, on every roll
+    const spy = vi.spyOn(random, "rollD20With");
+    const ws = laneSystem(["S...X"], oneBlightcaller, random);
+    const rerollFailedSave = vi.fn(() => true);
+    const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, rerollFailedSave };
+    ws.tickEnemyPhase({ heroTargets: [hero] });
+    expect(rerollFailedSave).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledTimes(2); // the original roll, then the reroll
+  });
+
+  it("Indomitable is never offered on a save that already succeeded", () => {
+    const random = RandomService.fixed(20); // nat 20 always succeeds
+    const ws = laneSystem(["S...X"], oneBlightcaller, random);
+    const rerollFailedSave = vi.fn(() => true);
+    const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, rerollFailedSave };
+    ws.tickEnemyPhase({ heroTargets: [hero] });
+    expect(rerollFailedSave).not.toHaveBeenCalled();
+  });
+
+  it("declining to reroll (e.g. no charges left) leaves the original failed save in place", () => {
+    const random = RandomService.fixed(1);
+    const spy = vi.spyOn(random, "rollD20With");
+    const ws = laneSystem(["S...X"], oneBlightcaller, random);
+    const rerollFailedSave = vi.fn(() => false);
+    const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, rerollFailedSave };
+    ws.tickEnemyPhase({ heroTargets: [hero] });
+    expect(rerollFailedSave).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledTimes(1); // no reroll actually happened
+    expect(hero.health).toBe(7); // still takes full damage
+  });
+
+  it("Elusive denies an enemy's own Advantage on the regular to-hit roll, not just forced saves (Rogue, D-124)", () => {
+    // Shadowfang's stealthed first strike always lands with Advantage —
+    // Elusive downgrades that to Normal for a target that has it.
+    const random = RandomService.fixed(15);
+    const spy = vi.spyOn(random, "rollD20With");
+    const ws = laneSystem(["S.X"], oneShadowfang, random);
+    const hero: Combatant = { id: "h", position: { x: 1, y: 0 }, health: 10, armorClass: 10, deniesAttackerAdvantage: () => true };
+    ws.tickEnemyPhase({ heroTargets: [hero] });
+    expect(spy).toHaveBeenCalledWith("normal");
+  });
+
+  it("without Elusive, the same stealthed ambush still rolls with Advantage", () => {
+    const random = RandomService.fixed(15);
+    const spy = vi.spyOn(random, "rollD20With");
+    const ws = laneSystem(["S.X"], oneShadowfang, random);
+    const hero: Combatant = { id: "h", position: { x: 1, y: 0 }, health: 10, armorClass: 10 };
+    ws.tickEnemyPhase({ heroTargets: [hero] });
+    expect(spy).toHaveBeenCalledWith("advantage");
+  });
+
+  it("Reckless Attack's grantsAttackerAdvantage rolls an ordinary Grunt's attack with 'advantage' (Barbarian, D-125)", () => {
+    const random = RandomService.fixed(15);
+    const spy = vi.spyOn(random, "rollD20With");
+    const ws = laneSystem(["S..X"], oneGrunt, random);
+    const hero: Combatant = { id: "h", position: { x: 1, y: 0 }, health: 10, armorClass: 10, grantsAttackerAdvantage: true };
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 1 && p.y === 0 });
+    expect(spy).toHaveBeenCalledWith("advantage");
+  });
+
+  it("without Reckless Attack active, the same Grunt attack rolls 'normal'", () => {
+    const random = RandomService.fixed(15);
+    const spy = vi.spyOn(random, "rollD20With");
+    const ws = laneSystem(["S..X"], oneGrunt, random);
+    const hero: Combatant = { id: "h", position: { x: 1, y: 0 }, health: 10, armorClass: 10 };
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 1 && p.y === 0 });
+    expect(spy).toHaveBeenCalledWith("normal");
+  });
+
+  it("Elusive still denies Advantage even when Reckless Attack would otherwise grant it (D-125)", () => {
+    const random = RandomService.fixed(15);
+    const spy = vi.spyOn(random, "rollD20With");
+    const ws = laneSystem(["S..X"], oneGrunt, random);
+    const hero: Combatant = {
+      id: "h",
+      position: { x: 1, y: 0 },
+      health: 10,
+      armorClass: 10,
+      grantsAttackerAdvantage: true,
+      deniesAttackerAdvantage: () => true,
+    };
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 1 && p.y === 0 });
+    expect(spy).toHaveBeenCalledWith("normal");
   });
 
   it("enemies route around a blocking hero when no one is in reach", () => {

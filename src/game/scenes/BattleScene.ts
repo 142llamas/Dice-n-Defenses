@@ -33,6 +33,7 @@ import {
 } from "../systems/CombatSystem";
 import { RandomService } from "../systems/RandomService";
 import { SavingThrowSystem } from "../systems/SavingThrowSystem";
+import { SkillCheckSystem } from "../systems/SkillCheckSystem";
 import { TurnSystem, PHASE_LABELS, type GamePhase } from "../systems/TurnSystem";
 import { EconomySystem } from "../systems/EconomySystem";
 import { BuildSystem, type PlacedStructure } from "../systems/BuildSystem";
@@ -179,6 +180,13 @@ type Interaction =
    * per spell kind; `castTileSpellOn` branches on the ability's own fields.
    */
   | { kind: "aimingTileSpell"; heroId: string; abilityId: string };
+
+/** D-125: one pending Wizard/Warlock spell-mastery-family pick — see `showSpellPickChoiceQueue`. */
+interface SpellPickRequest {
+  hero: Hero;
+  kind: "mastery" | "signature" | "arcanum";
+  tier?: number;
+}
 
 const ANIM_MS = 420;
 
@@ -366,10 +374,21 @@ export class BattleScene extends Phaser.Scene {
   /** Phase 13.2 (D-087): Fighter-only, a separate once-per-battle resource from the bonus action above. */
   private actionSurgeButton!: Phaser.GameObjects.Rectangle;
   private actionSurgeLabel!: Phaser.GameObjects.Text;
+
+  // D-125: a third single-purpose HUD button, shared by several unrelated
+  // class features that each need their own toggle/spend button but never
+  // apply to the same hero at once (a hero is single-class) — Barbarian's
+  // Reckless Attack, Cleric's Channel Divinity: Preserve Life, Ranger's
+  // Vanish, Monk's Empty Body. One dispatcher (`showClassActionButtonFor`),
+  // same shape as `showBonusActionButtonFor`.
+  private classActionButton!: Phaser.GameObjects.Rectangle;
+  private classActionLabel!: Phaser.GameObjects.Text;
   /** Phase 13.2 (D-087): attacks Uncanny-Dodged this enemy phase, so the combat log can say so (reference identity, not a data field on EnemyAttackEvent). */
   private uncannyDodgedThisPhase = new Set<EnemyAttackEvent>();
   /** Phase 13.8 (D-093): attacks halved by Rage/Wild Shape this enemy phase, so the combat log can say so. */
   private damageResistedThisPhase = new Set<EnemyAttackEvent>();
+  /** D-124: attacks weakened by College of Lore's Cutting Words this enemy phase — the reacting Bard's name, so the combat log can say so. */
+  private cuttingWordsAppliedThisPhase = new Map<EnemyAttackEvent, string>();
   private goldText!: Phaser.GameObjects.Text;
   private previewText!: Phaser.GameObjects.Text;
   private buildButton!: Phaser.GameObjects.Rectangle;
@@ -430,6 +449,16 @@ export class BattleScene extends Phaser.Scene {
   private pendingAfterSubclass: (() => void) | null = null;
   /** True while the subclass-choice overlay is up, so the board ignores input under it. */
   private choosingSubclass = false;
+  /**
+   * D-125: the Spell Mastery/Signature Spells (Wizard)/Mystic Arcanum
+   * (Warlock) one-time spell-pick overlay — same "queue and pop" shape as
+   * `asiQueue`/`subclassQueue`, shares `asiOverlay`'s rendering (never runs
+   * concurrently with either).
+   */
+  private spellPickQueue: SpellPickRequest[] = [];
+  private pendingAfterSpellPick: (() => void) | null = null;
+  /** True while the spell-pick overlay is up, so the board ignores input under it. */
+  private choosingSpellPick = false;
   /**
    * Phase 13.7 (D-092): the spellbook overlay — shown when a caster hero
    * (Wizard/Cleric) opens "Cast a Spell" instead of using the old
@@ -637,6 +666,9 @@ export class BattleScene extends Phaser.Scene {
     this.subclassQueue = [];
     this.pendingAfterSubclass = null;
     this.choosingSubclass = false;
+    this.spellPickQueue = [];
+    this.pendingAfterSpellPick = null;
+    this.choosingSpellPick = false;
     this.spellbookOverlay = [];
     this.spellbookPage = 0;
     this.ui = { kind: "idle" };
@@ -1062,13 +1094,24 @@ export class BattleScene extends Phaser.Scene {
 
     // ----- Below the grid: status line, then combat log, then the action
     // buttons — STACKED vertically, each with reserved room, rather than
-    // status-left / log-right on the same row. Playtest fix: the status
-    // line's hint text (especially the build-mode hint) could run long
-    // enough to visually collide with the right-aligned combat log and even
-    // the button row below it. Stacking with generous gaps and word-wrap
-    // makes that impossible regardless of content length.
+    // status-left / log-right on the same row.
+    //
+    // Playtest fix: `wrapWidth` used to be `this.map.cols * TILE_SIZE` — the
+    // GRID's own pixel width, not the canvas's. On a narrow map (Frostbound
+    // Hollow's 14 cols, or any Map Builder map down to 6) that squeezed a
+    // full 4-hero party's status plus a "heroSelected"/"equipping" hint
+    // (which can include a full gear/structure description) into far fewer
+    // characters per line than the 60px reserved height assumed, wrapping to
+    // 4+ lines and bleeding into combatLogText directly below it — despite
+    // this exact spot's own prior comment claiming word-wrap already made
+    // that "impossible regardless of content length" (wrapping bounds WIDTH,
+    // not the fixed height it was meant to protect). Nothing else shares this
+    // row horizontally, so there's no reason to tie the wrap width to the
+    // grid at all — using the canvas's own width instead (minus a margin)
+    // gives every map the same generous line length regardless of how narrow
+    // its grid is.
     const belowGridY = this.grid.originY + this.map.rows * TILE_SIZE + 16;
-    const wrapWidth = this.map.cols * TILE_SIZE; // the grid's own width
+    const wrapWidth = GAME_WIDTH - 80;
 
     this.statusText = this.add
       .text(GAME_WIDTH / 2, belowGridY, "", {
@@ -1080,7 +1123,11 @@ export class BattleScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0)
       .setDepth(30);
-    const statusBlockHeight = 60; // reserves up to ~3 wrapped lines
+    // Bumped 60 -> 78 (~3 -> ~4.5 wrapped lines) as extra headroom on top of
+    // the wrapWidth fix above — still leaves the item grid/Done button below
+    // clear of GAME_HEIGHT on Frostbound Hollow's 9 rows (the tallest
+    // built-in map) — see the bounding-box math in buildShopHud's own comment.
+    const statusBlockHeight = 78;
 
     this.combatLogText = this.add
       .text(GAME_WIDTH / 2, belowGridY + statusBlockHeight, "", {
@@ -1088,6 +1135,10 @@ export class BattleScene extends Phaser.Scene {
         fontSize: "12px",
         color: "#c0a0a0",
         align: "center",
+        // Playtest fix: this had no wordWrap at all — a single long combat-log
+        // line (a multi-clause weapon-mastery/spell/status message) could
+        // render wider than the 1280px canvas and clip off both edges.
+        wordWrap: { width: wrapWidth },
       })
       .setOrigin(0.5, 0)
       .setDepth(30);
@@ -1206,6 +1257,28 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(31)
       .setVisible(false);
     this.actionSurgeButton.on("pointerdown", () => this.onActionSurgeButton());
+
+    // D-125: a third row below Bonus Action/Action Surge — no horizontal
+    // room left on their row (Action Surge already reaches close to the
+    // canvas's right edge at 1280px), so this reuses the same "add a new
+    // row" precedent that produced the Bonus Action/Action Surge row itself.
+    const cy3 = cy2 + 40;
+    this.classActionButton = this.add
+      .rectangle(GAME_WIDTH / 2 + 150, cy3, 260, 32, 0x4a6a8a)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(31)
+      .setVisible(false);
+    this.classActionLabel = this.add
+      .text(GAME_WIDTH / 2 + 150, cy3, "", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "14px",
+        color: "#e0f0ff",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(31)
+      .setVisible(false);
+    this.classActionButton.on("pointerdown", () => this.onClassActionButton());
 
     this.buildShopHud(cy);
   }
@@ -1656,7 +1729,11 @@ export class BattleScene extends Phaser.Scene {
     this.tickTemporaryStructures();
 
     const report = this.waveSystem.tickEnemyPhase({
-      heroTargets: this.livingHeroes(),
+      // D-125: a hidden hero (Ranger's Vanish/Monk's Empty Body) can't be
+      // picked as an attack target — it still physically occupies its tile
+      // (movement/pathfinding blocking, `isLivingHeroAt` below, is
+      // deliberately untouched; only TARGETING changes).
+      heroTargets: this.livingHeroes().filter((h) => !h.isHidden),
       // Ground enemies route around living heroes AND placed walls.
       isBlocked: (p) => this.isLivingHeroAt(p) || this.buildSystem.isWallAt(p),
       // Flying enemies (D-048) ignore walls; telling the WaveSystem which
@@ -1699,6 +1776,8 @@ export class BattleScene extends Phaser.Scene {
     this.lastReport = report;
     this.applyUncannyDodges(report);
     this.applyDamageResistanceBuffs(report);
+    this.applyCuttingWords(report);
+    this.applyRetaliations(report);
     // Phase 24 (D-115): resolve each trap trigger's REAL name (and whether
     // it's single-use) while the structure is still on the tile — the
     // structure may be removed (single-use) or the terrain fallback has no
@@ -1903,10 +1982,16 @@ export class BattleScene extends Phaser.Scene {
       else this.showRestChoice(proceed);
     };
     if (this.progression.hasPendingLevelUp(this.wavesCleared)) {
-      const { asiHeroes, subclassHeroes } = this.applyClassLevelUps();
-      const afterSubclass = () => {
-        if (asiHeroes.length > 0) this.showAsiChoiceQueue(asiHeroes, afterLevelUp);
+      const { asiHeroes, subclassHeroes, spellPickHeroes } = this.applyClassLevelUps();
+      // D-125: subclass -> ASI -> spell-mastery-family pick -> rest, same
+      // deferred-queue chaining `showAsiChoiceQueue`/`showSubclassChoiceQueue` already use.
+      const afterAsi = () => {
+        if (spellPickHeroes.length > 0) this.showSpellPickChoiceQueue(spellPickHeroes, afterLevelUp);
         else afterLevelUp();
+      };
+      const afterSubclass = () => {
+        if (asiHeroes.length > 0) this.showAsiChoiceQueue(asiHeroes, afterAsi);
+        else afterAsi();
       };
       if (subclassHeroes.length > 0) this.showSubclassChoiceQueue(subclassHeroes, afterSubclass);
       else afterSubclass();
@@ -1925,11 +2010,18 @@ export class BattleScene extends Phaser.Scene {
    * caller can queue `showAsiChoiceQueue` for exactly those heroes. Phase
    * 13.11 (D-096): also returns every hero whose NEW level grants a
    * subclass (`CharacterSystem.subclassGrantedAtLevel`) and doesn't already
-   * have one, so the caller can queue `showSubclassChoiceQueue` first.
+   * have one, so the caller can queue `showSubclassChoiceQueue` first. D-125:
+   * also returns every hero whose NEW level unlocks a Spell Mastery/
+   * Signature Spells (Wizard)/Mystic Arcanum (Warlock) pick it hasn't made
+   * yet — `levelUpClass()` only ever advances one level per call, and these
+   * six trigger levels (11/13/15/17/18/20) are all distinct, so a hero can
+   * trigger at most ONE of these three kinds per call.
    */
-  private applyClassLevelUps(): { asiHeroes: Hero[]; subclassHeroes: Hero[] } {
+  private applyClassLevelUps(): { asiHeroes: Hero[]; subclassHeroes: Hero[]; spellPickHeroes: SpellPickRequest[] } {
     const needsAsi: Hero[] = [];
     const needsSubclass: Hero[] = [];
+    const needsSpellPick: SpellPickRequest[] = [];
+    const arcanumTiers = [6, 7, 8, 9];
     for (const hero of this.livingHeroes()) {
       const beforeLevel = hero.level;
       const beforeAttacks = hero.attacksPerAction;
@@ -1948,12 +2040,18 @@ export class BattleScene extends Phaser.Scene {
           ) {
             needsSubclass.push(hero);
           }
+          if (hero.needsSpellMasteryPick()) needsSpellPick.push({ hero, kind: "mastery" });
+          else if (hero.needsSignatureSpellsPick()) needsSpellPick.push({ hero, kind: "signature" });
+          else {
+            const tier = arcanumTiers.find((t) => hero.needsMysticArcanumPick(t));
+            if (tier !== undefined) needsSpellPick.push({ hero, kind: "arcanum", tier });
+          }
         }
       }
     }
     this.progression.acknowledgeLevelUp();
     this.syncHeroTokens();
-    return { asiHeroes: needsAsi, subclassHeroes: needsSubclass };
+    return { asiHeroes: needsAsi, subclassHeroes: needsSubclass, spellPickHeroes: needsSpellPick };
   }
 
   // KI-033 fix: shrink the banner's font size, using its real measured
@@ -2262,7 +2360,11 @@ export class BattleScene extends Phaser.Scene {
     const suffix = BattleScene.didHit(atk.result) ? ` for ${atk.result.damageDealt}` : "";
     const dodgeSuffix = this.uncannyDodgedThisPhase.has(atk) ? " (halved by Uncanny Dodge)" : "";
     const resistSuffix = this.damageResistedThisPhase.has(atk) ? " (halved by Rage/Wild Shape)" : "";
-    this.logCombat(`${atk.enemy.def.name} ${verb} ${this.nameOfCombatant(atk.target.id)}${suffix}${dodgeSuffix}${resistSuffix}`);
+    const cuttingWordsBard = this.cuttingWordsAppliedThisPhase.get(atk);
+    const cuttingWordsSuffix = cuttingWordsBard ? ` (weakened by ${cuttingWordsBard}'s Cutting Words)` : "";
+    this.logCombat(
+      `${atk.enemy.def.name} ${verb} ${this.nameOfCombatant(atk.target.id)}${suffix}${dodgeSuffix}${resistSuffix}${cuttingWordsSuffix}`,
+    );
   }
 
   /**
@@ -2312,6 +2414,63 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * D-124: College of Lore's Cutting Words — spends a Bard's own reaction
+   * (not the target's) and a Bardic Inspiration use to weaken a landed blow
+   * against ANY living hero, reusing Uncanny Dodge's exact "reduce the
+   * already-computed `AttackResult` before it renders" shape
+   * (`applyUncannyDodges`, above), generalized to a flat reduction
+   * (`BARDIC_INSPIRATION_BONUS`, the same number Bardic Inspiration's own
+   * bonus already uses) and to protecting any ally, not just the Bard
+   * itself. Called right after the self-mitigation passes above, so it
+   * reduces whatever damage those already left standing.
+   */
+  private applyCuttingWords(report: EnemyPhaseReport): void {
+    this.cuttingWordsAppliedThisPhase = new Map();
+    for (const atk of report.attacks) {
+      if (atk.result.damageDealt <= 0) continue;
+      const target = this.heroById(atk.target.id);
+      if (!target || !target.isAlive()) continue;
+      const bard = this.heroes.find((h) => h.canUseCuttingWords());
+      if (!bard) continue;
+      bard.useCuttingWords();
+      const reduction = Math.min(atk.result.damageDealt, BARDIC_INSPIRATION_BONUS);
+      target.health = Math.min(target.effectiveMaxHealth, target.health + reduction);
+      atk.result.damageDealt -= reduction;
+      atk.result.healthAfter = target.health;
+      atk.result.defeated = atk.result.healthBefore > 0 && target.health <= 0;
+      this.cuttingWordsAppliedThisPhase.set(atk, bard.name);
+    }
+  }
+
+  /**
+   * D-124: Path of the Berserker's Retaliation (level 14+) — once per turn,
+   * a hero that just took damage from an ADJACENT attacker immediately
+   * strikes back, spending its own reaction. `removeDefeated()`/
+   * `resolveDeaths()` (called later, inside `tickEnemyPhase`'s own
+   * `delayedCall`) already funnel through every enemy-removal cause
+   * generically, so a Retaliation kill gets the exact same gold/loot/
+   * death-trigger handling as any other — nothing extra to wire here.
+   */
+  private applyRetaliations(report: EnemyPhaseReport): void {
+    for (const atk of report.attacks) {
+      if (atk.result.damageDealt <= 0 || !atk.enemy.isAlive()) continue;
+      if (CombatSystem.range(atk.enemy.position, atk.target.position) > 1) continue;
+      const hero = this.heroById(atk.target.id);
+      if (!hero || !hero.canUseRetaliation()) continue;
+      hero.useRetaliation();
+      const profile: AttackProfile = {
+        rangeTiles: 1,
+        damage: hero.effectiveAttackDamage,
+        attackBonus: hero.effectiveAttackBonus,
+      };
+      const result = CombatSystem.applyAttack(atk.enemy, profile, this.random);
+      const verb = BattleScene.attackVerb(result);
+      const suffix = BattleScene.didHit(result) ? ` for ${result.damageDealt}` : "";
+      this.logCombat(`${hero.name} retaliates and ${verb} ${atk.enemy.def.name}${suffix}`);
+    }
+  }
+
   /** Refresh every hero token's HP/status badge and remove any hero that has fallen. */
   private syncHeroTokens(): void {
     for (const hero of this.heroes) {
@@ -2341,6 +2500,12 @@ export class BattleScene extends Phaser.Scene {
     const codes = STATUS_EFFECT_ORDER.filter((id) => hero.hasStatus(id)).map(
       (id) => getStatusEffectDefinition(id).name[0],
     );
+    // D-125: Reckless Attack/hidden aren't enemy-inflicted `StatusEffectId`s
+    // (both are self-toggled Hero flags), so neither can join the loop
+    // above — added as their own letter codes instead, same visible-badge
+    // treatment.
+    if (hero.grantsAttackerAdvantage) codes.push("K");
+    if (hero.isHidden) codes.push("V");
     if (codes.length === 0) {
       badge.setVisible(false);
       return;
@@ -2380,6 +2545,7 @@ export class BattleScene extends Phaser.Scene {
     this.showPotionButton(false);
     this.showBonusActionButton(false);
     this.showActionSurgeButton(false);
+    this.showClassActionButton(false);
     this.activeRing.setVisible(false);
     this.buildGhost.setVisible(false);
     this.buildGhostGlyph.setVisible(false);
@@ -2412,6 +2578,7 @@ export class BattleScene extends Phaser.Scene {
           this.showPotionButtonFor(hero);
           this.showBonusActionButtonFor(hero);
           this.showActionSurgeButtonFor(hero);
+          this.showClassActionButtonFor(hero);
         }
         if (next.kind === "aimingAbility") {
           this.showAbilityTargets(hero);
@@ -2494,8 +2661,10 @@ export class BattleScene extends Phaser.Scene {
       critThreshold: hero.critThreshold,
       // Phase 21 (D-112): an enemy-inflicted "blinded"-family status rolls
       // this hero's own attack with disadvantage, same as an enemy under
-      // "blinded"/"sapped"/"toppled" already does.
-      advantage: hero.attacksWithDisadvantage ? "disadvantage" : undefined,
+      // "blinded"/"sapped"/"toppled" already does. D-125: Reckless Attack
+      // overrides that with Advantage (same "no cancellation modeled"
+      // simplification every other Advantage source here already makes).
+      advantage: hero.recklessAttackAdvantage ? "advantage" : hero.attacksWithDisadvantage ? "disadvantage" : undefined,
     };
   }
 
@@ -2733,6 +2902,67 @@ export class BattleScene extends Phaser.Scene {
     this.showActionSurgeButton(true);
   }
 
+  private showClassActionButton(show: boolean): void {
+    this.classActionButton.setVisible(show);
+    this.classActionLabel.setVisible(show);
+  }
+
+  /**
+   * D-125: a hero is single-class, so at most one of these ever applies —
+   * Barbarian's Reckless Attack, Cleric's Channel Divinity: Preserve Life,
+   * Ranger's Vanish, Monk's Empty Body. Reckless Attack/Preserve Life spend
+   * neither the action nor bonus action's shared slot in
+   * `showBonusActionButtonFor`, so this button can be visible AT THE SAME
+   * TIME as Rage (Barbarian) — a real Barbarian very often wants both in
+   * one turn. Vanish DOES spend the same bonus-action slot Hunter's Mark
+   * uses (both set `bonusActed`), so a Ranger may see both buttons but can
+   * only actually use one.
+   */
+  private showClassActionButtonFor(hero: Hero): void {
+    if (hero.canUseRecklessAttack()) {
+      this.classActionLabel.setText("Reckless Attack (T)");
+      this.showClassActionButton(true);
+    } else if (hero.canUsePreserveLife()) {
+      this.classActionLabel.setText("Channel Divinity: Preserve Life (T)");
+      this.showClassActionButton(true);
+    } else if (hero.canUseVanish()) {
+      this.classActionLabel.setText("Vanish (T)");
+      this.showClassActionButton(true);
+    } else if (hero.canUseCunningActionHide()) {
+      this.classActionLabel.setText("Cunning Action: Hide (T)");
+      this.showClassActionButton(true);
+    } else if (hero.canUseEmptyBody()) {
+      this.classActionLabel.setText("Empty Body (T)");
+      this.showClassActionButton(true);
+    }
+  }
+
+  /**
+   * D-125: a flat, documented simplification standing in for a real
+   * passive-Perception DC — enemies have no ability scores to derive one
+   * from (same "enemies are data, not full combatants" boundary this
+   * project already draws elsewhere, e.g. `savingThrowBonus`'s own
+   * untuned-default fallback). Keyed by the highest-role living enemy still
+   * on the board — a legendary-tier threat is a harder audience to slip
+   * past than a minion.
+   */
+  private static readonly STEALTH_DC_BY_ROLE: Record<string, number> = {
+    minion: 10,
+    miniboss: 13,
+    boss: 16,
+    legendary: 19,
+  };
+
+  private stealthDcForBoard(): number {
+    const roleRank: Record<string, number> = { minion: 0, miniboss: 1, boss: 2, legendary: 3 };
+    let highest = "minion";
+    for (const enemy of this.waveSystem.enemies) {
+      const role = enemy.def.role ?? "minion";
+      if (roleRank[role] > roleRank[highest]) highest = role;
+    }
+    return BattleScene.STEALTH_DC_BY_ROLE[highest];
+  }
+
   private wireInput(): void {
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
       const tile = this.grid.worldToTile({ x: pointer.worldX, y: pointer.worldY });
@@ -2765,6 +2995,11 @@ export class BattleScene extends Phaser.Scene {
     });
     this.input.keyboard?.on("keydown-F", () => {
       if (this.ui.kind === "heroSelected") this.onActionSurgeButton();
+    });
+    // D-125: T (a single shared "class action" slot: Reckless Attack/
+    // Preserve Life/etc. — see `showClassActionButtonFor`).
+    this.input.keyboard?.on("keydown-T", () => {
+      if (this.ui.kind === "heroSelected") this.onClassActionButton();
     });
     this.input.keyboard?.on("keydown-ENTER", () => this.handlePrimaryActivate());
     this.input.keyboard?.on("keydown-SPACE", (event: KeyboardEvent) => {
@@ -3028,7 +3263,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private handleEscape(): void {
-    if (this.choosingAsi || this.choosingSubclass || this.choosingRest) return; // must resolve the choice, no Esc shortcut
+    if (this.choosingAsi || this.choosingSubclass || this.choosingSpellPick || this.choosingRest) return; // must resolve the choice, no Esc shortcut
     if (this.tutorialOverlay.length > 0) {
       this.dismissTutorial(); // the tutorial is informational, not a forced choice
       return;
@@ -3089,6 +3324,9 @@ export class BattleScene extends Phaser.Scene {
       this.rejectAt(enemy.position, `${hero.name} has already acted this turn`);
       return;
     }
+    // D-125: a basic attack always breaks this hero's own hidden state,
+    // mirroring a stealthed enemy's "first strike reveals it" rule.
+    if (hero.isHidden) hero.reveal();
     const profile = this.attackProfileFor(hero);
     const usingLuck = hero.canUseLucky();
     if (usingLuck) profile.advantage = "advantage";
@@ -3168,6 +3406,7 @@ export class BattleScene extends Phaser.Scene {
       this.applyWeaponMastery(hero, enemy, result);
       this.applyReflectorDamage(hero, enemy, result);
       this.applyGrapplerRestrain(hero, enemy, result);
+      this.applyIntimidatingPresence(hero, enemy, result);
       this.applyIrresistibleOffenseBonus(hero, enemy, result);
       this.applyDarkOnesBlessing(hero, result);
       this.applyShadowbladeFirstStrike(hero, enemy, result);
@@ -3344,6 +3583,24 @@ export class BattleScene extends Phaser.Scene {
     }
     enemy.applyStatus("restrained", 1);
     this.logCombat(`${hero.name}'s Grappler feat restrains ${enemy.def.name} (save ${save.total} vs DC ${dc})`);
+  }
+
+  /**
+   * D-124: Path of the Berserker's Intimidating Presence (level 10+) — a
+   * landed basic-attack hit also frightens the target on a failed save,
+   * mirroring Grappler's own "rider on an already-resolved hit, own save
+   * roll" shape exactly (`applyGrapplerRestrain`, above).
+   */
+  private applyIntimidatingPresence(hero: Hero, enemy: Enemy, result: AttackResult): void {
+    if (!hero.hasIntimidatingPresence || result.damageDealt <= 0 || !enemy.isAlive()) return;
+    const dc = 8 + hero.effectiveAttackBonus;
+    const save = SavingThrowSystem.rollSave(enemy.savingThrowBonus, dc, this.random);
+    if (save.success) {
+      this.logCombat(`${enemy.def.name} resists ${hero.name}'s Intimidating Presence (save ${save.total} vs DC ${dc})`);
+      return;
+    }
+    enemy.applyStatus("frightened", 2);
+    this.logCombat(`${hero.name}'s Intimidating Presence frightens ${enemy.def.name} (save ${save.total} vs DC ${dc})`);
   }
 
   /**
@@ -3576,6 +3833,8 @@ export class BattleScene extends Phaser.Scene {
       this.setInteraction({ kind: "heroSelected", heroId: hero.id });
       return;
     }
+    // D-125: an offensive ability breaks this hero's own hidden state, same as a basic attack.
+    if (hero.isHidden) hero.reveal();
     if (ability.savingThrow) {
       this.castSavingThrowAbilityOn(hero, ability, enemy);
       return;
@@ -3746,6 +4005,8 @@ export class BattleScene extends Phaser.Scene {
       this.returnToAimingMode(hero, ability.id);
       return;
     }
+    // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
+    if (hero.isHidden) hero.reveal();
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
     this.playCastVisual(ability, hero.position, target.position);
@@ -3791,6 +4052,8 @@ export class BattleScene extends Phaser.Scene {
       this.setInteraction({ kind: "heroSelected", heroId: hero.id });
       return;
     }
+    // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
+    if (hero.isHidden) hero.reveal();
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
     this.playCastVisual(ability, hero.position, hero.position);
@@ -3818,6 +4081,8 @@ export class BattleScene extends Phaser.Scene {
       this.setInteraction({ kind: "heroSelected", heroId: hero.id });
       return;
     }
+    // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
+    if (hero.isHidden) hero.reveal();
     if (GridSystem.manhattanDistance(hero.position, tile) > ability.rangeTiles) {
       this.rejectAt(tile, "Out of range");
       this.setInteraction({ kind: "aimingTileSpell", heroId: hero.id, abilityId: ability.id });
@@ -3903,6 +4168,8 @@ export class BattleScene extends Phaser.Scene {
       this.setInteraction({ kind: "heroSelected", heroId: hero.id });
       return;
     }
+    // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
+    if (hero.isHidden) hero.reveal();
     if (GridSystem.manhattanDistance(hero.position, tile) > ability.rangeTiles || !this.isTileEmptyForPlacement(tile)) {
       this.rejectAt(tile, "Can't teleport there");
       this.setInteraction({ kind: "aimingTileSpell", heroId: hero.id, abilityId: ability.id });
@@ -3929,6 +4196,8 @@ export class BattleScene extends Phaser.Scene {
       this.setInteraction({ kind: "heroSelected", heroId: hero.id });
       return;
     }
+    // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
+    if (hero.isHidden) hero.reveal();
     if (GridSystem.manhattanDistance(hero.position, tile) > ability.rangeTiles || !this.isTileEmptyForPlacement(tile)) {
       this.rejectAt(tile, "Can't summon there");
       this.setInteraction({ kind: "aimingTileSpell", heroId: hero.id, abilityId: ability.id });
@@ -3992,6 +4261,8 @@ export class BattleScene extends Phaser.Scene {
       this.setInteraction({ kind: "heroSelected", heroId: hero.id });
       return;
     }
+    // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
+    if (hero.isHidden) hero.reveal();
     if (GridSystem.manhattanDistance(hero.position, tile) > ability.rangeTiles) {
       this.rejectAt(tile, "Out of range");
       this.setInteraction({ kind: "aimingTileSpell", heroId: hero.id, abilityId: ability.id });
@@ -4234,6 +4505,8 @@ export class BattleScene extends Phaser.Scene {
       this.rejectAt(hero.position, `No enemies within reach of ${ability.name}`);
       return;
     }
+    // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
+    if (hero.isHidden) hero.reveal();
     this.spendSpellSlotIfNeeded(hero, ability);
     hero.markActedForSpellCast();
     this.playCastVisual(ability, hero.position, hero.position);
@@ -4363,6 +4636,52 @@ export class BattleScene extends Phaser.Scene {
     hero.useActionSurge();
     this.logCombat(`${hero.name} uses Action Surge, gaining an extra action`);
     this.setInteraction({ kind: "heroSelected", heroId: hero.id });
+  }
+
+  /** D-125: whichever single class action `showClassActionButtonFor` found eligible — see that method for why these can coexist with the bonus-action button. */
+  private onClassActionButton(): void {
+    if (this.turns.current !== "player" || this.inputLocked()) return;
+    const heroId = this.ui.kind === "heroSelected" ? this.ui.heroId : null;
+    if (!heroId) return;
+    const hero = this.heroById(heroId);
+    if (!hero) return;
+    if (hero.canUseRecklessAttack()) {
+      hero.activateRecklessAttack();
+      this.logCombat(`${hero.name} attacks recklessly — advantage on its attacks, but attacks against it gain advantage too`);
+    } else if (hero.canUsePreserveLife()) {
+      const healed = hero.usePreserveLife(this.livingHeroes());
+      const total = healed.reduce((sum, h) => sum + h.amount, 0);
+      this.logCombat(`${hero.name} channels divinity, Preserve Life, restoring ${total} HP across the party`);
+      for (const { hero: ally } of healed) {
+        const token = this.heroTokens.get(ally.id);
+        if (token) this.updateHpText(token, ally.health, ally.effectiveMaxHealth);
+      }
+    } else if (hero.canUseVanish()) {
+      hero.useVanish();
+      this.attemptHide(hero, "Vanish");
+    } else if (hero.canUseCunningActionHide()) {
+      hero.useCunningActionHide();
+      this.attemptHide(hero, "Cunning Action's Hide");
+    } else if (hero.canUseEmptyBody()) {
+      hero.useEmptyBody();
+      this.logCombat(`${hero.name} uses Empty Body, turning invisible`);
+    } else {
+      return;
+    }
+    this.updateHeroStatusBadge(hero);
+    this.setInteraction({ kind: "heroSelected", heroId: hero.id });
+  }
+
+  /** D-125: rolls the shared Stealth check both Vanish and Cunning Action's Hide attempt, hiding the hero on success. */
+  private attemptHide(hero: Hero, actionName: string): void {
+    const dc = this.stealthDcForBoard();
+    const result = SkillCheckSystem.rollCheck(hero.stealthCheckModifier(), dc, this.random, hero.stealthCheckAdvantage);
+    if (result.success) {
+      hero.hide();
+      this.logCombat(`${hero.name} uses ${actionName}, vanishing from sight (Stealth ${result.total} vs DC ${dc})`);
+    } else {
+      this.logCombat(`${hero.name} tries ${actionName} but fails to stay hidden (Stealth ${result.total} vs DC ${dc})`);
+    }
   }
 
   private applyHeroResults(
@@ -5925,6 +6244,104 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
+   * D-125: Wizard's Spell Mastery (level 18)/Signature Spells (level 20) and
+   * Warlock's Mystic Arcanum (levels 11/13/15/17) — a ONE-TIME pick from a
+   * hero's own already-known spell list, made the instant the feature is
+   * gained. Same "queue and pop" shape as `showAsiChoiceQueue`/
+   * `showSubclassChoiceQueue`, reusing `renderAsiPrompt`/`asiOverlay`.
+   */
+  private showSpellPickChoiceQueue(requests: SpellPickRequest[], onDone: () => void): void {
+    this.spellPickQueue = [...requests];
+    this.pendingAfterSpellPick = onDone;
+    this.choosingSpellPick = true;
+    this.advanceSpellPickQueue();
+  }
+
+  /** Pop the next request off `spellPickQueue` and show its picker, or finish if the queue is empty. */
+  private advanceSpellPickQueue(): void {
+    const request = this.spellPickQueue.shift();
+    if (!request) {
+      this.clearAsiOverlay();
+      this.choosingSpellPick = false;
+      const proceed = this.pendingAfterSpellPick;
+      this.pendingAfterSpellPick = null;
+      proceed?.();
+      return;
+    }
+    this.showSpellPickPrompt(request);
+  }
+
+  private showSpellPickPrompt(request: SpellPickRequest): void {
+    const { hero, kind, tier } = request;
+    if (kind === "mastery") {
+      const eligible = hero.eligibleSpellMasterySpells();
+      if (eligible.length === 0) {
+        this.advanceSpellPickQueue(); // nothing known yet at a low enough level — nothing to pick from
+        return;
+      }
+      this.renderAsiPrompt(
+        `${hero.name} — Spell Mastery: Choose a Spell`,
+        eligible.map((id) => ({
+          label: getAbility(id).name,
+          onClick: () => {
+            hero.chooseSpellMasterySpell(id);
+            this.logCombat(`${hero.name} masters ${getAbility(id).name} — castable at will, free, forever`);
+            this.advanceSpellPickQueue();
+          },
+        })),
+      );
+    } else if (kind === "signature") {
+      const eligible = hero.eligibleSignatureSpells();
+      if (eligible.length < 2) {
+        this.advanceSpellPickQueue(); // fewer than 2 known 3rd-level spells to choose from
+        return;
+      }
+      this.renderAsiPrompt(
+        `${hero.name} — Signature Spells: Choose the First`,
+        eligible.map((id) => ({
+          label: getAbility(id).name,
+          onClick: () => this.showSignatureSpellSecondPick(hero, id, eligible),
+        })),
+      );
+    } else if (kind === "arcanum" && tier !== undefined) {
+      const eligible = hero.eligibleMysticArcanumSpells(tier);
+      if (eligible.length === 0) {
+        this.advanceSpellPickQueue(); // nothing known yet at this exact spell level
+        return;
+      }
+      this.renderAsiPrompt(
+        `${hero.name} — Mystic Arcanum (${tier}th level): Choose a Spell`,
+        eligible.map((id) => ({
+          label: getAbility(id).name,
+          onClick: () => {
+            hero.chooseMysticArcanumSpell(tier, id);
+            this.logCombat(`${hero.name} learns the Mystic Arcanum ${getAbility(id).name} — one free cast per Long Rest`);
+            this.advanceSpellPickQueue();
+          },
+        })),
+      );
+    } else {
+      this.advanceSpellPickQueue();
+    }
+  }
+
+  /** Signature Spells' second pick — excludes whichever spell was already picked first. */
+  private showSignatureSpellSecondPick(hero: Hero, first: string, eligible: string[]): void {
+    const remaining = eligible.filter((id) => id !== first);
+    this.renderAsiPrompt(
+      `${hero.name} — Signature Spells: Choose the Second`,
+      remaining.map((id) => ({
+        label: getAbility(id).name,
+        onClick: () => {
+          hero.chooseSignatureSpells([first, id]);
+          this.logCombat(`${hero.name} picks ${getAbility(first).name} and ${getAbility(id).name} as Signature Spells — one free cast each per rest`);
+          this.advanceSpellPickQueue();
+        },
+      })),
+    );
+  }
+
+  /**
    * Phase 13.6 (D-091): the Ability-Score-Improvement-or-feat overlay. Shown
    * once per hero in `heroes` (already filtered to those who just reached an
    * ASI-granting level), one at a time via `asiQueue` — the same "queue and
@@ -6177,11 +6594,12 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  /** True while a modal (ASI/feat choice, subclass choice, rest choice, or the tutorial) should block board input. */
+  /** True while a modal (ASI/feat choice, subclass choice, spell-pick choice, rest choice, or the tutorial) should block board input. */
   private inputLocked(): boolean {
     return (
       this.choosingAsi ||
       this.choosingSubclass ||
+      this.choosingSpellPick ||
       this.choosingRest ||
       this.tutorialOverlay.length > 0
     );

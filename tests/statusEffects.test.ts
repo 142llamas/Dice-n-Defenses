@@ -246,3 +246,44 @@ describe("WaveSystem integration: sapped/toppled roll the enemy's own attack wit
     expect(spy).toHaveBeenCalledWith("disadvantage");
   });
 });
+
+// D-124: "frightened" reuses "blinded"/"sapped"/"toppled"'s exact
+// attackRollDisadvantage shape — the Barbarian's Intimidating Presence's
+// real hookup (`BattleScene.applyIntimidatingPresence`, not unit-testable
+// here, same standing Phaser limitation as every other BattleScene-only
+// mechanic). This file's job is proving the STATUS ITSELF behaves like
+// every other timed effect and rolls the afflicted enemy's own attack with
+// disadvantage, exactly like sapped/toppled above.
+
+describe("Enemy status effect bookkeeping: frightened (D-124)", () => {
+  it("applies and expires like any other timed status", () => {
+    const enemy = new Enemy("e#1", getEnemyDefinition("grunt"), { x: 0, y: 0 });
+    expect(enemy.hasStatus("frightened")).toBe(false);
+    enemy.applyStatus("frightened", 2);
+    expect(enemy.hasStatus("frightened")).toBe(true);
+    enemy.tickStatuses();
+    expect(enemy.hasStatus("frightened")).toBe(true);
+    enemy.tickStatuses();
+    expect(enemy.hasStatus("frightened")).toBe(false);
+  });
+});
+
+describe("WaveSystem integration: frightened rolls the enemy's own attack with disadvantage", () => {
+  it("rolls with disadvantage while frightened", () => {
+    const map = new GameMap(parseMapRows("lane", "lane", ["S....X"]));
+    const pf = new PathfindingSystem(map);
+    const random = RandomService.fixed(15);
+    const spy = vi.spyOn(random, "rollD20With");
+    const ws = new WaveSystem(map, pf, [laneWave("grunt")], { startingIntegrity: 20, random });
+    ws.startWave(0);
+    const t1 = ws.tickEnemyPhase();
+    const grunt = t1.spawned[0];
+    grunt.position = { x: 4, y: 0 };
+    grunt.applyStatus("frightened", 1);
+    const heroTarget: Combatant = { id: "hero1", position: { x: 5, y: 0 }, health: 20, armorClass: 10 };
+
+    const t2 = ws.tickEnemyPhase({ heroTargets: [heroTarget] });
+    expect(t2.attacks).toHaveLength(1);
+    expect(spy).toHaveBeenCalledWith("disadvantage");
+  });
+});

@@ -67,6 +67,44 @@ export interface Combatant {
    * no per-side special-casing.
    */
   applyStatus?(id: StatusEffectId, durationTurns: number): void;
+  /**
+   * D-124: this combatant's advantage mode on a saving throw someone else's
+   * attack forces (e.g. Barbarian's Danger Sense, always Advantage against a
+   * DEX-based forced save — the only kind `WaveSystem` forces on a hero
+   * today). Absent is treated as "normal", same fallback `savingThrowBonus`
+   * already gets.
+   */
+  readonly savingThrowAdvantage?: AdvantageMode;
+  /**
+   * D-124: Rogue/Monk's Evasion — true halves (instead of fully applies) the
+   * damage from a FAILED forced saving throw; a successful save already
+   * takes 0 damage regardless (SavingThrowSystem's existing rule). Absent
+   * (or false) means no change, the pre-D-124 full-damage-on-fail behavior.
+   */
+  readonly evasionHalvesFailedSave?: boolean;
+  /**
+   * D-124: Fighter's Indomitable — given a forced saving throw this
+   * combatant just FAILED, returns true if it chose (and could afford) to
+   * reroll it, consuming a per-rest charge as a side effect. The caller
+   * rerolls once more and uses that new result unconditionally, matching
+   * the SRD's own "you must use the new roll" wording. Absent means never
+   * offered a reroll.
+   */
+  rerollFailedSave?(): boolean;
+  /**
+   * D-124: Rogue's Elusive — true means no attack roll against this
+   * combatant may have Advantage (an ambush/blinded-enemy Advantage is
+   * downgraded to Normal; a Disadvantage from some other source is
+   * unaffected). Absent (or false) means no change.
+   */
+  deniesAttackerAdvantage?(): boolean;
+  /**
+   * D-125: Barbarian's Reckless Attack — true means every attack roll
+   * AGAINST this combatant has Advantage until the start of its next turn
+   * (the trade for Advantage on its own attacks, applied directly in
+   * `BattleScene.attackProfileFor`). Absent (or false) means no change.
+   */
+  readonly grantsAttackerAdvantage?: boolean;
 }
 
 /** A single-target attack profile (a basic attack or a single-target ability). */

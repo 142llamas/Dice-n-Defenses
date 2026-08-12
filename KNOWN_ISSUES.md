@@ -6,6 +6,162 @@
 
 ## Open items to verify
 
+- **KI-083 — D-126's UI-layout audit-and-fix (Compendium tabs/class
+  selector, Map Builder's terrain palette, Free Play's map/boss labels,
+  Browse Shared Maps' list pagination, and the core Battle HUD's status/
+  combat-log wrap width) is not yet confirmed by Kevin in a browser.** Built
+  and verified headless-only (typecheck, all 1130 tests unchanged, production
+  build all pass — 115 modules unchanged; `npm run dev` not re-checked this
+  session). Every fix here was derived from real bounding-box arithmetic
+  against `GAME_WIDTH`/`GAME_HEIGHT` and real data-table lengths (not
+  guessed), but this is presentation-only Phaser code with no automated
+  coverage — the same standing limitation every other visual-only fix in
+  this project has. To check:
+  - **Compendium**: open it (Classes tab, the default) and confirm all 12
+    class buttons and all 10 category tabs render fully on-canvas with none
+    clipped at either edge — this used to be broken the instant the screen
+    opened.
+  - **Map Builder**: open it (Terrain tab, the default) and confirm all 8
+    terrain swatches (Floor through Sand) render fully on-canvas.
+  - **Free Play**: confirm every map name (especially "Cinderfall Rift
+    (volcanic, collapsing bridge)") and every boss name (especially "The
+    Hollow Empress") reads clearly inside its own button with no overlap
+    into a neighboring button — names may now wrap to 2-3 small-font lines
+    instead of one line, which is the intended trade-off.
+  - **Browse Shared Maps** (needs Firebase configured and at least 6
+    published maps to actually exercise): confirm the map list shows 5 at a
+    time with working ◀ Prev/Next ▶ controls, a "Page N/M" label, and that
+    "Next" past the last locally-loaded page fetches more before advancing,
+    without ever visually reaching the Wave Count section below it.
+  - **The core Battle HUD** (the one most likely to matter): with a full
+    4-hero party, play a battle on Frostbound Hollow specifically (the
+    narrowest AND tallest built-in map — the worst real case this fix
+    targets) and confirm the status line (party status + hint text) never
+    visually runs into the combat log lines directly below it, in ordinary
+    "hero selected" play as well as while hovering a long gear/structure
+    description in Build or Gear mode. Also worth a look on a couple of
+    wider maps to confirm nothing regressed there.
+  - **Known, deliberate, unfixed edge case, not a bug**: `renderAsiPrompt`'s
+    title can mathematically overlap its own first button row at 15+
+    simultaneous choices, reachable only by the Epic Boon feat's
+    ability-picker at character level 19+ — no run in this game currently
+    reaches that level (see KI-066), so this has no real player-facing path
+    today. See D-126 for the full list of what was checked and left alone.
+
+- **KI-082 — D-125's five slices (Reckless Attack, Preserve Life, skill
+  proficiency/checks + hero stealth, Wizard's Spell Mastery/Signature
+  Spells, Warlock's Mystic Arcanum) are not yet confirmed by Kevin in a
+  browser.** Built and verified headless-only (typecheck, all 1130 tests,
+  production build all pass — 115 modules, up from 114; `npm run dev` not
+  re-checked this session). Every mechanic here is BattleScene-button-
+  driven, same standing "no browser in this environment" limitation as
+  D-124's own batch. Not yet verified:
+  - **Barbarian's Reckless Attack** (level 2+): select a Barbarian, confirm
+    a "Reckless Attack (T)" button appears alongside (not instead of) the
+    Rage bonus-action button, click it, then land a basic attack and
+    confirm the combat log/attack roll reads with Advantage — then let an
+    enemy hit that same Barbarian back and confirm ITS roll also shows
+    Advantage, lasting until the Barbarian's own next turn (a "Reckless"
+    status badge should show on its token the whole time).
+  - **Cleric's Channel Divinity: Preserve Life** (Life Domain, level 2+):
+    select a damaged party with a Life Domain Cleric, confirm a "Channel
+    Divinity: Preserve Life (T)" button appears, click it, and confirm the
+    combat log reports a total HP restored across up to 5 allies, each
+    capped at half its own max HP — confirm the button disappears once
+    uses run out and reappears after a Short OR Long Rest. A non-Life-
+    Domain Cleric should never see this button at all.
+  - **Ranger's Vanish / Rogue's Cunning Action: Hide** (level 14+/2+): click
+    the button, confirm a combat-log line reports a Stealth roll vs. a DC,
+    and — on success — that hero's token should stop being a valid enemy
+    attack target next enemy phase (a "Hidden" badge should show); a Ranger
+    at level 10+ standing still should succeed noticeably more often than
+    one that already moved this turn (Hide in Plain Sight's +10); a level-9+
+    Thief Rogue standing still should also succeed more often (Supreme
+    Sneak's Advantage). The hidden hero should immediately lose the badge
+    and become targetable again the instant it makes its own attack or
+    casts a spell.
+  - **Monk's Empty Body** (level 18+): click the button, confirm it spends
+    this hero's entire Ki pool and its action, and the hero immediately
+    becomes hidden with no roll at all.
+  - **Wizard's Spell Mastery (level 18)/Signature Spells (level 20)**: clear
+    enough waves to reach these levels and confirm a picker overlay appears
+    automatically (right after any ASI/subclass choice, before the Rest
+    choice) listing only that hero's own known spells at the right spell
+    level (1-5 for Mastery, exactly two 3rd-level picks for Signature
+    Spells) — then confirm the spellbook shows the chosen spell(s) as
+    castable even with 0 remaining slots of that level, and that Signature
+    Spells' free use recharges after a Short Rest.
+  - **Warlock's Mystic Arcanum** (levels 11/13/15/17): same picker flow, one
+    tier at a time (6th/7th/8th/9th-level spells respectively) — confirm
+    each tier's free cast recharges ONLY on a Long Rest, not a Short one
+    (a Warlock's own Pact Magic slots DO refill on a Short Rest — don't
+    confuse that with Mystic Arcanum staying spent underneath it).
+  - **Known, deliberate limits, not bugs**: Rogue's Blindsense/Ranger's
+    Feral Senses stay inert (the opposite direction — detecting an enemy's
+    hidden state — needs a per-observer targeting model this game doesn't
+    have); no other skill-check moment exists beyond the Stealth check
+    built here; a hidden hero still physically blocks movement/pathfinding
+    exactly like before — only enemy TARGETING is affected.
+
+- **KI-081 — D-124's batch of wired-real class/subclass features (Indomitable,
+  Danger Sense, Evasion, Elusive, The Fiend's Expanded Spell List, Intimidating
+  Presence, Retaliation, Cutting Words) is not yet confirmed by Kevin in a
+  browser.** Built and verified headless-only (typecheck, all 1088 tests,
+  production build all pass — 114 modules, unchanged; `npm run dev` serves
+  HTTP 200 not re-checked this session, no scene/UI file touched). The pure
+  saving-throw/advantage hookups have real unit-test coverage down to the
+  `WaveSystem` layer (see `tests/combat.test.ts`'s new D-124 block); the three
+  BattleScene-only hookups do not, per the same standing Phaser limitation
+  every other in-battle auto-apply mechanic in this project has (Uncanny
+  Dodge, Grappler, etc.). Not yet verified in a real battle:
+  - **Fighter's Indomitable** (level 9+): take a hit from a save-forcing enemy
+    (Blightcaller, Free Play/Bestiary) enough times to fail a save, and
+    confirm the combat log shows a reroll happening (currently no dedicated
+    log line distinguishes a rerolled save from a normal one — a real,
+    minor UI gap worth a look, not a logic bug) and that a second failed
+    save in the same battle, once out of charges, does NOT reroll again.
+  - **Barbarian's Danger Sense** (level 2+): confirm a Barbarian resists a
+    Blightcaller-style forced save noticeably more often than a same-level
+    non-Barbarian over several hits (Advantage is probabilistic, so this
+    needs a few tries to see, not a single guaranteed outcome).
+  - **Rogue's/Monk's Evasion** (level 7+): confirm a FAILED forced save deals
+    roughly half damage instead of full — the log line's damage number is
+    the only visible cue today (no "(halved by Evasion)" suffix the way
+    Uncanny Dodge/Rage get one — another small, real UI gap).
+  - **Rogue's Elusive** (level 18+): stand a level-18+ Rogue next to a
+    stealth enemy (Shadowfang/Nightblade) and confirm its ambush hit lands
+    noticeably less reliably than against a same-AC non-Rogue ally over
+    several tries (Advantage downgraded to Normal is also probabilistic).
+  - **The Fiend's Expanded Spell List**: build a Warlock with The Fiend,
+    level it to 3/5/7/9, and confirm Burning Hands/Command (then Blindness-
+    Deafness/Scorching Ray, etc.) actually appear in the spellbook overlay
+    and are castable — Starbound Patron (the other Warlock subclass) should
+    NOT show any of them.
+  - **Path of the Berserker's Intimidating Presence** (level 10+): land a
+    basic-attack hit with a level-10+ Berserker Barbarian and confirm the
+    combat log sometimes shows the target becoming frightened (a failed
+    save) with a visible status badge — confirm a Path of the Ironhide
+    Barbarian (the other subclass) never triggers it.
+  - **Path of the Berserker's Retaliation** (level 14+): let an adjacent
+    enemy hit a level-14+ Berserker Barbarian and confirm a counter-attack
+    log line appears immediately after, and that it only fires once per
+    turn even if the same hero is hit twice.
+  - **College of Lore's Cutting Words** (level 3+): with a level-3+ College
+    of Lore Bard in the party, let any hero take a hit and confirm the
+    combat log sometimes shows the damage weakened with a "Cutting Words"
+    suffix, spending one of the Bard's Bardic Inspiration uses (separate
+    from its own bonus-action use) — confirm College of the Blade (the
+    other Bard subclass) never triggers it.
+  - **Known, deliberate limits, not bugs**: Life Domain's Domain Spells stay
+    inert — every named spell was already part of the base Cleric spell
+    list, so this feature makes no observable difference (see D-124).
+    Mindless Rage/Countercharm/Aura of Courage/Stillness of Mind (all about
+    resisting the new "frightened" status) stay inert — nothing inflicts
+    frightened ON a hero yet, only FROM one. Wizard's Spell Mastery/
+    Signature Spells and Warlock's Mystic Arcanum still need a real spell
+    picker UI, not built this pass. See D-124 for the full list of what was
+    deliberately deferred and why.
+
 - **KI-080 — D-123's fantasy/parchment restyle of Main Menu, Compendium, and
   Bestiary is not yet confirmed by Kevin in a browser.** Built and verified
   headless-only (typecheck, all 1036 tests, production build all pass — 114

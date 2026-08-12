@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { GAME_WIDTH, COLORS } from "../config";
+import { centeredRowX } from "./uiTheme";
 import { GridSystem, type GridPosition } from "../systems/GridSystem";
 import { GameMap, type TileRole } from "../systems/GameMap";
 import type { ParsedMap, TileType } from "../data/testMap";
@@ -311,12 +312,13 @@ export class MapBuilderScene extends Phaser.Scene {
       this.paletteTab === "terrain"
         ? TERRAIN_PALETTE.map((t) => ({ label: t.label, selection: { kind: "terrain" as const, tileType: t.tileType } }))
         : MARKER_PALETTE.map((m) => ({ label: m.label, selection: { kind: "marker" as const, role: m.role } }));
-    const totalWidth = items.length * w + (items.length - 1) * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    // Playtest fix: at the fixed 180px width this row (8 terrain swatches)
+    // ran off both edges of the 1280px canvas — centeredRowX shrinks item
+    // width to fit instead once the palette outgrows the available space.
+    const { xs, itemWidth } = centeredRowX(items.length, w, gap, GAME_WIDTH / 2);
 
     items.forEach((item, i) => {
-      const x = startX + i * (w + gap);
-      const { rect, label } = this.buildSmallButton(x, y, w, 32, item.label, 0x2a2a3a, () => {
+      const { rect, label } = this.buildSmallButton(xs[i], y, itemWidth, 32, item.label, 0x2a2a3a, () => {
         this.selectedPalette = item.selection;
         this.refreshPaletteHighlight();
       });
