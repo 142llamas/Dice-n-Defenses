@@ -2,6 +2,45 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Four Foundational Systems: Damage Resistance, Stealth Sense, Charge Items, Ability-Score Items (D-127)
+
+While Kevin ran his first in-browser playtest pass in several sessions, this
+session closed four long-documented "no system to hook into yet" gaps —
+architecture that was genuinely missing, not stale wiring. See **D-127** in
+`DECISIONS.md` for the complete method, every design choice, and everything
+deliberately left out of scope.
+
+Added:
+- **Nonmagical damage-type resistance**: a hero's real equipped weapon now
+  carries a damage type (bludgeoning/piercing/slashing — already present in
+  `data/weapons.ts`, just never consumed before now), and `CombatSystem`
+  halves a landed nonmagical hit against a resistant target. Rat Swarm/
+  Locust Swarm gain the real SRD Swarm trait's resistance; Boon of
+  Irresistible Offense's "damage always ignores Resistance" half is finally
+  real, bypassing it entirely.
+- **Rogue's Blindsense (level 14+) / Ranger's Feral Senses (level 18+)**:
+  real for the first time — a level-appropriate hero within 2 tiles can now
+  click-target a still-hidden stealth enemy that every other hero (and the
+  enemy AI) still can't see, without revealing it to anyone else.
+- **Charge-based active items**: Wand of Magic Missile (7 charges), Wand of
+  Web (6), and Staff of Healing (10) grant their spell to ANY hero, even a
+  non-caster, spent as item charges rather than a class spell slot; fully
+  recharge on a Long Rest. The spellbook overlay shows a live "N/M charges"
+  count for these.
+- **Ability-score-setting magic items**: Gauntlets of Ogre Power (Strength
+  19), Headband of Intellect (Intelligence 19), and Amulet of Health
+  (Constitution 19) — equipping one raises every derived combat number that
+  ability feeds (attack damage, max HP, Armor Class, spell save DC, saving
+  throws) live, with no effect if the hero's own score is already as high.
+  Fixed a related pre-existing gap as part of this: a DEX Ability Score
+  Improvement previously never raised Armor Class without real armor
+  equipped — it does now.
+
+Tests: 1147/1147 passing (up from 1130), typecheck and production build
+(115 modules) both clean. No browser available in this environment — every
+mechanic above joins the "not yet confirmed by Kevin" queue (see **KI-084**
+in `KNOWN_ISSUES.md` for the full in-browser checklist).
+
 ## [Unreleased] — 0.2.0-dev — A Full UI-Layout Audit and Fix (D-126)
 
 Kevin reported real, current "clashing text boxes" and "boxes going over the

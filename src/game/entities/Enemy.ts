@@ -1,5 +1,6 @@
 import type { GridPosition } from "../systems/GridSystem";
 import { getEnemyDefinition, type EnemyDefinition } from "../data/enemies";
+import type { DamageType } from "../data/weapons";
 import type { Combatant } from "../systems/CombatSystem";
 import {
   getStatusEffectDefinition,
@@ -205,14 +206,17 @@ export class Enemy implements Combatant {
    * (see `WaveSystem`'s swarm-aware occupancy checks), is immune to a fixed
    * set of conditions (`SWARM_IMMUNE_STATUSES` below), can't regain HP (see
    * `Lifedrinker`/`Healer` archetypes' own skip-if-swarm checks), and deals
-   * half damage once Bloodied (see `attackDamage` below). NOT modeled: the
-   * real SRD's bludgeoning/piercing/slashing damage RESISTANCE — this game
-   * has no damage-type-aware resistance system for any attack to hook into
-   * yet (same category of gap as Boon of Irresistible Offense's own
-   * documented damage-resistance half).
+   * half damage once Bloodied (see `attackDamage` below). The trait's
+   * bludgeoning/piercing/slashing damage resistance is modeled separately —
+   * see `damageResistances` below (D-127).
    */
   get isSwarm(): boolean {
     return this.def.swarm === true;
+  }
+
+  /** D-127: this enemy's nonmagical damage-type resistance, if any — see `data/enemies.ts`'s `damageResistances` field and `CombatSystem.applyAttack`. */
+  get damageResistances(): DamageType[] | undefined {
+    return this.activeDef.damageResistances;
   }
 
   /** True once this enemy is at half its BASE max HP or fewer ("Bloodied", the real SRD term). */

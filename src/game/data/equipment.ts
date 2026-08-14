@@ -1,4 +1,5 @@
 ﻿import type { StatusEffectId } from "./statusEffects";
+import type { AbilityScoreId } from "./abilityScores";
 import type { WeaponData } from "./weapons";
 import type { ArmorData } from "./armor";
 import { WEAPON_DEFINITIONS, WEAPON_ORDER } from "./weapons";
@@ -187,6 +188,24 @@ export interface EquipmentDefinition {
   requiresAttunement?: boolean;
   /** Phase 13.9 (D-094): a real on-hit/on-kill magic effect. Absent for a purely flat-bonus item. */
   proc?: EquipmentProc;
+  /**
+   * D-127: a charge-based active item (wand/rod/staff) — grants `spellId` to
+   * ANY hero while equipped (added to `Hero.knownSpellAbilityIds`, same
+   * "castable even with no real spell slots" shape as Magic Initiate),
+   * spending one of `maxCharges` per cast instead of a slot. Fully refills
+   * on a Long Rest (this project's existing simplification for every other
+   * per-rest resource — no partial-recharge dice roll). Absent for every
+   * other item.
+   */
+  chargedSpell?: { spellId: string; maxCharges: number };
+  /**
+   * D-127: an ability-score-SETTING item (Gauntlets of Ogre Power, Headband
+   * of Intellect, Amulet of Health) — sets `ability` to `value` while
+   * equipped, with no effect if the hero's own score is already `value` or
+   * higher (the real SRD rule — see `Hero.effectiveAbilityScore`). Absent
+   * for every other item.
+   */
+  setsAbilityScore?: { ability: AbilityScoreId; value: number };
   /** Phase 17 (D-108): present only for a `slot: "weapon"` item — see data/weapons.ts. */
   weapon?: WeaponData;
   /** Phase 17 (D-108): present only for a `slot: "chest"` REAL ARMOR item (absent for a flavor chest item) — see data/armor.ts. */

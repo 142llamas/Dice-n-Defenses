@@ -547,8 +547,8 @@ export const ROGUE: CharacterClassDefinition = {
       level: 14,
       name: "Blindsense",
       description:
-        "Senses hidden/stealthed ENEMIES nearby. Still inert (D-125) — a hero-side hidden state now exists (Ranger's Vanish, Monk's Empty Body), but this is the opposite direction: a stealth enemy's own `Enemy.isRevealed` (D-111) is a single global flag shared by every hero, not per-observer, so \"this Rogue specifically can see through it\" needs its own targeting-exception model, a real future slice.",
-      mechanicallyActive: false,
+        "Senses hidden/stealthed ENEMIES nearby. Real (D-127): a still-hidden stealth enemy within 2 tiles becomes targetable to THIS Rogue specifically, without revealing it to any other hero or the enemy AI's own targeting.",
+      mechanicallyActive: true,
     },
     {
       level: 15,
@@ -1684,8 +1684,8 @@ export const RANGER: CharacterClassDefinition = {
       level: 18,
       name: "Feral Senses",
       description:
-        "Senses invisible/hidden ENEMIES nearby. Still inert (D-125) — same reason as Rogue's Blindsense above: this is a hero detecting an enemy's hidden state, the opposite direction from the hero-side hidden state (Vanish/Empty Body) this session built.",
-      mechanicallyActive: false,
+        "Senses invisible/hidden ENEMIES nearby. Real (D-127): a still-hidden stealth enemy within 2 tiles becomes targetable to THIS Ranger specifically, without revealing it to any other hero or the enemy AI's own targeting.",
+      mechanicallyActive: true,
     },
     {
       level: 19,

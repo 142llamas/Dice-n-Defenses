@@ -2,6 +2,7 @@ import { GridSystem, type GridPosition } from "./GridSystem";
 import { RandomService } from "./RandomService";
 import type { AdvantageMode } from "./RandomService";
 import type { StatusEffectId } from "../data/statusEffects";
+import type { DamageType } from "../data/weapons";
 
 /**
  * CombatSystem: pure combat rules. No Phaser, no entity classes.
@@ -105,6 +106,13 @@ export interface Combatant {
    * `BattleScene.attackProfileFor`). Absent (or false) means no change.
    */
   readonly grantsAttackerAdvantage?: boolean;
+  /**
+   * D-127: damage types this combatant resists (halves incoming damage from,
+   * rounded down) when the attack isn't `magical` — the real SRD Swarm
+   * trait's bludgeoning/piercing/slashing resistance. Absent means no
+   * resistance, same as every combatant before this decision.
+   */
+  readonly damageResistances?: ReadonlyArray<DamageType>;
 }
 
 /** A single-target attack profile (a basic attack or a single-target ability). */
@@ -128,6 +136,21 @@ export interface AttackProfile {
    * Ignored when `autoHit` (no roll takes place to be critical).
    */
   critThreshold?: number;
+  /**
+   * D-127: this attack's damage type, for resistance purposes. Absent for
+   * every spell/ability attack (this game has no damage-type field on
+   * spells) and for a hero with no weapon equipped — resistance only ever
+   * applies to a real weapon's B/P/S damage, matching the real SRD Swarm
+   * trait's "nonmagical" scope without needing a damage-type field on every
+   * spell.
+   */
+  damageType?: DamageType;
+  /**
+   * D-127: true bypasses `damageResistances` entirely (an enchanted weapon,
+   * or Boon of Irresistible Offense's "damage always ignores Resistance"
+   * clause). Ignored when `damageType` is absent.
+   */
+  magical?: boolean;
 }
 
 /** Detail on the d20 roll itself, present whenever an attack actually rolled (not `autoHit`). */
@@ -215,6 +238,19 @@ export class CombatSystem {
   }
 
   /**
+   * D-127: halve (round down) a landed hit's raw damage if `target` resists
+   * `profile.damageType` and the attack isn't `magical`. A no-op for an
+   * untyped attack (every spell, and every hero with no weapon equipped) or a
+   * target with no matching resistance — every attack before this decision
+   * behaves identically.
+   */
+  private static applyResistance(rawDamage: number, profile: AttackProfile, target: Combatant): number {
+    if (!profile.damageType || profile.magical) return rawDamage;
+    if (!target.damageResistances?.includes(profile.damageType)) return rawDamage;
+    return Math.floor(rawDamage / 2);
+  }
+
+  /**
    * Roll an attack against a target's Armor Class. A natural 20 always hits
    * (and crits); a natural 1 always misses regardless of bonuses; otherwise
    * `d20 + attackBonus >= targetArmorClass` decides it.
@@ -254,7 +290,7 @@ export class CombatSystem {
     }
 
     if (profile.autoHit) {
-      const rawHit = Math.max(0, profile.damage);
+      const rawHit = CombatSystem.applyResistance(Math.max(0, profile.damage), profile, target);
       const damageDealt = target.absorbDamage ? target.absorbDamage(rawHit) : rawHit;
       const healthAfter = Math.max(0, healthBefore - damageDealt);
       target.health = healthAfter;
@@ -275,7 +311,9 @@ export class CombatSystem {
       profile.advantage ?? "normal",
       profile.critThreshold,
     );
-    const rawHit = roll.hit ? CombatSystem.computeDamage(profile.damage, roll.critical) : 0;
+    const rawHit = roll.hit
+      ? CombatSystem.applyResistance(CombatSystem.computeDamage(profile.damage, roll.critical), profile, target)
+      : 0;
     const damageDealt = target.absorbDamage ? target.absorbDamage(rawHit) : rawHit;
     const healthAfter = Math.max(0, healthBefore - damageDealt);
     target.health = healthAfter;

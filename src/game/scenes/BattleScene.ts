@@ -206,6 +206,8 @@ const DIVINE_SMITE_BONUS_DAMAGE = 6;
 const HUNTERS_MARK_BONUS_DAMAGE = 4;
 /** Hunter's Mark auto-targets the nearest enemy within this many tiles (no separate aim step — see BattleScene.onBonusActionButton). */
 const HUNTERS_MARK_RANGE_TILES = 3;
+/** D-127: Rogue's Blindsense/Ranger's Feral Senses see a hidden enemy within this many tiles — a "close, not board-wide" reading of the real SRD's ~10ft, since this game has no feet-per-tile scale defined anywhere else to convert precisely — see `isEnemyTargetable`. */
+const STEALTH_SENSE_RANGE_TILES = 2;
 
 /**
  * Phase 11.5 (D-078): the Gear grid now shops equipment AND potions from one
@@ -991,6 +993,10 @@ export class BattleScene extends Phaser.Scene {
       // free starting-gear option" rule) already has its cape flying before
       // its first turn.
       this.ensureHeroCape(hero);
+      // D-127: same rule can start a hero with a charge-based item already
+      // equipped (Wand of Magic Missile/Web are uncommon) — initialize its
+      // charge pool before its first turn, same as the cape above.
+      hero.onGearChanged();
     });
   }
 
@@ -1684,8 +1690,10 @@ export class BattleScene extends Phaser.Scene {
       attackRangeTiles: hero.attackRangeTiles,
       movementBudget: hero.movementBudget(),
       // Phase 20 (D-111): an AI-controlled hero can't target a still-hidden
-      // stealth enemy either — same rule as a human clicking one.
-      enemies: this.waveSystem.enemies.filter((e) => this.isEnemyTargetable(e)),
+      // stealth enemy either — same rule as a human clicking one. D-127: an
+      // AI-controlled hero with Blindsense/Feral Senses still gets its own
+      // per-observer exception here, same as a human-controlled one.
+      enemies: this.waveSystem.enemies.filter((e) => this.isEnemyTargetable(e, hero)),
       isOccupied: (p) => this.isHeroMovementBlocked(p),
       blocksStopping: (p) => this.isHeroStoppingBlocked(p, hero.id),
     });
@@ -2321,13 +2329,25 @@ export class BattleScene extends Phaser.Scene {
    * before its ambush. Enemy-initiated pathing/occupancy checks (movement
    * blocking, build-tile occupancy) do NOT use this — a hidden enemy still
    * physically occupies its tile.
+   *
+   * D-127: `observerHero`, when given, lets Rogue's Blindsense/Ranger's
+   * Feral Senses see through the global-hidden check for THAT hero
+   * specifically — a still-hidden enemy stays untargetable to every other
+   * hero (and to the AI candidate list when no specific hero is passed),
+   * exactly the "per-observer" exception `data/classes.ts` previously
+   * flagged as needing its own targeting model.
    */
-  private isEnemyTargetable(enemy: Enemy): boolean {
-    if (enemy.def.stealth === true && !enemy.isRevealed) return false;
+  private isEnemyTargetable(enemy: Enemy, observerHero?: Hero): boolean {
+    if (enemy.def.stealth === true && !enemy.isRevealed) {
+      if (!observerHero?.hasStealthSense) return false;
+      if (CombatSystem.range(observerHero.position, enemy.position) > STEALTH_SENSE_RANGE_TILES) return false;
+    }
     // Phase 21 (D-112): a still-disguised Mimic reads as scenery/treasure,
     // not a hostile token — untargetable the same way a hidden stealth
     // enemy is, but revealed by PROXIMITY (see `WaveSystem.tickEnemyPhase`)
-    // rather than its own first strike.
+    // rather than its own first strike. Blindsense/Feral Senses are a
+    // stealth-specific sense (SRD wording: "hidden or invisible creatures"),
+    // not a disguise-piercing one, so a Mimic gets no exception here.
     if (enemy.def.mimicDisguise === true && !enemy.isRevealed) return false;
     return true;
   }
@@ -2665,6 +2685,11 @@ export class BattleScene extends Phaser.Scene {
       // overrides that with Advantage (same "no cancellation modeled"
       // simplification every other Advantage source here already makes).
       advantage: hero.recklessAttackAdvantage ? "advantage" : hero.attacksWithDisadvantage ? "disadvantage" : undefined,
+      // D-127: a real weapon's damage type, for Swarm-style resistance —
+      // undefined with no weapon equipped, so resistance never applies to a
+      // flat/unarmed attack.
+      damageType: hero.attackDamageType,
+      magical: hero.attackIsMagical,
     };
   }
 
@@ -3075,7 +3100,7 @@ export class BattleScene extends Phaser.Scene {
     if (this.ui.kind === "aimingAbility") {
       const hero = this.heroById(this.ui.heroId);
       const enemy = this.enemyAt(tile);
-      if (hero && enemy && this.isEnemyTargetable(enemy)) this.castAbilityOn(hero, enemy);
+      if (hero && enemy && this.isEnemyTargetable(enemy, hero)) this.castAbilityOn(hero, enemy);
       else this.setInteraction({ kind: "heroSelected", heroId: this.ui.heroId });
       return;
     }
@@ -3104,14 +3129,12 @@ export class BattleScene extends Phaser.Scene {
 
     // Clicking an enemy while a hero is selected attempts a basic attack.
     // Phase 20 (D-111): a still-hidden stealth enemy can't be clicked at all.
+    // D-127: the hero lookup moves ahead of the targetability check so a
+    // Blindsense/Feral Senses hero's own per-observer exception applies here.
     const enemyHere = this.enemyAt(tile);
-    if (
-      enemyHere &&
-      this.isEnemyTargetable(enemyHere) &&
-      (this.ui.kind === "heroSelected" || this.ui.kind === "confirmingMove")
-    ) {
+    if (enemyHere && (this.ui.kind === "heroSelected" || this.ui.kind === "confirmingMove")) {
       const hero = this.heroById(this.ui.heroId);
-      if (hero) {
+      if (hero && this.isEnemyTargetable(enemyHere, hero)) {
         this.tryBasicAttack(hero, enemyHere);
         return;
       }
@@ -3607,8 +3630,9 @@ export class BattleScene extends Phaser.Scene {
    * Phase 18 (D-109): Boon of Irresistible Offense only — a natural-20 hit
    * deals bonus damage equal to the ability score the boon raised
    * (`Hero.irresistibleOffenseBonusDamage`). The boon's other half (its
-   * damage always ignores Resistance) stays inert — this game has no
-   * damage-resistance system to ignore.
+   * damage always ignores Resistance) is now real too (D-127) — see
+   * `Hero.attackIsMagical`, applied in `attackProfileFor` before the base hit
+   * even resolves, so this bonus-damage add-on needs no separate handling.
    */
   private applyIrresistibleOffenseBonus(hero: Hero, enemy: Enemy, result: AttackResult): void {
     if (!result.roll?.critical || result.damageDealt <= 0 || !enemy.isAlive()) return;
@@ -4383,9 +4407,14 @@ export class BattleScene extends Phaser.Scene {
     const pageItems = castable.slice(this.spellbookPage * perPage, this.spellbookPage * perPage + perPage);
     pageItems.forEach((id, i) => {
       const ability = getAbility(id);
-      const costLabel = ability.spellSlotLevel
-        ? `${ordinalSpellLevel(ability.spellSlotLevel)}-level (${hero.spellSlotsRemainingAt(ability.spellSlotLevel)} left)`
-        : "cantrip";
+      // D-127: a charge-based item's granted spell shows its own charge
+      // count instead of a spell-slot count — it isn't spent from either.
+      const chargeInfo = hero.chargeInfoForSpell(id);
+      const costLabel = chargeInfo
+        ? `${chargeInfo.remaining}/${chargeInfo.max} charges`
+        : ability.spellSlotLevel
+          ? `${ordinalSpellLevel(ability.spellSlotLevel)}-level (${hero.spellSlotsRemainingAt(ability.spellSlotLevel)} left)`
+          : "cantrip";
       const col = i % columns;
       const row = Math.floor(i / columns);
       const x = startX + col * (width + colGap);
@@ -4529,7 +4558,7 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
     const enemy = this.enemyAt(tile);
-    if (enemy && this.isEnemyTargetable(enemy)) this.castAbilityOn(hero, enemy, ability);
+    if (enemy && this.isEnemyTargetable(enemy, hero)) this.castAbilityOn(hero, enemy, ability);
     else this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
 
@@ -4851,6 +4880,7 @@ export class BattleScene extends Phaser.Scene {
       if (hero.wouldConflictWithGrip(drop.itemId, slot)) continue;
       hero.equippedItems[slot] = drop.itemId;
       this.ensureHeroCape(hero);
+      hero.onGearChanged();
       this.logCombat(`${sourceName} drops ${def.name}${rarityTag} — ${hero.name} equips it!`);
       this.updateGoldHud();
       return;
@@ -5364,6 +5394,7 @@ export class BattleScene extends Phaser.Scene {
     hero.equippedItems[slot] = itemId;
     this.logCombat(`${hero.name} equips ${def.name} into ${GEAR_SLOT_LABELS[slot]} (${def.cost}g)`);
     this.ensureHeroCape(hero);
+    hero.onGearChanged();
     this.updateGoldHud();
     this.setInteraction({ kind: "equipping", itemId });
   }
@@ -5376,6 +5407,7 @@ export class BattleScene extends Phaser.Scene {
     this.economy.refund(def.cost);
     this.logCombat(`${hero.name} unequips ${def.name} from ${GEAR_SLOT_LABELS[slot]} (+${def.cost}g refunded)`);
     this.ensureHeroCape(hero);
+    hero.onGearChanged();
     this.updateGoldHud();
     this.setInteraction({ kind: "equipping", itemId: this.currentEquipItemId() });
   }

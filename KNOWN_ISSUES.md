@@ -6,6 +6,55 @@
 
 ## Open items to verify
 
+- **KI-084 — D-127's four foundational systems (nonmagical damage-type
+  resistance, Blindsense/Feral Senses, charge-based items, ability-score-
+  setting items) are not yet confirmed by Kevin in a browser.** Built and
+  verified headless-only (typecheck, all 1147 tests, production build all
+  pass — 115 modules, unchanged; `npm run dev` not re-checked this session).
+  To check:
+  - **Swarm damage resistance**: in Free Play or Bestiary, put a Rat
+    Swarm/Locust Swarm in a hero's basic-attack range and confirm a
+    mundane (non-enchanted) weapon hit deals roughly HALF its usual damage
+    compared to a same-AC non-Swarm enemy — then equip a `+1/+2/+3`
+    enchanted version of the same weapon and confirm the SAME attack now
+    deals FULL damage (the enchant bypasses the resistance).
+  - **Boon of Irresistible Offense's other half**: with a level-19+ hero
+    holding this Epic Boon (hard to reach — 10 waves max per run, see
+    KI-066), confirm a natural-20 hit against a Swarm enemy does NOT get
+    halved, unlike the same hero's non-crit hits against that Swarm.
+  - **Blindsense/Feral Senses**: with a level-14+ Rogue (or level-18+
+    Ranger), let a stealth enemy (Shadowfang/Nightblade, Free Play/
+    Bestiary) go hidden, then move that hero within 2 tiles and confirm
+    it CAN click-target/basic-attack the still-hidden enemy while every
+    other hero in the party still cannot. Confirm the enemy's own token
+    still shows as an anonymous "?" the whole time (only targetability
+    changed, not the visual) — see D-127 for why the visual wasn't
+    attempted.
+  - **Charge-based items**: equip a Wand of Magic Missile (Gear grid,
+    amulet slot) onto a non-caster (Fighter/Barbarian/Rogue/Monk) and
+    confirm "Magic Missile" appears in that hero's spellbook overlay with
+    a "7/7 charges" label instead of a spell-slot count; cast it 7 times
+    and confirm the count ticks down and the 8th attempt is refused;
+    confirm a Long Rest refills it back to 7/7. Try Wand of Web and Staff
+    of Healing the same way.
+  - **Ability-score-setting items**: equip Gauntlets of Ogre Power onto a
+    below-19-Strength hero and confirm basic-attack damage visibly jumps;
+    unequip and confirm it drops back to exactly its prior value. Equip
+    Amulet of Health and confirm max HP rises with the SAME amount added
+    to current HP immediately (not a full heal). Equip Headband of
+    Intellect on an Int-caster (Wizard) and confirm its spellbook's listed
+    spell save DCs rise by the same amount. Try equipping Gauntlets of
+    Ogre Power on an already-Strength-20+ hero (a high-STR Barbarian) and
+    confirm NO change (the real SRD "no effect if already higher" rule).
+  - **Known, deliberate limits, not bugs**: damage-type resistance only
+    ever applies to a real equipped weapon's attack, never a spell (no
+    spell in this game has a damage type at all); only 3 charge items and
+    3 ability-score items exist, not the full real SRD families of either;
+    the ASI-picker's displayed ability score does NOT reflect an equipped
+    item's override (shows the hero's true underlying score). See D-127
+    for the complete list of what was built and what was deliberately left
+    out.
+
 - **KI-083 — D-126's UI-layout audit-and-fix (Compendium tabs/class
   selector, Map Builder's terrain palette, Free Play's map/boss labels,
   Browse Shared Maps' list pagination, and the core Battle HUD's status/
@@ -96,12 +145,14 @@
     each tier's free cast recharges ONLY on a Long Rest, not a Short one
     (a Warlock's own Pact Magic slots DO refill on a Short Rest — don't
     confuse that with Mystic Arcanum staying spent underneath it).
-  - **Known, deliberate limits, not bugs**: Rogue's Blindsense/Ranger's
+  - **Known, deliberate limits, not bugs**: ~~Rogue's Blindsense/Ranger's
     Feral Senses stay inert (the opposite direction — detecting an enemy's
     hidden state — needs a per-observer targeting model this game doesn't
-    have); no other skill-check moment exists beyond the Stealth check
-    built here; a hidden hero still physically blocks movement/pathfinding
-    exactly like before — only enemy TARGETING is affected.
+    have)~~ — **RESOLVED by D-127** (see KI-084): a per-observer targeting
+    exception now exists, and both features are real. No other skill-check
+    moment exists beyond the Stealth check built here; a hidden hero still
+    physically blocks movement/pathfinding exactly like before — only enemy
+    TARGETING is affected.
 
 - **KI-081 — D-124's batch of wired-real class/subclass features (Indomitable,
   Danger Sense, Evasion, Elusive, The Fiend's Expanded Spell List, Intimidating
@@ -580,15 +631,17 @@
   - **Known, deliberate limits, not bugs**: there is no "found but not
     equipped" loot inventory/browsing UI — a drop is auto-equipped or
     auto-sold the instant it happens, with no player choice in the moment
-    (a real, documented scope boundary, not a gap to chase). No
+    (a real, documented scope boundary, not a gap to chase). ~~No
     ability-score-setting magic item (Amulet of Health, Gauntlets of Ogre
     Power, Headband of Intellect, and the rest of that real SRD family) was
     added — this game's derived combat stats bake an ability modifier in at
     several different points, not always read live, making a live-override
-    hook a real, separately-sized risk. No charge-based active item
+    hook a real, separately-sized risk.~~ / ~~No charge-based active item
     (wand/rod/staff) exists — no "limited uses independent of a class's own
-    resource pools" item mechanic exists yet. Enchanted `+1/+2/+3` gear is
-    loot-only, not purchasable in the shop this pass.
+    resource pools" item mechanic exists yet.~~ — **both RESOLVED by D-127**
+    (see KI-084): three of each family now exist, not the full real SRD
+    lists of either. Enchanted `+1/+2/+3` gear is loot-only, not purchasable
+    in the shop this pass.
 
 - **KI-069 — Phase 21's second wave of enemy archetypes (hero-side status
   effects, 12 more mechanics, 24 new enemies, D-112) is not yet confirmed by
@@ -655,11 +708,13 @@
   - **Known, deliberate limits, not bugs**: there is no on-token visual for
     a Shielded enemy's remaining ward amount, or for a Multi-Phase Boss
     having crossed its threshold — both are log-line-only this pass, a
-    real UI gap worth a look but not a correctness bug. Swarm's real SRD
+    real UI gap worth a look but not a correctness bug. ~~Swarm's real SRD
     bludgeoning/piercing/slashing damage RESISTANCE is NOT modeled (this
     game has no damage-type-aware resistance system for any attack to hook
-    into) — only the occupy-space/condition-immunity/Bloodied-half-damage
-    thirds of the real trait are real. A hero's `preventsAction`/
+    into)~~ — **RESOLVED by D-127** (see KI-084): a hero's nonmagical
+    weapon attack is now halved against a resistant target; only the
+    occupy-space/condition-immunity/Bloodied-half-damage thirds of the real
+    trait predate this. A hero's `preventsAction`/
     `movementReduction` consumption (stunned/restrained fully locking a
     turn, slowed reducing move range) is real and wired, but nothing in
     this batch's roster actually inflicts either on a hero — only

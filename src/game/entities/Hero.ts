@@ -2,9 +2,10 @@ import type { GridPosition } from "../systems/GridSystem";
 import type { HeroDefinition, HeroControlMode } from "../data/heroes";
 import type { Combatant } from "../systems/CombatSystem";
 import type { AdvantageMode } from "../systems/RandomService";
-import { modifierFor, type AbilityScoreId, type AbilityScores } from "../data/abilityScores";
+import { abilityModifier, ABILITY_SCORE_IDS, type AbilityScoreId, type AbilityScores } from "../data/abilityScores";
 import { GEAR_SLOT_IDS, getEquipmentDefinition, type GearSlotId, type EquipmentDefinition } from "../data/equipment";
 import { weaponAttackDamage, weaponRangeTiles, weaponAbilityModifier, averageDiceDamage } from "../systems/WeaponSystem";
+import type { DamageType } from "../data/weapons";
 import { GENERAL_SLOT_IDS, getPotionDefinition, type GeneralSlotId, type PotionDefinition } from "../data/potions";
 import {
   combatStatsForClassLevel,
@@ -297,6 +298,10 @@ export interface HeroSnapshot {
   mysticArcanumSpellIds: Partial<Record<number, string>>;
   /** D-125: Mystic Arcanum's per-tier once-per-Long-Rest use flags. */
   mysticArcanumUsedThisRest: Partial<Record<number, boolean>>;
+  /** D-127: remaining charges per equipped charge-based item id. */
+  itemChargesRemaining: Record<string, number>;
+  /** D-127: active ability-score-SETTING item overrides. */
+  abilityScoreOverrides: Partial<Record<AbilityScoreId, number>>;
 }
 
 /**
@@ -427,7 +432,8 @@ export class Hero implements Combatant {
    */
   private readonly baseAttackRangeTiles: number;
   attackBonus: number;
-  readonly baseArmorClass: number;
+  /** D-127: no longer `readonly` — a DEX-setting item needs to recompute this live. See `recomputeBaseArmorClass`. */
+  baseArmorClass: number;
   readonly abilityId: string;
   /** Phase 11.4 (D-077): "human" (default) waits for clicks; "ai" acts on its own. */
   readonly controlledBy: HeroControlMode;
@@ -541,6 +547,16 @@ export class Hero implements Combatant {
   private magicInitiateSpellUsesRemaining: number[] = [];
   /** D-124: Fighter's Indomitable — rerolls of a failed forced saving throw remaining this Long Rest. See `indomitableMaxUses`/`rerollFailedSave`. */
   private indomitableUsesRemaining = 0;
+  /** D-127: remaining charges per equipped charge-based item id (wand/staff), initialized to its `maxCharges` the first time it's equipped — see `onGearChanged`/`chargesRemainingFor`. Fully refills on a Long Rest. */
+  private itemChargesRemaining: Record<string, number> = {};
+  /**
+   * D-127: ability-score-SETTING magic items (Gauntlets of Ogre Power,
+   * Headband of Intellect, Amulet of Health), rebuilt from scratch on every
+   * `onGearChanged` call — see `effectiveAbilityScore`/`recomputeCombatStats`.
+   * Empty for a hero with no such item equipped, same as every hero before
+   * this decision.
+   */
+  private abilityScoreOverrides: Partial<Record<AbilityScoreId, number>> = {};
 
   /** Current tile. Only changes when a move is COMMITTED via moveTo(). */
   position: GridPosition;
@@ -623,9 +639,30 @@ export class Hero implements Combatant {
     return this.extraAttacks;
   }
 
-  /** Phase 13.6 (D-091): one ability score's current value (post any Ability Score Improvement). Null for the classic fixed roster. */
+  /** Phase 13.6 (D-091): one ability score's current value (post any Ability Score Improvement). Null for the classic fixed roster. Deliberately the RAW score, not layered with an ability-score-SETTING item's override (see `effectiveAbilityScore`) — matches the real SRD's own "your score is still what it is, the item just makes you as strong/smart/tough as if it were higher" framing. */
   abilityScoreValue(ability: AbilityScoreId): number | null {
     return this.abilityScores ? this.abilityScores[ability] : null;
+  }
+
+  /**
+   * D-127: `ability`'s value AS USED FOR EVERY DERIVED COMBAT NUMBER (HP,
+   * attack, AC, spell save DC, saving throws) — the higher of this hero's
+   * raw score and an equipped ability-score-SETTING item's override, the
+   * real SRD rule ("sets your score to X; no effect if already X or
+   * higher"). Falls back to the raw score with no override equipped, same
+   * as every hero before this decision. 0 for the classic fixed roster (no
+   * ability scores at all).
+   */
+  private effectiveAbilityScore(ability: AbilityScoreId): number {
+    if (!this.abilityScores) return 0;
+    return Math.max(this.abilityScores[ability], this.abilityScoreOverrides[ability] ?? -Infinity);
+  }
+
+  /** D-127: a full `AbilityScores` set with every override folded in — see `effectiveAbilityScore`. Only meaningful for a hero WITH ability scores; callers already guard on `this.abilityScores` before reaching here. */
+  private effectiveAbilityScores(): AbilityScores {
+    const scores = {} as AbilityScores;
+    for (const id of ABILITY_SCORE_IDS) scores[id] = this.effectiveAbilityScore(id);
+    return scores;
   }
 
   /**
@@ -638,7 +675,7 @@ export class Hero implements Combatant {
     if (!this.classId || !this.abilityScores) return null;
     const classDef = getClassDefinition(this.classId);
     if (!classDef.spellcasting) return null;
-    return spellSaveDC(classDef, this.classLevel, this.abilityScores);
+    return spellSaveDC(classDef, this.classLevel, this.effectiveAbilityScores());
   }
 
   /**
@@ -653,7 +690,7 @@ export class Hero implements Combatant {
   get savingThrowBonus(): number {
     const base = !this.classId || !this.abilityScores
       ? HERO_DEFAULT_SAVING_THROW_BONUS
-      : computeSavingThrowBonus(getClassDefinition(this.classId), this.classLevel, this.abilityScores, "dex");
+      : computeSavingThrowBonus(getClassDefinition(this.classId), this.classLevel, this.effectiveAbilityScores(), "dex");
     return base + this.buffTotal("savingThrowBonusDelta") + this.gearBonus("savingThrowBonus");
   }
 
@@ -986,14 +1023,14 @@ export class Hero implements Combatant {
     return this.assignedSubclassId === "circle-of-the-ashen-veil" ? ASHEN_VEIL_WILD_SHAPE_HEAL_BONUS : 0;
   }
 
-  /** Phase 17 (D-108): this hero's Dexterity modifier, or 0 for the classic fixed roster (no ability scores). */
+  /** Phase 17 (D-108): this hero's Dexterity modifier, or 0 for the classic fixed roster (no ability scores). D-127: reads the effective (item-override-aware) score. */
   private get dexMod(): number {
-    return this.abilityScores ? modifierFor(this.abilityScores, "dex") : 0;
+    return this.abilityScores ? abilityModifier(this.effectiveAbilityScore("dex")) : 0;
   }
 
-  /** Phase 17 (D-108): this hero's Strength modifier, or 0 for the classic fixed roster (no ability scores). */
+  /** Phase 17 (D-108): this hero's Strength modifier, or 0 for the classic fixed roster (no ability scores). D-127: reads the effective (item-override-aware) score. */
   private get strMod(): number {
-    return this.abilityScores ? modifierFor(this.abilityScores, "str") : 0;
+    return this.abilityScores ? abilityModifier(this.effectiveAbilityScore("str")) : 0;
   }
 
   /** Phase 17 (D-108): the real weapon in this hero's new `"weapon"` gear slot, or null if empty. */
@@ -1002,6 +1039,27 @@ export class Hero implements Combatant {
     if (!itemId) return null;
     const def = getEquipmentDefinition(itemId);
     return def.weapon ? def : null;
+  }
+
+  /**
+   * D-127: this hero's equipped weapon's real damage type (bludgeoning/
+   * piercing/slashing), read by `BattleScene.attackProfileFor` for Swarm-
+   * style resistance. Undefined with no weapon equipped — resistance never
+   * applies to a flat/unarmed basic attack, same as every hero before this
+   * decision.
+   */
+  get attackDamageType(): DamageType | undefined {
+    return this.equippedWeaponDef?.weapon?.damageType;
+  }
+
+  /**
+   * D-127: true if this hero's basic attack should bypass nonmagical damage
+   * resistance entirely — an enchanted (+1/+2/+3) weapon, or Boon of
+   * Irresistible Offense's "damage always ignores Resistance" clause (see
+   * `attacksIgnoreResistance`).
+   */
+  get attackIsMagical(): boolean {
+    return (this.equippedWeaponDef?.enchantLevel ?? 0) > 0 || this.attacksIgnoreResistance;
   }
 
   /**
@@ -1328,6 +1386,80 @@ export class Hero implements Combatant {
     }, []);
   }
 
+  /** D-127: every currently-equipped charge-based item (wand/staff), in slot order — see `EquipmentDefinition.chargedSpell`. */
+  private get equippedChargedItems(): EquipmentDefinition[] {
+    return GEAR_SLOT_IDS.reduce<EquipmentDefinition[]>((defs, slot) => {
+      const itemId = this.equippedItems[slot];
+      if (!itemId) return defs;
+      const def = getEquipmentDefinition(itemId);
+      if (def.chargedSpell) defs.push(def);
+      return defs;
+    }, []);
+  }
+
+  /** D-127: every equipped charge-based item's granted spell id, for `knownSpellAbilityIds` — included regardless of remaining charges (an empty wand still reads as "known," just uncastable, same as Magic Initiate's own granted spells once its free use is spent). */
+  private get chargedItemSpellIds(): string[] {
+    return this.equippedChargedItems.map((def) => def.chargedSpell!.spellId);
+  }
+
+  /** D-127: remaining charges for an equipped charge-based item. 0 if unequipped or never tracked. */
+  chargesRemainingFor(itemId: string): number {
+    return this.itemChargesRemaining[itemId] ?? 0;
+  }
+
+  /**
+   * D-127: called by `BattleScene` right after any equip/unequip mutation
+   * (alongside the existing `ensureHeroCape` side-effect call) — initializes
+   * a newly-equipped charge-based item's pool to full the first time it's
+   * seen. An item's remaining charges persist across unequip/re-equip
+   * (real SRD wands don't lose their charge when set down), so this is a
+   * no-op for an item already being tracked.
+   */
+  onGearChanged(): void {
+    for (const def of this.equippedChargedItems) {
+      if (!(def.id in this.itemChargesRemaining)) this.itemChargesRemaining[def.id] = def.chargedSpell!.maxCharges;
+    }
+    this.recomputeAbilityScoreOverrides();
+  }
+
+  /**
+   * D-127: rebuild `abilityScoreOverrides` from scratch by scanning every
+   * equipped item for `setsAbilityScore`, then recompute every derived
+   * combat number. Rebuilding from scratch (rather than incrementally
+   * adding/removing) means an unequip is handled for free — nothing lingers
+   * — and two items targeting the same ability (not possible with today's
+   * three, which sit in different slots and target different abilities)
+   * would resolve to "last slot scanned wins" with no extra logic needed.
+   */
+  private recomputeAbilityScoreOverrides(): void {
+    const overrides: Partial<Record<AbilityScoreId, number>> = {};
+    for (const slot of GEAR_SLOT_IDS) {
+      const itemId = this.equippedItems[slot];
+      const boost = itemId ? getEquipmentDefinition(itemId).setsAbilityScore : undefined;
+      if (boost) overrides[boost.ability] = boost.value;
+    }
+    this.abilityScoreOverrides = overrides;
+    this.recomputeCombatStats(this.flatHpBonusesTotal);
+  }
+
+  /** D-127: the equipped charge-based item (if any) that grants `abilityId`, for `canCastSpell`/`spendSpellSlotFor`. */
+  private findEquippedChargedItemFor(abilityId: string): EquipmentDefinition | undefined {
+    return this.equippedChargedItems.find((def) => def.chargedSpell!.spellId === abilityId);
+  }
+
+  /** D-127: true if `abilityId` is an equipped charge-based item's granted spell with a charge remaining. */
+  private hasItemChargeFreeUse(abilityId: string): boolean {
+    const def = this.findEquippedChargedItemFor(abilityId);
+    return !!def && this.chargesRemainingFor(def.id) > 0;
+  }
+
+  /** D-127: `{remaining, max}` if `abilityId` is granted by an equipped charge-based item, else undefined — read by `BattleScene`'s spellbook overlay to show "N/M charges" instead of a spell-slot count. */
+  chargeInfoForSpell(abilityId: string): { remaining: number; max: number } | undefined {
+    const def = this.findEquippedChargedItemFor(abilityId);
+    if (!def) return undefined;
+    return { remaining: this.chargesRemainingFor(def.id), max: def.chargedSpell!.maxCharges };
+  }
+
   /** True if any general slot currently holds a potion. */
   hasAnyPotion(): boolean {
     return GENERAL_SLOT_IDS.some((slot) => this.equippedPotions[slot] !== undefined);
@@ -1406,8 +1538,7 @@ export class Hero implements Combatant {
     const flatHpBonusesBefore = this.flatHpBonusesTotal;
     const oldLevel = this.classLevel;
     this.classLevel += 1;
-    const stats = combatStatsForClassLevel(this.classId, this.classLevel, this.abilityScores, this.abilityId);
-    this.applyLeveledStats(stats, flatHpBonusesBefore);
+    this.recomputeCombatStats(flatHpBonusesBefore);
     const classDef = getClassDefinition(this.classId);
     if (classDef.spellcasting) this.growSpellSlots(classDef, oldLevel, this.classLevel);
     // D-124: Indomitable's max use count grows at levels 9/13/17 — grant the
@@ -1456,6 +1587,31 @@ export class Hero implements Combatant {
   }
 
   /**
+   * D-127: the shared "recompute every ability-score-derived combat number"
+   * step `levelUpClass`/`improveAbilityScore`/`applyFeatAbilityBoost` each
+   * already performed inline (now deduplicated into one place) — extended to
+   * read `effectiveAbilityScores()` instead of the raw `this.abilityScores`,
+   * so an ability-score-SETTING item's override is picked up too. Also used
+   * by `onGearChanged` when such an item is equipped/unequipped, with no
+   * level or ability-score change involved at all — `flatHpBonusesBefore`
+   * is simply `this.flatHpBonusesTotal` (unchanged) in that case, so
+   * `applyLeveledStats`'s hpGain reduces to exactly the new-vs-old maxHealth
+   * delta, same as a CON-score change should produce.
+   */
+  private recomputeCombatStats(flatHpBonusesBefore: number): void {
+    if (!this.classId || !this.abilityScores) return;
+    const stats = combatStatsForClassLevel(this.classId, this.classLevel, this.effectiveAbilityScores(), this.abilityId);
+    this.applyLeveledStats(stats, flatHpBonusesBefore);
+    this.recomputeBaseArmorClass();
+  }
+
+  /** D-127: `baseArmorClass` after any ability-score change — previously frozen at construction (a real, documented pre-existing gap: a DEX Ability Score Improvement never updated it without real armor equipped). Recomputed with the exact formula `CharacterBuildSystem.heroDefinitionFromBuild` uses once at construction. A no-op for a hero with no ability scores (the classic fixed roster keeps its construction-time value forever, unchanged). */
+  private recomputeBaseArmorClass(): void {
+    if (!this.abilityScores) return;
+    this.baseArmorClass = 10 + abilityModifier(this.effectiveAbilityScore("dex"));
+  }
+
+  /**
    * Phase 13.6 (D-091): an Ability Score Improvement, applied in place at the
    * hero's CURRENT class level (no level change) — raises one ability score
    * by `amount` (capped at `MAX_ABILITY_SCORE`) and recomputes every
@@ -1471,8 +1627,7 @@ export class Hero implements Combatant {
       ...this.abilityScores,
       [ability]: Math.min(MAX_ABILITY_SCORE, this.abilityScores[ability] + amount),
     };
-    const stats = combatStatsForClassLevel(this.classId, this.classLevel, this.abilityScores, this.abilityId);
-    this.applyLeveledStats(stats, flatHpBonusesBefore);
+    this.recomputeCombatStats(flatHpBonusesBefore);
   }
 
   /** Feat ids chosen so far in place of an Ability Score Improvement (Phase 13.6, D-091). Always empty for the classic fixed roster. */
@@ -1516,8 +1671,7 @@ export class Hero implements Combatant {
       ...this.abilityScores,
       [chosenAbility]: Math.min(hardCap, this.abilityScores[chosenAbility] + amount),
     };
-    const stats = combatStatsForClassLevel(this.classId, this.classLevel, this.abilityScores, this.abilityId);
-    this.applyLeveledStats(stats, flatHpBonusesBefore);
+    this.recomputeCombatStats(flatHpBonusesBefore);
   }
 
   /** Phase 18 (D-109): grants Magic Initiate's 2 cantrips + (if the list has one) 1 first-level spell from `listId`, plus one free-cast use of the leveled spell. */
@@ -1595,7 +1749,12 @@ export class Hero implements Combatant {
   /** Boon of Irresistible Offense only: the bonus damage a natural-20 attack deals (equal to the ability score this boon raised). 0 without the feat. */
   get irresistibleOffenseBonusDamage(): number {
     if (!this.feats.includes("boon-of-irresistible-offense") || !this.irresistibleOffenseAbility || !this.abilityScores) return 0;
-    return this.abilityScores[this.irresistibleOffenseAbility];
+    return this.effectiveAbilityScore(this.irresistibleOffenseAbility);
+  }
+
+  /** D-127: Boon of Irresistible Offense's other half, now real — see `attackIsMagical`. */
+  get attacksIgnoreResistance(): boolean {
+    return this.feats.includes("boon-of-irresistible-offense");
   }
 
   /** Lucky only: rerolls remaining. 0 without the feat, or once exhausted until a Long Rest. */
@@ -1620,8 +1779,17 @@ export class Hero implements Combatant {
    * Empty for a non-caster or the classic fixed roster.
    */
   knownSpellAbilityIds(): string[] {
-    if (!this.classId) return [];
-    return [...knownSpellIdsForClass(this.classId), ...this.magicInitiateSpellIds, ...this.subclassGrantedSpellAbilityIds];
+    // D-127: a charge-based item's granted spell doesn't require a class at
+    // all (Magic Initiate's own "even for a Fighter" precedent) — checked
+    // ahead of the `!this.classId` early return so a non-caster with an
+    // equipped wand still gets it.
+    if (!this.classId) return [...this.chargedItemSpellIds];
+    return [
+      ...knownSpellIdsForClass(this.classId),
+      ...this.magicInitiateSpellIds,
+      ...this.subclassGrantedSpellAbilityIds,
+      ...this.chargedItemSpellIds,
+    ];
   }
 
   /**
@@ -1666,6 +1834,7 @@ export class Hero implements Combatant {
     if (this.hasSpellMasteryFreeUse(abilityId)) return true;
     if (this.hasSignatureSpellFreeUse(abilityId)) return true;
     if (this.hasMysticArcanumFreeUse(abilityId)) return true;
+    if (this.hasItemChargeFreeUse(abilityId)) return true;
     return this.spellSlotsRemainingAt(ability.spellSlotLevel) > 0;
   }
 
@@ -1705,6 +1874,11 @@ export class Hero implements Combatant {
     const arcanumTier = this.mysticArcanumTierFor(abilityId);
     if (arcanumTier !== undefined && !this.mysticArcanumUsedThisRest[arcanumTier]) {
       this.mysticArcanumUsedThisRest[arcanumTier] = true;
+      return;
+    }
+    const chargedItem = this.findEquippedChargedItemFor(abilityId);
+    if (chargedItem && this.hasItemChargeFreeUse(abilityId)) {
+      this.itemChargesRemaining[chargedItem.id] -= 1;
       return;
     }
     this.spendSpellSlotWithRecallRoll(level, recallRoll);
@@ -1956,6 +2130,17 @@ export class Hero implements Combatant {
   /** Breaks this hero's own hidden state — called the instant it makes a basic attack or casts a spell, mirroring a stealthed enemy's own "first strike reveals it" rule. */
   reveal(): void {
     this.hidden = false;
+  }
+
+  /**
+   * D-127: true for a Rogue 14+ (Blindsense) or Ranger 18+ (Feral Senses) —
+   * the OPPOSITE direction from `isHidden` above: this hero can see through
+   * a still-hidden ENEMY's own stealth, within `BattleScene`'s
+   * `STEALTH_SENSE_RANGE_TILES` of its position, without revealing that
+   * enemy to anyone else (`isEnemyTargetable`'s `observerHero` parameter).
+   */
+  get hasStealthSense(): boolean {
+    return (this.classId === "rogue" && this.classLevel >= 14) || (this.classId === "ranger" && this.classLevel >= 18);
   }
 
   /**
@@ -2394,6 +2579,8 @@ export class Hero implements Combatant {
     for (const id of this.signatureSpellIds) this.signatureSpellUsesRemaining[id] = true;
     // D-125: Mystic Arcanum recharges on a Long Rest ONLY, the SRD's real cadence.
     for (const tier of Object.keys(this.mysticArcanumSpellIds)) this.mysticArcanumUsedThisRest[Number(tier)] = false;
+    // D-127: a charge-based item's pool fully refills on a Long Rest ONLY (this project's simplified cadence — see `EquipmentDefinition.chargedSpell`).
+    for (const def of this.equippedChargedItems) this.itemChargesRemaining[def.id] = def.chargedSpell!.maxCharges;
   }
 
   /**
@@ -2526,6 +2713,8 @@ export class Hero implements Combatant {
       signatureSpellUsesRemaining: { ...this.signatureSpellUsesRemaining },
       mysticArcanumSpellIds: { ...this.mysticArcanumSpellIds },
       mysticArcanumUsedThisRest: { ...this.mysticArcanumUsedThisRest },
+      itemChargesRemaining: { ...this.itemChargesRemaining },
+      abilityScoreOverrides: { ...this.abilityScoreOverrides },
     };
   }
 
@@ -2613,5 +2802,7 @@ export class Hero implements Combatant {
     this.signatureSpellUsesRemaining = { ...snapshot.signatureSpellUsesRemaining };
     this.mysticArcanumSpellIds = { ...snapshot.mysticArcanumSpellIds };
     this.mysticArcanumUsedThisRest = { ...snapshot.mysticArcanumUsedThisRest };
+    this.itemChargesRemaining = { ...snapshot.itemChargesRemaining };
+    this.abilityScoreOverrides = { ...snapshot.abilityScoreOverrides };
   }
 }

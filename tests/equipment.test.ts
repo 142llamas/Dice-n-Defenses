@@ -469,3 +469,129 @@ describe("Hero starting equipment (Phase 13.11, D-096)", () => {
     expect(hero.effectiveAttackDamage).toBe(3 + 2);
   });
 });
+
+/**
+ * D-127: charge-based active items (wands/staves) — previously a deliberate
+ * scope cut (see `data/magicItems.ts`'s top comment). Grants a spell to ANY
+ * hero (even one with no `classId` at all, like `wren()` below), spent as
+ * item charges rather than a class spell slot.
+ */
+describe("Charge-based items (D-127)", () => {
+  it("grants its spell to a non-caster the moment it's equipped", () => {
+    const hero = wren();
+    expect(hero.knownSpellAbilityIds()).not.toContain("magic-missile");
+    hero.equippedItems.amulet = "wand-of-magic-missile";
+    hero.onGearChanged();
+    expect(hero.knownSpellAbilityIds()).toContain("magic-missile");
+    expect(hero.canCastSpell("magic-missile")).toBe(true);
+    expect(hero.chargeInfoForSpell("magic-missile")).toEqual({ remaining: 7, max: 7 });
+  });
+
+  it("spends a charge per cast, and denies casting once exhausted", () => {
+    const hero = wren();
+    hero.equippedItems.amulet = "wand-of-magic-missile";
+    hero.onGearChanged();
+    for (let i = 0; i < 7; i++) {
+      expect(hero.canCastSpell("magic-missile")).toBe(true);
+      hero.spendSpellSlotFor("magic-missile", 1, 4);
+    }
+    expect(hero.chargeInfoForSpell("magic-missile")?.remaining).toBe(0);
+    expect(hero.canCastSpell("magic-missile")).toBe(false); // wren() has no class, so no slot to fall back to
+  });
+
+  it("removes the spell from the known list on unequip, but preserves remaining charges", () => {
+    const hero = wren();
+    hero.equippedItems.amulet = "wand-of-magic-missile";
+    hero.onGearChanged();
+    hero.spendSpellSlotFor("magic-missile", 1, 4);
+    expect(hero.chargeInfoForSpell("magic-missile")?.remaining).toBe(6);
+
+    delete hero.equippedItems.amulet;
+    expect(hero.knownSpellAbilityIds()).not.toContain("magic-missile");
+
+    hero.equippedItems.amulet = "wand-of-magic-missile";
+    hero.onGearChanged(); // already-tracked item id — charges are NOT reset to max
+    expect(hero.chargeInfoForSpell("magic-missile")?.remaining).toBe(6);
+  });
+
+  it("fully refills on a Long Rest", () => {
+    const hero = wren();
+    hero.equippedItems.amulet = "wand-of-magic-missile";
+    hero.onGearChanged();
+    hero.spendSpellSlotFor("magic-missile", 1, 4);
+    hero.spendSpellSlotFor("magic-missile", 1, 4);
+    expect(hero.chargeInfoForSpell("magic-missile")?.remaining).toBe(5);
+    hero.longRest();
+    expect(hero.chargeInfoForSpell("magic-missile")?.remaining).toBe(7);
+  });
+});
+
+/**
+ * D-127: ability-score-SETTING items (Gauntlets of Ogre Power, Headband of
+ * Intellect, Amulet of Health) — the one genuinely risky piece of this
+ * decision, since ability scores feed several different baked (not
+ * live-recomputed) `Hero` fields. These need a real D&D-built hero (`wren()`
+ * above has no ability scores at all), so tests build one directly.
+ */
+describe("Ability-score-setting items (D-127)", () => {
+  function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
+    return {
+      id: "build-1",
+      name: "Kael",
+      raceId: "human",
+      classId: "fighter",
+      level: 1,
+      abilityScores: { str: 10, dex: 14, con: 10, int: 10, wis: 10, cha: 8 },
+      abilityId: "cleave",
+      controlledBy: "human",
+      ...overrides,
+    };
+  }
+
+  function heroFromBuild(overrides: Partial<CharacterBuild> = {}): Hero {
+    return new Hero(heroDefinitionFromBuild(build(overrides)), { x: 0, y: 0 });
+  }
+
+  it("Gauntlets of Ogre Power raises STR-derived attack damage, and reverts exactly on unequip", () => {
+    const hero = heroFromBuild(); // STR 10 -> +0 mod
+    const baseAttackDamage = hero.attackDamage;
+    hero.equippedItems.amulet = "gauntlets-of-ogre-power"; // sets STR to 19 -> +4 mod
+    hero.onGearChanged();
+    expect(hero.attackDamage).toBe(baseAttackDamage + 4);
+
+    delete hero.equippedItems.amulet;
+    hero.onGearChanged();
+    expect(hero.attackDamage).toBe(baseAttackDamage);
+  });
+
+  it("has no effect if the hero's own Strength is already 19 or higher", () => {
+    const hero = heroFromBuild({ abilityScores: { str: 20, dex: 14, con: 10, int: 10, wis: 10, cha: 8 } });
+    const baseAttackDamage = hero.attackDamage;
+    hero.equippedItems.amulet = "gauntlets-of-ogre-power";
+    hero.onGearChanged();
+    expect(hero.attackDamage).toBe(baseAttackDamage); // 20 is already higher than 19
+  });
+
+  it("Amulet of Health raises CON-derived max HP, adjusting current health by the same delta", () => {
+    const hero = heroFromBuild(); // CON 10 -> +0 mod
+    const baseMaxHealth = hero.effectiveMaxHealth;
+    const baseHealth = hero.health;
+    hero.equippedItems.amulet = "amulet-of-health"; // sets CON to 19 -> +4 mod
+    hero.onGearChanged();
+    expect(hero.effectiveMaxHealth).toBeGreaterThan(baseMaxHealth);
+    const hpDelta = hero.effectiveMaxHealth - baseMaxHealth;
+    expect(hero.health).toBe(baseHealth + hpDelta); // gained immediately, same as a level-up's HP gain
+
+    delete hero.equippedItems.amulet;
+    hero.onGearChanged();
+    expect(hero.effectiveMaxHealth).toBe(baseMaxHealth);
+  });
+
+  it("Headband of Intellect raises an Int-caster's spell save DC", () => {
+    const hero = heroFromBuild({ classId: "wizard", abilityId: "fire-bolt", abilityScores: { str: 10, dex: 14, con: 10, int: 10, wis: 10, cha: 8 } });
+    const baseDC = hero.spellSaveDC;
+    hero.equippedItems.head = "headband-of-intellect"; // sets INT to 19 -> +4 mod
+    hero.onGearChanged();
+    expect(hero.spellSaveDC).toBe((baseDC ?? 0) + 4);
+  });
+});

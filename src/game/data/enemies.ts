@@ -1,5 +1,6 @@
 import type { GridPosition } from "../systems/GridSystem";
 import type { StatusEffectId } from "./statusEffects";
+import type { DamageType } from "./weapons";
 
 /**
  * Enemy definitions — data, not code (Source of Truth "data-driven content").
@@ -391,9 +392,23 @@ export interface EnemyDefinition {
   /**
    * Phase 21 (D-112), Swarm: verified against the real SRD 5.2.1/2024
    * "Swarm" trait. See `Enemy.isSwarm`'s own comment for the full mechanical
-   * breakdown and what's deliberately NOT modeled (damage-type resistance).
+   * breakdown; the trait's damage-type resistance is modeled separately, see
+   * `damageResistances` below (D-127).
    */
   swarm?: boolean;
+  /**
+   * D-127: nonmagical damage-type resistance (the real SRD Swarm trait's
+   * bludgeoning/piercing/slashing resistance, previously not modeled — see
+   * `Enemy.isSwarm`). Halves a landed weapon attack's damage when its
+   * `AttackProfile.damageType` is in this list and the attacker isn't
+   * wielding an enchanted (+1/+2/+3) weapon or holding Boon of Irresistible
+   * Offense (`CombatSystem.applyAttack`, `Hero.attackIsMagical`). Spell
+   * damage never sets a `damageType` at all, so it's never resisted here —
+   * matching the real trait's "nonmagical" scope without needing a
+   * damage-type field on all 318 spells. Absent means no resistance, same as
+   * every enemy before this decision.
+   */
+  damageResistances?: DamageType[];
   /**
    * Phase 21 (D-112), Healer/Debuffer hybrid + Anti-caster: a landed
    * single-target attack against a hero also applies this status effect to
@@ -1780,6 +1795,7 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     movementType: "ground",
     rewardGold: 5,
     swarm: true,
+    damageResistances: ["bludgeoning", "piercing", "slashing"],
     abilities: [],
     assetKey: "enemy-rat-swarm",
     role: "minion",
@@ -1799,6 +1815,7 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     movementType: "ground",
     rewardGold: 6,
     swarm: true,
+    damageResistances: ["bludgeoning", "piercing", "slashing"],
     abilities: [],
     assetKey: "enemy-locust-swarm",
     role: "minion",

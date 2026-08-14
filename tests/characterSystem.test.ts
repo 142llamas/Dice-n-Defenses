@@ -213,6 +213,7 @@ describe("the Rogue class table (Phase 11.3, D-075)", () => {
     const active = activeFeaturesUpToLevel(ROGUE, 20);
     // Phase 13.6 (D-091): every "Ability Score Improvement" entry (4/8/10/12/16/19) is now active too.
     // D-124: Evasion (7) and Elusive (18) are now active too.
+    // D-127: Blindsense (14) is now active too.
     expect(active.map((f) => f.name)).toEqual([
       "Sneak Attack",
       "Cunning Action",
@@ -222,6 +223,7 @@ describe("the Rogue class table (Phase 11.3, D-075)", () => {
       "Ability Score Improvement",
       "Ability Score Improvement",
       "Ability Score Improvement",
+      "Blindsense",
       "Ability Score Improvement",
       "Elusive",
       "Ability Score Improvement",

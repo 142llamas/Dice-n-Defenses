@@ -449,6 +449,29 @@ four more named potions, and one original item:
   `Graphics` DRAWING CODE, not a new asset, the same treatment Phase 20's
   aura ring already established.
 
+D-127 ("four foundational systems," this chat) added 6 more real SRD magic
+items to `data/magicItems.ts` — three from each of the two families Phase 22
+(D-113) explicitly deferred (see that row above):
+- **Wand of Magic Missile, Wand of Web, Staff of Healing** — real SRD 5.1
+  charge-based active items (CC BY 4.0), reusing the real Magic Missile/Web/
+  Cure Wounds spells already in `data/spells.ts` (Phase 15/16, D-104/D-106).
+  Charge counts (7/6/10) match the real SRD; the recharge cadence is
+  simplified to "fully refills on a Long Rest" rather than the real SRD's
+  daily partial-recharge dice roll, the same simplification this project
+  already applies to every other per-rest resource.
+- **Gauntlets of Ogre Power, Headband of Intellect, Amulet of Health** —
+  real SRD 5.1 ability-score-setting items (CC BY 4.0), each setting one
+  ability score to 19 while worn, matching the real SRD text (with no effect
+  if the wearer's own score is already 19 or higher).
+- The new `EquipmentDefinition.chargedSpell`/`setsAbilityScore` fields and
+  every `Hero`-side mechanic reading them (`onGearChanged`,
+  `effectiveAbilityScore`, `recomputeCombatStats`) are original engineering,
+  not SRD content — only the six items' names/numbers/flavor above are
+  SRD-derived.
+- No new art, audio, or fonts — these render with the existing
+  coloured-shape/name-label equipment presentation, same as every other
+  magic item in this project.
+
 ## Rules for future chats
 
 - Any asset (image, audio, font) or any rules text taken from outside this project

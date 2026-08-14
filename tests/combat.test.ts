@@ -167,6 +167,66 @@ describe("CombatSystem dice resolution", () => {
   });
 });
 
+/**
+ * D-127: nonmagical damage-type resistance (the real SRD Swarm trait,
+ * previously not modeled — see `Enemy.isSwarm`'s comment). `RandomService
+ * .fixed(15)` always hits at AC 10, same convention as every other
+ * applyAttack test above.
+ */
+describe("CombatSystem damage-type resistance (D-127)", () => {
+  const resistant = (id: string, health: number): Combatant => ({
+    ...at(id, 1, 0, health),
+    damageResistances: ["bludgeoning", "piercing", "slashing"],
+  });
+
+  it("halves (rounded down) a nonmagical matching-type hit", () => {
+    const target = resistant("swarm", 20);
+    const r = CombatSystem.applyAttack(
+      target,
+      { rangeTiles: 1, damage: 5, attackBonus: 0, damageType: "slashing" },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(2); // floor(5 / 2)
+    expect(target.health).toBe(18);
+  });
+
+  it("does not halve a magical matching-type hit (enchanted weapon / Boon of Irresistible Offense)", () => {
+    const target = resistant("swarm", 20);
+    const r = CombatSystem.applyAttack(
+      target,
+      { rangeTiles: 1, damage: 5, attackBonus: 0, damageType: "slashing", magical: true },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(5);
+  });
+
+  it("does not resist an untyped attack (every spell, and a hero with no weapon equipped)", () => {
+    const target = resistant("swarm", 20);
+    const r = CombatSystem.applyAttack(target, { rangeTiles: 1, damage: 5, attackBonus: 0 }, RandomService.fixed(15));
+    expect(r.damageDealt).toBe(5);
+  });
+
+  it("does not resist a non-matching damage type", () => {
+    const target: Combatant = { ...at("t", 1, 0, 20), damageResistances: ["piercing"] };
+    const r = CombatSystem.applyAttack(
+      target,
+      { rangeTiles: 1, damage: 5, attackBonus: 0, damageType: "slashing" },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(5);
+  });
+
+  it("a non-resistant target is unaffected by a typed attack", () => {
+    const target = at("t", 1, 0, 20);
+    const r = CombatSystem.applyAttack(
+      target,
+      { rangeTiles: 1, damage: 5, attackBonus: 0, damageType: "slashing" },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(5);
+  });
+});
+
 describe("CombatSystem single- and area-attacks", () => {
   it("rejects an out-of-range single target (returns null)", () => {
     const target = at("t", 3, 0, 5);

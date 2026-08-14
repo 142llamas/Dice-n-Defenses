@@ -41,6 +41,14 @@ import { WEAPON_DEFINITIONS } from "./weapons";
  * `BattleScene.updateHeroCapes`) — a real, new bit of Phaser drawing code,
  * not a new art asset, the same "coloured shapes, no final art" treatment
  * Phase 20's aura ring already established.
+ *
+ * D-127 follow-up: three of this file's original scope cuts are now closed.
+ * Charge-based active items are real (`chargedSpell`, see Wand of Magic
+ * Missile/Web, Staff of Healing below) and Swarm's damage-type resistance is
+ * real (`data/enemies.ts`'s `damageResistances`, `CombatSystem.applyAttack`)
+ * — see `DECISIONS.md`'s D-127 entry. Ability-score-setting items
+ * (`setsAbilityScore`) are also real; see Gauntlets of Ogre Power/Headband
+ * of Intellect/Amulet of Health below.
  */
 
 export const MAGIC_ITEM_DEFINITIONS: Record<string, EquipmentDefinition> = {
@@ -219,6 +227,85 @@ export const MAGIC_ITEM_DEFINITIONS: Record<string, EquipmentDefinition> = {
     requiresAttunement: true,
     assetKey: "magic-dagger-of-venom",
   },
+
+  // D-127: the real SRD "charge-based active item" family (wands/staves),
+  // previously a deliberate scope cut (see this file's top comment) — real
+  // now via `EquipmentDefinition.chargedSpell`. Simplified to a flat "fully
+  // refills on a Long Rest" cadence rather than the real SRD's daily partial-
+  // recharge dice roll, matching every other per-rest resource in this
+  // project. Grants the named spell to ANY equipped hero, even a non-caster,
+  // the same "castable with no real spell slots" shape Magic Initiate
+  // already established (see `Hero.knownSpellAbilityIds`).
+  "wand-of-magic-missile": {
+    id: "wand-of-magic-missile",
+    name: "Wand of Magic Missile",
+    description: "Casts Magic Missile, even for a non-caster. 7 charges, fully recharges on a Long Rest.",
+    cost: 40,
+    slot: "amulet",
+    rarity: "uncommon",
+    chargedSpell: { spellId: "magic-missile", maxCharges: 7 },
+    assetKey: "magic-wand-of-magic-missile",
+  },
+  "wand-of-web": {
+    id: "wand-of-web",
+    name: "Wand of Web",
+    description: "Casts Web, even for a non-caster. 6 charges, fully recharges on a Long Rest. Requires attunement.",
+    cost: 48,
+    slot: "amulet",
+    rarity: "uncommon",
+    chargedSpell: { spellId: "web", maxCharges: 6 },
+    requiresAttunement: true,
+    assetKey: "magic-wand-of-web",
+  },
+  "staff-of-healing": {
+    id: "staff-of-healing",
+    name: "Staff of Healing",
+    description: "Casts Cure Wounds, even for a non-caster. 10 charges, fully recharges on a Long Rest. Requires attunement.",
+    cost: 55,
+    slot: "amulet",
+    rarity: "uncommon",
+    chargedSpell: { spellId: "cure-wounds", maxCharges: 10 },
+    requiresAttunement: true,
+    assetKey: "magic-staff-of-healing",
+  },
+
+  // D-127: the real SRD "ability-score-setting item" family — previously a
+  // deliberate scope cut (see this file's top comment). Real now via
+  // `EquipmentDefinition.setsAbilityScore` (see `Hero.effectiveAbilityScore`
+  // for the "sets to X; no effect if already X or higher" rule).
+  "gauntlets-of-ogre-power": {
+    id: "gauntlets-of-ogre-power",
+    name: "Gauntlets of Ogre Power",
+    description: "Your Strength is 19 while worn. No effect if your Strength is already 19 or higher. Requires attunement.",
+    cost: 42,
+    slot: "amulet",
+    rarity: "uncommon",
+    setsAbilityScore: { ability: "str", value: 19 },
+    requiresAttunement: true,
+    assetKey: "magic-gauntlets-of-ogre-power",
+  },
+  "headband-of-intellect": {
+    id: "headband-of-intellect",
+    name: "Headband of Intellect",
+    description: "Your Intelligence is 19 while worn. No effect if your Intelligence is already 19 or higher. Requires attunement.",
+    cost: 42,
+    slot: "head",
+    rarity: "uncommon",
+    setsAbilityScore: { ability: "int", value: 19 },
+    requiresAttunement: true,
+    assetKey: "magic-headband-of-intellect",
+  },
+  "amulet-of-health": {
+    id: "amulet-of-health",
+    name: "Amulet of Health",
+    description: "Your Constitution is 19 while worn. No effect if your Constitution is already 19 or higher. Requires attunement.",
+    cost: 60,
+    slot: "amulet",
+    rarity: "rare",
+    setsAbilityScore: { ability: "con", value: 19 },
+    requiresAttunement: true,
+    assetKey: "magic-amulet-of-health",
+  },
 };
 
 /** The magic-item catalogue in shop order — see `equipment.ts`'s `EQUIPMENT_ORDER`. */
@@ -238,4 +325,10 @@ export const MAGIC_ITEM_ORDER: string[] = [
   "flame-tongue",
   "frost-brand",
   "dagger-of-venom",
+  "wand-of-magic-missile",
+  "wand-of-web",
+  "staff-of-healing",
+  "gauntlets-of-ogre-power",
+  "headband-of-intellect",
+  "amulet-of-health",
 ];

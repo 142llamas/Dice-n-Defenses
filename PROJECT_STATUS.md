@@ -1,6 +1,38 @@
 # Project Status
 
-## A Full UI-Layout Audit and Fix: Clashing/Off-Canvas Boxes Across the Game (D-126) — DONE this session
+## Four Foundational Systems: Damage Resistance, Stealth Sense, Charge Items, Ability-Score Items (D-127) — DONE this session
+
+While Kevin ran his first in-browser playtest pass in several sessions, this
+session closed four gaps `KNOWN_ISSUES.md` had documented as genuinely
+missing architecture (not stale wiring): damage-type resistance, per-observer
+stealth detection, charge-based active items, and ability-score-setting
+items. Built in order of increasing risk, each verified independently
+(`npm run typecheck`/`npm test`/`npm run build`) before moving to the next.
+See **D-127** in `DECISIONS.md` for the complete method and every deliberate
+scope boundary.
+
+- **Nonmagical damage-type resistance**: `data/weapons.ts` already carried a
+  per-weapon damage type, just unused for resistance — now consumed by
+  `CombatSystem.applyAttack` to halve a nonmagical hit against a resistant
+  target. Rat Swarm/Locust Swarm gain the real SRD Swarm resistance; Boon of
+  Irresistible Offense's "ignores Resistance" half is finally real.
+- **Rogue's Blindsense (14+) / Ranger's Feral Senses (18+)**: real for the
+  first time — a per-observer targeting exception lets that hero
+  specifically target a still-hidden stealth enemy within 2 tiles, without
+  revealing it to anyone else.
+- **Charge-based items**: Wand of Magic Missile, Wand of Web, Staff of
+  Healing — grant their spell to any hero (even a non-caster), spent as item
+  charges instead of a spell slot, fully recharging on a Long Rest.
+- **Ability-score-setting items**: Gauntlets of Ogre Power, Headband of
+  Intellect, Amulet of Health — set an ability score to 19 while equipped,
+  live-recomputing every derived combat number (attack, HP, AC, spell save
+  DC, saves). Also fixed a related pre-existing gap: a DEX Ability Score
+  Improvement previously never raised AC without real armor equipped.
+- Tests: 1147/1147 passing (up from 1130), typecheck and production build
+  (115 modules) both clean. No browser available in this environment — see
+  **KI-084** for the full in-browser verification checklist.
+
+## A Full UI-Layout Audit and Fix: Clashing/Off-Canvas Boxes Across the Game (D-126) — DONE previous session
 
 Kevin reported real, current "clashing text boxes" and "boxes going over the
 edge of the screen" while gathering art assets, and asked for a full audit
