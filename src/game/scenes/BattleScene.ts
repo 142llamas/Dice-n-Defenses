@@ -49,6 +49,25 @@ import { getClassDefinition } from "../data/classes";
 import { ABILITY_SCORE_IDS, ABILITY_SCORE_NAMES, type AbilityScoreId } from "../data/abilityScores";
 import { FEAT_IDS, getFeat } from "../data/feats";
 import { Hero, BARDIC_INSPIRATION_BONUS, MAX_ATTUNEMENTS, type MagicInitiateListId } from "../entities/Hero";
+import {
+  fastForwardHero,
+  resolveAsiForLevel,
+  resolveSubclassForClass,
+  resolveSpellPickForRequest,
+  type LevelUpPlan,
+} from "../systems/LevelUpPlanSystem";
+import {
+  spellSwapStepsForClass,
+  preparedSwapIsFullRelist,
+  maxCastableSpellLevel,
+  eligibleCantripPool,
+  eligibleLeveledSpellPool,
+  preparedSpellCountForClassAtLevel,
+  type SpellSwapTrigger,
+  type SpellSwapStepKind,
+} from "../systems/SpellPreparationSystem";
+import { cantripsKnownForClassAtLevel } from "../systems/SpellcastingSystem";
+import { getSpell } from "../data/spells";
 import { Enemy } from "../entities/Enemy";
 import type { Summon } from "../entities/Summon";
 import { TEST_MAP, type ParsedMap, type TileType } from "../data/testMap";
@@ -56,7 +75,7 @@ import { DynamicTerrainSystem } from "../systems/DynamicTerrainSystem";
 import { WAVES, type WaveDefinition } from "../data/waves";
 import { getCampaignDefinition, getCampaignMap } from "../data/campaigns";
 import { getMapById } from "../data/maps";
-import { ENEMY_COLORS, getEnemyDefinition, type EnemyRole } from "../data/enemies";
+import { ENEMY_COLORS, ENEMY_DEFINITIONS, getEnemyDefinition, type EnemyRole } from "../data/enemies";
 import type { HeroDefinition } from "../data/heroes";
 import { HeroAISystem } from "../systems/HeroAISystem";
 import { canActOnHero } from "../systems/CoopSessionSystem";
@@ -108,6 +127,9 @@ import { getBuffEffectDefinition } from "../data/buffEffects";
 import {
   durationScaleFor,
   loadSettings,
+  saveSettings,
+  nextAnimationSpeed,
+  ANIMATION_SPEED_LABELS,
   hasSeenTutorial,
   markTutorialSeen,
   type AnimationSpeed,
@@ -147,6 +169,18 @@ const BOARD_TERRAIN_COLORS: Record<TileType, number> = {
   sand: 0xc2a878,
 };
 
+/** Test Mode (D-138): every enemy id, for the debug spawner's picker grid. */
+const DEBUG_ENEMY_IDS: string[] = Object.keys(ENEMY_DEFINITIONS);
+/** Test Mode (D-138): every terrain type, for the debug terrain-painter's picker grid. */
+const DEBUG_TERRAIN_TYPES: TileType[] = Object.keys(BOARD_TERRAIN_COLORS) as TileType[];
+/**
+ * Test Mode (D-138): a fixed, generously long duration for a debug-applied
+ * status effect — long enough to observe without babysitting a countdown; a
+ * second click on the same status chip removes it early regardless of how
+ * much time is left (see `handleDebugStatusClick`).
+ */
+const DEBUG_STATUS_DURATION_TURNS = 99;
+
 /**
  * BattleScene — Phase 4: Combat MVP.
  *
@@ -179,7 +213,13 @@ type Interaction =
    * empty, placeable tile within range). One shared variant rather than one
    * per spell kind; `castTileSpellOn` branches on the ability's own fields.
    */
-  | { kind: "aimingTileSpell"; heroId: string; abilityId: string };
+  | { kind: "aimingTileSpell"; heroId: string; abilityId: string }
+  /** Test Mode (D-138): the next tile click spawns this enemy id on it. */
+  | { kind: "debugSpawnEnemy"; enemyId: string }
+  /** Test Mode (D-138): the next tile click repaints it to this terrain type. */
+  | { kind: "debugPaintTerrain"; tileType: TileType }
+  /** Test Mode (D-138): the next tile click toggles this status on whatever hero/enemy occupies it. */
+  | { kind: "debugStatus"; statusId: StatusEffectId };
 
 /** D-125: one pending Wizard/Warlock spell-mastery-family pick — see `showSpellPickChoiceQueue`. */
 interface SpellPickRequest {
@@ -349,6 +389,8 @@ export class BattleScene extends Phaser.Scene {
   private pathDots: Phaser.GameObjects.Arc[] = [];
   private activeRing!: Phaser.GameObjects.Arc;
   private hoverRect!: Phaser.GameObjects.Rectangle;
+  /** D-132: the HP/AC (and, while a hero is selected and aiming at an enemy, hit%) hover tooltip. */
+  private unitTooltip!: Phaser.GameObjects.Text;
   private pendingRect!: Phaser.GameObjects.Rectangle;
 
   private bannerText!: Phaser.GameObjects.Text;
@@ -462,6 +504,36 @@ export class BattleScene extends Phaser.Scene {
   /** True while the spell-pick overlay is up, so the board ignores input under it. */
   private choosingSpellPick = false;
   /**
+   * A plain "You reached level N!" confirmation, shown once per hero whose
+   * level-up this wave grants no other choice (no ASI/subclass/spell-pick
+   * popup of its own to announce it) — closing KI-079's gap where such a
+   * hero previously only got a combat-log line, no on-screen popup at all.
+   * Same "queue and pop" shape as `asiQueue`/`subclassQueue`, shares
+   * `asiOverlay`'s rendering.
+   */
+  private levelUpAckQueue: Hero[] = [];
+  private pendingAfterLevelUpAck: (() => void) | null = null;
+  /** True while the level-up acknowledgment overlay is up, so the board ignores input under it. */
+  private choosingLevelUpAck = false;
+  /**
+   * D-136 (Phase 3 of the spell-preparation economy): the in-battle spell-
+   * swap overlay, shown once per hero (queue-and-pop, same shape as
+   * `asiQueue`/`subclassQueue`, shares `asiOverlay`'s rendering) at either a
+   * Long Rest just taken (`chooseRest`) or a level just gained
+   * (`applyClassLevelUps`) — whichever trigger `spellPrepTrigger` names.
+   * `spellPrepSteps`/`spellPrepStepIndex` track this hero's own step ladder
+   * (`spellSwapStepsForClass`); the "replace one" flow's first pick is
+   * threaded directly as a parameter between its two screens, no field
+   * needed.
+   */
+  private spellPrepQueue: Hero[] = [];
+  private spellPrepTrigger: SpellSwapTrigger = "longRest";
+  private spellPrepSteps: SpellSwapStepKind[] = [];
+  private spellPrepStepIndex = 0;
+  private pendingAfterSpellPrep: (() => void) | null = null;
+  /** True while the spell-prep overlay is up, so the board ignores input under it. */
+  private choosingSpellPrep = false;
+  /**
    * Phase 13.7 (D-092): the spellbook overlay — shown when a caster hero
    * (Wizard/Cleric) opens "Cast a Spell" instead of using the old
    * single-ability flow. Gated entirely through `Interaction`'s
@@ -498,6 +570,37 @@ export class BattleScene extends Phaser.Scene {
   private ui: Interaction = { kind: "idle" };
   private lastReport: EnemyPhaseReport | null = null;
   private combatLog: string[] = [];
+  /**
+   * KI-085/D-130: the "technical" tier of a two-tier battle log — every d20
+   * attack/save roll's raw numbers (die, bonus, target number, advantage
+   * mode) — kept separate from `combatLog`'s plain-English lines rather than
+   * folded into them, per Kevin's own ask. Viewed in its own overlay (see
+   * `showTechnicalLogOverlay`), not the small always-on HUD line
+   * `combatLog` uses, so it can hold far more history (200 vs. 5 lines).
+   */
+  private technicalLog: string[] = [];
+  private technicalLogOverlay: Phaser.GameObjects.GameObject[] = [];
+  /**
+   * Test Mode (D-138): the top-level debug menu (Skip Wave, No-Fail toggle,
+   * and the three mode-select buttons) — same dim+panel modal shape as
+   * `technicalLogOverlay`. Only ever populated when `this.testMode`.
+   */
+  private debugMenuOverlay: Phaser.GameObjects.GameObject[] = [];
+  /** Test Mode (D-138): mirrors `WaveSystem.setNoFail`'s own flag, for the toggle button's label. */
+  private debugNoFailEnabled = false;
+  private debugEnemyButtons: Phaser.GameObjects.Rectangle[] = [];
+  private debugEnemyLabels: Phaser.GameObjects.Text[] = [];
+  private debugTerrainButtons: Phaser.GameObjects.Rectangle[] = [];
+  private debugTerrainLabels: Phaser.GameObjects.Text[] = [];
+  private debugStatusButtons: Phaser.GameObjects.Rectangle[] = [];
+  private debugStatusLabels: Phaser.GameObjects.Text[] = [];
+  /**
+   * The board's own pit "✕" glyph, one per pit tile, keyed "x,y" — tracked
+   * (rather than fire-and-forget, as it was before D-138) so Test Mode's
+   * debug terrain-painter can find and remove a tile's glyph if it repaints
+   * that tile away from "pit".
+   */
+  private pitGlyphs = new Map<string, Phaser.GameObjects.Text>();
   /** Phase 11.7 (D-071): treasure tiles already consumed this battle, by "x,y" key. */
   private consumedTreasureTiles = new Set<string>();
   /** D-068: which loss condition ended the run, for the end-screen message. */
@@ -532,6 +635,14 @@ export class BattleScene extends Phaser.Scene {
    * `init()`.
    */
   private heroDefinitions: HeroDefinition[] = [];
+  /**
+   * D-133: each hero's Character Creation level-up planner blueprint, if one
+   * was set, keyed by hero id — built once in `buildHeroes()` from
+   * `HeroDefinition.levelUpPlan`. A hero with no entry here behaves exactly
+   * as it always has (D-129's fixed defaults pre-battle, unprompted in-battle
+   * popups).
+   */
+  private heroLevelUpPlans: Map<string, LevelUpPlan> = new Map();
   /**
    * Phase 11.4 (D-077): the difficulty tier picked in `CharacterCreationScene`,
    * or "normal" (1x/1x) when omitted.
@@ -592,6 +703,13 @@ export class BattleScene extends Phaser.Scene {
    * stays correct in campaign mode too.
    */
   private currentWaves: WaveDefinition[] = WAVES;
+  /**
+   * Test Mode (D-138): true only when this battle was entered via
+   * `TestModeScene` → `CharacterCreationScene`. Gates the debug toolbar
+   * (Skip Wave, No-Fail, Spawn Enemy, Paint Terrain, Set Status) — every
+   * other path into a battle is completely unaffected.
+   */
+  private testMode = false;
 
   constructor() {
     super("BattleScene");
@@ -605,6 +723,7 @@ export class BattleScene extends Phaser.Scene {
     freePlayWaves?: WaveDefinition[];
     customMapData?: ParsedMap;
     coopSession?: { code: string; localUid: string; heroOwners: Record<string, string>; partnerName: string };
+    testMode?: boolean;
   }): void {
     if (!data?.heroDefinitions?.length) {
       throw new Error(
@@ -618,6 +737,7 @@ export class BattleScene extends Phaser.Scene {
     this.freePlayWaves = data?.freePlayWaves ?? null;
     this.customMapData = data?.customMapData ?? null;
     this.coopSession = data?.coopSession ?? null;
+    this.testMode = data?.testMode ?? false;
   }
 
   /**
@@ -671,11 +791,22 @@ export class BattleScene extends Phaser.Scene {
     this.spellPickQueue = [];
     this.pendingAfterSpellPick = null;
     this.choosingSpellPick = false;
+    this.levelUpAckQueue = [];
+    this.pendingAfterLevelUpAck = null;
+    this.choosingLevelUpAck = false;
+    this.spellPrepQueue = [];
+    this.spellPrepTrigger = "longRest";
+    this.spellPrepSteps = [];
+    this.spellPrepStepIndex = 0;
+    this.pendingAfterSpellPrep = null;
+    this.choosingSpellPrep = false;
     this.spellbookOverlay = [];
     this.spellbookPage = 0;
     this.ui = { kind: "idle" };
     this.lastReport = null;
     this.combatLog = [];
+    this.technicalLog = [];
+    this.technicalLogOverlay = [];
     this.defeatReason = null;
     this.wavesCleared = 0;
     this.tutorialOverlay = [];
@@ -752,6 +883,7 @@ export class BattleScene extends Phaser.Scene {
     this.buildHeroes();
     this.buildHighlightObjects();
     this.buildHud();
+    if (this.testMode) this.buildDebugToolbar();
 
     this.turns = new TurnSystem();
     this.turns.onChange = (next, prev) => this.onPhaseChange(next, prev);
@@ -778,6 +910,7 @@ export class BattleScene extends Phaser.Scene {
 
   private buildBoard(): void {
     this.tileRects.clear();
+    this.pitGlyphs.clear();
     for (let y = 0; y < this.map.rows; y++) {
       for (let x = 0; x < this.map.cols; x++) {
         const pos = { x, y };
@@ -788,7 +921,7 @@ export class BattleScene extends Phaser.Scene {
           .setDepth(0);
         this.tileRects.set(`${x},${y}`, rect);
         if (type === "pit") {
-          this.add
+          const glyph = this.add
             .text(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, "✕", {
               fontFamily: "system-ui, Arial, sans-serif",
               fontSize: "20px",
@@ -796,6 +929,7 @@ export class BattleScene extends Phaser.Scene {
             })
             .setOrigin(0.5)
             .setDepth(1);
+          this.pitGlyphs.set(`${x},${y}`, glyph);
         }
       }
     }
@@ -932,6 +1066,9 @@ export class BattleScene extends Phaser.Scene {
   private buildHeroes(): void {
     const starts = this.map.data.heroStarts;
     const baseDefinitions = this.heroDefinitions;
+    this.heroLevelUpPlans = new Map(
+      baseDefinitions.filter((def) => def.levelUpPlan).map((def) => [def.id, def.levelUpPlan as LevelUpPlan]),
+    );
     // Phase 12.3 (D-103): a coop battle overrides `controlledBy` per hero,
     // from the session's `heroOwners` — "human" for whichever heroes THIS
     // client's uid owns, "remote" for the partner's (never "ai": coop v1
@@ -947,6 +1084,17 @@ export class BattleScene extends Phaser.Scene {
     definitions.forEach((def, i) => {
       const start = starts[i] ?? starts[0];
       const hero = new Hero(def, start);
+      if (def.startingLevel && def.startingLevel > 1) this.fastForwardHeroToLevel(hero, def.startingLevel);
+      // D-135: a Character Creation manual spell pick is a wholesale
+      // override of whatever `growSpellSelections()`'s auto-fill produced
+      // during construction/fast-forward above — applied once, here, after
+      // the hero's level is already final. Spellbook first so a Wizard's
+      // subsequent `preparedSpellIds` (drawn from the picker's own spellbook
+      // step) lines up with `growSpellSelections`'s own pool choice, even
+      // though neither setter actually reads the other's state.
+      if (def.spellbookIds) hero.chooseSpellbook(def.spellbookIds);
+      if (def.knownCantripIds) hero.chooseCantrips(def.knownCantripIds);
+      if (def.preparedSpellIds) hero.choosePreparedSpells(def.preparedSpellIds);
       this.heroes.push(hero);
       const c = this.grid.tileToWorldCenter(start);
       const color = COLORS.hero;
@@ -1000,6 +1148,22 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * D-129: pre-battle level fast-forward, for Free Play/New Game's new
+   * per-hero/team "Starting Level" control. D-133: the actual level-by-level
+   * walk and choice-trigger resolution now lives in
+   * `LevelUpPlanSystem.fastForwardHero` (shared with that system's own
+   * `simulateHeroForPlanning`, used by the Character Creation planner UI) —
+   * this hero's plan (if any) resolves each trigger; anything the plan
+   * doesn't cover falls back to D-129's original silent defaults. Always
+   * silent regardless of the plan's `mode` — this runs once at battle setup,
+   * before the first player turn even exists, so there's no popup mechanism
+   * available and no "level 1 -> level N" story to tell the player.
+   */
+  private fastForwardHeroToLevel(hero: Hero, targetLevel: number): void {
+    fastForwardHero(hero, targetLevel, this.heroLevelUpPlans.get(hero.id));
+  }
+
   private buildHighlightObjects(): void {
     this.activeRing = this.add
       .circle(0, 0, TILE_SIZE * 0.44)
@@ -1014,6 +1178,20 @@ export class BattleScene extends Phaser.Scene {
       .rectangle(0, 0, TILE_SIZE, TILE_SIZE, COLORS.moveConfirm, 0.35)
       .setStrokeStyle(3, COLORS.moveConfirm)
       .setDepth(6)
+      .setVisible(false);
+    // D-132: depth 50 — above every token/badge/highlight, so it's never
+    // obscured by whatever it's floating over.
+    this.unitTooltip = this.add
+      .text(0, 0, "", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "13px",
+        color: "#0e0e14",
+        backgroundColor: "#e8e0c0",
+        padding: { left: 6, right: 6, top: 3, bottom: 3 },
+        align: "center",
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(50)
       .setVisible(false);
   }
 
@@ -1414,10 +1592,47 @@ export class BattleScene extends Phaser.Scene {
     this.equipItemButtons = equip.buttons;
     this.equipItemLabels = equip.labels;
 
+    // Test Mode (D-138): three more grids sharing this exact same footprint —
+    // never shown at the same time as each other, Shop, or Gear (all mutually
+    // exclusive via `this.ui.kind`). Only ever built; only ever SHOWN when
+    // `this.testMode`.
+    const debugEnemyItems = DEBUG_ENEMY_IDS.map((id) => ({ id, label: getEnemyDefinition(id).name }));
+    const debugEnemy = this.buildItemGrid(
+      cy,
+      debugEnemyItems,
+      (id) => this.selectDebugEnemy(id),
+      undefined,
+      ITEM_GRID_PAGE_SIZE,
+    );
+    this.debugEnemyButtons = debugEnemy.buttons;
+    this.debugEnemyLabels = debugEnemy.labels;
+
+    const debugTerrainItems = DEBUG_TERRAIN_TYPES.map((type) => ({ id: type, label: type }));
+    const debugTerrain = this.buildItemGrid(
+      cy,
+      debugTerrainItems,
+      (id) => this.selectDebugTerrain(id as TileType),
+      undefined,
+      ITEM_GRID_PAGE_SIZE,
+    );
+    this.debugTerrainButtons = debugTerrain.buttons;
+    this.debugTerrainLabels = debugTerrain.labels;
+
+    const debugStatusItems = STATUS_EFFECT_ORDER.map((id) => ({ id, label: getStatusEffectDefinition(id).name }));
+    const debugStatus = this.buildItemGrid(
+      cy,
+      debugStatusItems,
+      (id) => this.selectDebugStatus(id as StatusEffectId),
+      undefined,
+      ITEM_GRID_PAGE_SIZE,
+    );
+    this.debugStatusButtons = debugStatus.buttons;
+    this.debugStatusLabels = debugStatus.labels;
+
     // Phase 11.7 (D-071): shown in place of the Gear grid when no living
     // hero is close enough to a shop tile — see showEquipUI/isAnyHeroNearShop.
     this.equipLockLabel = this.add
-      .text(GAME_WIDTH / 2, cy + 40, "Move a hero to a Shop tile to access Gear", {
+      .text(GAME_WIDTH / 2, cy + 40, "Move a hero to a Shop tile to buy/equip Gear", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#e0a860",
@@ -1502,6 +1717,7 @@ export class BattleScene extends Phaser.Scene {
     this.doneButton.on("pointerdown", () => {
       if (this.ui.kind === "building") this.exitBuildMode();
       else if (this.ui.kind === "equipping") this.exitEquipMode();
+      else if (this.isDebugGridKind(this.ui.kind)) this.setInteraction({ kind: "idle" });
     });
   }
 
@@ -1641,7 +1857,8 @@ export class BattleScene extends Phaser.Scene {
         this.waveSystem.advanceToNextWave();
         this.tickDynamicTerrain();
         for (const hero of this.heroes) hero.resetForNewTurn();
-        this.time.delayedCall(650, () => this.turns.transitionTo("player"));
+        // KI-085/D-130: same Game Speed scaling as resolvePhase's pause above.
+        this.time.delayedCall(this.scaledDuration(650), () => this.turns.transitionTo("player"));
         break;
       case "victory":
         this.markCampaignCompletedIfAny();
@@ -1728,6 +1945,7 @@ export class BattleScene extends Phaser.Scene {
       const suffix = BattleScene.didHit(evt.result) ? ` for ${evt.result.damageDealt}` : "";
       const targetName = evt.target instanceof Enemy ? evt.target.def.name : "its target";
       this.logCombat(`${evt.summon.def.name} ${verb} ${targetName}${suffix}`);
+      this.logTechnical(BattleScene.technicalAttackLine(evt.summon.def.name, targetName, evt.result));
     }
     this.resolveDeaths(this.waveSystem.removeDefeated());
     for (const instanceId of before) {
@@ -1925,7 +2143,10 @@ export class BattleScene extends Phaser.Scene {
 
   /** Decide what follows the enemy phase. */
   private resolvePhase(): void {
-    this.time.delayedCall(400, () => {
+    // KI-085/D-130: this fixed post-phase pause now scales with Game Speed
+    // too, not just tween durations — otherwise "Instant" still felt slow
+    // between phases even with every tween itself skipped.
+    this.time.delayedCall(this.scaledDuration(400), () => {
       if (this.waveSystem.isDefeated()) {
         this.defeatReason = "integrity";
         this.turns.transitionTo("defeat");
@@ -1973,11 +2194,12 @@ export class BattleScene extends Phaser.Scene {
    * machine racing ahead of it.
    *
    * A hero has no CHOICE to make on a level that ISN'T an Ability Score
-   * Improvement — real per-class leveling is automatic; each hero just
-   * levels up and the log says so, same "no modal needed" treatment already
-   * used elsewhere for automatic effects (e.g. Uncanny Dodge). Phase 13.6
-   * (D-091): a level that DOES grant an ASI queues `showAsiChoiceQueue` for
-   * every hero who just reached one, before moving on to any Rest choice.
+   * Improvement — real per-class leveling is automatic. KI-085/D-130: such a
+   * hero now also gets a plain "reaches level N!" popup (`showLevelUpAckQueue`)
+   * on top of the log line, since a log-only confirmation was Kevin's own
+   * reported gap. Phase 13.6 (D-091): a level that DOES grant an ASI queues
+   * `showAsiChoiceQueue` for every hero who just reached one, before moving
+   * on to any Rest choice.
    */
   private afterWaveCleared(): void {
     const proceed = () => {
@@ -1990,19 +2212,28 @@ export class BattleScene extends Phaser.Scene {
       else this.showRestChoice(proceed);
     };
     if (this.progression.hasPendingLevelUp(this.wavesCleared)) {
-      const { asiHeroes, subclassHeroes, spellPickHeroes } = this.applyClassLevelUps();
-      // D-125: subclass -> ASI -> spell-mastery-family pick -> rest, same
-      // deferred-queue chaining `showAsiChoiceQueue`/`showSubclassChoiceQueue` already use.
-      const afterAsi = () => {
-        if (spellPickHeroes.length > 0) this.showSpellPickChoiceQueue(spellPickHeroes, afterLevelUp);
+      const { asiHeroes, subclassHeroes, spellPickHeroes, spellSwapHeroes, plainHeroes } = this.applyClassLevelUps();
+      // D-125/D-130/D-136: plain ack -> subclass -> ASI -> spell-mastery-
+      // family pick -> level-up spell swap -> rest, same deferred-queue
+      // chaining `showAsiChoiceQueue`/`showSubclassChoiceQueue` already use.
+      const afterSpellPick = () => {
+        if (spellSwapHeroes.length > 0) this.showSpellPrepQueue(spellSwapHeroes, "levelUp", afterLevelUp);
         else afterLevelUp();
+      };
+      const afterAsi = () => {
+        if (spellPickHeroes.length > 0) this.showSpellPickChoiceQueue(spellPickHeroes, afterSpellPick);
+        else afterSpellPick();
       };
       const afterSubclass = () => {
         if (asiHeroes.length > 0) this.showAsiChoiceQueue(asiHeroes, afterAsi);
         else afterAsi();
       };
-      if (subclassHeroes.length > 0) this.showSubclassChoiceQueue(subclassHeroes, afterSubclass);
-      else afterSubclass();
+      const afterPlainAck = () => {
+        if (subclassHeroes.length > 0) this.showSubclassChoiceQueue(subclassHeroes, afterSubclass);
+        else afterSubclass();
+      };
+      if (plainHeroes.length > 0) this.showLevelUpAckQueue(plainHeroes, afterPlainAck);
+      else afterPlainAck();
     } else {
       afterLevelUp();
     }
@@ -2023,12 +2254,23 @@ export class BattleScene extends Phaser.Scene {
    * Signature Spells (Wizard)/Mystic Arcanum (Warlock) pick it hasn't made
    * yet — `levelUpClass()` only ever advances one level per call, and these
    * six trigger levels (11/13/15/17/18/20) are all distinct, so a hero can
-   * trigger at most ONE of these three kinds per call.
+   * trigger at most ONE of these three kinds per call. D-130: also returns
+   * every OTHER hero that leveled with none of the above — the caller queues
+   * `showLevelUpAckQueue` for exactly those, so every leveled hero gets some
+   * on-screen popup, not just the ones with a real choice to make.
    */
-  private applyClassLevelUps(): { asiHeroes: Hero[]; subclassHeroes: Hero[]; spellPickHeroes: SpellPickRequest[] } {
+  private applyClassLevelUps(): {
+    asiHeroes: Hero[];
+    subclassHeroes: Hero[];
+    spellPickHeroes: SpellPickRequest[];
+    spellSwapHeroes: Hero[];
+    plainHeroes: Hero[];
+  } {
     const needsAsi: Hero[] = [];
     const needsSubclass: Hero[] = [];
     const needsSpellPick: SpellPickRequest[] = [];
+    const needsSpellSwap: Hero[] = [];
+    const plainHeroes: Hero[] = [];
     const arcanumTiers = [6, 7, 8, 9];
     for (const hero of this.livingHeroes()) {
       const beforeLevel = hero.level;
@@ -2038,28 +2280,69 @@ export class BattleScene extends Phaser.Scene {
         let msg = `${hero.name} reaches level ${hero.level}!`;
         if (hero.attacksPerAction > beforeAttacks) msg += ` (now attacks ${hero.attacksPerAction}x per turn)`;
         this.logCombat(msg);
+        // D-133: an "auto" plan resolves every trigger silently, right here,
+        // instead of queuing an overlay — the whole point of that mode. A
+        // "prompt"/"fresh"/unset plan queues exactly as it always has.
+        const plan = this.heroLevelUpPlans.get(hero.id);
+        const autoMode = plan?.mode === "auto";
+        let hasChoice = false;
         if (hero.classId) {
           const classDef = getClassDefinition(hero.classId);
-          if (asiFeatureGrantedAtLevel(classDef, hero.level)) needsAsi.push(hero);
+          if (asiFeatureGrantedAtLevel(classDef, hero.level)) {
+            hasChoice = true;
+            if (autoMode) resolveAsiForLevel(hero, hero.level, plan);
+            else needsAsi.push(hero);
+          }
           if (
             !hero.subclassId &&
             subclassGrantedAtLevel(classDef, hero.level) &&
             subclassesForClass(hero.classId).length > 0
           ) {
-            needsSubclass.push(hero);
+            hasChoice = true;
+            if (autoMode) resolveSubclassForClass(hero, hero.classId, plan);
+            else needsSubclass.push(hero);
           }
-          if (hero.needsSpellMasteryPick()) needsSpellPick.push({ hero, kind: "mastery" });
-          else if (hero.needsSignatureSpellsPick()) needsSpellPick.push({ hero, kind: "signature" });
-          else {
+          if (hero.needsSpellMasteryPick()) {
+            hasChoice = true;
+            if (autoMode) resolveSpellPickForRequest(hero, { hero, kind: "mastery" }, plan);
+            else needsSpellPick.push({ hero, kind: "mastery" });
+          } else if (hero.needsSignatureSpellsPick()) {
+            hasChoice = true;
+            if (autoMode) resolveSpellPickForRequest(hero, { hero, kind: "signature" }, plan);
+            else needsSpellPick.push({ hero, kind: "signature" });
+          } else {
             const tier = arcanumTiers.find((t) => hero.needsMysticArcanumPick(t));
-            if (tier !== undefined) needsSpellPick.push({ hero, kind: "arcanum", tier });
+            if (tier !== undefined) {
+              hasChoice = true;
+              if (autoMode) resolveSpellPickForRequest(hero, { hero, kind: "arcanum", tier }, plan);
+              else needsSpellPick.push({ hero, kind: "arcanum", tier });
+            }
+          }
+          // D-136: a level-up is ALSO the trigger for Sorcerer/Bard/Warlock's
+          // replace-one prepared-spell swap, and for every cantrip-having
+          // class but Wizard's replace-one cantrip swap. Unlike the three
+          // checks above, this recurs at EVERY level-up for a caster's whole
+          // career, not a one-time unlock — there's no plannable slot for it
+          // (see D-136 for why), so "auto" mode just skips it silently
+          // (equivalent to "keep current selection") instead of resolving a
+          // plan entry that doesn't exist for this trigger.
+          if (spellSwapStepsForClass(hero.classId, hero.level, "levelUp").length > 0) {
+            hasChoice = true;
+            if (!autoMode) needsSpellSwap.push(hero);
           }
         }
+        if (!hasChoice) plainHeroes.push(hero);
       }
     }
     this.progression.acknowledgeLevelUp();
     this.syncHeroTokens();
-    return { asiHeroes: needsAsi, subclassHeroes: needsSubclass, spellPickHeroes: needsSpellPick };
+    return {
+      asiHeroes: needsAsi,
+      subclassHeroes: needsSubclass,
+      spellPickHeroes: needsSpellPick,
+      spellSwapHeroes: needsSpellSwap,
+      plainHeroes,
+    };
   }
 
   // KI-033 fix: shrink the banner's font size, using its real measured
@@ -2288,6 +2571,19 @@ export class BattleScene extends Phaser.Scene {
     return Math.round(baseMs * durationScaleFor(this.animationSpeed));
   }
 
+  /**
+   * KI-085/D-130: cycle Game Speed (Normal -> Fast -> Instant -> Normal),
+   * persisting immediately so the Main Menu's own control (and the next
+   * battle) picks up the same value. Every tween/pause this scene plays
+   * reads `this.animationSpeed` live via `scaledDuration`, so this takes
+   * effect on the very next one — no need to restart the battle.
+   */
+  private cycleGameSpeed(): void {
+    this.animationSpeed = nextAnimationSpeed(this.animationSpeed);
+    saveSettings(window.localStorage, SETTINGS_STORAGE_KEY, { animationSpeed: this.animationSpeed });
+    this.logCombat(`Game speed: ${ANIMATION_SPEED_LABELS[this.animationSpeed]}`);
+  }
+
   private breachEnemyToken(enemy: Enemy): void {
     const c = this.grid.tileToWorldCenter(enemy.position);
     this.flashTile(c.x, c.y, COLORS.breachFlash, 0.7, 360);
@@ -2385,6 +2681,7 @@ export class BattleScene extends Phaser.Scene {
     this.logCombat(
       `${atk.enemy.def.name} ${verb} ${this.nameOfCombatant(atk.target.id)}${suffix}${dodgeSuffix}${resistSuffix}${cuttingWordsSuffix}`,
     );
+    this.logTechnical(BattleScene.technicalAttackLine(atk.enemy.def.name, this.nameOfCombatant(atk.target.id), atk.result));
   }
 
   /**
@@ -2488,6 +2785,7 @@ export class BattleScene extends Phaser.Scene {
       const verb = BattleScene.attackVerb(result);
       const suffix = BattleScene.didHit(result) ? ` for ${result.damageDealt}` : "";
       this.logCombat(`${hero.name} retaliates and ${verb} ${atk.enemy.def.name}${suffix}`);
+      this.logTechnical(BattleScene.technicalAttackLine(hero.name, atk.enemy.def.name, result));
     }
   }
 
@@ -2546,11 +2844,23 @@ export class BattleScene extends Phaser.Scene {
     // between items WITHIN the same mode (e.g. clicking a different shop
     // slot) keeps whatever focus/index already matches the new selection, so
     // keyboard and mouse selection never fight over grid position.
-    const enteringGridMode = next.kind === "building" || next.kind === "equipping";
+    const enteringGridMode =
+      next.kind === "building" || next.kind === "equipping" || this.isDebugGridKind(next.kind);
     if (enteringGridMode) {
-      if (prevKind !== "building" && prevKind !== "equipping") this.keyboardFocus = "grid";
-      const items = next.kind === "building" ? SHOP_ORDER : this.visibleGearCatalog();
-      const currentId = next.kind === "building" ? next.defId : next.itemId;
+      if (prevKind !== "building" && prevKind !== "equipping" && !this.isDebugGridKind(prevKind)) this.keyboardFocus = "grid";
+      const items = this.currentGridItems(); // this.ui already === next, set above
+      const currentId =
+        next.kind === "building"
+          ? next.defId
+          : next.kind === "equipping"
+            ? next.itemId
+            : next.kind === "debugSpawnEnemy"
+              ? next.enemyId
+              : next.kind === "debugPaintTerrain"
+                ? next.tileType
+                : next.kind === "debugStatus"
+                  ? next.statusId
+                  : undefined;
       const idx = currentId ? items.indexOf(currentId) : -1;
       this.gridFocusIndex = idx >= 0 ? idx : 0;
     } else {
@@ -2571,8 +2881,9 @@ export class BattleScene extends Phaser.Scene {
     this.buildGhostGlyph.setVisible(false);
     this.showShopUI(next.kind === "building", next.kind === "building" ? next.defId : undefined);
     this.showEquipUI(next.kind === "equipping", next.kind === "equipping" ? next.itemId : undefined);
+    this.showDebugPickerUI();
     this.refreshPageNav();
-    const modeActive = next.kind === "building" || next.kind === "equipping";
+    const modeActive = next.kind === "building" || next.kind === "equipping" || this.isDebugGridKind(next.kind);
     this.doneButton.setVisible(modeActive);
     this.doneLabel.setVisible(modeActive);
     // Phase 13.7 (D-092): the spellbook overlay only ever exists while
@@ -2622,6 +2933,10 @@ export class BattleScene extends Phaser.Scene {
       if (hero) this.renderSpellbookOverlay(hero);
     }
     this.refreshStatus();
+    // D-132: selecting/deselecting a hero can change whether a hit-chance
+    // line belongs on the tooltip for whatever tile the mouse already sits
+    // on, even with no mouse movement of its own.
+    this.updateUnitTooltip(this.cursorPos);
   }
 
   private showRange(hero: Hero): void {
@@ -3069,6 +3384,20 @@ export class BattleScene extends Phaser.Scene {
       this.showTutorial();
     });
 
+    // KI-085/D-130: cycle Game Speed live, mid-battle, without needing to
+    // exit to the Main Menu (the only place it could be changed before).
+    // Always available (not gated on `inputLocked()`) since it never touches
+    // board state, only how fast future tweens/pauses play out.
+    this.input.keyboard?.on("keydown-S", () => this.cycleGameSpeed());
+
+    // KI-085/D-130: the technical log overlay — guarded against stacking on
+    // top of another modal, same "informational, not a forced choice"
+    // treatment as H's tutorial reopen above.
+    this.input.keyboard?.on("keydown-L", () => {
+      if ((this.inputLocked() && this.technicalLogOverlay.length === 0) || this.endOverlay.length > 0) return;
+      this.toggleTechnicalLogOverlay();
+    });
+
     // Restart safety: Phaser already tears down a scene's input plugin on
     // shutdown, but we remove our own pointer/keyboard listeners explicitly so
     // that returning to the menu and starting a new battle can never accumulate
@@ -3087,6 +3416,23 @@ export class BattleScene extends Phaser.Scene {
     // Build mode: a click builds on an empty tile or refunds a structure.
     if (this.ui.kind === "building") {
       this.handleBuildClick(tile);
+      return;
+    }
+
+    // Test Mode (D-138): the three debug-picker modes, each a click-and-stay
+    // mode exactly like Build — the picked enemy/terrain/status stays
+    // selected across repeated clicks until the tester picks a different one
+    // or exits via Done/Esc.
+    if (this.ui.kind === "debugSpawnEnemy") {
+      this.handleDebugSpawnClick(tile);
+      return;
+    }
+    if (this.ui.kind === "debugPaintTerrain") {
+      this.handleDebugTerrainClick(tile);
+      return;
+    }
+    if (this.ui.kind === "debugStatus") {
+      this.handleDebugStatusClick(tile);
       return;
     }
 
@@ -3192,6 +3538,51 @@ export class BattleScene extends Phaser.Scene {
       else this.clearPath();
     }
     if (this.ui.kind === "building") this.updateBuildGhost(tile);
+    this.updateUnitTooltip(tile);
+  }
+
+  /**
+   * D-132: a hover tooltip — a hero's tile shows its HP/AC; an enemy's tile
+   * shows the same, plus (only while a hero is selected and this enemy is a
+   * legal basic-attack target for it) a "N% to hit" line from
+   * `previewHitChance`. A still-hidden stealth/Mimic enemy shows nothing at
+   * all, the same "nothing to see here" treatment its token/name already get
+   * (see `applyStealthVisual`) — its HP/AC would otherwise leak information
+   * the player hasn't earned yet.
+   */
+  private updateUnitTooltip(tile: GridPosition | null): void {
+    if (!tile) {
+      this.unitTooltip.setVisible(false);
+      return;
+    }
+    const hero = this.heroAt(tile);
+    if (hero) {
+      this.showUnitTooltipAt(tile, `${hero.name}\nHP ${hero.health}/${hero.effectiveMaxHealth}  ·  AC ${hero.armorClass}`);
+      return;
+    }
+    const enemy = this.enemyAt(tile);
+    if (enemy) {
+      const stillHidden = (enemy.def.stealth === true || enemy.def.mimicDisguise === true) && !enemy.isRevealed;
+      if (stillHidden) {
+        this.unitTooltip.setVisible(false);
+        return;
+      }
+      let text = `${enemy.def.name}\nHP ${enemy.health}/${enemy.def.maxHealth}  ·  AC ${enemy.armorClass}`;
+      if (this.ui.kind === "heroSelected") {
+        const selectedHero = this.heroById(this.ui.heroId);
+        const chance = selectedHero ? this.previewHitChance(selectedHero, enemy) : null;
+        if (chance !== null) text += `\n${Math.round(chance * 100)}% to hit`;
+      }
+      this.showUnitTooltipAt(tile, text);
+      return;
+    }
+    this.unitTooltip.setVisible(false);
+  }
+
+  private showUnitTooltipAt(tile: GridPosition, text: string): void {
+    const c = this.grid.tileToWorldCenter(tile);
+    const x = Math.min(Math.max(c.x, 90), GAME_WIDTH - 90);
+    this.unitTooltip.setText(text).setPosition(x, c.y - TILE_SIZE * 0.6).setVisible(true);
   }
 
   /**
@@ -3218,7 +3609,10 @@ export class BattleScene extends Phaser.Scene {
   /** Route an arrow-key press to whichever thing currently has keyboard focus. */
   private handleArrowKey(dx: number, dy: number): void {
     if (this.turns.current !== "player" || this.inputLocked()) return;
-    if ((this.ui.kind === "building" || this.ui.kind === "equipping") && this.keyboardFocus === "grid") {
+    if (
+      (this.ui.kind === "building" || this.ui.kind === "equipping" || this.isDebugGridKind(this.ui.kind)) &&
+      this.keyboardFocus === "grid"
+    ) {
       this.moveGridFocus(dx, dy);
       return;
     }
@@ -3232,10 +3626,10 @@ export class BattleScene extends Phaser.Scene {
     this.updateHoverAt(next);
   }
 
-  /** Row-major navigation within the currently visible shop/equip grid. */
+  /** Row-major navigation within the currently visible shop/equip/debug-picker grid. */
   private moveGridFocus(dx: number, dy: number): void {
-    const items = this.ui.kind === "building" ? SHOP_ORDER : this.ui.kind === "equipping" ? this.visibleGearCatalog() : null;
-    if (!items) return;
+    const items = this.currentGridItems();
+    if (items.length === 0) return;
     const cols = 4;
     let idx = this.gridFocusIndex + dx + dy * cols;
     idx = Math.max(0, Math.min(items.length - 1, idx));
@@ -3245,18 +3639,26 @@ export class BattleScene extends Phaser.Scene {
     this.refreshGridFocusVisual();
   }
 
-  /** Toggle whether arrow keys drive the shop/Gear grid or the board cursor. */
+  /** Toggle whether arrow keys drive the shop/Gear/debug-picker grid or the board cursor. */
   private toggleKeyboardFocus(): void {
-    if (this.ui.kind !== "building" && this.ui.kind !== "equipping") return;
+    if (this.ui.kind !== "building" && this.ui.kind !== "equipping" && !this.isDebugGridKind(this.ui.kind)) return;
     this.keyboardFocus = this.keyboardFocus === "grid" ? "board" : "grid";
     this.hoveredItemId = this.keyboardFocus === "grid" ? this.currentGridItems()[this.gridFocusIndex] : null;
     this.refreshGridFocusVisual();
     this.refreshStatus();
   }
 
+  /** Test Mode (D-138): true for any of the three debug-picker interaction kinds. */
+  private isDebugGridKind(kind: Interaction["kind"]): boolean {
+    return kind === "debugSpawnEnemy" || kind === "debugPaintTerrain" || kind === "debugStatus";
+  }
+
   private currentGridItems(): readonly string[] {
     if (this.ui.kind === "building") return SHOP_ORDER;
     if (this.ui.kind === "equipping") return this.visibleGearCatalog();
+    if (this.ui.kind === "debugSpawnEnemy") return DEBUG_ENEMY_IDS;
+    if (this.ui.kind === "debugPaintTerrain") return DEBUG_TERRAIN_TYPES;
+    if (this.ui.kind === "debugStatus") return STATUS_EFFECT_ORDER;
     return [];
   }
 
@@ -3267,28 +3669,48 @@ export class BattleScene extends Phaser.Scene {
     if (!id) return;
     if (this.ui.kind === "building") this.selectShopItem(id);
     else if (this.ui.kind === "equipping") this.selectEquipItem(id);
+    else if (this.ui.kind === "debugSpawnEnemy") this.selectDebugEnemy(id);
+    else if (this.ui.kind === "debugPaintTerrain") this.selectDebugTerrain(id as TileType);
+    else if (this.ui.kind === "debugStatus") this.selectDebugStatus(id as StatusEffectId);
   }
 
   /** Redraw the grid's keyboard-focus ring without tearing down the whole mode. */
   private refreshGridFocusVisual(): void {
     if (this.ui.kind === "building") this.showShopUI(true, this.ui.defId);
     else if (this.ui.kind === "equipping") this.showEquipUI(true, this.ui.itemId);
+    else if (this.isDebugGridKind(this.ui.kind)) this.showDebugPickerUI();
     this.refreshPageNav();
   }
 
   /** Phase 8 keyboard hotkey: select the hero at this fixed roster index. */
   private selectHeroByIndex(i: number): void {
     if (this.turns.current !== "player" || this.inputLocked()) return;
-    if (this.ui.kind === "building" || this.ui.kind === "equipping") return;
+    if (this.ui.kind === "building" || this.ui.kind === "equipping" || this.isDebugGridKind(this.ui.kind)) return;
     const hero = this.heroes[i];
     if (!hero || !hero.isAlive() || !this.canLocallyControl(hero)) return;
     this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
 
   private handleEscape(): void {
-    if (this.choosingAsi || this.choosingSubclass || this.choosingSpellPick || this.choosingRest) return; // must resolve the choice, no Esc shortcut
+    if (
+      this.choosingAsi ||
+      this.choosingSubclass ||
+      this.choosingSpellPick ||
+      this.choosingLevelUpAck ||
+      this.choosingRest ||
+      this.choosingSpellPrep
+    )
+      return; // must resolve the choice, no Esc shortcut
     if (this.tutorialOverlay.length > 0) {
       this.dismissTutorial(); // the tutorial is informational, not a forced choice
+      return;
+    }
+    if (this.technicalLogOverlay.length > 0) {
+      this.closeTechnicalLogOverlay(); // also informational, not a forced choice
+      return;
+    }
+    if (this.debugMenuOverlay.length > 0) {
+      this.closeDebugMenu(); // also informational, not a forced choice
       return;
     }
     if (this.endOverlay.length > 0) {
@@ -3297,6 +3719,8 @@ export class BattleScene extends Phaser.Scene {
       this.exitBuildMode();
     } else if (this.ui.kind === "equipping") {
       this.exitEquipMode();
+    } else if (this.isDebugGridKind(this.ui.kind)) {
+      this.setInteraction({ kind: "idle" });
     } else if (this.ui.kind === "aimingAbility") {
       this.setInteraction({ kind: "heroSelected", heroId: this.ui.heroId });
     } else if (
@@ -3342,14 +3766,25 @@ export class BattleScene extends Phaser.Scene {
    * defeats the target, `attackSingle` returns null for the rest (it only
    * targets the living) and the loop simply stops early.
    */
-  private tryBasicAttack(hero: Hero, enemy: Enemy): void {
-    if (!hero.canAct()) {
-      this.rejectAt(enemy.position, `${hero.name} has already acted this turn`);
-      return;
-    }
-    // D-125: a basic attack always breaks this hero's own hidden state,
-    // mirroring a stealthed enemy's "first strike reveals it" rule.
-    if (hero.isHidden) hero.reveal();
+  /**
+   * D-132: every advantage/bonus source a basic attack against a SPECIFIC
+   * enemy would apply, computed read-only (no resource spent, no dice
+   * rolled) — shared by the real attack (`tryBasicAttack`, which spends the
+   * flags this returns) and the hover-preview hit-chance calculator
+   * (`previewHitChance`, which only reads them). Keeping this one place
+   * means the preview can never drift from what actually happens when the
+   * hero swings.
+   */
+  private computeBasicAttackProfile(
+    hero: Hero,
+    enemy: Enemy,
+  ): {
+    profile: AttackProfile;
+    usingLuck: boolean;
+    vexed: boolean;
+    inspired: boolean;
+    fated: boolean;
+  } {
     const profile = this.attackProfileFor(hero);
     const usingLuck = hero.canUseLucky();
     if (usingLuck) profile.advantage = "advantage";
@@ -3377,6 +3812,32 @@ export class BattleScene extends Phaser.Scene {
     // precedent as Lucky/Bardic Inspiration.
     const fated = hero.canUseBoonOfFate;
     if (fated) profile.attackBonus += hero.boonOfFateBonus;
+    return { profile, usingLuck, vexed, inspired, fated };
+  }
+
+  /**
+   * D-132: the hover-tooltip's "N% to hit" line — null when the enemy is out
+   * of this hero's current attack range (or already dead), the same cases
+   * `tryBasicAttack`'s own `CombatSystem.attackSingle` silently refuses.
+   * Read-only: calls `computeBasicAttackProfile` for the exact bonuses a real
+   * swing would use, then resolves them analytically instead of rolling.
+   */
+  private previewHitChance(hero: Hero, enemy: Enemy): number | null {
+    if (!enemy.isAlive()) return null;
+    const { profile } = this.computeBasicAttackProfile(hero, enemy);
+    if (!CombatSystem.isInRange(hero.position, enemy.position, profile.rangeTiles)) return null;
+    return CombatSystem.hitChance(profile.attackBonus, enemy.armorClass, profile.advantage ?? "normal", profile.critThreshold);
+  }
+
+  private tryBasicAttack(hero: Hero, enemy: Enemy): void {
+    if (!hero.canAct()) {
+      this.rejectAt(enemy.position, `${hero.name} has already acted this turn`);
+      return;
+    }
+    // D-125: a basic attack always breaks this hero's own hidden state,
+    // mirroring a stealthed enemy's "first strike reveals it" rule.
+    if (hero.isHidden) hero.reveal();
+    const { profile, usingLuck, vexed, inspired, fated } = this.computeBasicAttackProfile(hero, enemy);
     const firstResult = CombatSystem.attackSingle(hero.position, enemy, profile, this.random);
     if (!firstResult) {
       this.rejectAt(enemy.position, `${enemy.def.name} is out of range`);
@@ -3423,6 +3884,7 @@ export class BattleScene extends Phaser.Scene {
       const verb = BattleScene.attackVerb(result);
       const suffix = BattleScene.didHit(result) ? ` for ${result.damageDealt}` : "";
       this.logCombat(`${hero.name} ${verb} ${enemy.def.name}${suffix}`);
+      this.logTechnical(BattleScene.technicalAttackLine(hero.name, enemy.def.name, result));
       this.applyPaladinSmite(hero, enemy, result);
       this.applyHuntersMarkBonus(hero, enemy, result);
       this.applyEquipmentProcs(hero, enemy, result);
@@ -3464,6 +3926,7 @@ export class BattleScene extends Phaser.Scene {
     const verb = BattleScene.attackVerb(result);
     const suffix = BattleScene.didHit(result) ? ` for ${result.damageDealt}` : "";
     this.logCombat(`${hero.name}'s off-hand ${verb} ${enemy.def.name}${suffix}`);
+    this.logTechnical(BattleScene.technicalAttackLine(`${hero.name}'s off-hand`, enemy.def.name, result));
     if (BattleScene.didHit(result)) this.showHeroHit(enemy);
   }
 
@@ -3560,6 +4023,7 @@ export class BattleScene extends Phaser.Scene {
         const verb = BattleScene.attackVerb(cleaveResult);
         const suffix = BattleScene.didHit(cleaveResult) ? ` for ${cleaveResult.damageDealt}` : "";
         this.logCombat(`${hero.name}'s ${masteryName} mastery ${verb} ${second.def.name}${suffix}`);
+        this.logTechnical(BattleScene.technicalAttackLine(`${hero.name}'s ${masteryName}`, second.def.name, cleaveResult));
         if (BattleScene.didHit(cleaveResult)) this.showHeroHit(second);
         return;
       }
@@ -3757,11 +4221,30 @@ export class BattleScene extends Phaser.Scene {
           this.logCombat(`${enemy.def.name} resists ${def.name}'s effect (save ${save.total} vs DC ${proc.saveDC})`);
           return;
         }
-        enemy.health = Math.max(0, enemy.health - proc.bonusDamage);
-        result.damageDealt += proc.bonusDamage;
+        // D-137: a proc that declares its own damageType/damageTypes routes
+        // through the same resistance math as a spell/attack; one that
+        // doesn't (every item before this decision) keeps hitting health
+        // directly, unchanged.
+        const bonusDamage =
+          proc.damageType || proc.damageTypes
+            ? CombatSystem.applyResistance(
+                proc.bonusDamage,
+                {
+                  rangeTiles: 0,
+                  damage: proc.bonusDamage,
+                  attackBonus: 0,
+                  damageType: proc.damageType,
+                  damageTypes: proc.damageTypes,
+                  magical: proc.magical,
+                },
+                enemy,
+              )
+            : proc.bonusDamage;
+        enemy.health = Math.max(0, enemy.health - bonusDamage);
+        result.damageDealt += bonusDamage;
         result.healthAfter = enemy.health;
         result.defeated = result.healthBefore > 0 && enemy.health <= 0;
-        this.logCombat(`${def.name} sears ${enemy.def.name} for ${proc.bonusDamage} more damage`);
+        this.logCombat(`${def.name} sears ${enemy.def.name} for ${bonusDamage} more damage`);
         return;
       }
       case "onKillHealNearestAlly": {
@@ -3817,7 +4300,15 @@ export class BattleScene extends Phaser.Scene {
       const results = CombatSystem.attackArea(
         hero.position,
         this.waveSystem.enemies,
-        { rangeTiles: ability.rangeTiles, damage: ability.damage, attackBonus: hero.effectiveAttackBonus, autoHit: ability.autoHit },
+        {
+          rangeTiles: ability.rangeTiles,
+          damage: ability.damage,
+          attackBonus: hero.effectiveAttackBonus,
+          autoHit: ability.autoHit,
+          damageType: ability.damageType,
+          damageTypes: ability.damageTypes,
+          magical: true,
+        },
         this.random,
       );
       if (results.length === 0) {
@@ -3872,6 +4363,9 @@ export class BattleScene extends Phaser.Scene {
         damage: ability.damage + (inspired ? hero.pendingInspirationBonus : 0),
         attackBonus: hero.effectiveAttackBonus + (inspired ? hero.pendingInspirationBonus : 0),
         autoHit: ability.autoHit,
+        damageType: ability.damageType,
+        damageTypes: ability.damageTypes,
+        magical: true,
       },
       this.random,
     );
@@ -3989,7 +4483,11 @@ export class BattleScene extends Phaser.Scene {
     this.spendSpellSlotIfNeeded(hero, ability);
     this.playCastVisual(ability, hero.position, enemy.position);
     enemy.lastDeathCause = deathCauseForAbility(ability);
-    const result = SavingThrowSystem.applySaveOrDamage(enemy, ability.damage, dc, enemy.savingThrowBonus, this.random);
+    const result = SavingThrowSystem.applySaveOrDamage(enemy, ability.damage, dc, enemy.savingThrowBonus, this.random, "normal", {
+      damageType: ability.damageType,
+      damageTypes: ability.damageTypes,
+      magical: true,
+    });
     hero.markActedForSpellCast();
     if (result.save.success) {
       this.logCombat(`${enemy.def.name} resists ${hero.name}'s ${ability.name} (save ${result.save.total} vs DC ${dc})`);
@@ -4132,7 +4630,11 @@ export class BattleScene extends Phaser.Scene {
       const dc = hero.spellSaveDC ?? 10;
       for (const enemy of targets) {
         enemy.lastDeathCause = aoeDeathCause;
-        const result = SavingThrowSystem.applySaveOrDamage(enemy, ability.damage, dc, enemy.savingThrowBonus, this.random);
+        const result = SavingThrowSystem.applySaveOrDamage(enemy, ability.damage, dc, enemy.savingThrowBonus, this.random, "normal", {
+          damageType: ability.damageType,
+          damageTypes: ability.damageTypes,
+          magical: true,
+        });
         if (result.save.success) {
           this.logCombat(`${enemy.def.name} resists ${hero.name}'s ${ability.name} (save ${result.save.total} vs DC ${dc})`);
         } else {
@@ -4157,7 +4659,15 @@ export class BattleScene extends Phaser.Scene {
       const results = CombatSystem.attackArea(
         tile,
         this.waveSystem.enemies,
-        { rangeTiles: radius, damage: ability.damage, attackBonus: hero.effectiveAttackBonus, autoHit: ability.autoHit },
+        {
+          rangeTiles: radius,
+          damage: ability.damage,
+          attackBonus: hero.effectiveAttackBonus,
+          autoHit: ability.autoHit,
+          damageType: ability.damageType,
+          damageTypes: ability.damageTypes,
+          magical: true,
+        },
         this.random,
       );
       this.applyHeroResults(hero, ability.name, results, ability.appliesStatus, aoeDeathCause);
@@ -4527,7 +5037,15 @@ export class BattleScene extends Phaser.Scene {
     const results = CombatSystem.attackArea(
       hero.position,
       this.waveSystem.enemies,
-      { rangeTiles: ability.rangeTiles, damage: ability.damage, attackBonus: hero.effectiveAttackBonus, autoHit: ability.autoHit },
+      {
+        rangeTiles: ability.rangeTiles,
+        damage: ability.damage,
+        attackBonus: hero.effectiveAttackBonus,
+        autoHit: ability.autoHit,
+        damageType: ability.damageType,
+        damageTypes: ability.damageTypes,
+        magical: true,
+      },
       this.random,
     );
     if (results.length === 0) {
@@ -4726,6 +5244,7 @@ export class BattleScene extends Phaser.Scene {
       const verb = BattleScene.attackVerb(r);
       const suffix = BattleScene.didHit(r) ? ` for ${r.damageDealt}` : "";
       this.logCombat(`${hero.name}'s ${abilityName} ${verb} ${name}${suffix}`);
+      this.logTechnical(BattleScene.technicalAttackLine(`${hero.name}'s ${abilityName}`, name, r));
       if (enemy && BattleScene.didHit(r)) {
         if (deathCause) enemy.lastDeathCause = deathCause;
         this.showHeroHit(enemy);
@@ -5003,6 +5522,24 @@ export class BattleScene extends Phaser.Scene {
     this.setInteraction({ kind: "building", defId });
   }
 
+  /** Test Mode (D-138): pick which enemy the next tile click spawns. */
+  private selectDebugEnemy(enemyId: string): void {
+    if (this.ui.kind !== "debugSpawnEnemy") return;
+    this.setInteraction({ kind: "debugSpawnEnemy", enemyId });
+  }
+
+  /** Test Mode (D-138): pick which terrain type the next tile click paints. */
+  private selectDebugTerrain(tileType: TileType): void {
+    if (this.ui.kind !== "debugPaintTerrain") return;
+    this.setInteraction({ kind: "debugPaintTerrain", tileType });
+  }
+
+  /** Test Mode (D-138): pick which status the next tile click toggles on its occupant. */
+  private selectDebugStatus(statusId: StatusEffectId): void {
+    if (this.ui.kind !== "debugStatus") return;
+    this.setInteraction({ kind: "debugStatus", statusId });
+  }
+
   /**
    * Show/hide the shop buttons and highlight the selected, affordable items.
    * Phase 25 (D-116): only the current PAGE (`ITEM_GRID_PAGE_SIZE` slots) is
@@ -5062,17 +5599,69 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
+   * Test Mode (D-138): show/hide whichever debug-picker grid (Spawn Enemy,
+   * Paint Terrain, Set Status) matches `this.ui.kind`, one page at a time —
+   * same pagination shape as `showShopUI`/`showEquipUI`. Hides all three
+   * grids outright when `this.ui.kind` isn't one of them (called
+   * unconditionally from `setInteraction`, same as those two).
+   */
+  private showDebugPickerUI(): void {
+    const ui = this.ui;
+    const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
+    const render = (
+      show: boolean,
+      buttons: Phaser.GameObjects.Rectangle[],
+      labels: Phaser.GameObjects.Text[],
+      items: readonly string[],
+      selectedId: string | undefined,
+    ): void => {
+      buttons.forEach((btn, i) => {
+        const onThisPage = Math.floor(i / ITEM_GRID_PAGE_SIZE) === page;
+        const visible = show && onThisPage;
+        btn.setVisible(visible);
+        labels[i].setVisible(visible);
+        if (visible) {
+          const selected = items[i] === selectedId;
+          btn.setFillStyle(selected ? 0x5a7ab0 : 0x3a4a6a);
+          btn.setStrokeStyle(this.keyboardFocus === "grid" && i === this.gridFocusIndex ? 3 : 0, 0xffffff);
+        }
+      });
+    };
+    render(
+      ui.kind === "debugSpawnEnemy",
+      this.debugEnemyButtons,
+      this.debugEnemyLabels,
+      DEBUG_ENEMY_IDS,
+      ui.kind === "debugSpawnEnemy" ? ui.enemyId : undefined,
+    );
+    render(
+      ui.kind === "debugPaintTerrain",
+      this.debugTerrainButtons,
+      this.debugTerrainLabels,
+      DEBUG_TERRAIN_TYPES,
+      ui.kind === "debugPaintTerrain" ? ui.tileType : undefined,
+    );
+    render(
+      ui.kind === "debugStatus",
+      this.debugStatusButtons,
+      this.debugStatusLabels,
+      STATUS_EFFECT_ORDER,
+      ui.kind === "debugStatus" ? ui.statusId : undefined,
+    );
+  }
+
+  /**
    * Phase 17 (D-108)/Phase 25 (D-116): the page-nav control shared by
-   * whichever item grid is active (Shop or Gear — never both), refreshed
-   * after any change to `gridFocusIndex` or mode. Hidden entirely when
-   * neither grid is showing, or when the active grid's whole catalogue fits
-   * on one page.
+   * whichever item grid is active (Shop, Gear, or a Test Mode debug picker —
+   * never more than one at once), refreshed after any change to
+   * `gridFocusIndex` or mode. Hidden entirely when no grid is showing, or
+   * when the active grid's whole catalogue fits on one page.
    */
   private refreshPageNav(): void {
     const kind = this.ui.kind;
     const gridVisible =
-      kind === "building" || (kind === "equipping" && this.isAnyHeroNearShop());
-    const items = kind === "building" ? SHOP_ORDER : kind === "equipping" ? this.visibleGearCatalog() : [];
+      kind === "building" || (kind === "equipping" && this.isAnyHeroNearShop()) || this.isDebugGridKind(kind);
+    const items = this.currentGridItems();
     const pageCount = Math.max(1, Math.ceil(items.length / ITEM_GRID_PAGE_SIZE));
     const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
     const showNav = gridVisible && pageCount > 1;
@@ -5081,9 +5670,9 @@ export class BattleScene extends Phaser.Scene {
     this.pageNavLabel.setVisible(showNav).setText(`Page ${page + 1}/${pageCount}`);
   }
 
-  /** Phase 17 (D-108)/Phase 25 (D-116): jump the active grid's (Shop or Gear) page by moving `gridFocusIndex` to the start of the adjacent page. */
+  /** Phase 17 (D-108)/Phase 25 (D-116): jump the active grid's (Shop, Gear, or a Test Mode debug picker) page by moving `gridFocusIndex` to the start of the adjacent page. */
   private turnGridPage(direction: 1 | -1): void {
-    if (this.ui.kind !== "building" && this.ui.kind !== "equipping") return;
+    if (this.ui.kind !== "building" && this.ui.kind !== "equipping" && !this.isDebugGridKind(this.ui.kind)) return;
     const items = this.currentGridItems();
     const pageCount = Math.max(1, Math.ceil(items.length / ITEM_GRID_PAGE_SIZE));
     const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
@@ -6055,28 +6644,60 @@ export class BattleScene extends Phaser.Scene {
     this.combatLogText.setText(this.combatLog.join("\n"));
   }
 
+  /** KI-085/D-130: append a line to the technical log's own history (see `technicalLog`'s doc comment). */
+  private logTechnical(line: string): void {
+    this.technicalLog.push(line);
+    if (this.technicalLog.length > 200) this.technicalLog.shift();
+  }
+
+  /**
+   * KI-085/D-130: the full dice-roll detail behind one attack/save result —
+   * die, bonus, target number, advantage mode, and the raw outcome — for the
+   * technical log's own line, alongside (never instead of) the existing
+   * plain-English `logCombat` line at the same call site. Absent `roll`
+   * means an `autoHit` attack (a trap, or any ability that skips the d20
+   * entirely) — reported as such rather than inventing roll numbers that
+   * never happened.
+   */
+  private static technicalAttackLine(attackerName: string, targetName: string, result: AttackResult): string {
+    if (!result.roll) {
+      const dmg = result.damageDealt > 0 ? ` for ${result.damageDealt}` : "";
+      return `${attackerName} -> ${targetName}: auto-hit (no roll)${dmg}`;
+    }
+    const { d20, total, targetArmorClass, hit, critical, fumble, advantage } = result.roll;
+    const bonus = total - d20;
+    const bonusText = bonus >= 0 ? `+${bonus}` : `${bonus}`;
+    const advText = advantage === "normal" ? "" : ` (${advantage})`;
+    const outcome = fumble ? "FUMBLE" : critical ? "CRITICAL HIT" : hit ? "HIT" : "MISS";
+    const dmgText = hit && result.damageDealt > 0 ? `, ${result.damageDealt} damage` : "";
+    return `${attackerName} -> ${targetName}: d20 ${d20} ${bonusText} = ${total} vs ${targetArmorClass}${advText} -> ${outcome}${dmgText}`;
+  }
+
   private refreshStatus(): void {
     const heroPart = this.heroes
       .map((h) => {
         if (!h.isAlive()) return `${h.name} (down)`;
         const move = h.canMove() ? "move:ready" : "move:used";
         const act = h.canAct() ? "act:ready" : "act:used";
-        const sel =
+        const isSelected =
           (this.ui.kind === "heroSelected" ||
             this.ui.kind === "confirmingMove" ||
             this.ui.kind === "aimingAbility" ||
             this.ui.kind === "choosingSpell" ||
             this.ui.kind === "aimingSpell" ||
             this.ui.kind === "aimingTileSpell") &&
-          this.ui.heroId === h.id
-            ? " <"
-            : "";
+          this.ui.heroId === h.id;
+        const sel = isSelected ? " <" : "";
         const gearCount = GEAR_SLOT_IDS.filter((s) => h.equippedItems[s]).length;
         const potionCount = GENERAL_SLOT_IDS.filter((s) => h.equippedPotions[s]).length;
         const gear = gearCount || potionCount ? ` [gear ${gearCount}/${GEAR_SLOT_IDS.length} pot ${potionCount}/${GENERAL_SLOT_IDS.length}]` : "";
         // Phase 13.3 (D-089): only a D&D-built hero has a meaningful class level to show.
         const level = h.classId !== undefined ? ` Lv${h.level}` : "";
-        return `${h.name}${level} ${h.health}/${h.effectiveMaxHealth}hp ${move} ${act}${gear}${sel}`;
+        // D-132: AC only for the currently selected hero — printing it for
+        // all 4 at once would lengthen the always-on line for every hero,
+        // risking the exact wrap-width regression D-126/KI-083 just fixed.
+        const ac = isSelected ? ` AC${h.armorClass}` : "";
+        return `${h.name}${level} ${h.health}/${h.effectiveMaxHealth}hp${ac} ${move} ${act}${gear}${sel}`;
       })
       .join("    ");
     const enemyCount = this.waveSystem.enemies.length;
@@ -6104,12 +6725,22 @@ export class BattleScene extends Phaser.Scene {
       hint = previewId
         ? (() => {
             const entry = gearCatalogEntry(previewId);
-            return `  |  ${entry.name} (${entry.cost}g): ${entry.description} · click a hero to equip · ${focusHint} · Esc when done`;
+            const verb = entry.isPotion ? "buy & carry it (use later with P)" : "buy & equip it";
+            return `  |  ${entry.name} (${entry.cost}g): ${entry.description} · click a hero to ${verb} for ${entry.cost}g · click a hero already carrying it to unequip & refund · ${focusHint} · Esc when done`;
           })()
-        : `  |  pick an item, then click a hero to equip (or click a carrying hero to unequip) · ${focusHint} · Esc when done`;
+        : `  |  click an item below to select it, then click a hero to BUY it — gear equips immediately, potions are carried for later use (P) · click a hero already carrying an item to unequip & refund · ${focusHint} · Esc when done`;
+    } else if (this.ui.kind === "debugSpawnEnemy") {
+      const focusHint = this.keyboardFocus === "grid" ? "Tab: aim on board" : "Tab: pick item";
+      hint = `  |  Test Mode: click a tile to spawn ${getEnemyDefinition(this.ui.enemyId).name} there · ${focusHint} · Esc when done`;
+    } else if (this.ui.kind === "debugPaintTerrain") {
+      const focusHint = this.keyboardFocus === "grid" ? "Tab: aim on board" : "Tab: pick item";
+      hint = `  |  Test Mode: click a tile to paint it "${this.ui.tileType}" · no placement checks · ${focusHint} · Esc when done`;
+    } else if (this.ui.kind === "debugStatus") {
+      const focusHint = this.keyboardFocus === "grid" ? "Tab: aim on board" : "Tab: pick item";
+      hint = `  |  Test Mode: click a hero/enemy to toggle "${getStatusEffectDefinition(this.ui.statusId).name}" on it · ${focusHint} · Esc when done`;
     }
-    if (this.ui.kind !== "building" && this.ui.kind !== "equipping") hint += "  ·  1-4: select hero";
-    hint += "  ·  arrows+Enter/Space: keyboard play  ·  H: help";
+    if (this.ui.kind !== "building" && this.ui.kind !== "equipping" && !this.isDebugGridKind(this.ui.kind)) hint += "  ·  1-4: select hero";
+    hint += "  ·  arrows+Enter/Space: keyboard play  ·  H: help  ·  S: game speed  ·  L: technical log";
     this.statusText.setText(`${heroPart}    enemies: ${enemyCount}${hint}`);
   }
 
@@ -6207,7 +6838,52 @@ export class BattleScene extends Phaser.Scene {
     this.choosingRest = false;
     const proceed = this.pendingAfterRest;
     this.pendingAfterRest = null;
+    // D-136: a Long Rest is the trigger for Wizard/Cleric/Druid's full spell
+    // relist (and Wizard's own cantrip swap) — offer it here, deferring
+    // `proceed` past it the same way `afterWaveCleared` defers past every
+    // other overlay. Paladin/Ranger's own Long-Rest tier stays moot (empty
+    // eligible pool), so they never actually appear in this filter.
+    if (kind === "long") {
+      const heroesNeedingPrep = this.livingHeroes().filter(
+        (hero) => hero.classId && spellSwapStepsForClass(hero.classId, hero.level, "longRest").length > 0,
+      );
+      if (heroesNeedingPrep.length > 0) {
+        this.showSpellPrepQueue(heroesNeedingPrep, "longRest", () => proceed?.());
+        return;
+      }
+    }
     proceed?.();
+  }
+
+  /**
+   * KI-085/D-130: a plain "reaches level N!" confirmation for a hero whose
+   * level-up this wave grants no other choice — the subclass/ASI/spell-pick
+   * overlays already announce their own hero's new level in their title, so
+   * this queue is populated with only the LEFTOVER heroes (see
+   * `applyClassLevelUps`'s `plainHeroes`), never both for the same hero.
+   * Same "queue and pop" shape as `showSubclassChoiceQueue`.
+   */
+  private showLevelUpAckQueue(heroes: Hero[], onDone: () => void): void {
+    this.levelUpAckQueue = [...heroes];
+    this.pendingAfterLevelUpAck = onDone;
+    this.choosingLevelUpAck = true;
+    this.advanceLevelUpAckQueue();
+  }
+
+  /** Pop the next hero off `levelUpAckQueue` and show their confirmation, or finish if the queue is empty. */
+  private advanceLevelUpAckQueue(): void {
+    const hero = this.levelUpAckQueue.shift();
+    if (!hero) {
+      this.clearAsiOverlay();
+      this.choosingLevelUpAck = false;
+      const proceed = this.pendingAfterLevelUpAck;
+      this.pendingAfterLevelUpAck = null;
+      proceed?.();
+      return;
+    }
+    this.renderAsiPrompt(`${hero.name} reaches level ${hero.level}!`, [
+      { label: "Continue", onClick: () => this.advanceLevelUpAckQueue() },
+    ]);
   }
 
   /**
@@ -6259,12 +6935,14 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
     const classDef = getClassDefinition(hero.classId);
+    const plannedSubclassId = this.heroLevelUpPlans.get(hero.id)?.subclassId;
     this.renderAsiPrompt(
       `${hero.name} reaches level ${hero.level}!`,
       options.map((subclass) => ({
         label: `Choose: ${subclass.name}`,
         desc: `A ${classDef.name} path chosen at level ${classDef.subclassChoiceLevel}.`,
         onClick: () => this.finishSubclassChoice(hero, subclass.id),
+        highlighted: subclass.id === plannedSubclassId,
       })),
     );
   }
@@ -6305,12 +6983,17 @@ export class BattleScene extends Phaser.Scene {
 
   private showSpellPickPrompt(request: SpellPickRequest): void {
     const { hero, kind, tier } = request;
+    // D-133: a hero's "prompt" plan keys its spell picks by trigger LEVEL —
+    // and `hero.level` IS that trigger level right now, since this prompt
+    // only ever fires the instant `needsXPick()` first becomes true.
+    const plannedPick = this.heroLevelUpPlans.get(hero.id)?.spellPicks[hero.level];
     if (kind === "mastery") {
       const eligible = hero.eligibleSpellMasterySpells();
       if (eligible.length === 0) {
         this.advanceSpellPickQueue(); // nothing known yet at a low enough level — nothing to pick from
         return;
       }
+      const plannedSpellId = plannedPick?.kind === "mastery" ? plannedPick.spellId : undefined;
       this.renderAsiPrompt(
         `${hero.name} — Spell Mastery: Choose a Spell`,
         eligible.map((id) => ({
@@ -6320,6 +7003,7 @@ export class BattleScene extends Phaser.Scene {
             this.logCombat(`${hero.name} masters ${getAbility(id).name} — castable at will, free, forever`);
             this.advanceSpellPickQueue();
           },
+          highlighted: id === plannedSpellId,
         })),
       );
     } else if (kind === "signature") {
@@ -6328,11 +7012,13 @@ export class BattleScene extends Phaser.Scene {
         this.advanceSpellPickQueue(); // fewer than 2 known 3rd-level spells to choose from
         return;
       }
+      const plannedFirst = plannedPick?.kind === "signature" ? plannedPick.spellIds[0] : undefined;
       this.renderAsiPrompt(
         `${hero.name} — Signature Spells: Choose the First`,
         eligible.map((id) => ({
           label: getAbility(id).name,
           onClick: () => this.showSignatureSpellSecondPick(hero, id, eligible),
+          highlighted: id === plannedFirst,
         })),
       );
     } else if (kind === "arcanum" && tier !== undefined) {
@@ -6341,6 +7027,8 @@ export class BattleScene extends Phaser.Scene {
         this.advanceSpellPickQueue(); // nothing known yet at this exact spell level
         return;
       }
+      const plannedSpellId =
+        plannedPick?.kind === "arcanum" && plannedPick.tier === tier ? plannedPick.spellId : undefined;
       this.renderAsiPrompt(
         `${hero.name} — Mystic Arcanum (${tier}th level): Choose a Spell`,
         eligible.map((id) => ({
@@ -6350,6 +7038,7 @@ export class BattleScene extends Phaser.Scene {
             this.logCombat(`${hero.name} learns the Mystic Arcanum ${getAbility(id).name} — one free cast per Long Rest`);
             this.advanceSpellPickQueue();
           },
+          highlighted: id === plannedSpellId,
         })),
       );
     } else {
@@ -6360,6 +7049,9 @@ export class BattleScene extends Phaser.Scene {
   /** Signature Spells' second pick — excludes whichever spell was already picked first. */
   private showSignatureSpellSecondPick(hero: Hero, first: string, eligible: string[]): void {
     const remaining = eligible.filter((id) => id !== first);
+    const plannedPick = this.heroLevelUpPlans.get(hero.id)?.spellPicks[hero.level];
+    const plannedSecond =
+      plannedPick?.kind === "signature" && plannedPick.spellIds[0] === first ? plannedPick.spellIds[1] : undefined;
     this.renderAsiPrompt(
       `${hero.name} — Signature Spells: Choose the Second`,
       remaining.map((id) => ({
@@ -6369,8 +7061,199 @@ export class BattleScene extends Phaser.Scene {
           this.logCombat(`${hero.name} picks ${getAbility(first).name} and ${getAbility(id).name} as Signature Spells — one free cast each per rest`);
           this.advanceSpellPickQueue();
         },
+        highlighted: id === plannedSecond,
       })),
     );
+  }
+
+  /**
+   * D-136 (Phase 3): the two building blocks a "prepared"/"cantrips" swap
+   * step needs — the eligible pool (filtered to what's actually castable at
+   * this hero's CURRENT level, same display-only filter D-135's Character
+   * Creation picker applies at Starting Level) and the hero's live current
+   * selection/cap for that kind. No draft object: these screens write
+   * straight to the `Hero` via `chooseCantrips`/`choosePreparedSpells` on
+   * every click and re-render from the hero's own live state, since Phase 3
+   * never edits a Wizard's spellbook (the one case Phase 2 needed a draft
+   * for, to prune stranded prepared picks mid-edit).
+   */
+  private spellPrepPool(hero: Hero, kind: SpellSwapStepKind): string[] {
+    if (!hero.classId) return [];
+    if (kind === "cantrips") return eligibleCantripPool(hero.classId);
+    const maxLevel = maxCastableSpellLevel(hero.classId, hero.level);
+    const pool = hero.classId === "wizard" ? hero.spellbookIds : eligibleLeveledSpellPool(hero.classId);
+    return pool.filter((id) => getSpell(id).level <= maxLevel);
+  }
+
+  private spellPrepCurrent(hero: Hero, kind: SpellSwapStepKind): readonly string[] {
+    return kind === "cantrips" ? hero.knownCantripIds : hero.preparedSpellIds;
+  }
+
+  private spellPrepMaxCount(hero: Hero, kind: SpellSwapStepKind): number {
+    if (!hero.classId) return 0;
+    return kind === "cantrips"
+      ? cantripsKnownForClassAtLevel(getClassDefinition(hero.classId), hero.level)
+      : preparedSpellCountForClassAtLevel(hero.classId, hero.level);
+  }
+
+  private spellPrepTriggerLabel(): string {
+    return this.spellPrepTrigger === "longRest" ? "Long Rest" : "Level-Up";
+  }
+
+  /**
+   * D-136 (Phase 3): the in-battle counterpart to D-135's Character Creation
+   * spell picker — offers each hero in `heroes` (already filtered to those
+   * with a real swap opportunity at `trigger` via `spellSwapStepsForClass`)
+   * its cantrip/prepared swap step(s), one hero at a time via `spellPrepQueue`
+   * — same "queue and pop" shape as `asiQueue`/`subclassQueue`/`spellPickQueue`,
+   * sharing `asiOverlay`'s rendering (never runs concurrently with any of
+   * them — see `chooseRest`/`afterWaveCleared`'s own chaining).
+   */
+  private showSpellPrepQueue(heroes: Hero[], trigger: SpellSwapTrigger, onDone: () => void): void {
+    this.spellPrepQueue = [...heroes];
+    this.spellPrepTrigger = trigger;
+    this.pendingAfterSpellPrep = onDone;
+    this.choosingSpellPrep = true;
+    this.advanceSpellPrepQueue();
+  }
+
+  /** Pop the next hero off `spellPrepQueue` and compute their own step ladder, or finish if the queue is empty. */
+  private advanceSpellPrepQueue(): void {
+    const hero = this.spellPrepQueue.shift();
+    if (!hero || !hero.classId) {
+      this.clearAsiOverlay();
+      this.choosingSpellPrep = false;
+      const proceed = this.pendingAfterSpellPrep;
+      this.pendingAfterSpellPrep = null;
+      proceed?.();
+      return;
+    }
+    this.spellPrepSteps = spellSwapStepsForClass(hero.classId, hero.level, this.spellPrepTrigger);
+    this.spellPrepStepIndex = 0;
+    this.showSpellPrepStep(hero);
+  }
+
+  /** Show this hero's next swap-step screen, or advance to the next hero once their own ladder is exhausted. */
+  private showSpellPrepStep(hero: Hero): void {
+    if (this.spellPrepStepIndex >= this.spellPrepSteps.length) {
+      this.advanceSpellPrepQueue();
+      return;
+    }
+    const kind = this.spellPrepSteps[this.spellPrepStepIndex];
+    if (kind === "prepared" && hero.classId && preparedSwapIsFullRelist(hero.classId)) {
+      this.showSpellPrepRelistScreen(hero, kind);
+    } else {
+      this.showSpellPrepDropScreen(hero, kind);
+    }
+  }
+
+  private advanceSpellPrepStep(hero: Hero): void {
+    this.spellPrepStepIndex += 1;
+    this.showSpellPrepStep(hero);
+  }
+
+  /**
+   * The full-relist screen (Wizard/Cleric/Druid's PREPARED list at Long
+   * Rest only — cantrips never take this path, see `preparedSwapIsFullRelist`'s
+   * own doc comment): a toggle-multiple-then-confirm interaction, ported
+   * from `CharacterCreationScene.showSpellStepScreen` but writing straight
+   * to the live `Hero` instead of a scene-local draft (see `spellPrepPool`'s
+   * comment for why no draft is needed here). Re-invoked on every toggle
+   * click so `highlighted` stays in sync with the hero's own live list.
+   */
+  private showSpellPrepRelistScreen(hero: Hero, kind: SpellSwapStepKind): void {
+    const pool = this.spellPrepPool(hero, kind);
+    const current = this.spellPrepCurrent(hero, kind);
+    const max = this.spellPrepMaxCount(hero, kind);
+    const title = kind === "cantrips" ? "Known Cantrips" : "Prepared Spells";
+
+    const choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }> = pool.map(
+      (id) => {
+        const spell = getSpell(id);
+        const isSelected = current.includes(id);
+        return {
+          label: spell.name,
+          desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
+          highlighted: isSelected,
+          onClick: () => {
+            let next: string[];
+            if (isSelected) next = current.filter((existingId) => existingId !== id);
+            else if (current.length < max) next = [...current, id];
+            else return; // already at the cap, and this id isn't currently selected — no-op
+            if (kind === "cantrips") hero.chooseCantrips(next);
+            else hero.choosePreparedSpells(next);
+            this.showSpellPrepRelistScreen(hero, kind);
+          },
+        };
+      },
+    );
+
+    const count = current.length;
+    choices.push({
+      label: `Confirm (${count}/${max})`,
+      onClick: () => (count === max ? this.advanceSpellPrepStep(hero) : undefined),
+    });
+
+    this.renderAsiPrompt(`${hero.name} — ${title} (${this.spellPrepTriggerLabel()}) — Choose ${max}`, choices);
+  }
+
+  /**
+   * The "replace exactly one" flow (every cantrip swap; Paladin/Ranger's
+   * PREPARED list, moot in practice — see D-136): screen A picks which
+   * currently-known entry to drop (or bails out via "Keep current"), screen
+   * B (`showSpellPrepLearnScreen`) picks its replacement from the eligible
+   * pool minus what's already known. Nothing is committed until the Learn
+   * screen's own click, so "◀ Back" from there is a free undo.
+   */
+  private showSpellPrepDropScreen(hero: Hero, kind: SpellSwapStepKind): void {
+    const current = this.spellPrepCurrent(hero, kind);
+    const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
+    const choices: Array<{ label: string; desc?: string; onClick: () => void }> = current.map((id) => {
+      const spell = getSpell(id);
+      return {
+        label: spell.name,
+        desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
+        onClick: () => this.showSpellPrepLearnScreen(hero, kind, id),
+      };
+    });
+    choices.push({
+      label: "Keep current — no swap",
+      desc: `Skip this ${label.toLowerCase()} swap and move on.`,
+      onClick: () => this.advanceSpellPrepStep(hero),
+    });
+    this.renderAsiPrompt(`${hero.name} — ${this.spellPrepTriggerLabel()}: Replace a ${label}`, choices);
+  }
+
+  private showSpellPrepLearnScreen(hero: Hero, kind: SpellSwapStepKind, dropId: string): void {
+    const current = this.spellPrepCurrent(hero, kind);
+    const pool = this.spellPrepPool(hero, kind).filter((id) => !current.includes(id));
+    if (pool.length === 0) {
+      // Nothing eligible to learn instead — same auto-skip idiom the Spell
+      // Mastery/Signature Spells/Mystic Arcanum screens already use when
+      // there's genuinely nothing to pick from.
+      this.advanceSpellPrepStep(hero);
+      return;
+    }
+    const dropLabel = getSpell(dropId).name;
+    const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
+
+    const choices: Array<{ label: string; desc?: string; onClick: () => void }> = pool.map((id) => {
+      const spell = getSpell(id);
+      return {
+        label: spell.name,
+        desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
+        onClick: () => {
+          const next = current.filter((existingId) => existingId !== dropId).concat(id);
+          if (kind === "cantrips") hero.chooseCantrips(next);
+          else hero.choosePreparedSpells(next);
+          this.logCombat(`${hero.name} swaps ${dropLabel} for ${spell.name}`);
+          this.advanceSpellPrepStep(hero);
+        },
+      };
+    });
+    choices.push({ label: "◀ Back", onClick: () => this.showSpellPrepDropScreen(hero, kind) });
+
+    this.renderAsiPrompt(`${hero.name} — ${this.spellPrepTriggerLabel()}: Learn a New ${label}`, choices);
   }
 
   /**
@@ -6403,36 +7286,56 @@ export class BattleScene extends Phaser.Scene {
 
   /** Step 1: raise ability scores, or take a feat instead. */
   private showAsiPathChoice(hero: Hero): void {
+    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[hero.level];
     this.renderAsiPrompt(`${hero.name} — Ability Score Improvement`, [
       {
         label: "Raise Ability Scores",
         desc: "+2 to one ability score, or +1 to two different ones.",
         onClick: () => this.showAsiModeChoice(hero),
+        highlighted: planned?.path === "ability",
       },
       {
         label: "Take a Feat",
         desc: "A special talent instead of raw ability scores.",
         onClick: () => this.showFeatChoice(hero),
+        highlighted: planned?.path === "feat",
       },
     ]);
   }
 
   /** Step 2a (Raise Ability Scores path): the SRD's real split — +2 to one, or +1 to two. */
   private showAsiModeChoice(hero: Hero): void {
+    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[hero.level];
+    const plannedAbility = planned?.path === "ability" ? planned : undefined;
     this.renderAsiPrompt(`${hero.name} — Raise Ability Scores`, [
       {
         label: "+2 to one ability",
         desc: "Raise a single ability score by 2.",
-        onClick: () => this.showAsiAbilityPicker(hero, (ability) => this.finishAsiSingle(hero, ability)),
+        onClick: () =>
+          this.showAsiAbilityPicker(
+            hero,
+            (ability) => this.finishAsiSingle(hero, ability),
+            undefined,
+            plannedAbility?.abilityMode === "single" ? plannedAbility.ability : undefined,
+          ),
+        highlighted: plannedAbility?.abilityMode === "single",
       },
       {
         label: "+1 to two abilities",
         desc: "Raise two different ability scores by 1 each.",
         onClick: () => {
-          this.showAsiAbilityPicker(hero, (first) => {
-            this.showAsiAbilityPicker(hero, (second) => this.finishAsiSplit(hero, first, second), first);
-          });
+          const splitPlan = plannedAbility?.abilityMode === "split" ? plannedAbility : undefined;
+          this.showAsiAbilityPicker(
+            hero,
+            (first) => {
+              const secondHighlight = splitPlan && splitPlan.first === first ? splitPlan.second : undefined;
+              this.showAsiAbilityPicker(hero, (second) => this.finishAsiSplit(hero, first, second), first, secondHighlight);
+            },
+            undefined,
+            splitPlan?.first,
+          );
         },
+        highlighted: plannedAbility?.abilityMode === "split",
       },
     ]);
   }
@@ -6442,10 +7345,12 @@ export class BattleScene extends Phaser.Scene {
     hero: Hero,
     onPick: (ability: AbilityScoreId) => void,
     exclude?: AbilityScoreId,
+    highlightAbility?: AbilityScoreId,
   ): void {
     const choices = ABILITY_SCORE_IDS.filter((id) => id !== exclude).map((id) => ({
       label: `${ABILITY_SCORE_NAMES[id]} (${hero.abilityScoreValue(id)})`,
       onClick: () => onPick(id),
+      highlighted: id === highlightAbility,
     }));
     this.renderAsiPrompt(`${hero.name} — Choose an Ability`, choices);
   }
@@ -6479,12 +7384,15 @@ export class BattleScene extends Phaser.Scene {
       this.showAsiModeChoice(hero);
       return;
     }
+    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[hero.level];
+    const plannedFeatId = planned?.path === "feat" ? planned.featId : undefined;
     const choices = available.map((id) => {
       const feat = getFeat(id);
       return {
         label: feat.name,
         desc: feat.description,
         onClick: () => this.beginFeatGrant(hero, id),
+        highlighted: id === plannedFeatId,
       };
     });
     this.renderAsiPrompt(`${hero.name} — Choose a Feat`, choices);
@@ -6499,11 +7407,14 @@ export class BattleScene extends Phaser.Scene {
    */
   private beginFeatGrant(hero: Hero, featId: string): void {
     const feat = getFeat(featId);
+    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[hero.level];
+    const plannedForThisFeat = planned?.path === "feat" && planned.featId === featId ? planned : undefined;
     if (feat.abilityScoreBoost) {
       const allowed = feat.abilityScoreBoost.allowedAbilities;
       const choices = ABILITY_SCORE_IDS.filter((id) => allowed.includes(id)).map((id) => ({
         label: `${ABILITY_SCORE_NAMES[id]} (${hero.abilityScoreValue(id)})`,
         onClick: () => this.continueFeatGrant(hero, featId, { chosenAbility: id }),
+        highlighted: id === plannedForThisFeat?.chosenAbility,
       }));
       this.renderAsiPrompt(`${hero.name} — ${feat.name}: Choose an Ability`, choices);
       return;
@@ -6520,11 +7431,14 @@ export class BattleScene extends Phaser.Scene {
         { id: "wizard", label: "Wizard" },
       ];
       const remaining = lists.filter((l) => !hero.magicInitiateListsTaken.includes(l.id));
+      const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[hero.level];
+      const plannedList = planned?.path === "feat" && planned.featId === featId ? planned.magicInitiateList : undefined;
       this.renderAsiPrompt(
         `${hero.name} — Magic Initiate: Choose a List`,
         remaining.map((l) => ({
           label: l.label,
           onClick: () => this.finishAsiFeat(hero, featId, { ...partial, magicInitiateList: l.id }),
+          highlighted: l.id === plannedList,
         })),
       );
       return;
@@ -6556,9 +7470,18 @@ export class BattleScene extends Phaser.Scene {
    * step, since the step count/shape varies but the "pick one of these"
    * interaction never does.
    */
+  /**
+   * D-133: `highlighted` marks whichever option matches this hero's
+   * "prompt" mode level-up plan, if any — a gold outline and a "★ " label
+   * prefix, still exactly as clickable as every other option (a suggestion,
+   * not a lock). Every queue below (`showAsiPathChoice` through
+   * `showSignatureSpellSecondPick`) looks up its own hero's plan and passes
+   * this through; a hero with no plan (or mode "fresh") never sets it, so
+   * this is a pure additive rendering feature.
+   */
   private renderAsiPrompt(
     title: string,
-    choices: Array<{ label: string; desc?: string; onClick: () => void }>,
+    choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }>,
   ): void {
     this.clearAsiOverlay();
     const dim = this.add
@@ -6595,11 +7518,12 @@ export class BattleScene extends Phaser.Scene {
         .rectangle(x, y, width, height, 0x3a5a8a)
         .setInteractive({ useHandCursor: true })
         .setDepth(41);
+      if (choice.highlighted) btn.setStrokeStyle(3, 0xf0c040);
       const name = this.add
-        .text(x, y - (choice.desc ? 20 : 0), choice.label, {
+        .text(x, y - (choice.desc ? 20 : 0), choice.highlighted ? `★ ${choice.label}` : choice.label, {
           fontFamily: "system-ui, Arial, sans-serif",
           fontSize: "14px",
-          color: "#e8e8f0",
+          color: choice.highlighted ? "#ffe58a" : "#e8e8f0",
           fontStyle: "bold",
           align: "center",
           wordWrap: { width: width - 16 },
@@ -6626,14 +7550,18 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  /** True while a modal (ASI/feat choice, subclass choice, spell-pick choice, rest choice, or the tutorial) should block board input. */
+  /** True while a modal (ASI/feat choice, subclass choice, spell-pick choice, spell-prep swap choice, rest choice, the tutorial, the technical log, or Test Mode's debug menu) should block board input. */
   private inputLocked(): boolean {
     return (
       this.choosingAsi ||
       this.choosingSubclass ||
       this.choosingSpellPick ||
+      this.choosingLevelUpAck ||
       this.choosingRest ||
-      this.tutorialOverlay.length > 0
+      this.choosingSpellPrep ||
+      this.tutorialOverlay.length > 0 ||
+      this.technicalLogOverlay.length > 0 ||
+      this.debugMenuOverlay.length > 0
     );
   }
 
@@ -6681,7 +7609,8 @@ export class BattleScene extends Phaser.Scene {
           "mode, Tab switches arrow keys between the item grid and the board.\n\n" +
           "Don't let enemies reach the OUT tile — that damages your Stronghold\n" +
           "Integrity. Lose it all and the run ends. Press H any time to see\n" +
-          "this again.",
+          "this again, S to cycle Game Speed (Normal/Fast/Instant), or L to see\n" +
+          "the technical log (every attack/save roll's raw dice and bonuses).",
         {
           fontFamily: "system-ui, Arial, sans-serif",
           fontSize: "16px",
@@ -6718,6 +7647,310 @@ export class BattleScene extends Phaser.Scene {
     const after = this.pendingAfterTutorial;
     this.pendingAfterTutorial = null;
     after?.();
+  }
+
+  /** Toggle the technical log overlay open or closed (the "L" hotkey). */
+  private toggleTechnicalLogOverlay(): void {
+    if (this.technicalLogOverlay.length > 0) this.closeTechnicalLogOverlay();
+    else this.showTechnicalLogOverlay();
+  }
+
+  /**
+   * KI-085/D-130: the technical log's own dedicated screen (not folded into
+   * the always-on `combatLogText` line, per Kevin's explicit ask) — the last
+   * 24 entries of `technicalLog`, most recent at the bottom, same dim+panel
+   * shape `showTutorial` already established. Blocks board input while open
+   * (see `inputLocked`), same as every other modal overlay in this scene.
+   */
+  private showTechnicalLogOverlay(): void {
+    this.closeTechnicalLogOverlay();
+    const dim = this.add
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.75)
+      .setDepth(45);
+    const title = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 300, "Technical Log", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "28px",
+        color: "#f0e070",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(46);
+    const subtitle = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 264, "Every attack/save roll's raw dice, bonuses, and outcome", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "13px",
+        color: "#9a9ab0",
+      })
+      .setOrigin(0.5)
+      .setDepth(46);
+    const recent = this.technicalLog.slice(-24);
+    const bodyText = recent.length > 0 ? recent.join("\n") : "No attack or save rolls have happened yet this battle.";
+    const body = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 30, bodyText, {
+        fontFamily: "monospace",
+        fontSize: "13px",
+        color: "#e8e8f0",
+        align: "left",
+        lineSpacing: 4,
+        wordWrap: { width: GAME_WIDTH - 160 },
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(46);
+    const btn = this.add
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 300, 220, 52, 0x4caf72)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(46);
+    const btnLabel = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 300, "Close (L or Esc)", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "20px",
+        color: "#0e0e14",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(46);
+    btn.on("pointerover", () => btn.setFillStyle(0x66c98c));
+    btn.on("pointerout", () => btn.setFillStyle(0x4caf72));
+    btn.on("pointerdown", () => this.closeTechnicalLogOverlay());
+    this.technicalLogOverlay.push(dim, title, subtitle, body, btn, btnLabel);
+  }
+
+  private closeTechnicalLogOverlay(): void {
+    for (const obj of this.technicalLogOverlay) obj.destroy();
+    this.technicalLogOverlay = [];
+  }
+
+  // ----- Test Mode debug tools (D-138) ------------------------------------
+
+  /**
+   * Test Mode (D-138): a single small button, bottom-right corner — the only
+   * always-visible new HUD element `this.testMode` adds. Anchored purely to
+   * `GAME_WIDTH`/`GAME_HEIGHT` (not the grid), well clear of the centered
+   * shop/gear/debug-picker grid stack below the board on every built-in map.
+   */
+  private buildDebugToolbar(): void {
+    const x = GAME_WIDTH - 110;
+    const y = GAME_HEIGHT - 24;
+    const btn = this.add
+      .rectangle(x, y, 180, 36, 0x8a3a3a)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(30);
+    this.add
+      .text(x, y, "Debug Menu (F9)", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "13px",
+        color: "#ffd8d8",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(30);
+    btn.on("pointerover", () => btn.setFillStyle(0xa04a4a));
+    btn.on("pointerout", () => btn.setFillStyle(0x8a3a3a));
+    btn.on("pointerdown", () => this.toggleDebugMenu());
+
+    this.input.keyboard?.on("keydown-F9", () => {
+      if ((this.inputLocked() && this.debugMenuOverlay.length === 0) || this.endOverlay.length > 0) return;
+      this.toggleDebugMenu();
+    });
+  }
+
+  /** Toggle the Test Mode debug menu open or closed (the "F9" hotkey, or its corner button). */
+  private toggleDebugMenu(): void {
+    if (this.debugMenuOverlay.length > 0) this.closeDebugMenu();
+    else this.showDebugMenu();
+  }
+
+  /**
+   * Test Mode (D-138): the top-level debug menu — Skip Wave, the No-Fail
+   * toggle, and the three mode-select buttons (Spawn Enemy/Paint Terrain/Set
+   * Status). Each mode-select button closes this menu and enters the
+   * matching debug-picker `Interaction` kind, whose own grid then appears in
+   * the same footprint the Shop/Gear grid already uses. Same dim+panel modal
+   * shape as `showTechnicalLogOverlay`.
+   */
+  private showDebugMenu(): void {
+    this.closeDebugMenu();
+    const dim = this.add
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.75)
+      .setDepth(45);
+    const title = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 220, "Test Mode: Debug Menu", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "28px",
+        color: "#f0e070",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(46);
+    const subtitle = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 184, "Balance-testing tools — never available outside Test Mode", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "13px",
+        color: "#9a9ab0",
+      })
+      .setOrigin(0.5)
+      .setDepth(46);
+    this.debugMenuOverlay.push(dim, title, subtitle);
+
+    const makeButton = (menuY: number, label: string, color: number, onClick: () => void): void => {
+      const btn = this.add
+        .rectangle(GAME_WIDTH / 2, menuY, 340, 48, color)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(46);
+      const lbl = this.add
+        .text(GAME_WIDTH / 2, menuY, label, {
+          fontFamily: "system-ui, Arial, sans-serif",
+          fontSize: "16px",
+          color: "#0e0e14",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(46);
+      btn.on("pointerover", () => btn.setAlpha(0.85));
+      btn.on("pointerout", () => btn.setAlpha(1));
+      btn.on("pointerdown", onClick);
+      this.debugMenuOverlay.push(btn, lbl);
+    };
+
+    makeButton(GAME_HEIGHT / 2 - 120, "Skip Wave", 0x4caf72, () => this.debugSkipWave());
+    makeButton(
+      GAME_HEIGHT / 2 - 60,
+      `No-Fail Stronghold: ${this.debugNoFailEnabled ? "ON" : "OFF"}`,
+      this.debugNoFailEnabled ? 0xe0b050 : 0x8a8a4a,
+      () => this.debugToggleNoFail(),
+    );
+    makeButton(GAME_HEIGHT / 2, "Spawn Enemy…", 0x5a6a8a, () => {
+      this.closeDebugMenu();
+      this.setInteraction({ kind: "debugSpawnEnemy", enemyId: DEBUG_ENEMY_IDS[0] });
+    });
+    makeButton(GAME_HEIGHT / 2 + 60, "Paint Terrain…", 0x5a6a8a, () => {
+      this.closeDebugMenu();
+      this.setInteraction({ kind: "debugPaintTerrain", tileType: DEBUG_TERRAIN_TYPES[0] });
+    });
+    makeButton(GAME_HEIGHT / 2 + 120, "Set Status…", 0x5a6a8a, () => {
+      this.closeDebugMenu();
+      this.setInteraction({ kind: "debugStatus", statusId: STATUS_EFFECT_ORDER[0] });
+    });
+
+    const closeBtn = this.add
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 200, 220, 44, 0x7a5a3a)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(46);
+    const closeLbl = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 200, "Close (F9 or Esc)", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "16px",
+        color: "#e8e8f0",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(46);
+    closeBtn.on("pointerdown", () => this.closeDebugMenu());
+    this.debugMenuOverlay.push(closeBtn, closeLbl);
+  }
+
+  private closeDebugMenu(): void {
+    for (const obj of this.debugMenuOverlay) obj.destroy();
+    this.debugMenuOverlay = [];
+  }
+
+  /**
+   * Test Mode (D-138): force-clear the CURRENT wave — no reward gold (a
+   * bypass, not a real clear) — then run the exact same post-clear
+   * continuation a real wave-clear uses (`afterWaveCleared`): any pending
+   * level-up/rest overlay, then the next wave or Victory.
+   */
+  private debugSkipWave(): void {
+    if (this.turns.current !== "player") return;
+    const cleared = [...this.waveSystem.enemies];
+    this.waveSystem.forceEndWave();
+    for (const enemy of cleared) this.destroyEnemyToken(enemy.instanceId);
+    this.logCombat("Test Mode: wave skipped.");
+    this.closeDebugMenu();
+    this.afterWaveCleared();
+  }
+
+  /**
+   * Test Mode (D-138): toggle whether the stronghold can ever actually
+   * fall — integrity still visibly rises/falls on a breach, this only
+   * suppresses the loss condition itself (`WaveSystem.isDefeated`).
+   */
+  private debugToggleNoFail(): void {
+    this.debugNoFailEnabled = !this.debugNoFailEnabled;
+    this.waveSystem.setNoFail(this.debugNoFailEnabled);
+    this.logCombat(`Test Mode: No-Fail Stronghold ${this.debugNoFailEnabled ? "enabled" : "disabled"}.`);
+    this.showDebugMenu(); // rebuild in place so the toggle button's own label reflects the new state
+  }
+
+  /** Test Mode (D-138): spawn the selected enemy at the clicked tile — stays in this mode for repeated spawns. */
+  private handleDebugSpawnClick(tile: GridPosition): void {
+    if (this.ui.kind !== "debugSpawnEnemy") return;
+    const enemy = this.waveSystem.spawnAt(this.ui.enemyId, tile);
+    this.spawnEnemyToken(enemy);
+    this.markEnemySeen(enemy.def.id);
+    this.logCombat(`Test Mode: spawned ${enemy.def.name}.`);
+  }
+
+  /**
+   * Test Mode (D-138): repaint the clicked tile to the selected terrain type
+   * — no placement validation (occupancy, buildability) at all, a deliberate
+   * debug-tool simplification; the tester is responsible for what they
+   * paint under a hero/enemy/structure. Mirrors `tickDynamicTerrain`'s own
+   * live single-tile repaint exactly (mutate the SAME `GameMap.data.tiles`
+   * array every system already holds a reference to, then restyle the one
+   * `tileRects` entry).
+   */
+  private handleDebugTerrainClick(tile: GridPosition): void {
+    if (this.ui.kind !== "debugPaintTerrain") return;
+    const type = this.ui.tileType;
+    this.map.data.tiles[tile.y][tile.x] = type;
+    const rect = this.tileRects.get(`${tile.x},${tile.y}`);
+    if (rect) rect.setFillStyle(BOARD_TERRAIN_COLORS[type], 1);
+    const key = `${tile.x},${tile.y}`;
+    const existingGlyph = this.pitGlyphs.get(key);
+    if (existingGlyph) {
+      existingGlyph.destroy();
+      this.pitGlyphs.delete(key);
+    }
+    if (type === "pit") {
+      const tl = this.grid.tileToWorldTopLeft(tile);
+      const glyph = this.add
+        .text(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, "✕", {
+          fontFamily: "system-ui, Arial, sans-serif",
+          fontSize: "20px",
+          color: "#6a3a3a",
+        })
+        .setOrigin(0.5)
+        .setDepth(1);
+      this.pitGlyphs.set(key, glyph);
+    }
+    this.logCombat(`Test Mode: painted (${tile.x}, ${tile.y}) as ${type}.`);
+  }
+
+  /**
+   * Test Mode (D-138): toggle the selected status on whatever hero/enemy
+   * occupies the clicked tile — applies it (a fixed, long debug duration) if
+   * absent, removes it early if already present. A no-op on an empty tile.
+   */
+  private handleDebugStatusClick(tile: GridPosition): void {
+    if (this.ui.kind !== "debugStatus") return;
+    const statusId = this.ui.statusId;
+    const target = this.heroAt(tile) ?? this.enemyAt(tile);
+    if (!target) return;
+    if (target.hasStatus(statusId)) {
+      target.removeStatus(statusId);
+      this.logCombat(`Test Mode: cleared ${getStatusEffectDefinition(statusId).name} from ${this.debugTargetName(target)}.`);
+    } else {
+      target.applyStatus(statusId, DEBUG_STATUS_DURATION_TURNS);
+      this.logCombat(`Test Mode: applied ${getStatusEffectDefinition(statusId).name} to ${this.debugTargetName(target)}.`);
+    }
+    if (target instanceof Hero) this.updateHeroStatusBadge(target);
+    else this.updateStatusBadge(target);
+  }
+
+  private debugTargetName(target: Hero | Enemy): string {
+    return target instanceof Hero ? target.name : target.def.name;
   }
 
   private showEndScreen(message: string, colorHex: string): void {

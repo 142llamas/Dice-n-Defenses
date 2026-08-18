@@ -1,17 +1,18 @@
 import type { CharacterClassDefinition } from "../data/classes";
 
 /**
- * SpellcastingSystem: pure derived math for the spell-slot/known-spells side
- * of the D&D 5.5e character system (Phase 11.2, DECISIONS D-071/D-074). No
- * Phaser, no dependency on `Hero` — mirrors `CharacterSystem`'s treatment of
- * the Fighter's class table, just for a caster's spellcasting progression.
+ * SpellcastingSystem: pure derived math for the cantrips-known/spell-slot
+ * side of the D&D 5e character system (Phase 11.2, DECISIONS D-071/D-074).
+ * No Phaser, no dependency on `Hero` — mirrors `CharacterSystem`'s
+ * treatment of the Fighter's class table, just for a caster's spellcasting
+ * progression.
  *
- * Combat stays fully deterministic (D-030) and Phase-2-boundary-honest: this
- * file computes what a Wizard KNOWS/HAS by level (cantrips, slots, prepared
- * spells), but does not spend or track slots during a battle — this game has
- * no resource-spending action economy yet (same boundary as the Fighter's
- * inert Second Wind/Action Surge). Only cantrips (no slot cost) are actually
- * castable in `BattleScene` today, via `data/spells.ts`'s `abilityId` seam.
+ * D-134: the PREPARED-spell-count math (how many leveled spells/cantrips a
+ * class actually has prepared/known at a level, and how often that can
+ * change) moved to `systems/SpellPreparationSystem.ts` — this file stays
+ * focused on the two things every class's `spellcasting` data block
+ * declares directly (`cantripsKnownByLevel`/`spellSlotsByLevel`), not the
+ * newer economy layered on top of them.
  */
 
 const MIN_LEVEL = 1;
@@ -57,14 +58,4 @@ function lookupSparse<T>(table: Record<number, T>, level: number): T | undefined
     .sort((a, b) => b - a);
   if (eligibleLevels.length === 0) return undefined;
   return table[eligibleLevels[0]];
-}
-
-/**
- * A Wizard prepares a number of spells from their spellbook equal to their
- * Intelligence modifier + Wizard level (SRD 5.2.1, minimum 1). Meaningless
- * for a non-caster.
- */
-export function preparedSpellsKnownForWizardAtLevel(level: number, intelligenceModifier: number): number {
-  assertValidLevel(level);
-  return Math.max(1, level + intelligenceModifier);
 }

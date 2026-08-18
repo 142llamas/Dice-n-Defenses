@@ -1,5 +1,6 @@
-import type { Combatant } from "./CombatSystem";
+import { CombatSystem, type Combatant } from "./CombatSystem";
 import { RandomService, type AdvantageMode } from "./RandomService";
+import type { DamageType, DamageTypeSplit } from "../data/weapons";
 
 /**
  * SavingThrowSystem — Phase 13.5 (DECISIONS D-090). No Phaser, mirrors
@@ -62,6 +63,21 @@ export class SavingThrowSystem {
    * roll REPLACES the first outright (even if worse), matching the SRD's own
    * "you must use the new roll" wording, and only that final roll is
    * reflected in the returned `save`.
+   *
+   * D-131: `options.damageType`/`options.magical` route the post-save
+   * damage through `CombatSystem.applyResistance` before it comes off
+   * `target.health` — the same resistance/vulnerability/immunity rule every
+   * attack-roll-based hit already respects (`CombatSystem.applyAttack`), now
+   * also applied to a save-based spell (Fireball, Sacred Flame, Thunderwave,
+   * etc.). Absent `damageType` is a no-op, unchanged from every save before
+   * this decision. Evasion's halving is applied AFTER resistance/
+   * vulnerability resolve — the two are independent 5e rules that both
+   * apply to the same instance of damage.
+   *
+   * D-137: `options.damageTypes` (a genuinely dual/multi-typed save-or-
+   * damage spell, e.g. Meteor Swarm/Ice Storm) takes over from
+   * `options.damageType` the same way `AttackProfile.damageTypes` does —
+   * see `CombatSystem.applyResistance`.
    */
   static applySaveOrDamage(
     target: Combatant,
@@ -70,7 +86,13 @@ export class SavingThrowSystem {
     savingThrowBonus: number,
     random: RandomService,
     advantage: AdvantageMode = "normal",
-    options?: { halveOnFail?: boolean; rerollFailedSave?: () => boolean },
+    options?: {
+      halveOnFail?: boolean;
+      rerollFailedSave?: () => boolean;
+      damageType?: DamageType;
+      damageTypes?: ReadonlyArray<DamageTypeSplit>;
+      magical?: boolean;
+    },
   ): SavingThrowAttackResult {
     const healthBefore = target.health;
     let save = SavingThrowSystem.rollSave(savingThrowBonus, dc, random, advantage);
@@ -80,7 +102,19 @@ export class SavingThrowSystem {
     if (healthBefore <= 0 || save.success) {
       return { targetId: target.id, rawDamage: damage, damageDealt: 0, healthBefore, healthAfter: healthBefore, defeated: false, save };
     }
-    const damageDealt = Math.max(0, options?.halveOnFail ? Math.floor(damage / 2) : damage);
+    const resisted = CombatSystem.applyResistance(
+      Math.max(0, damage),
+      {
+        rangeTiles: 0,
+        damage,
+        attackBonus: 0,
+        damageType: options?.damageType,
+        damageTypes: options?.damageTypes,
+        magical: options?.magical,
+      },
+      target,
+    );
+    const damageDealt = Math.max(0, options?.halveOnFail ? Math.floor(resisted / 2) : resisted);
     const healthAfter = Math.max(0, healthBefore - damageDealt);
     target.health = healthAfter;
     return {

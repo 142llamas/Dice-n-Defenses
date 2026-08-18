@@ -4,7 +4,7 @@ import {
   loadSettings,
   saveSettings,
   nextAnimationSpeed,
-  type AnimationSpeed,
+  ANIMATION_SPEED_LABELS,
 } from "../systems/SettingsSystem";
 import { firebaseReady } from "../cloud/firebaseApp";
 import { initAuth, signInWithGoogle, signOutAndResetAnonymous, type AuthState } from "../cloud/AuthClient";
@@ -17,12 +17,6 @@ import {
   FONT_DISPLAY,
   FONT_BODY,
 } from "./uiTheme";
-
-const ANIMATION_SPEED_LABELS: Record<AnimationSpeed, string> = {
-  normal: "Normal",
-  fast: "Fast",
-  instant: "Instant (reduced motion)",
-};
 
 /**
  * MainMenuScene: the game's title screen.
@@ -218,6 +212,7 @@ export class MainMenuScene extends Phaser.Scene {
 
     const entries: { label: string; onClick: () => void }[] = [
       { label: "Map Builder", onClick: () => this.scene.start("MapBuilderScene") },
+      { label: "Test Mode", onClick: () => this.scene.start("TestModeScene") },
     ];
     if (firebaseReady) {
       entries.push({ label: "Browse Shared Maps", onClick: () => this.scene.start("BrowseSharedMapsScene") });
@@ -306,10 +301,12 @@ export class MainMenuScene extends Phaser.Scene {
 
   /**
    * Phase 8: a single settings control, top-right corner. Cycles the one
-   * setting the game has (animation speed, which doubles as "reduced
-   * motion" at its "instant" step) and persists the choice to localStorage —
-   * BattleScene reads the same key on its own `create()`, so a change here
-   * takes effect next battle.
+   * setting the game has (labeled "Game Speed" — KI-085/D-130 renamed this
+   * from "Animation" since it also scales the fixed pauses between phases,
+   * not just individual tweens; "instant" still doubles as "reduced motion")
+   * and persists the choice to localStorage — BattleScene reads the same key
+   * on its own `create()`, so a change here takes effect next battle. It can
+   * also be cycled live, mid-battle, with the S key (see BattleScene).
    */
   private buildSettingsControl(): void {
     let settings = loadSettings(window.localStorage, SETTINGS_STORAGE_KEY);
@@ -331,7 +328,7 @@ export class MainMenuScene extends Phaser.Scene {
       { variant: "tool", depth: 20 },
     );
 
-    const refresh = () => handle.setLabel(`Animation: ${ANIMATION_SPEED_LABELS[settings.animationSpeed]}`);
+    const refresh = () => handle.setLabel(`Game Speed: ${ANIMATION_SPEED_LABELS[settings.animationSpeed]}`);
     refresh();
   }
 }

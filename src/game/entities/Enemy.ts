@@ -219,6 +219,16 @@ export class Enemy implements Combatant {
     return this.activeDef.damageResistances;
   }
 
+  /** D-131: this enemy's damage-type vulnerability, if any — see `data/enemies.ts`'s `damageVulnerabilities` field and `CombatSystem.applyResistance`. */
+  get damageVulnerabilities(): DamageType[] | undefined {
+    return this.activeDef.damageVulnerabilities;
+  }
+
+  /** D-131: this enemy's damage-type immunity, if any — see `data/enemies.ts`'s `damageImmunities` field and `CombatSystem.applyResistance`. */
+  get damageImmunities(): DamageType[] | undefined {
+    return this.activeDef.damageImmunities;
+  }
+
   /** True once this enemy is at half its BASE max HP or fewer ("Bloodied", the real SRD term). */
   get isBloodied(): boolean {
     return this.health <= this.def.maxHealth / 2;
@@ -247,6 +257,11 @@ export class Enemy implements Combatant {
 
   hasStatus(id: StatusEffectId): boolean {
     return this.activeStatuses.some((s) => s.id === id);
+  }
+
+  /** Test Mode (D-138): remove a status effect early, if present. A no-op otherwise. */
+  removeStatus(id: StatusEffectId): void {
+    this.activeStatuses = this.activeStatuses.filter((s) => s.id !== id);
   }
 
   /** Advance every active status by one phase, dropping any that expire. */

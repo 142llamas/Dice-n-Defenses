@@ -11,6 +11,7 @@ import { getClassDefinition } from "../data/classes";
 import { subclassesForClass } from "../data/subclasses";
 import { attackStyleForAbility, combatStatsForClassLevel } from "./CharacterSystem";
 import { CREATABLE_CLASS_IDS, CHARACTER_NAME_POOL, signatureActionIdsForClass } from "../data/characterCreation";
+import type { LevelUpPlan } from "./LevelUpPlanSystem";
 
 // Re-exported for existing callers/tests — this function now lives in
 // CharacterSystem.ts (Phase 13.3, D-089) alongside the rest of the pure
@@ -136,6 +137,38 @@ export interface CharacterBuild {
   subclassId?: string;
   /** Phase 13.11 (D-096): one common/uncommon item picked at creation, or undefined for "None". */
   startingEquipmentId?: string;
+  /**
+   * D-129: a pre-battle class level to fast-forward to before wave 1, set at
+   * party-setup time (individually per hero, or all at once via the team
+   * control) — separate from `level` above, which stays 1 (the level
+   * `heroDefinitionFromBuild`'s own base-stat math is computed from; the
+   * Hero entity is then leveled up for real, level by level, once built —
+   * see `BattleScene.fastForwardHeroToLevel`). Undefined/1 means "no
+   * fast-forward," matching every existing build's behavior unchanged.
+   */
+  startingLevel?: number;
+  /**
+   * D-133: this hero's Character Creation level-up planner blueprint, set by
+   * `CharacterCreationScene`'s "Plan Levels" overlay. Undefined means no
+   * plan — every existing build is unaffected. Passed straight through to
+   * `HeroDefinition.levelUpPlan` by `heroDefinitionFromBuild`.
+   */
+  levelUpPlan?: LevelUpPlan;
+  /**
+   * D-135 (Phase 2 of D-134's real spell-preparation economy): a caster's
+   * manually-picked starting prepared leveled spells / known cantrips /
+   * (Wizard only) spellbook, set by `CharacterCreationScene`'s "Spells"
+   * picker overlay. Undefined (the default for every non-caster and every
+   * caster the player never opened the picker for) means "keep the silent
+   * `Hero.growSpellSelections()` auto-fill" — every existing build is
+   * unaffected. Passed straight through to the matching `HeroDefinition`
+   * fields by `heroDefinitionFromBuild`; `BattleScene.buildHeroes` applies
+   * them as a wholesale override once the hero's Starting-Level fast-
+   * forward finishes.
+   */
+  preparedSpellIds?: string[];
+  knownCantripIds?: string[];
+  spellbookIds?: string[];
 }
 
 /**
@@ -196,6 +229,18 @@ export function heroDefinitionFromBuild(build: CharacterBuild): HeroDefinition {
     classRiderDamage: stats.bonusRiderDamage,
     // Rendering hint for a future real hero sprite — see HeroDefinition's own comment.
     assetKey: `hero-${build.classId}`,
+    // D-129: passed straight through — `BattleScene.buildHeroes` fast-forwards
+    // the constructed Hero entity to this level, once, right after it's built.
+    startingLevel: build.startingLevel,
+    // D-133: passed straight through — `BattleScene.heroLevelUpPlans` reads
+    // it to resolve every future ASI/subclass/spell-pick trigger.
+    levelUpPlan: build.levelUpPlan,
+    // D-135: passed straight through — `BattleScene.buildHeroes` applies
+    // these (when set) as a wholesale override right after the hero's
+    // Starting-Level fast-forward finishes.
+    preparedSpellIds: build.preparedSpellIds,
+    knownCantripIds: build.knownCantripIds,
+    spellbookIds: build.spellbookIds,
   };
 }
 

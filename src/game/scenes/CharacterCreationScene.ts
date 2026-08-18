@@ -1,13 +1,34 @@
 import Phaser from "phaser";
-import { GAME_WIDTH, SAVE_STORAGE_KEY } from "../config";
+import { GAME_WIDTH, GAME_HEIGHT, SAVE_STORAGE_KEY } from "../config";
 import { ABILITY_SCORE_IDS, ABILITY_SCORE_NAMES, modifierFor, type AbilityScoreId } from "../data/abilityScores";
 import { CHARACTER_NAME_POOL, CREATABLE_CLASS_IDS, STARTING_GEAR_IDS, signatureActionIdsForClass } from "../data/characterCreation";
 import { getAbility } from "../data/abilities";
 import { getClassDefinition } from "../data/classes";
+import { getSpell } from "../data/spells";
+import { combatStatsForClassLevel } from "../systems/CharacterSystem";
+import { cantripsKnownForClassAtLevel, spellSlotsForClassAtLevel } from "../systems/SpellcastingSystem";
+import {
+  spellPickStepsForClass,
+  eligibleCantripPool,
+  eligibleLeveledSpellPool,
+  wizardSpellbookSizeAtLevel,
+  preparedSpellCountForClassAtLevel,
+  defaultFill,
+  type SpellPickStepKind,
+} from "../systems/SpellPreparationSystem";
 import { subclassesForClass, getSubclassDefinition } from "../data/subclasses";
 import { getEquipmentDefinition } from "../data/equipment";
+import { FEAT_IDS, getFeat } from "../data/feats";
 import { RACE_IDS, getRaceDefinition } from "../data/races";
 import type { HeroDefinition, HeroControlMode } from "../data/heroes";
+import { Hero, MAX_CLASS_LEVEL, type MagicInitiateListId } from "../entities/Hero";
+import {
+  emptyLevelUpPlan,
+  fastForwardHero,
+  futureChoiceSteps,
+  type LevelUpChoiceStep,
+  type LevelUpPlan,
+} from "../systems/LevelUpPlanSystem";
 import { DIFFICULTY_IDS, getDifficultyDefinition, type DifficultyId } from "../data/difficulty";
 import type { WaveDefinition } from "../data/waves";
 import type { ParsedMap } from "../data/testMap";
@@ -167,6 +188,17 @@ interface SlotState {
    * subclass choice happens later, in battle.
    */
   subclassIndex: number;
+  /** D-129: a pre-battle class level (1-20) to fast-forward to before wave 1 — see `BattleScene.fastForwardHeroToLevel`. */
+  startingLevel: number;
+  /** D-133: this hero's level-up planner blueprint — see `openLevelPlanner`. Defaults to "fresh" (no plan), identical to every pre-D-133 build. */
+  levelUpPlan: LevelUpPlan;
+  /**
+   * D-135: this hero's manually-picked starting prepared leveled spells/
+   * known cantrips/(Wizard) spellbook — see `openSpellPicker`. Each field
+   * undefined means "keep `Hero.growSpellSelections()`'s silent auto-fill,"
+   * identical to every pre-D-135 build.
+   */
+  spellPicks: { cantripIds?: string[]; leveledSpellIds?: string[]; spellbookIds?: string[] };
 }
 
 interface SlotWidgets {
@@ -179,6 +211,11 @@ interface SlotWidgets {
   gearLabel: Phaser.GameObjects.Text;
   subclassLabel: Phaser.GameObjects.Text;
   statsLabel: Phaser.GameObjects.Text;
+  levelLabel: Phaser.GameObjects.Text;
+  /** D-133: the "Plan Levels" row's label — see `openLevelPlanner`. */
+  planLabel: Phaser.GameObjects.Text;
+  /** D-135: the "Spells" row's label — see `openSpellPicker`. */
+  spellsLabel: Phaser.GameObjects.Text;
   /** Every GameObject this slot created, for dimming an inactive (beyond party size) slot. */
   allObjects: Phaser.GameObjects.GameObject[];
   /** The interactive rectangles among `allObjects`, for disabling an inactive slot's clicks. */
@@ -197,6 +234,10 @@ export class CharacterCreationScene extends Phaser.Scene {
   private partySizeLabel!: Phaser.GameObjects.Text;
   private difficultyButton!: Phaser.GameObjects.Rectangle;
   private difficultyLabel!: Phaser.GameObjects.Text;
+  /** D-129: the "set every slot's Starting Level at once" control — see `buildTeamLevelControl`. */
+  private teamLevelValue = 1;
+  private teamLevelButton!: Phaser.GameObjects.Rectangle;
+  private teamLevelLabel!: Phaser.GameObjects.Text;
   /** Phase 11.8 (D-071): forwarded unchanged to BattleScene; `undefined` when
    * reached via the plain "Create Party" button (no campaign selected). */
   private campaignId?: string;
@@ -207,6 +248,9 @@ export class CharacterCreationScene extends Phaser.Scene {
   /** Phase 11.10 (D-085): forwarded unchanged to BattleScene; set only when
    * reached from `MapBuilderScene`'s Playtest button or `BrowseSharedMapsScene`. */
   private customMapData?: ParsedMap;
+  /** Test Mode (D-138): forwarded unchanged to BattleScene; set only when
+   * reached from `TestModeScene`. */
+  private testMode = false;
   /** Phase 9 (D-083): the save slot this party was loaded from/saved to, if any. */
   private loadedSlotId?: string;
   private loadedParty?: CharacterBuild[];
@@ -216,6 +260,35 @@ export class CharacterCreationScene extends Phaser.Scene {
   private savePartyButton!: Phaser.GameObjects.Rectangle;
   private savePartyLabel!: Phaser.GameObjects.Text;
   private saveStatusLabel!: Phaser.GameObjects.Text;
+
+  /**
+   * D-133: the "Plan Levels" wizard overlay's own working state — separate
+   * from `slots[slot].levelUpPlan`, which only gets overwritten on a
+   * confirmed "Save & Close" (see `closeLevelPlanner`). `planningSlot` is
+   * non-null exactly while the overlay is shown.
+   */
+  private levelPlanOverlay: Phaser.GameObjects.GameObject[] = [];
+  private planningSlot: number | null = null;
+  private planningDraft: LevelUpPlan = emptyLevelUpPlan();
+  private planningSteps: LevelUpChoiceStep[] = [];
+  private planningStepIndex = 0;
+
+  /**
+   * D-135: the "Spells" wizard overlay's own working state — reuses
+   * `levelPlanOverlay`/`renderPlanPrompt`/`clearLevelPlanOverlay` above (both
+   * wizards are never open at once, and that rendering machinery is already
+   * fully generic — title + a choices array — with no `LevelUpPlan`-specific
+   * typing in it). `spellPickSlot` is non-null exactly while this overlay is
+   * shown.
+   */
+  private spellPickSlot: number | null = null;
+  private spellPickDraft: { cantripIds: string[]; leveledSpellIds: string[]; spellbookIds: string[] } = {
+    cantripIds: [],
+    leveledSpellIds: [],
+    spellbookIds: [],
+  };
+  private spellPickSteps: SpellPickStepKind[] = [];
+  private spellPickStepIndex = 0;
 
   constructor() {
     super("CharacterCreationScene");
@@ -229,6 +302,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     loadedSlotId?: string;
     loadedParty?: CharacterBuild[];
     customMapData?: ParsedMap;
+    testMode?: boolean;
   }): void {
     this.campaignId = data?.campaignId;
     this.freePlayMapId = data?.freePlayMapId;
@@ -237,6 +311,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.loadedSlotId = data?.loadedSlotId;
     this.loadedParty = data?.loadedParty;
     this.customMapData = data?.customMapData;
+    this.testMode = data?.testMode ?? false;
   }
 
   create(): void {
@@ -276,9 +351,17 @@ export class CharacterCreationScene extends Phaser.Scene {
               raceIndex: 0,
               allocator: new StandardArrayAllocator(),
               abilityIndex: slot,
-              controlledBy: "human",
+              // D-129: default to 1 human, the rest AI-controlled — Kevin's
+              // own request, so a fresh party is playtest-ready without
+              // manually toggling three slots every time. Loading a saved
+              // party (`slotStateFromBuild`, below) still uses whatever
+              // control mix was actually saved, unaffected by this default.
+              controlledBy: slot === 0 ? "human" : "ai",
               startingGearIndex: 0,
               subclassIndex: 0,
+              startingLevel: 1,
+              levelUpPlan: emptyLevelUpPlan(),
+              spellPicks: {},
             },
       );
       this.widgets.push(this.buildSlotUi(slot));
@@ -298,16 +381,20 @@ export class CharacterCreationScene extends Phaser.Scene {
     const allObjects: Phaser.GameObjects.GameObject[] = [];
     const interactiveButtons: Phaser.GameObjects.Rectangle[] = [];
 
-    // Spans the actual content range (Hero-N label at ~y121 through the
-    // stats preview at ~y635), verified by adding up every row's height and
-    // gap below (bounding-box math, no browser available here — same
+    // Spans the actual content range (Hero-N label at ~y121 through the new
+    // Spells row at ~y710), verified by adding up every row's height
+    // and gap below (bounding-box math, no browser available here — same
     // discipline as D-046/D-055/D-059's HUD layout fixes). Grew by 40px in
     // Phase 11.3 (D-075) for the race row, another 40px in Phase 13.11
-    // (D-096) for the Gear row, and another 40px in Phase 14.2 (D-099) for
-    // the new Subclass row — top edge (y105) held fixed every time, so the
-    // whole column grows downward, not into the title/subtitle above.
+    // (D-096) for the Gear row, another 40px in Phase 14.2 (D-099) for the
+    // Subclass row, another 40px in D-129 for the Starting Level row,
+    // another 40px in D-133 for the Plan Levels row, and another 40px in
+    // D-135 for the Spells row — top edge (y105) held fixed every time, so
+    // the whole column grows downward, not into the title/subtitle above
+    // (every row below this column, from `buildBottomControls` down,
+    // shifted +40px to match).
     const background = this.add
-      .rectangle(x, 370, COLUMN_WIDTH, 530, 0x1a1a26)
+      .rectangle(x, 430, COLUMN_WIDTH, 650, 0x1a1a26)
       .setStrokeStyle(1, 0x2a2a3a)
       .setDepth(0);
     allObjects.push(background);
@@ -359,6 +446,12 @@ export class CharacterCreationScene extends Phaser.Scene {
       const s = this.slots[slot];
       s.classIndex = (s.classIndex + 1) % CREATABLE_CLASS_IDS.length;
       s.abilityIndex = 0; // the new class's action list has a different shape — start from its first entry
+      // D-133: a different class has an entirely different choice ladder —
+      // a stale plan would be meaningless at best, wrong at worst.
+      s.levelUpPlan = emptyLevelUpPlan();
+      // D-135: same reasoning — a different class has an entirely different
+      // spell list, so a stale manual pick would be meaningless too.
+      s.spellPicks = {};
       this.refreshAll();
     });
 
@@ -472,6 +565,61 @@ export class CharacterCreationScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
+    // D-129: a pre-battle "Starting Level" control — cycles 1-20, wrapping,
+    // same interaction shape as every other cycle button in this column.
+    // Kevin asked for this specifically to stop every playtest from having
+    // to grind a party up from level 1; see the Team Level control in
+    // `buildBottomControls` for setting every slot at once instead.
+    const levelY = subclassY + 85;
+    const levelButton = this.add
+      .rectangle(x, levelY, COLUMN_WIDTH - 20, 26, 0x28241c)
+      .setStrokeStyle(1, 0x4a4030)
+      .setInteractive({ useHandCursor: true });
+    const levelLabel = this.add
+      .text(x, levelY, "", { fontFamily: "monospace", fontSize: "13px", color: "#e0c890" })
+      .setOrigin(0.5);
+    levelButton.on("pointerover", () => levelButton.setFillStyle(0x342e22));
+    levelButton.on("pointerout", () => levelButton.setFillStyle(0x28241c));
+    levelButton.on("pointerdown", () => {
+      const s = this.slots[slot];
+      s.startingLevel = s.startingLevel >= MAX_CLASS_LEVEL ? 1 : s.startingLevel + 1;
+      this.refreshAll();
+    });
+
+    // D-133: the level-by-level Character Creation planner — opens a
+    // full-screen wizard (see `openLevelPlanner`) letting the player pick
+    // every future ASI/subclass/spell-pick choice for this hero in advance.
+    const planY = levelY + 40;
+    const planButton = this.add
+      .rectangle(x, planY, COLUMN_WIDTH - 20, 26, 0x2c2020)
+      .setStrokeStyle(1, 0x5a3a3a)
+      .setInteractive({ useHandCursor: true });
+    const planLabel = this.add
+      .text(x, planY, "", { fontFamily: "monospace", fontSize: "13px", color: "#e0a0a0" })
+      .setOrigin(0.5);
+    planButton.on("pointerover", () => planButton.setFillStyle(0x362828));
+    planButton.on("pointerout", () => planButton.setFillStyle(0x2c2020));
+    planButton.on("pointerdown", () => this.openLevelPlanner(slot));
+
+    // D-135: the starting spell-selection wizard — opens a full-screen
+    // picker (see `openSpellPicker`) letting the player choose this hero's
+    // starting prepared spells/known cantrips/(Wizard) spellbook, instead of
+    // silently taking `Hero.growSpellSelections()`'s auto-fill. A harmless
+    // no-op for a class with no real picks to make (see
+    // `spellPickStepsForClass`'s own doc comment for why Paladin/Ranger, in
+    // particular, land here despite having a real spell-slot economy).
+    const spellsY = planY + 40;
+    const spellsButton = this.add
+      .rectangle(x, spellsY, COLUMN_WIDTH - 20, 26, 0x202c2c)
+      .setStrokeStyle(1, 0x3a5a5a)
+      .setInteractive({ useHandCursor: true });
+    const spellsLabel = this.add
+      .text(x, spellsY, "", { fontFamily: "monospace", fontSize: "13px", color: "#a0e0e0" })
+      .setOrigin(0.5);
+    spellsButton.on("pointerover", () => spellsButton.setFillStyle(0x283838));
+    spellsButton.on("pointerout", () => spellsButton.setFillStyle(0x202c2c));
+    spellsButton.on("pointerdown", () => this.openSpellPicker(slot));
+
     allObjects.push(
       nameButton,
       nameLabel,
@@ -486,9 +634,25 @@ export class CharacterCreationScene extends Phaser.Scene {
       subclassButton,
       subclassLabel,
       statsLabel,
+      levelButton,
+      levelLabel,
+      planButton,
+      planLabel,
+      spellsButton,
+      spellsLabel,
       ...Object.values(abilityScoreLabels),
     );
-    interactiveButtons.push(nameButton, classButton, raceButton, signatureButton, gearButton, subclassButton);
+    interactiveButtons.push(
+      nameButton,
+      classButton,
+      raceButton,
+      signatureButton,
+      gearButton,
+      subclassButton,
+      levelButton,
+      planButton,
+      spellsButton,
+    );
 
     return {
       controlLabel,
@@ -500,6 +664,9 @@ export class CharacterCreationScene extends Phaser.Scene {
       gearLabel,
       subclassLabel,
       statsLabel,
+      levelLabel,
+      planLabel,
+      spellsLabel,
       allObjects,
       interactiveButtons,
     };
@@ -508,12 +675,14 @@ export class CharacterCreationScene extends Phaser.Scene {
   // Phase 11.4 (D-077): party size + difficulty, sitting in the gap between
   // the slot columns and Start Battle. Phase 13.11 (D-096): shifted down
   // another +50px (600->650); Phase 14.2 (D-099): shifted down another +40px
-  // (650->690), along with every row below it, to clear the column
-  // background's new taller bottom edge (y635, after the Subclass row) —
-  // same discipline as the race-row +40 shift and the 720->900->1000 canvas
+  // (650->690); D-129 shifted down another +90px (690->780); D-133 shifted
+  // down another +40px (780->820) for the Plan Levels row; D-135 shifted
+  // down another +40px (820->860, see below) for the new Spells row, same
+  // discipline as the race-row +40 shift and the 720->900->1000 canvas
   // bumps; GAME_HEIGHT (1080) has ample room to spare either way.
   private buildBottomControls(): void {
-    const y = 690;
+    this.buildTeamLevelControl(810);
+    const y = 860;
     const leftX = GAME_WIDTH / 2 - 150;
     const rightX = GAME_WIDTH / 2 + 150;
 
@@ -547,20 +716,47 @@ export class CharacterCreationScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * D-129: sets every slot's Starting Level at once (Kevin's "as a team"
+   * option, alongside each column's own individual "Level: N" control) — a
+   * single centered button, cycling 1-20 like every other cycle control,
+   * that stamps its current value onto all `MAX_PARTY_SIZE` slots the
+   * instant it's clicked. A slot can still be fine-tuned individually
+   * afterward; this is a quick group-set, not a locked/linked value.
+   */
+  private buildTeamLevelControl(y: number): void {
+    this.teamLevelButton = this.add
+      .rectangle(GAME_WIDTH / 2, y, 320, 40, 0x28241c)
+      .setStrokeStyle(1, 0x4a4030)
+      .setInteractive({ useHandCursor: true });
+    this.teamLevelLabel = this.add
+      .text(GAME_WIDTH / 2, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e0c890" })
+      .setOrigin(0.5);
+    this.teamLevelButton.on("pointerover", () => this.teamLevelButton.setFillStyle(0x342e22));
+    this.teamLevelButton.on("pointerout", () => this.teamLevelButton.setFillStyle(0x28241c));
+    this.teamLevelButton.on("pointerdown", () => {
+      this.teamLevelValue = this.teamLevelValue >= MAX_CLASS_LEVEL ? 1 : this.teamLevelValue + 1;
+      this.slots.forEach((s) => (s.startingLevel = this.teamLevelValue));
+      this.refreshAll();
+    });
+  }
+
   // Phase 9 (D-083): Start Battle moves to the left half of the row,
   // mirroring the party-size/difficulty row's own leftX/rightX split one row
   // above — Save Party takes the right half. Phase 13.11 (D-096): this whole
   // row shifted down +50px (650->700); Phase 14.2 (D-099): another +40px
-  // (700->740), same reason as buildBottomControls' own shift.
+  // (700->740); D-129: another +90px (740->830); D-133: another +40px
+  // (830->870); D-135: another +40px (870->910), same reason as
+  // buildBottomControls' own shift.
   private buildStartButton(): void {
     const leftX = GAME_WIDTH / 2 - 150;
     const rightX = GAME_WIDTH / 2 + 150;
 
     this.startButton = this.add
-      .rectangle(leftX, 740, 260, 50, 0x4caf72)
+      .rectangle(leftX, 910, 260, 50, 0x4caf72)
       .setInteractive({ useHandCursor: true });
     this.add
-      .text(leftX, 740, "Start Battle", {
+      .text(leftX, 910, "Start Battle", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "20px",
         color: "#0e0e14",
@@ -588,15 +784,16 @@ export class CharacterCreationScene extends Phaser.Scene {
         freePlayMapId: this.freePlayMapId,
         freePlayWaves: this.freePlayWaves,
         customMapData: this.customMapData,
+        testMode: this.testMode,
       });
     });
 
     this.savePartyButton = this.add
-      .rectangle(rightX, 740, 260, 50, 0x2a2a3a)
+      .rectangle(rightX, 910, 260, 50, 0x2a2a3a)
       .setStrokeStyle(1, 0x4a4a5a)
       .setInteractive({ useHandCursor: true });
     this.savePartyLabel = this.add
-      .text(rightX, 740, "", {
+      .text(rightX, 910, "", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#e8e8f0",
@@ -609,11 +806,11 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.savePartyButton.on("pointerdown", () => this.onSaveParty());
 
     this.saveStatusLabel = this.add
-      .text(rightX, 790, "", { fontFamily: "monospace", fontSize: "13px", color: "#8a8aa0" })
+      .text(rightX, 960, "", { fontFamily: "monospace", fontSize: "13px", color: "#8a8aa0" })
       .setOrigin(0.5);
 
     this.statusText = this.add
-      .text(GAME_WIDTH / 2, 820, "", {
+      .text(GAME_WIDTH / 2, 990, "", {
         fontFamily: "monospace",
         fontSize: "13px",
         color: "#d0a0a0",
@@ -671,11 +868,11 @@ export class CharacterCreationScene extends Phaser.Scene {
 
   private buildBackButton(): void {
     const back = this.add
-      .rectangle(GAME_WIDTH / 2, 870, 200, 40, 0x2a2a3a)
+      .rectangle(GAME_WIDTH / 2, 1040, 200, 40, 0x2a2a3a)
       .setStrokeStyle(1, 0x4a4a5a)
       .setInteractive({ useHandCursor: true });
     const label = this.add
-      .text(GAME_WIDTH / 2, 870, "Back to Menu", {
+      .text(GAME_WIDTH / 2, 1040, "Back to Menu", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#c8c8d8",
@@ -711,6 +908,13 @@ export class CharacterCreationScene extends Phaser.Scene {
       // undefined `build.subclassId` (a later-choice class) also lands on 0,
       // harmlessly unused since `subclassIdForNewBuild` ignores it for those.
       subclassIndex: Math.max(0, subclassesForClass(build.classId).findIndex((s) => s.id === build.subclassId)),
+      startingLevel: build.startingLevel ?? 1,
+      levelUpPlan: build.levelUpPlan ?? emptyLevelUpPlan(),
+      spellPicks: {
+        leveledSpellIds: build.preparedSpellIds,
+        cantripIds: build.knownCantripIds,
+        spellbookIds: build.spellbookIds,
+      },
     };
   }
 
@@ -740,6 +944,15 @@ export class CharacterCreationScene extends Phaser.Scene {
         // class starts undefined (see BattleScene's subclass-choice queue).
         subclassId: subclassIdForNewBuild(classId, s.subclassIndex),
         startingEquipmentId: s.startingGearIndex > 0 ? STARTING_GEAR_IDS[s.startingGearIndex - 1] : undefined,
+        startingLevel: s.startingLevel,
+        // D-133: undefined for a "fresh"/never-planned hero — identical to
+        // every pre-D-133 build.
+        levelUpPlan: s.levelUpPlan.mode === "fresh" ? undefined : s.levelUpPlan,
+        // D-135: undefined for any field the player never customized —
+        // identical to every pre-D-135 build.
+        preparedSpellIds: s.spellPicks.leveledSpellIds,
+        knownCantripIds: s.spellPicks.cantripIds,
+        spellbookIds: s.spellPicks.spellbookIds,
       };
     });
   }
@@ -763,6 +976,7 @@ export class CharacterCreationScene extends Phaser.Scene {
 
     this.partySizeLabel.setText(`Party Size: ${this.partySize}`);
     this.difficultyLabel.setText(`Difficulty: ${getDifficultyDefinition(this.difficultyId).name}`);
+    this.teamLevelLabel.setText(`Team Level: ${this.teamLevelValue} (all heroes)`);
 
     const duplicateNames = hasDuplicateNames(builds);
     const duplicateAbilities = hasDuplicateAbilities(builds);
@@ -840,11 +1054,48 @@ export class CharacterCreationScene extends Phaser.Scene {
     );
 
     w.subclassLabel.setText(this.subclassSummary(build.classId, build.subclassId));
+    this.fitSubclassLabelToWidth(w.subclassLabel);
 
     const def = heroDefinitionFromBuild(build);
-    w.statsLabel.setText(
-      `HP ${def.maxHealth}  ATK ${def.attackDamage}\nRange ${def.attackRangeTiles}  Move ${def.movementTiles}`,
+    // D-129: the stats preview now reflects the chosen Starting Level, not
+    // always level 1 — `combatStatsForClassLevel` is the same pure function
+    // `heroDefinitionFromBuild` itself calls, just re-run at `startingLevel`
+    // instead of the build's fixed `level: 1`. Range/Move don't change by
+    // level, so those two still come from `def` unchanged. This preview
+    // does NOT include any Ability Score Improvement a real fast-forward
+    // would apply (see `BattleScene.fastForwardHeroToLevel`) — a deliberate
+    // simplification, since ASI always targets whichever ability is highest
+    // AT THE TIME, something only the actual fast-forward can resolve.
+    const leveledStats = combatStatsForClassLevel(
+      build.classId,
+      build.startingLevel ?? 1,
+      build.abilityScores,
+      build.abilityId,
     );
+    w.statsLabel.setText(
+      `HP ${leveledStats.maxHealth}  ATK ${leveledStats.attackDamage}\nRange ${def.attackRangeTiles}  Move ${def.movementTiles}`,
+    );
+    w.levelLabel.setText(`Starting Level: ${build.startingLevel ?? 1}`);
+
+    const plan = this.slots[slot].levelUpPlan;
+    const planStatus = plan.mode === "auto" ? "Auto" : plan.mode === "prompt" ? "Prompt" : "Off";
+    w.planLabel.setText(`Plan Levels: ${planStatus}`);
+
+    w.spellsLabel.setText(this.spellsSummary(slot, build.classId, build.startingLevel ?? 1));
+  }
+
+  /**
+   * D-135: "Spells" row summary — N/A (dim) for a class with no real spell
+   * pick to make at this level (see `spellPickStepsForClass`'s own doc
+   * comment for why Paladin/Ranger land here despite having a real spell
+   * slot economy), otherwise whether the player has customized any of the
+   * three fields yet.
+   */
+  private spellsSummary(slot: number, classId: string, level: number): string {
+    if (spellPickStepsForClass(classId, level).length === 0) return "Spells: N/A";
+    const picks = this.slots[slot].spellPicks;
+    const customized = picks.cantripIds || picks.leveledSpellIds || picks.spellbookIds;
+    return customized ? "Spells: Customized (click to edit)" : "Spells: Auto-fill (click to customize)";
   }
 
   /**
@@ -863,5 +1114,640 @@ export class CharacterCreationScene extends Phaser.Scene {
     }
     const classDef = getClassDefinition(classId);
     return `Subclass: chosen in battle at level ${classDef.subclassChoiceLevel} (${options.length} options)`;
+  }
+
+  /**
+   * Playtest fix: this label's text is computed (a class name, a level
+   * number, an option count all vary), and the longer "chosen in battle at
+   * level N (M options)" phrasing measured wider than its own
+   * `COLUMN_WIDTH - 20` button at the fixed 13px it was created with — it ran
+   * over the tile on both sides. Shrinks the font (same measure-then-shrink
+   * approach as `BattleScene.fitBannerToWidth`) to whatever the real text
+   * width needs, rather than guessing a smaller fixed size that would still
+   * break the moment the phrasing changes again.
+   */
+  private fitSubclassLabelToWidth(label: Phaser.GameObjects.Text): void {
+    const maxWidth = COLUMN_WIDTH - 20 - 8;
+    const baseFontSizePx = 13;
+    const minFontSizePx = 9;
+    label.setFontSize(baseFontSizePx);
+    let size = baseFontSizePx;
+    while (label.width > maxWidth && size > minFontSizePx) {
+      size -= 1;
+      label.setFontSize(size);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // D-133: the level-by-level Character Creation planner. A full-screen
+  // wizard overlay — the same button-grid modal shape `BattleScene
+  // .renderAsiPrompt` established for its own in-battle ASI/subclass/
+  // spell-pick queues, reimplemented locally (this scene has no mechanism
+  // to share a private method from another scene) — that walks the player
+  // through every future level-up choice point for the slot's current
+  // class (`LevelUpPlanSystem.futureChoiceSteps`), storing picks into a
+  // working draft only committed to `slots[slot].levelUpPlan` on a
+  // confirmed "Save & Close."
+  // ---------------------------------------------------------------------
+
+  private openLevelPlanner(slot: number): void {
+    this.planningSlot = slot;
+    const existing = this.slots[slot].levelUpPlan;
+    this.planningDraft = {
+      mode: existing.mode,
+      subclassId: existing.subclassId,
+      asiChoices: { ...existing.asiChoices },
+      spellPicks: { ...existing.spellPicks },
+    };
+    const classId = CREATABLE_CLASS_IDS[this.slots[slot].classIndex];
+    this.planningSteps = futureChoiceSteps(classId);
+    this.planningStepIndex = 0;
+    this.showPlanModeSelect();
+  }
+
+  private closeLevelPlanner(commit: boolean): void {
+    if (commit && this.planningSlot !== null) {
+      this.slots[this.planningSlot].levelUpPlan = this.planningDraft;
+    }
+    this.planningSlot = null;
+    this.clearLevelPlanOverlay();
+    this.refreshAll();
+  }
+
+  private clearLevelPlanOverlay(): void {
+    for (const obj of this.levelPlanOverlay) obj.destroy();
+    this.levelPlanOverlay = [];
+  }
+
+  private showPlanModeSelect(): void {
+    this.renderPlanPrompt("How should this hero's future level-ups be handled?", [
+      {
+        label: "Auto-follow a blueprint",
+        desc: "Every choice you plan next applies silently, in battle — no popups at all for this hero.",
+        onClick: () => {
+          this.planningDraft.mode = "auto";
+          this.planningStepIndex = 0;
+          this.showNextPlanStep();
+        },
+        highlighted: this.planningDraft.mode === "auto",
+      },
+      {
+        label: "Prompted each level",
+        desc: "You'll still get the usual in-battle popup — pre-highlighted with whatever you plan next.",
+        onClick: () => {
+          this.planningDraft.mode = "prompt";
+          this.planningStepIndex = 0;
+          this.showNextPlanStep();
+        },
+        highlighted: this.planningDraft.mode === "prompt",
+      },
+      {
+        label: "Always choose fresh",
+        desc: "No blueprint at all — every future choice is made unprompted, in battle, exactly as today.",
+        onClick: () => {
+          this.planningDraft = emptyLevelUpPlan("fresh");
+          this.closeLevelPlanner(true);
+        },
+        highlighted: this.planningDraft.mode === "fresh",
+      },
+      {
+        label: "Cancel",
+        desc: "Discard any changes made in this session and keep this hero's previously saved plan.",
+        onClick: () => this.closeLevelPlanner(false),
+      },
+    ]);
+  }
+
+  private showNextPlanStep(): void {
+    if (this.planningStepIndex >= this.planningSteps.length) {
+      this.showPlanDoneScreen();
+      return;
+    }
+    const step = this.planningSteps[this.planningStepIndex];
+    if (step.kind === "subclass") this.showPlanSubclassStep(step);
+    else if (step.kind === "asi") this.showPlanAsiStep(step);
+    else this.showPlanSpellPickStep(step);
+  }
+
+  private advancePlanStep(): void {
+    this.planningStepIndex += 1;
+    this.showNextPlanStep();
+  }
+
+  private goBackPlanStep(): void {
+    if (this.planningStepIndex === 0) {
+      this.showPlanModeSelect();
+      return;
+    }
+    this.planningStepIndex -= 1;
+    this.showNextPlanStep();
+  }
+
+  private showPlanDoneScreen(): void {
+    this.renderPlanPrompt("Blueprint complete", [
+      { label: "Save & Close", desc: "Commits every choice made in this session to this hero.", onClick: () => this.closeLevelPlanner(true) },
+      { label: "◀ Back", onClick: () => this.goBackPlanStep() },
+      { label: "Cancel", desc: "Discard this session's edits and keep the previously saved plan.", onClick: () => this.closeLevelPlanner(false) },
+    ]);
+  }
+
+  private planBackChoice(): { label: string; onClick: () => void } {
+    return { label: "◀ Back", onClick: () => this.goBackPlanStep() };
+  }
+
+  private planSkipChoice(): { label: string; desc: string; onClick: () => void } {
+    return {
+      label: "Skip (use default here)",
+      desc: "Leaves this level unset — resolved with the usual default (or still prompted live, if this hero's mode is Prompted).",
+      onClick: () => this.advancePlanStep(),
+    };
+  }
+
+  /**
+   * Builds a scratch, throwaway `Hero` (never added to any battle) fast-
+   * forwarded to exactly `atLevel`, with every trigger BELOW `atLevel`
+   * resolved against `planningDraft` — but `atLevel`'s own trigger
+   * deliberately left unresolved, so this method's caller can inspect real
+   * eligibility (feats/spells) for the choice about to be made, then apply
+   * whatever the player picks afterward.
+   */
+  private simulateHeroUpToChoice(atLevel: number): Hero {
+    const build = this.buildsFromSlots()[this.planningSlot as number];
+    const hero = new Hero(heroDefinitionFromBuild(build), { x: 0, y: 0 });
+    if (atLevel > 1) {
+      fastForwardHero(hero, atLevel - 1, this.planningDraft);
+      if (hero.level < atLevel) hero.levelUpClass();
+    }
+    return hero;
+  }
+
+  private showPlanSubclassStep(step: LevelUpChoiceStep): void {
+    const classId = CREATABLE_CLASS_IDS[this.slots[this.planningSlot as number].classIndex];
+    const options = subclassesForClass(classId);
+    this.renderPlanPrompt(`Level ${step.level} — Choose a Subclass`, [
+      ...options.map((opt) => ({
+        label: opt.name,
+        onClick: () => {
+          this.planningDraft.subclassId = opt.id;
+          this.advancePlanStep();
+        },
+        highlighted: this.planningDraft.subclassId === opt.id,
+      })),
+      this.planBackChoice(),
+      this.planSkipChoice(),
+    ]);
+  }
+
+  private showPlanAsiStep(step: LevelUpChoiceStep): void {
+    const hero = this.simulateHeroUpToChoice(step.level);
+    const existing = this.planningDraft.asiChoices[step.level];
+    const featChoices = FEAT_IDS.filter((id) => hero.meetsFeatPrerequisites(id)).map((id) => {
+      const feat = getFeat(id);
+      return {
+        label: `Feat: ${feat.name}`,
+        desc: feat.description,
+        onClick: () => this.showPlanFeatSubChoice(step.level, id, hero),
+        highlighted: existing?.path === "feat" && existing.featId === id,
+      };
+    });
+    this.renderPlanPrompt(`Level ${step.level} — Ability Score Improvement`, [
+      {
+        label: "+2 to one ability",
+        desc: "Raise a single ability score by 2.",
+        onClick: () => this.showPlanAbilityPicker(step.level, "single"),
+        highlighted: existing?.path === "ability" && existing.abilityMode === "single",
+      },
+      {
+        label: "+1 to two abilities",
+        desc: "Raise two different ability scores by 1 each.",
+        onClick: () => this.showPlanAbilityPicker(step.level, "split"),
+        highlighted: existing?.path === "ability" && existing.abilityMode === "split",
+      },
+      ...featChoices,
+      this.planBackChoice(),
+      this.planSkipChoice(),
+    ]);
+  }
+
+  private showPlanAbilityPicker(level: number, mode: "single" | "split", firstPicked?: AbilityScoreId): void {
+    if (mode === "single") {
+      this.renderPlanPrompt(
+        `Level ${level} — Choose an Ability (+2)`,
+        ABILITY_SCORE_IDS.map((id) => ({
+          label: ABILITY_SCORE_NAMES[id],
+          onClick: () => {
+            this.planningDraft.asiChoices[level] = { path: "ability", abilityMode: "single", ability: id };
+            this.advancePlanStep();
+          },
+        })).concat([this.planBackChoice()]),
+      );
+      return;
+    }
+    if (firstPicked === undefined) {
+      this.renderPlanPrompt(
+        `Level ${level} — Choose the First Ability (+1)`,
+        ABILITY_SCORE_IDS.map((id) => ({
+          label: ABILITY_SCORE_NAMES[id],
+          onClick: () => this.showPlanAbilityPicker(level, "split", id),
+        })).concat([this.planBackChoice()]),
+      );
+      return;
+    }
+    this.renderPlanPrompt(
+      `Level ${level} — Choose the Second Ability (+1)`,
+      ABILITY_SCORE_IDS.filter((id) => id !== firstPicked)
+        .map((id) => ({
+          label: ABILITY_SCORE_NAMES[id],
+          onClick: () => {
+            this.planningDraft.asiChoices[level] = { path: "ability", abilityMode: "split", first: firstPicked, second: id };
+            this.advancePlanStep();
+          },
+        }))
+        .concat([this.planBackChoice()]),
+    );
+  }
+
+  private showPlanFeatSubChoice(level: number, featId: string, hero: Hero): void {
+    const feat = getFeat(featId);
+    if (feat.abilityScoreBoost) {
+      const allowed = feat.abilityScoreBoost.allowedAbilities;
+      this.renderPlanPrompt(
+        `Level ${level} — ${feat.name}: Choose an Ability`,
+        ABILITY_SCORE_IDS.filter((id) => allowed.includes(id))
+          .map((id) => ({
+            label: ABILITY_SCORE_NAMES[id],
+            onClick: () => this.finishPlanFeat(level, featId, { chosenAbility: id }),
+          }))
+          .concat([this.planBackChoice()]),
+      );
+      return;
+    }
+    if (featId === "magic-initiate") {
+      const lists: Array<{ id: MagicInitiateListId; label: string }> = [
+        { id: "cleric", label: "Cleric" },
+        { id: "druid", label: "Druid" },
+        { id: "wizard", label: "Wizard" },
+      ];
+      const remaining = lists.filter((l) => !hero.magicInitiateListsTaken.includes(l.id));
+      this.renderPlanPrompt(
+        `Level ${level} — Magic Initiate: Choose a List`,
+        remaining
+          .map((l) => ({
+            label: l.label,
+            onClick: () => this.finishPlanFeat(level, featId, { magicInitiateList: l.id }),
+          }))
+          .concat([this.planBackChoice()]),
+      );
+      return;
+    }
+    this.finishPlanFeat(level, featId, {});
+  }
+
+  private finishPlanFeat(
+    level: number,
+    featId: string,
+    options: { chosenAbility?: AbilityScoreId; magicInitiateList?: MagicInitiateListId },
+  ): void {
+    this.planningDraft.asiChoices[level] = { path: "feat", featId, ...options };
+    this.advancePlanStep();
+  }
+
+  private showPlanSpellPickStep(step: LevelUpChoiceStep): void {
+    const hero = this.simulateHeroUpToChoice(step.level);
+    const existing = this.planningDraft.spellPicks[step.level];
+
+    if (step.spellPickKind === "mastery") {
+      const eligible = hero.eligibleSpellMasterySpells();
+      if (eligible.length === 0) {
+        this.advancePlanStep(); // nothing known yet at a low enough level — mirrors the live queue's own skip
+        return;
+      }
+      this.renderPlanPrompt(`Level ${step.level} — Spell Mastery: Choose a Spell`, [
+        ...eligible.map((id) => ({
+          label: getAbility(id).name,
+          onClick: () => {
+            this.planningDraft.spellPicks[step.level] = { kind: "mastery" as const, spellId: id };
+            this.advancePlanStep();
+          },
+          highlighted: existing?.kind === "mastery" && existing.spellId === id,
+        })),
+        this.planBackChoice(),
+        this.planSkipChoice(),
+      ]);
+    } else if (step.spellPickKind === "signature") {
+      const eligible = hero.eligibleSignatureSpells();
+      if (eligible.length < 2) {
+        this.advancePlanStep();
+        return;
+      }
+      this.renderPlanPrompt(`Level ${step.level} — Signature Spells: Choose the First`, [
+        ...eligible.map((id) => ({
+          label: getAbility(id).name,
+          onClick: () => this.showPlanSignatureSecond(step.level, id, eligible),
+          highlighted: existing?.kind === "signature" && existing.spellIds[0] === id,
+        })),
+        this.planBackChoice(),
+        this.planSkipChoice(),
+      ]);
+    } else if (step.spellPickKind === "arcanum" && step.tier !== undefined) {
+      const tier = step.tier;
+      const eligible = hero.eligibleMysticArcanumSpells(tier);
+      if (eligible.length === 0) {
+        this.advancePlanStep();
+        return;
+      }
+      this.renderPlanPrompt(`Level ${step.level} — Mystic Arcanum (${tier}th level)`, [
+        ...eligible.map((id) => ({
+          label: getAbility(id).name,
+          onClick: () => {
+            this.planningDraft.spellPicks[step.level] = { kind: "arcanum" as const, tier, spellId: id };
+            this.advancePlanStep();
+          },
+          highlighted: existing?.kind === "arcanum" && existing.spellId === id,
+        })),
+        this.planBackChoice(),
+        this.planSkipChoice(),
+      ]);
+    } else {
+      this.advancePlanStep();
+    }
+  }
+
+  private showPlanSignatureSecond(level: number, first: string, eligible: string[]): void {
+    const remaining = eligible.filter((id) => id !== first);
+    this.renderPlanPrompt(
+      `Level ${level} — Signature Spells: Choose the Second`,
+      remaining
+        .map((id) => ({
+          label: getAbility(id).name,
+          onClick: () => {
+            this.planningDraft.spellPicks[level] = { kind: "signature", spellIds: [first, id] };
+            this.advancePlanStep();
+          },
+        }))
+        .concat([this.planBackChoice()]),
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // D-135: Character Creation's starting spell-selection wizard. Reuses
+  // `renderPlanPrompt`/`clearLevelPlanOverlay`/`levelPlanOverlay` above (both
+  // wizards are never open at once, and that rendering machinery has no
+  // `LevelUpPlan`-specific typing in it). Unlike the Level Planner's
+  // click-one-advance screens, every screen here is toggle-multiple-then-
+  // confirm, since a spell pick is a multi-select up to a cap.
+  // ---------------------------------------------------------------------
+
+  /** Highest spell level this class can actually cast at `level` — a Character-Creation-only DISPLAY filter (the canonical eligible pool in `SpellPreparationSystem` is unchanged) so the picker doesn't show a level-1 hero 100+ spells it can't cast for another 10+ levels. */
+  private maxCastableSpellLevel(classId: string, level: number): number {
+    const slots = spellSlotsForClassAtLevel(getClassDefinition(classId), level);
+    let max = 0;
+    slots.forEach((count, i) => {
+      if (count > 0) max = i + 1;
+    });
+    return max;
+  }
+
+  private openSpellPicker(slot: number): void {
+    const classId = CREATABLE_CLASS_IDS[this.slots[slot].classIndex];
+    const level = this.slots[slot].startingLevel;
+    this.spellPickSteps = spellPickStepsForClass(classId, level);
+    if (this.spellPickSteps.length === 0) return; // nothing this class can actually pick — see spellPickStepsForClass's own doc comment
+    this.spellPickSlot = slot;
+    const existing = this.slots[slot].spellPicks;
+    const maxLevel = this.maxCastableSpellLevel(classId, level);
+
+    // Seed each field from the hero's existing pick if it has one, else
+    // reproduce `Hero.growSpellSelections()`'s own `defaultFill` math over
+    // the (level-filtered) pool — the player opens the picker already
+    // looking at a valid, capped selection they can freely toggle, not a
+    // blank slate. Spellbook seeded first: the "prepared" pool below reads
+    // it, same pool choice `growSpellSelections` itself makes for a Wizard.
+    const spellbookPool = eligibleLeveledSpellPool("wizard").filter((id) => getSpell(id).level <= maxLevel);
+    const spellbookSize = classId === "wizard" ? wizardSpellbookSizeAtLevel(level) : 0;
+    const spellbookIds = existing.spellbookIds ?? (classId === "wizard" ? defaultFill(spellbookPool, [], spellbookSize) : []);
+
+    const cantripCount = cantripsKnownForClassAtLevel(getClassDefinition(classId), level);
+    const cantripIds = existing.cantripIds ?? defaultFill(eligibleCantripPool(classId), [], cantripCount);
+
+    const preparedPool =
+      classId === "wizard" ? spellbookIds : eligibleLeveledSpellPool(classId).filter((id) => getSpell(id).level <= maxLevel);
+    const preparedCount = preparedSpellCountForClassAtLevel(classId, level);
+    const leveledSpellIds = existing.leveledSpellIds ?? defaultFill(preparedPool, [], preparedCount);
+
+    this.spellPickDraft = { cantripIds, leveledSpellIds, spellbookIds };
+    this.spellPickStepIndex = 0;
+    this.showNextSpellPickStep();
+  }
+
+  private closeSpellPicker(commit: boolean): void {
+    if (commit && this.spellPickSlot !== null) {
+      // Only ever commit a field this class's step ladder actually offered —
+      // e.g. a non-Wizard never gets a `spellbookIds` entry, matching
+      // `existing` staying undefined for it on every future re-open too.
+      this.slots[this.spellPickSlot].spellPicks = {
+        cantripIds: this.spellPickSteps.includes("cantrips") ? this.spellPickDraft.cantripIds : undefined,
+        leveledSpellIds: this.spellPickSteps.includes("prepared") ? this.spellPickDraft.leveledSpellIds : undefined,
+        spellbookIds: this.spellPickSteps.includes("spellbook") ? this.spellPickDraft.spellbookIds : undefined,
+      };
+    }
+    this.spellPickSlot = null;
+    this.clearLevelPlanOverlay();
+    this.refreshAll();
+  }
+
+  private showNextSpellPickStep(): void {
+    if (this.spellPickStepIndex >= this.spellPickSteps.length) {
+      this.showSpellPickDoneScreen();
+      return;
+    }
+    this.showSpellStepScreen(this.spellPickSteps[this.spellPickStepIndex]);
+  }
+
+  private advanceSpellPickStep(): void {
+    this.spellPickStepIndex += 1;
+    this.showNextSpellPickStep();
+  }
+
+  private goBackSpellPickStep(): void {
+    this.spellPickStepIndex -= 1;
+    this.showNextSpellPickStep();
+  }
+
+  private showSpellPickDoneScreen(): void {
+    this.renderPlanPrompt("Spell Selection Complete", [
+      { label: "Save & Close", desc: "Commits every pick made in this session to this hero.", onClick: () => this.closeSpellPicker(true) },
+      { label: "◀ Back", onClick: () => this.goBackSpellPickStep() },
+      {
+        label: "Cancel",
+        desc: "Discard this session's edits and keep this hero's previous selection (or auto-fill).",
+        onClick: () => this.closeSpellPicker(false),
+      },
+    ]);
+  }
+
+  /** Step 0's "back" target is closing the wizard outright — there's no mode-select screen before the ladder here (unlike the Level Planner's). */
+  private spellPickBackChoice(): { label: string; onClick: () => void } {
+    if (this.spellPickStepIndex === 0) {
+      return { label: "Cancel", onClick: () => this.closeSpellPicker(false) };
+    }
+    return { label: "◀ Back", onClick: () => this.goBackSpellPickStep() };
+  }
+
+  /**
+   * One shared toggle-multiple-then-confirm screen for all three step kinds
+   * — they differ only in which pool/draft field/cap apply, not in
+   * interaction shape. Re-invoked on every toggle click (not just once) so
+   * the `highlighted` state stays in sync with the live draft.
+   */
+  private showSpellStepScreen(kind: SpellPickStepKind): void {
+    const slot = this.spellPickSlot as number;
+    const classId = CREATABLE_CLASS_IDS[this.slots[slot].classIndex];
+    const level = this.slots[slot].startingLevel;
+    const maxLevel = this.maxCastableSpellLevel(classId, level);
+
+    let title: string;
+    let pool: string[];
+    let draftKey: "cantripIds" | "leveledSpellIds" | "spellbookIds";
+    let max: number;
+
+    if (kind === "spellbook") {
+      title = "Wizard Spellbook";
+      pool = eligibleLeveledSpellPool("wizard").filter((id) => getSpell(id).level <= maxLevel);
+      draftKey = "spellbookIds";
+      max = wizardSpellbookSizeAtLevel(level);
+    } else if (kind === "cantrips") {
+      title = "Known Cantrips";
+      pool = eligibleCantripPool(classId);
+      draftKey = "cantripIds";
+      max = cantripsKnownForClassAtLevel(getClassDefinition(classId), level);
+    } else {
+      title = classId === "wizard" ? "Prepared Spells (from your Spellbook)" : "Prepared Spells";
+      pool =
+        classId === "wizard"
+          ? this.spellPickDraft.spellbookIds
+          : eligibleLeveledSpellPool(classId).filter((id) => getSpell(id).level <= maxLevel);
+      draftKey = "leveledSpellIds";
+      max = preparedSpellCountForClassAtLevel(classId, level);
+    }
+
+    const selected = this.spellPickDraft[draftKey];
+    const choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }> = pool.map((id) => {
+      const spell = getSpell(id);
+      const isSelected = selected.includes(id);
+      return {
+        label: spell.name,
+        desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
+        highlighted: isSelected,
+        onClick: () => {
+          if (isSelected) {
+            this.spellPickDraft[draftKey] = selected.filter((existingId) => existingId !== id);
+          } else if (selected.length < max) {
+            this.spellPickDraft[draftKey] = [...selected, id];
+          } else {
+            return; // already at the cap, and this id isn't currently selected — no-op
+          }
+          // Editing the spellbook can strand previously-prepared picks no
+          // longer in it — `Hero.growSpellSelections()` has the same
+          // "prepared draws from the spellbook" invariant to keep.
+          if (kind === "spellbook") {
+            this.spellPickDraft.leveledSpellIds = this.spellPickDraft.leveledSpellIds.filter((preparedId) =>
+              this.spellPickDraft.spellbookIds.includes(preparedId),
+            );
+          }
+          this.showSpellStepScreen(kind);
+        },
+      };
+    });
+
+    const count = selected.length;
+    choices.push({ label: `Confirm (${count}/${max})`, onClick: () => (count === max ? this.advanceSpellPickStep() : undefined) });
+    choices.push(this.spellPickBackChoice());
+
+    this.renderPlanPrompt(`${title} — Choose ${max}`, choices);
+  }
+
+  /**
+   * A scene-local analog of `BattleScene.renderAsiPrompt` (same dim-rect +
+   * title + wrapping button-grid shape, including the same `highlighted`
+   * gold-outline treatment) — this scene has no mechanism to share a
+   * private method from another scene, so it's reimplemented here rather
+   * than exported for one caller. The dim backdrop is itself interactive
+   * (captures and swallows clicks, no handler) so it blocks every ordinary
+   * slot button underneath while the wizard is open, since this scene's
+   * existing buttons have no shared "input locked" flag to check.
+   */
+  private renderPlanPrompt(
+    title: string,
+    choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }>,
+  ): void {
+    this.clearLevelPlanOverlay();
+    const dim = this.add
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.85)
+      .setDepth(60)
+      .setInteractive();
+    const titleText = this.add
+      .text(GAME_WIDTH / 2, 90, title, {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "24px",
+        color: "#f0e070",
+        fontStyle: "bold",
+        align: "center",
+        wordWrap: { width: GAME_WIDTH - 160 },
+      })
+      .setOrigin(0.5)
+      .setDepth(61);
+    this.levelPlanOverlay.push(dim, titleText);
+
+    const hasDesc = choices.some((c) => c.desc);
+    const usableWidth = GAME_WIDTH - 80;
+    const width = Math.min(220, Math.max(120, Math.floor(usableWidth / Math.min(choices.length, 6)) - 14));
+    const height = hasDesc ? 82 : 44;
+    const spacing = width + 14;
+    const maxPerRow = Math.max(1, Math.floor(usableWidth / spacing));
+    const rowSpacing = height + 14;
+    const rowStartY = 170 + rowSpacing / 2;
+
+    choices.forEach((choice, i) => {
+      const row = Math.floor(i / maxPerRow);
+      const col = i % maxPerRow;
+      const itemsInRow = Math.min(maxPerRow, choices.length - row * maxPerRow);
+      const rowStartX = GAME_WIDTH / 2 - ((itemsInRow - 1) * spacing) / 2;
+      const x = rowStartX + col * spacing;
+      const y = rowStartY + row * rowSpacing;
+      const btn = this.add
+        .rectangle(x, y, width, height, 0x3a5a8a)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(61);
+      if (choice.highlighted) btn.setStrokeStyle(3, 0xf0c040);
+      const name = this.add
+        .text(x, y - (choice.desc ? 18 : 0), choice.highlighted ? `★ ${choice.label}` : choice.label, {
+          fontFamily: "system-ui, Arial, sans-serif",
+          fontSize: "13px",
+          color: choice.highlighted ? "#ffe58a" : "#e8e8f0",
+          fontStyle: "bold",
+          align: "center",
+          wordWrap: { width: width - 14 },
+        })
+        .setOrigin(0.5)
+        .setDepth(62);
+      this.levelPlanOverlay.push(btn, name);
+      if (choice.desc) {
+        const desc = this.add
+          .text(x, y + 16, choice.desc, {
+            fontFamily: "system-ui, Arial, sans-serif",
+            fontSize: "10px",
+            color: "#c8c8d8",
+            align: "center",
+            wordWrap: { width: width - 14 },
+          })
+          .setOrigin(0.5)
+          .setDepth(62);
+        this.levelPlanOverlay.push(desc);
+      }
+      btn.on("pointerover", () => btn.setFillStyle(0x4a6a9a));
+      btn.on("pointerout", () => btn.setFillStyle(0x3a5a8a));
+      btn.on("pointerdown", () => choice.onClick());
+    });
   }
 }

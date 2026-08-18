@@ -118,6 +118,48 @@ describe("WaveSystem completion (acceptance: detected reliably)", () => {
   });
 });
 
+describe("WaveSystem Test Mode debug hooks (D-138)", () => {
+  it("setNoFail(true) keeps isDefeated() false even at 0 integrity", () => {
+    const ws = makeSystem(
+      [{ id: "w", spawns: [{ enemyId: "grunt", count: 1, startTurn: 1, intervalTurns: 1 }], completionGold: 0 }],
+      1,
+    );
+    ws.tickEnemyPhase(); // grunt to (2,0)
+    ws.tickEnemyPhase(); // grunt breaches: integrity -> max(0, 1-2) = 0
+    expect(ws.integrity).toBe(0);
+    expect(ws.isDefeated()).toBe(true);
+    ws.setNoFail(true);
+    expect(ws.isDefeated()).toBe(false);
+    ws.setNoFail(false);
+    expect(ws.isDefeated()).toBe(true);
+  });
+
+  it("forceEndWave() empties active enemies and flips isCurrentWaveComplete() true", () => {
+    const ws = makeSystem([
+      {
+        id: "w",
+        spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 5 }],
+        completionGold: 0,
+      },
+    ]);
+    ws.tickEnemyPhase(); // spawns grunt #1 only; two more still scheduled
+    expect(ws.enemies.length).toBe(1);
+    expect(ws.isCurrentWaveComplete()).toBe(false);
+    ws.forceEndWave();
+    expect(ws.enemies.length).toBe(0);
+    expect(ws.isCurrentWaveComplete()).toBe(true);
+  });
+
+  it("spawnAt() adds a real Enemy of the requested definition at the exact tile", () => {
+    const ws = makeSystem([{ id: "w", spawns: [], completionGold: 0 }]);
+    const enemy = ws.spawnAt("grunt", { x: 1, y: 0 });
+    expect(ws.enemies).toContain(enemy);
+    expect(enemy.def).toBe(getEnemyDefinition("grunt"));
+    expect(enemy.position).toEqual({ x: 1, y: 0 });
+    expect(enemy.health).toBe(getEnemyDefinition("grunt").maxHealth);
+  });
+});
+
 describe("WaveSystem defeat", () => {
   it("reports defeat when Stronghold Integrity hits zero", () => {
     // Three grunts (2 breach each = 6) against 5 integrity -> defeat.

@@ -139,3 +139,86 @@ describe("SavingThrowSystem.applySaveOrDamage — rerollFailedSave (D-124)", () 
     expect(result.damageDealt).toBe(6);
   });
 });
+
+/**
+ * D-131: a save-based spell (Fireball, Sacred Flame, Thunderwave, etc.) now
+ * routes its post-save damage through `CombatSystem.applyResistance` too —
+ * previously this system had NO damage-type hook at all.
+ */
+describe("SavingThrowSystem.applySaveOrDamage — damageType/magical (D-131)", () => {
+  it("halves damage on a failed save against an elemental-resistant target", () => {
+    const t: Combatant = { ...target(20), damageResistances: ["fire"] };
+    const result = SavingThrowSystem.applySaveOrDamage(t, 10, 15, 0, RandomService.fixed(1), "normal", {
+      damageType: "fire",
+      magical: true,
+    });
+    expect(result.save.success).toBe(false);
+    expect(result.damageDealt).toBe(5);
+    expect(t.health).toBe(15);
+  });
+
+  it("zeroes damage on a failed save against an elemental-immune target", () => {
+    const t: Combatant = { ...target(20), damageImmunities: ["fire"] };
+    const result = SavingThrowSystem.applySaveOrDamage(t, 10, 15, 0, RandomService.fixed(1), "normal", {
+      damageType: "fire",
+      magical: true,
+    });
+    expect(result.damageDealt).toBe(0);
+    expect(t.health).toBe(20);
+  });
+
+  it("doubles damage on a failed save against an elemental-vulnerable target", () => {
+    const t: Combatant = { ...target(20), damageVulnerabilities: ["thunder"] };
+    const result = SavingThrowSystem.applySaveOrDamage(t, 6, 15, 0, RandomService.fixed(1), "normal", {
+      damageType: "thunder",
+      magical: true,
+    });
+    expect(result.damageDealt).toBe(12);
+  });
+
+  it("is a no-op (unchanged full damage) when damageType is absent, matching every save before D-131", () => {
+    const t = target(20);
+    const result = SavingThrowSystem.applySaveOrDamage(t, 10, 15, 0, RandomService.fixed(1));
+    expect(result.damageDealt).toBe(10);
+  });
+
+  it("combines with Evasion's halveOnFail — resistance applies first, then the Evasion halving on top", () => {
+    const t: Combatant = { ...target(20), damageResistances: ["fire"] };
+    const result = SavingThrowSystem.applySaveOrDamage(t, 12, 15, 0, RandomService.fixed(1), "normal", {
+      damageType: "fire",
+      magical: true,
+      halveOnFail: true,
+    });
+    expect(result.damageDealt).toBe(3); // floor(floor(12/2) / 2)
+  });
+});
+
+/**
+ * D-137: `options.damageTypes` gives a save-based spell the same dual-typed
+ * split `AttackProfile.damageTypes` gives an attack-roll-based hit — Meteor
+ * Swarm and Flame Strike are both save-based, so this is the path they
+ * actually take in `BattleScene`.
+ */
+describe("SavingThrowSystem.applySaveOrDamage — damageTypes (D-137)", () => {
+  it("splits damage per portion and resolves each type's resistance independently", () => {
+    const t: Combatant = { ...target(40), damageResistances: ["fire"] };
+    const result = SavingThrowSystem.applySaveOrDamage(t, 20, 15, 0, RandomService.fixed(1), "normal", {
+      damageTypes: [
+        { type: "fire", portion: 0.5 },
+        { type: "bludgeoning", portion: 0.5 },
+      ],
+      magical: true,
+    });
+    // 10 fire halved to 5 (resisted) + 10 bludgeoning at full = 15
+    expect(result.damageDealt).toBe(15);
+  });
+
+  it("damageTypes takes over from damageType when both are present", () => {
+    const t: Combatant = { ...target(20), damageImmunities: ["fire"] };
+    const result = SavingThrowSystem.applySaveOrDamage(t, 10, 15, 0, RandomService.fixed(1), "normal", {
+      damageType: "fire",
+      damageTypes: [{ type: "cold", portion: 1 }],
+    });
+    expect(result.damageDealt).toBe(10);
+  });
+});

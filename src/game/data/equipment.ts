@@ -1,6 +1,6 @@
 ﻿import type { StatusEffectId } from "./statusEffects";
 import type { AbilityScoreId } from "./abilityScores";
-import type { WeaponData } from "./weapons";
+import type { WeaponData, DamageType, DamageTypeSplit } from "./weapons";
 import type { ArmorData } from "./armor";
 import { WEAPON_DEFINITIONS, WEAPON_ORDER } from "./weapons";
 import { ARMOR_DEFINITIONS, ARMOR_ORDER, SHIELD_DEFINITIONS, SHIELD_ORDER } from "./armor";
@@ -148,8 +148,25 @@ export const GEAR_SLOT_TYPE_LABELS: Record<GearSlotType, string> = {
 export type EquipmentProc =
   /** On a landed hit, applies a status effect to the target â€” no save. */
   | { kind: "onHitStatus"; statusId: StatusEffectId; durationTurns: number }
-  /** On a landed hit, the target rolls a saving throw or takes bonus damage. */
-  | { kind: "onHitSaveOrDamage"; saveDC: number; bonusDamage: number }
+  /**
+   * On a landed hit, the target rolls a saving throw or takes bonus damage.
+   * D-137: `damageType`/`damageTypes`/`magical` are optional and route the
+   * bonus damage through `CombatSystem.applyResistance` (same shape as
+   * `AttackProfile`) instead of hitting `enemy.health` unconditionally —
+   * left absent, this proc behaves exactly as it always has (Flame
+   * Tongue/Frost Brand don't set these, so their bonus damage stays
+   * untyped/unresisted, unchanged). A future item that needs its bonus
+   * damage split across two real types (a "frostfire" weapon, say) sets
+   * `damageTypes` the same way `AbilityDefinition.damageTypes` does.
+   */
+  | {
+      kind: "onHitSaveOrDamage";
+      saveDC: number;
+      bonusDamage: number;
+      damageType?: DamageType;
+      damageTypes?: ReadonlyArray<DamageTypeSplit>;
+      magical?: boolean;
+    }
   /** Whenever the wearer defeats an enemy, the nearest other living ally is healed. */
   | { kind: "onKillHealNearestAlly"; healAmount: number }
   /** On a landed hit while the wearer has an active damage-resistance buff (Rage/Wild Shape), deals bonus damage. */

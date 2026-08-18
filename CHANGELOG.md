@@ -2,6 +2,378 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Test Mode (D-138)
+
+KI-085's last remaining large item: a dedicated Main Menu entry point into a
+battle unlocked for balance testing, plus a live in-battle debug toolbar. See
+**D-138** in `DECISIONS.md`.
+
+Added:
+- **A "Test Mode" button** on the Main Menu (Creator Tools row), opening a
+  new `TestModeScene` — a stripped-down map/wave-count picker with no
+  gating, handing off to the normal Character Creation flow (Starting
+  Level/Team Level from D-129 already covers "playable at any level").
+- **`WaveSystem.setNoFail`/`forceEndWave`/`spawnAt`**: a stronghold-cannot-
+  fall toggle (integrity still visibly changes, only the loss condition is
+  suppressed), a force-clear-the-current-wave hook (no reward gold — a
+  bypass, not a real clear), and an on-demand single-enemy spawn at an exact
+  tile, reusing the real spawn-construction code path.
+- **`Hero`/`Enemy.removeStatus(id)`**: removes a status effect early.
+- **A live in-battle Debug Menu (F9)**, `this.testMode`-gated only: Skip
+  Wave, a No-Fail Stronghold toggle, and three mode-select tools — Spawn
+  Enemy (any of the full enemy roster, on demand), Paint Terrain (any tile
+  type, no placement validation), and Set Status (toggle any status on/off
+  a hero or enemy) — each with its own paginated picker grid sharing the
+  Shop/Gear grid's existing footprint and keyboard navigation.
+
+Tests: 1251 → 1253 (+2). Typecheck, all 1253 tests, and the production
+build (118 modules, up from 117) all pass. Not yet confirmed by Kevin in a
+browser — see **KI-091** in `KNOWN_ISSUES.md`.
+
+## [Unreleased] — 0.2.0-dev — Dual-Typed Damage System (D-137)
+
+A general system for an attack/spell/item dealing TWO real damage types in
+the same hit, closing a gap D-131 had already flagged inline: Meteor Swarm,
+Flame Strike, and Ice Storm were all being collapsed to one type by judgment
+call. See **D-137** in `DECISIONS.md`.
+
+Added:
+- **`DamageTypeSplit` (`data/weapons.ts`)**: `{ type, portion }` — one
+  component of a dual/multi-typed split; a full split's portions sum to 1.
+- **`AttackProfile.damageTypes?`/`AbilityDefinition.damageTypes?`/
+  `SavingThrowSystem.applySaveOrDamage`'s `options.damageTypes?`**: when
+  present, divides raw damage into a portion per split and resolves
+  resistance/vulnerability/immunity independently for each portion against
+  its own type, then sums — the real 5e rule for a spell that deals more
+  than one damage type at once. The existing singular `damageType` is
+  unchanged and still what `VisualFxSystem` reads for hit color/death cause.
+- **`meteor-swarm`/`flame-strike` now split fire+bludgeoning /fire+radiant
+  50/50** (matching real SRD's own even dice split); **`ice-storm` splits
+  bludgeoning/cold ~39%/61%** (matching its real, UNEVEN 2d8-vs-4d6 SRD
+  ratio) — the first uneven split modeled in this project.
+- **`EquipmentProc`'s `onHitSaveOrDamage` variant gains the same optional
+  `damageType?`/`damageTypes?`/`magical?` fields**, so a future magic item's
+  bonus damage can be typed/dual-typed and routed through the same
+  resistance math, instead of always hitting health directly.
+
+Not converted: `storm-of-vengeance` — its SRD mix is different damage types
+on different ROUNDS of a multi-round effect, not two types in one hit, so it
+doesn't fit this system's "split one instance of damage" shape; D-131's
+original single-type call for it stands. Not retrofitted: Flame Tongue/Frost
+Brand's existing bonus-damage procs — the new fields are opt-in, so both
+items' bonus fire/cold damage still bypasses resistance exactly as before,
+unchanged pending a separate balance conversation.
+
+## [Unreleased] — 0.2.0-dev — Real SRD 5.2.1 Spell-Preparation Economy, Phase 3 (D-136)
+
+Phase 3, the last piece of D-134/D-135's spell-preparation economy: an
+in-battle "Prepare Spells" swap screen at Long Rest, and a level-up
+spell-swap step for the classes that change instead at level-up. Before
+this, a hero's prepared/known list only ever GREW automatically after
+character creation — see **D-136** in `DECISIONS.md` and **KI-090**.
+
+Added:
+- **`SpellPreparationSystem.spellSwapStepsForClass(classId, level, trigger)`**
+  (new, pure, tested): the in-battle analogue of Phase 2's
+  `spellPickStepsForClass`, keyed by a live `"longRest"`/`"levelUp"` trigger
+  instead of a one-time starting pick.
+- **`SpellPreparationSystem.preparedSwapIsFullRelist(classId)`** (new, pure,
+  tested): true for Wizard/Cleric/Druid (a toggle-many screen), false for a
+  "replace exactly one" class (a drop-then-learn screen).
+- **`SpellPreparationSystem.maxCastableSpellLevel(classId, level)`** (new,
+  pure, tested): Phase 2's Character-Creation-only display filter, promoted
+  so the in-battle screens can filter against a hero's CURRENT level.
+- **A Long-Rest-triggered "Prepare Spells" overlay**: choosing Long Rest now
+  offers Wizard/Cleric/Druid a full relist of their prepared spells (Wizard
+  also a cantrip swap), one hero at a time, before the next wave begins.
+- **A level-up-triggered spell-swap overlay**: Sorcerer/Bard/Warlock get a
+  "replace exactly one" prepared-spell swap on every qualifying level-up;
+  every cantrip-having class but Wizard gets the same for one cantrip. Each
+  screen offers a "Keep current — no swap" bail-out.
+
+Changed:
+- **`BattleScene.chooseRest`/`applyClassLevelUps`/`afterWaveCleared`**: wired
+  the two new triggers into the existing rest-choice and level-up overlay
+  chains.
+
+Not built, permanently (see **D-136**'s own reasoning): no
+`LevelUpPlanSystem.futureChoiceSteps` integration for the recurring swap
+opportunity (a plannable slot doesn't fit something that recurs every
+level/rest for a caster's whole career); no Wizard spellbook growth at Long
+Rest (only what's prepared FROM it changes).
+
+## [Unreleased] — 0.2.0-dev — Real SRD 5.2.1 Spell-Preparation Economy, Phase 2 (D-135)
+
+Phase 2 of D-134's spell-preparation economy: a real Character Creation UI
+step for a hero's starting prepared spells/known cantrips/(Wizard)
+spellbook, replacing the silent `defaultFill` auto-pick. Phase 3 (in-battle
+swap UI) is still not built — see **D-135** in `DECISIONS.md` and **KI-090**.
+
+Added:
+- **A "Spells" row in Character Creation**, per caster hero — opens a
+  full-screen toggle-multiple-then-confirm picker wizard, reusing D-133's
+  `renderPlanPrompt` overlay machinery. A Wizard walks Spellbook → Known
+  Cantrips → Prepared Spells (drawn from its own spellbook); every other
+  real caster walks Cantrips → Prepared Spells. Choices are filtered to
+  spells actually castable at the hero's Starting Level. Fighter/Rogue/
+  Barbarian/Monk and Paladin/Ranger show a disabled "Spells: N/A."
+- **`SpellPreparationSystem.spellPickStepsForClass(classId, level)`** (new,
+  pure, tested): the picker's own step sequence per class.
+- **`Hero.chooseSpellbook(ids)`** (new): a wholesale-replace mutator for a
+  Wizard's starting spellbook, distinct from the existing additive
+  `learnSpellbookSpells`.
+- **`CharacterBuild`/`HeroDefinition.preparedSpellIds`/`knownCantripIds`/
+  `spellbookIds`** (new, all optional): a caster's manual starting pick,
+  undefined meaning "keep the auto-fill."
+
+Changed:
+- **`BattleScene.buildHeroes`**: applies a manual spell pick (when set) as a
+  wholesale override right after a hero's Starting-Level fast-forward
+  finishes.
+
+Phase 3 (in-battle "Prepare Spells"/spell-swap UI) was built in the very
+next session — see D-136, above.
+
+## [Unreleased] — 0.2.0-dev — Real SRD 5.2.1 Spell-Preparation Economy, Phase 1 (D-134)
+
+Kevin asked whether the game modeled 5e's real spells-known/prepared
+rules — it didn't (an explicit prior simplification, D-092/D-106). Verified
+against the real SRD 5.2.1 text (not memory): every class "prepares" now,
+differing only in swap cadence — a three-tier model, not the classic 2014
+known-vs-prepared split. This is Phase 1 (data + pure system + `Hero`
+wiring, no UI yet) of a larger rework — see **D-134** in `DECISIONS.md` for
+the complete method and the full phase breakdown.
+
+Added:
+- **`systems/SpellPreparationSystem.ts`** (new, pure, tested): every
+  verified per-class prepared-spell-count table, the three-tier swap-
+  cadence model (`canSwapLeveledSpellAt`/`canSwapCantripAt`), a Wizard's
+  spellbook growth, and validation/default-fill helpers.
+- **`Hero.preparedSpellIds`/`knownCantripIds`/`spellbookIds`**: a caster's
+  real, bounded prepared/known lists — auto-populated with a deterministic
+  default until a future phase adds the real picker UI. New mutators
+  `choosePreparedSpells`/`chooseCantrips`/`learnSpellbookSpells` for that
+  future UI to call.
+
+Changed:
+- **`Hero.knownSpellAbilityIds()`** now returns what's actually prepared/
+  known, not the hero's entire class spell list — the in-battle spellbook
+  overlay (`BattleScene.renderSpellbookOverlay`) already read this method,
+  so it's now correctly gated with no `BattleScene` changes needed.
+- **`data/classes.ts`**: two real 2014-assumption bugs fixed — Paladin/
+  Ranger's spellcasting (and spell slots) now correctly start at level 1,
+  not 2; Sorcerer/Bard/Druid/Warlock get their own real SRD 5.2.1
+  cantrips-known tables instead of sharing Wizard/Cleric's.
+- Removed the dead, wrong `SpellcastingSystem.preparedSpellsKnownForWizardAtLevel`
+  (2014's `intMod + level` formula, never actually called).
+
+Not yet built (see **KI-090**): a Character Creation UI for a hero's real
+starting spell pick; an in-battle "Prepare Spells"/spell-swap UI.
+
+Tests: 1186 → **1221** (+35). Typecheck, all 1221 tests, and the production
+build (117 modules, up from 116) all pass. No browser available in this
+environment — Phase 1 touched no scene file.
+
+## [Unreleased] — 0.2.0-dev — Level-by-Level Character Creation Planner (D-133)
+
+KI-085's largest remaining item, held since D-128 for a design discussion
+(the same standing precedent every system this size gets). Kevin confirmed
+three forks directly: the planner lives inside Character Creation (not a
+separate scene), supports full drill-down (a feat's own sub-choice is
+plannable too), and "Prompted each level" pre-highlights the planned choice
+in the existing in-battle popup. See **D-133** in `DECISIONS.md` for the
+complete method.
+
+Added:
+- **`systems/LevelUpPlanSystem.ts`** (new, pure, tested): the one place a
+  hero's future ASI/subclass/spell-mastery-family choices resolve — a
+  plan's choice if present and still valid, else exactly D-129's original
+  defaults. `futureChoiceSteps(classId)` enumerates every future choice
+  point (1-20) for the planner UI to walk.
+- **A "Plan Levels" row in Character Creation**: opens a full-screen wizard
+  — a Mode screen (Auto-follow a blueprint / Prompted each level / Always
+  choose fresh), then one screen per future choice point, with real
+  eligible feats/spells computed from a scratch simulated hero.
+- **`renderAsiPrompt`'s `highlighted` option** (`BattleScene.ts`): a gold
+  outline + "★ " prefix marking whichever in-battle popup option matches a
+  "Prompted" hero's plan for that level — still fully clickable either way.
+
+Changed:
+- **`BattleScene.fastForwardHeroToLevel`** now delegates to
+  `LevelUpPlanSystem.fastForwardHero` (a refactor — same default behavior
+  for any hero with no plan).
+- **`BattleScene.applyClassLevelUps`**: an "Auto" mode hero's real in-battle
+  level-up choices resolve silently, right there, instead of opening an
+  overlay.
+
+Tests: 1168 → **1188** (+20, new `tests/levelUpPlanSystem.test.ts`).
+Typecheck, all 1188 tests, and the production build (116 modules, up from
+115) all pass. No browser available in this environment — see **KI-089**.
+
+## [Unreleased] — 0.2.0-dev — AC/Damage Visibility in the Battle HUD (D-132)
+
+Kevin confirmed the "Tide map" build-restriction report was his own mistake
+(didn't realize a hero must be within build range of a tile) — closed for
+good, no code change. Then picked up KI-085's confirmed AC/damage-visibility
+gap, choosing a selected-hero-only status-line addition plus a hover tooltip
+(HP/AC on any unit, a BG3-style hit% while targeting) over the alternatives
+offered. See **D-132** in `DECISIONS.md` for the complete method.
+
+Added:
+- **`CombatSystem.hitChance`**: a new pure, analytic hit-probability
+  function (no dice rolled) — normal/advantage/disadvantage, verified
+  against real `RandomService` rolls via three Monte Carlo tests.
+- **A hover tooltip** over any hero or enemy tile (mouse and keyboard cursor
+  alike): `HP {n}/{max} · AC {n}`, plus a `{n}% to hit` line while a hero is
+  selected and hovering a valid basic-attack target. Suppressed entirely for
+  a still-hidden stealth/Mimic enemy.
+- **The selected hero's AC** on the always-on battle-HUD status line.
+
+Changed:
+- **`BattleScene.tryBasicAttack`** refactored: its advantage/bonus
+  computation (Lucky, Vex, Grappler, Bardic Inspiration, Boon of Fate) moved
+  into a new shared `computeBasicAttackProfile`, reused read-only by the new
+  hover preview — behavior is unchanged, only the code path is shared.
+
+Tests: 1162 → **1168** (+6). Typecheck, all 1168 tests, and the production
+build (115 modules, unchanged) all pass. No browser available in this
+environment — see **KI-088**.
+
+## [Unreleased] — 0.2.0-dev — Full Damage-Type Mechanical Engine (D-131)
+
+Kevin's explicit, design-confirmed ask: damage types needed to be "both
+cosmetic AND mechanical... the full mechanical engine/rules," with a full
+roster pass (not a curated subset) for enemy resistance/vulnerability/
+immunity. This closes a gap D-127 itself flagged as deliberately out of
+scope, and resolves KI-078's long-standing "cast/death color is a cosmetic
+guess" limitation for real. See **D-131** in `DECISIONS.md` for the complete
+method.
+
+Added:
+- **The full real SRD damage-type taxonomy** (`DamageType` widened from 3
+  physical types to all 13: acid, bludgeoning, cold, fire, force, lightning,
+  necrotic, piercing, poison, psychic, radiant, slashing, thunder).
+- **A real per-spell `damageType`** on 47 of the ~198 castable spells —
+  every spell whose real 5e version deals damage of a verified type (Fire
+  Bolt→fire, Fireball→fire, Ray of Frost→cold, Sacred Flame→radiant,
+  Eldritch Blast→force, and 42 more). Every control/debuff/buff/heal/
+  summon/terrain/teleport spell whose `damage` here is this project's own
+  stand-in for a real spell with no damage at all (`command`,
+  `charm-person`, `sleep`, `bane`, etc.) correctly has none.
+- **`damageVulnerabilities`/`damageImmunities`** on `EnemyDefinition` (and
+  `Combatant`), alongside the existing `damageResistances` — a full roster
+  pass tagged 24 of the ~63 enemies based on their own existing name/lore
+  (fire-immune Cinderlord/Ashen Sovereign, poison-and-psychic-immune
+  constructs like Basalt Colossus/Gravemaw/Ironhide/Juggernaut, undead-
+  patterned Hollow Empress/Coin Wraith with radiant vulnerability, acid-
+  immune Ooze Splitter, and more).
+- **A save-based spell (Fireball, Sacred Flame, Thunderwave, etc.) now
+  respects resistance/vulnerability/immunity too** — `SavingThrowSystem
+  .applySaveOrDamage` previously had no damage-type hook at all.
+- **The cast-flourish and death-fade colors now use real data first**
+  (`VisualFxSystem`), falling back to the old keyword guess only for a
+  spell with no real damage type — resolves KI-078.
+
+Changed:
+- `CombatSystem.applyResistance` (made non-private) now resolves the full
+  5e rule: elemental types are NEVER affected by whether an attack is
+  "magical" (only the three physical types are, D-127's original rule,
+  unchanged); vulnerability is never bypassed by "magical" for any type;
+  a resistance+vulnerability match on the same type cancels out to full
+  damage per 5e RAW.
+
+Verified: `npm run typecheck`, 1149 → **1162** tests, `npm run build` (115
+modules, unchanged) all pass. Not yet confirmed by Kevin in a browser — see
+KI-087.
+
+## [Unreleased] — 0.2.0-dev — Gear-Purchase UX Clarity, Level-Up Popup, Live Game Speed, Two-Tier Battle Log (D-130)
+
+Kevin reported gear purchase, once found, was "very unintuitive," and asked
+to keep working down KI-085's feature list. He declined a new purchase-only
+stash when offered, so this session clarified the existing buy flow's
+wording instead; picked off the level-up popup, Game Speed, and battle-log
+items himself when asked to prioritize; and held the three largest,
+open-ended items (a debug/test mode, a Character Creation planner, spell
+damage types) for a design discussion, per this project's standing practice
+for a system that size. See **D-130** in `DECISIONS.md` for the complete
+method.
+
+Added:
+- **A "Technical Log" overlay ("L" key)**: the raw dice behind every attack/
+  save roll (d20, bonus, target AC, advantage mode, hit/crit/fumble/miss),
+  kept separate from the existing short plain-English combat log per Kevin's
+  own "not folded into the existing single combat-log line" ask.
+- **A "You reached level N!" popup** for a hero whose level-up grants no
+  other choice (previously a log line only, no popup at all) — closes
+  KI-079's reported gap.
+- **Game Speed can now be changed live, mid-battle ("S" key)**, not just from
+  the Main Menu before a battle starts; the Main Menu control is relabeled
+  "Game Speed" (was "Animation"), and two previously-fixed pacing pauses
+  between phases now scale with it too, so "Instant" actually speeds up the
+  whole turn cadence, not just individual tweens.
+
+Changed:
+- **Gear-grid wording** now explicitly describes the purchase: "buy & equip"
+  for gear, "buy & carry it (use later with P)" for potions, with the exact
+  gold cost named in the hint.
+
+Investigated, not changed:
+- **The "Tide map" build-restriction report**: no bug found in The Drowning
+  Vale's tile-buildability logic; needs a specific repro to go further.
+
+Verified: `npm run typecheck`, all 1149 tests (+1), `npm run build` (115
+modules, unchanged) all pass. Not yet confirmed by Kevin in a browser.
+
+## [Unreleased] — 0.2.0-dev — Free Play/New Game Starting Level, Default 1-Human-3-AI Party (D-129)
+
+Of the large feature-request list from Kevin's playtest report, he picked
+this as the top priority: a settable Starting Level directly solves his
+"testing nightmare of always starting at level 1." See **D-129** in
+`DECISIONS.md` for the complete method.
+
+Added:
+- **A "Level: N" control in every hero column** of Character Creation
+  (shared by both "New Game" and Free Play) — cycles 1-20, and the hero's
+  stats preview updates to roughly match. A new "Team Level: N (all
+  heroes)" button sets every slot at once; any slot can still be adjusted
+  individually afterward.
+- **A hero built at a Starting Level above 1 now actually enters battle
+  there** — real HP/attack/spell-slots/subclass for that level, built by
+  fast-forwarding through the same leveling math a real in-battle level-up
+  uses, just resolving any triggered choice (Ability Score Improvement,
+  subclass, a spell pick) with a fixed, sane default instead of a popup.
+- **A fresh party now defaults to Hero 1 = Human, Heroes 2-4 = AI**
+  (previously all four defaulted to Human) — Kevin's explicit request, so a
+  solo playtest is ready to go without manually toggling three slots.
+
+Verified: `npm run typecheck`, all 1148 tests (+1), `npm run build` (115
+modules, unchanged) all pass. Not yet confirmed by Kevin in a browser.
+
+## [Unreleased] — 0.2.0-dev — Three Playtest Text-Overflow Fixes (D-128)
+
+Kevin's next in-browser pass reported a mix of new bugs, questions, and large
+feature requests. Three concrete, unambiguous text-overflow bugs were fixed
+immediately; a gear-purchase report and an "I can't see AC/damage" question
+were investigated and reported, not fixed; the large feature-request list
+(debug/test mode, Free Play party setup with per-hero starting level, a
+level-by-level Character Creation planner, a two-tier battle log, spell
+damage types, a level-up popup, game-speed options) was deliberately not
+started — see **D-128**/**KI-085** for the full breakdown and why.
+
+Fixed:
+- **Compendium/Bestiary/Main Menu button labels** no longer spill past their
+  own button into a neighbor on a crowded row (10+ category tabs, 12 class
+  buttons) — the button box already shrank to fit (D-126), but the label
+  text never did until now.
+- **Free Play's Map/Finale Boss tile labels** no longer spill past the
+  bottom of their own tile into the locked-hint line below — the box height
+  was fixed regardless of how many lines a long name actually wrapped to.
+- **Character Creation's subclass-picker label** ("Subclass: chosen in
+  battle at level N...") no longer runs over both edges of its own button.
+
+Verified: `npm run typecheck`, all 1147 tests, `npm run build` (115 modules,
+unchanged) all pass. Not yet re-confirmed by Kevin in a browser.
+
 ## [Unreleased] — 0.2.0-dev — Four Foundational Systems: Damage Resistance, Stealth Sense, Charge Items, Ability-Score Items (D-127)
 
 While Kevin ran his first in-browser playtest pass in several sessions, this

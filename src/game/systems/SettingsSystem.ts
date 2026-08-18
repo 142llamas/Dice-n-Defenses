@@ -7,11 +7,12 @@
  * dependency" pattern every other system in this folder follows. A scene
  * wires it to the real `localStorage` via the tiny `SettingsStorage` shape.
  *
- * Deliberately small: one setting (animation speed, which also serves as the
- * "reduced motion" control — "instant" skips animation entirely) plus a
- * one-time tutorial-seen flag. No volume/audio setting exists because there
- * is no audio system yet (see KNOWN_ISSUES) — adding a control for a system
- * that doesn't exist would be unused scaffolding.
+ * Deliberately small: one setting (animation speed, exposed to the player as
+ * "Game Speed" — KI-085/D-130 — which also serves as the "reduced motion"
+ * control, since "instant" skips animation entirely) plus a one-time
+ * tutorial-seen flag. No volume/audio setting exists because there is no
+ * audio system yet (see KNOWN_ISSUES) — adding a control for a system that
+ * doesn't exist would be unused scaffolding.
  */
 
 export type AnimationSpeed = "normal" | "fast" | "instant";
@@ -31,6 +32,13 @@ export interface SettingsStorage {
 }
 
 const ANIMATION_SPEEDS: readonly AnimationSpeed[] = ["normal", "fast", "instant"];
+
+/** Shared player-facing label per speed step — used by both the Main Menu control and BattleScene's in-battle "S" hotkey. */
+export const ANIMATION_SPEED_LABELS: Record<AnimationSpeed, string> = {
+  normal: "Normal",
+  fast: "Fast",
+  instant: "Instant (reduced motion)",
+};
 
 /** Cycle to the next animation speed option, wrapping around. */
 export function nextAnimationSpeed(current: AnimationSpeed): AnimationSpeed {

@@ -87,6 +87,24 @@ export function createOrnateButton(
     .setOrigin(0.5);
   container.add([g, text]);
 
+  // Playtest fix: `centeredRowX` shrinks the BOX to fit a crowded row (10+
+  // Compendium tabs, 12 classes), but the label text itself never shrank to
+  // match, so a normal-length label could still render wider than its own
+  // now-narrower box and spill into its neighbors. Shrinks the font (down to
+  // a readable floor) against the button's REAL measured text width, the
+  // same "measure, don't guess" approach `BattleScene.fitBannerToWidth` uses.
+  const labelPadding = 10;
+  const minLabelFontSizePx = 9;
+  const fitLabelToWidth = (): void => {
+    text.setFontSize(fontSize);
+    let size = fontSize;
+    while (text.width > width - labelPadding && size > minLabelFontSizePx) {
+      size -= 1;
+      text.setFontSize(size);
+    }
+  };
+  fitLabelToWidth();
+
   let sub: Phaser.GameObjects.Text | undefined;
   if (opts.sublabel) {
     sub = scene.add
@@ -170,7 +188,10 @@ export function createOrnateButton(
 
   return {
     container,
-    setLabel: (t: string) => text.setText(t),
+    setLabel: (t: string) => {
+      text.setText(t);
+      fitLabelToWidth();
+    },
     setSelected: (s: boolean) => {
       selected = s;
       draw();

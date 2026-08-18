@@ -13,7 +13,14 @@ import {
   savingThrowBonus as computeSavingThrowBonus,
   type LeveledCombatStats,
 } from "../systems/CharacterSystem";
-import { spellSlotsForClassAtLevel } from "../systems/SpellcastingSystem";
+import { spellSlotsForClassAtLevel, cantripsKnownForClassAtLevel } from "../systems/SpellcastingSystem";
+import {
+  preparedSpellCountForClassAtLevel,
+  eligibleCantripPool,
+  eligibleLeveledSpellPool,
+  wizardSpellbookSizeAtLevel,
+  defaultFill,
+} from "../systems/SpellPreparationSystem";
 import { getClassDefinition, type CharacterClassDefinition } from "../data/classes";
 import { subclassGrantedSpellIdsUpToLevel } from "../data/subclasses";
 import { getFeat, hitPointBonusFromFeat, type FeatDefinition } from "../data/feats";
@@ -74,7 +81,7 @@ const SORCERY_POINTS_PER_REST = 2;
  * gaining levels here — far above anything a real run's wave count reaches
  * today, this is a defensive ceiling, not a tuned target.
  */
-const MAX_CLASS_LEVEL = 20;
+export const MAX_CLASS_LEVEL = 20;
 
 /** Phase 13.6 (D-091): the SRD's ability-score ceiling an ASI may never raise a score past. */
 const MAX_ABILITY_SCORE = 20;
@@ -181,10 +188,13 @@ const EMPTY_BODY_KI_COST = KI_POINTS_PER_REST;
 const THIEF_SUPREME_SNEAK_LEVEL = 9;
 /** Untuned, no passive-Perception equivalent exists for an enemy (no ability scores) — see `Hero.stealthCheckModifier`'s own comment. */
 const HIDE_IN_PLAIN_SIGHT_BONUS = 10;
-const WIZARD_SPELL_MASTERY_LEVEL = 18;
-const WIZARD_SIGNATURE_SPELLS_LEVEL = 20;
+// Exported (D-133) so LevelUpPlanSystem's `futureChoiceSteps` can enumerate
+// these trigger levels for the Character Creation planner without
+// re-hardcoding them a second time.
+export const WIZARD_SPELL_MASTERY_LEVEL = 18;
+export const WIZARD_SIGNATURE_SPELLS_LEVEL = 20;
 /** Warlock's Mystic Arcanum: spell-level tier -> the hero level it unlocks at. */
-const WARLOCK_MYSTIC_ARCANUM_LEVELS: Record<number, number> = { 6: 11, 7: 13, 8: 15, 9: 17 };
+export const WARLOCK_MYSTIC_ARCANUM_LEVELS: Record<number, number> = { 6: 11, 7: 13, 8: 15, 9: 17 };
 
 /** Magic Initiate's three SRD-legal spell lists — see `Hero.grantFeat`. */
 export type MagicInitiateListId = "cleric" | "druid" | "wizard";
@@ -302,6 +312,12 @@ export interface HeroSnapshot {
   itemChargesRemaining: Record<string, number>;
   /** D-127: active ability-score-SETTING item overrides. */
   abilityScoreOverrides: Partial<Record<AbilityScoreId, number>>;
+  /** D-134: this hero's currently prepared leveled spells. */
+  preparedSpellIds: string[];
+  /** D-134: this hero's currently known cantrips. */
+  knownCantripIds: string[];
+  /** D-134: a Wizard's spellbook (empty for every other class). */
+  spellbookIds: string[];
 }
 
 /**
@@ -557,6 +573,21 @@ export class Hero implements Combatant {
    * this decision.
    */
   private abilityScoreOverrides: Partial<Record<AbilityScoreId, number>> = {};
+  /**
+   * D-134: this hero's currently PREPARED leveled spells (1st+) — the real
+   * SRD 5.2.1 economy, replacing the old "knows its entire class list"
+   * simplification (D-092/D-106). Auto-populated with a deterministic
+   * default (`defaultFill`, first-eligible-in-list-order) at creation and
+   * on every level-up that grows the count, until a future phase adds the
+   * real Character Creation/in-battle picker UI — the same "silent default
+   * until a real choice exists" precedent D-129/D-133 already established.
+   * Empty for a non-caster.
+   */
+  private _preparedSpellIds: string[] = [];
+  /** D-134: this hero's currently known cantrips — same auto-populated-default treatment as `preparedSpellIds`, but its own separate count/swap-trigger table (see `SpellPreparationSystem`). Empty for a non-caster. */
+  private _knownCantripIds: string[] = [];
+  /** D-134: a Wizard's ever-growing spellbook (6 at level 1, +2 per level, never shrinks/forgets) — the pool its Long-Rest full relist prepares FROM, instead of the full class list every other caster draws from directly. Empty for every non-Wizard class. */
+  private _spellbookIds: string[] = [];
 
   /** Current tile. Only changes when a move is COMMITTED via moveTo(). */
   position: GridPosition;
@@ -620,6 +651,8 @@ export class Hero implements Combatant {
       const classDef = getClassDefinition(this.classId);
       if (classDef.spellcasting) this.spellSlotsRemaining = spellSlotsForClassAtLevel(classDef, this.classLevel);
     }
+    // D-134: a caster's starting prepared spells/known cantrips/(Wizard) spellbook.
+    this.growSpellSelections();
     // Phase 13.8 (D-093): each new class's signature resource pool, filled
     // to its flat per-rest max at creation — same pattern as `spellSlotsRemaining` above.
     if (this.classId === "barbarian") this.rageUsesRemaining = RAGE_USES_PER_REST;
@@ -769,6 +802,11 @@ export class Hero implements Combatant {
 
   hasStatus(id: StatusEffectId): boolean {
     return this.activeStatuses.some((s) => s.id === id);
+  }
+
+  /** Test Mode (D-138): remove a status effect early, if present. A no-op otherwise. */
+  removeStatus(id: StatusEffectId): void {
+    this.activeStatuses = this.activeStatuses.filter((s) => s.id !== id);
   }
 
   /** Advance every active status by one turn, dropping any that expire. Called from `resetForNewTurn`. */
@@ -1548,6 +1586,81 @@ export class Hero implements Combatant {
     // D-125: Channel Divinity's max use count grows at levels 2/6/18 — same
     // "capacity gained right away" treatment as Indomitable just above.
     this.channelDivinityUsesRemaining = Math.max(this.channelDivinityUsesRemaining, this.channelDivinityMaxUses);
+    // D-134: any newly-unlocked prepared-spell/cantrip/spellbook capacity —
+    // same "capacity gained right away" treatment as the two lines above.
+    this.growSpellSelections();
+  }
+
+  /**
+   * D-134: fills any newly-available prepared-spell/known-cantrip/(Wizard)
+   * spellbook capacity with a deterministic default (`defaultFill` — first
+   * not-yet-selected id from the eligible pool, in list order) — never
+   * removes anything already selected, only ever adds. This is the
+   * "silent default until a real choice-UI exists" precedent D-129/D-133
+   * already established elsewhere in this project: a future phase will let
+   * the player actually CHOOSE instead, but the game must stay fully
+   * playable in the meantime. Called once at construction (level 1) and
+   * again after every `levelUpClass()` call.
+   */
+  private growSpellSelections(): void {
+    if (!this.classId) return;
+    if (this.classId === "wizard") {
+      const spellbookSize = wizardSpellbookSizeAtLevel(this.classLevel);
+      this._spellbookIds = defaultFill(eligibleLeveledSpellPool("wizard"), this._spellbookIds, spellbookSize);
+    }
+    const preparedCount = preparedSpellCountForClassAtLevel(this.classId, this.classLevel);
+    if (preparedCount > 0) {
+      const pool = this.classId === "wizard" ? this._spellbookIds : eligibleLeveledSpellPool(this.classId);
+      this._preparedSpellIds = defaultFill(pool, this._preparedSpellIds, preparedCount);
+    }
+    const cantripCount = cantripsKnownForClassAtLevel(getClassDefinition(this.classId), this.classLevel);
+    if (cantripCount > 0) {
+      this._knownCantripIds = defaultFill(eligibleCantripPool(this.classId), this._knownCantripIds, cantripCount);
+    }
+  }
+
+  /** This hero's currently prepared leveled spells (1st+) — see `_preparedSpellIds`'s own field comment for the real SRD 5.2.1 economy this reflects. Empty for a non-caster. */
+  get preparedSpellIds(): readonly string[] {
+    return this._preparedSpellIds;
+  }
+
+  /** This hero's currently known cantrips. Empty for a non-caster. */
+  get knownCantripIds(): readonly string[] {
+    return this._knownCantripIds;
+  }
+
+  /** A Wizard's spellbook — the pool its Long-Rest full relist prepares from. Empty for any other class. */
+  get spellbookIds(): readonly string[] {
+    return this._spellbookIds;
+  }
+
+  /**
+   * D-134: sets this hero's prepared leveled spells wholesale — the mutator
+   * a future Character Creation/in-battle "Prepare Spells" picker UI will
+   * call (Phase 2/3, not yet built). Validity (right count, right pool) is
+   * the caller's responsibility — `SpellPreparationSystem.isValidSelection`
+   * — this method just stores whatever it's given, matching every other
+   * one-shot "choose..." mutator already in this file (e.g.
+   * `chooseSpellMasterySpell`).
+   */
+  choosePreparedSpells(ids: string[]): void {
+    this._preparedSpellIds = [...ids];
+  }
+
+  /** D-134: sets this hero's known cantrips wholesale — same shape as `choosePreparedSpells`, for a future cantrip-swap picker UI. */
+  chooseCantrips(ids: string[]): void {
+    this._knownCantripIds = [...ids];
+  }
+
+  /** D-134: adds spells to a Wizard's spellbook (never removes) — the mutator a future "copy a spell into your spellbook" UI will call. A no-op for any other class. */
+  learnSpellbookSpells(ids: string[]): void {
+    if (this.classId !== "wizard") return;
+    for (const id of ids) if (!this._spellbookIds.includes(id)) this._spellbookIds.push(id);
+  }
+
+  /** D-135: sets a Wizard's spellbook wholesale — distinct from `learnSpellbookSpells`'s additive "copy a spell in" semantics, for Character Creation's starting-spellbook picker, which replaces the auto-filled default rather than adding to it. */
+  chooseSpellbook(ids: string[]): void {
+    this._spellbookIds = [...ids];
   }
 
   /**
@@ -1773,10 +1886,12 @@ export class Hero implements Combatant {
   }
 
   /**
-   * Phase 13.7 (D-092): every spell this hero can pick from a spellbook —
-   * every cantrip its class knows plus every leveled spell this game can
-   * cast today, NOT just the one signature action chosen at creation.
-   * Empty for a non-caster or the classic fixed roster.
+   * D-134: every spell this hero can pick from a spellbook — its currently
+   * PREPARED leveled spells and KNOWN cantrips (not its whole class list —
+   * see `preparedSpellIds`/`knownCantripIds`'s own comments for the real
+   * SRD 5.2.1 economy this now reflects), plus every subclass-granted/
+   * Magic-Initiate/charged-item spell exactly as before. Empty for a
+   * non-caster or the classic fixed roster.
    */
   knownSpellAbilityIds(): string[] {
     // D-127: a charge-based item's granted spell doesn't require a class at
@@ -1785,7 +1900,8 @@ export class Hero implements Combatant {
     // equipped wand still gets it.
     if (!this.classId) return [...this.chargedItemSpellIds];
     return [
-      ...knownSpellIdsForClass(this.classId),
+      ...this._preparedSpellIds,
+      ...this._knownCantripIds,
       ...this.magicInitiateSpellIds,
       ...this.subclassGrantedSpellAbilityIds,
       ...this.chargedItemSpellIds,
@@ -2715,6 +2831,9 @@ export class Hero implements Combatant {
       mysticArcanumUsedThisRest: { ...this.mysticArcanumUsedThisRest },
       itemChargesRemaining: { ...this.itemChargesRemaining },
       abilityScoreOverrides: { ...this.abilityScoreOverrides },
+      preparedSpellIds: [...this._preparedSpellIds],
+      knownCantripIds: [...this._knownCantripIds],
+      spellbookIds: [...this._spellbookIds],
     };
   }
 
@@ -2804,5 +2923,8 @@ export class Hero implements Combatant {
     this.mysticArcanumUsedThisRest = { ...snapshot.mysticArcanumUsedThisRest };
     this.itemChargesRemaining = { ...snapshot.itemChargesRemaining };
     this.abilityScoreOverrides = { ...snapshot.abilityScoreOverrides };
+    this._preparedSpellIds = [...snapshot.preparedSpellIds];
+    this._knownCantripIds = [...snapshot.knownCantripIds];
+    this._spellbookIds = [...snapshot.spellbookIds];
   }
 }

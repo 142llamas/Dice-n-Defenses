@@ -1,11 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { FIGHTER, WIZARD, CLERIC } from "../src/game/data/classes";
-import {
-  isSpellcaster,
-  cantripsKnownForClassAtLevel,
-  spellSlotsForClassAtLevel,
-  preparedSpellsKnownForWizardAtLevel,
-} from "../src/game/systems/SpellcastingSystem";
+import { isSpellcaster, cantripsKnownForClassAtLevel, spellSlotsForClassAtLevel } from "../src/game/systems/SpellcastingSystem";
 
 /**
  * Phase 11.2 ("spellcasting engine," DECISIONS D-071/D-074) — pure derived
@@ -64,16 +59,5 @@ describe("the Cleric shares the Wizard's full-caster tables (Phase 11.3, D-075)"
   it("has the identical cantrip and spell-slot progression", () => {
     expect(cantripsKnownForClassAtLevel(CLERIC, 1)).toBe(cantripsKnownForClassAtLevel(WIZARD, 1));
     expect(spellSlotsForClassAtLevel(CLERIC, 5)).toEqual(spellSlotsForClassAtLevel(WIZARD, 5));
-  });
-});
-
-describe("preparedSpellsKnownForWizardAtLevel", () => {
-  it("is INT modifier + level, minimum 1", () => {
-    expect(preparedSpellsKnownForWizardAtLevel(1, 3)).toBe(4);
-    expect(preparedSpellsKnownForWizardAtLevel(5, 2)).toBe(7);
-  });
-
-  it("never drops below 1 even with a very negative INT modifier", () => {
-    expect(preparedSpellsKnownForWizardAtLevel(1, -5)).toBe(1);
   });
 });

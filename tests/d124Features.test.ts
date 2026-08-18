@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { Hero } from "../src/game/entities/Hero";
 import { heroDefinitionFromBuild, type CharacterBuild } from "../src/game/systems/CharacterBuildSystem";
+import { subclassGrantedSpellIdsUpToLevel } from "../src/game/data/subclasses";
+import { getSpell } from "../src/game/data/spells";
 
 /**
  * D-124: wiring a batch of class/subclass features whose blocking system
@@ -245,14 +247,26 @@ describe("subclass-granted spell lists via Hero.knownSpellAbilityIds (D-124)", (
     expect(hero.knownSpellAbilityIds()).toContain("scorching-ray");
   });
 
-  it("Life Domain's Domain Spells are wired but produce NO observable difference — every named spell (bar Revivify/Raise Dead) is already in the base Cleric list", () => {
+  it("Life Domain's Domain Spells are wired and, under D-134's now-bounded prepared-spell economy, are genuinely guaranteed known regardless of what's actually prepared", () => {
     const withSubclass = heroFromBuild({ classId: "cleric", abilityId: "sacred-flame", subclassId: "life-domain" });
     const withoutSubclass = heroFromBuild({ classId: "cleric", abilityId: "sacred-flame" });
     for (let i = 1; i < 9; i++) {
       withSubclass.levelUpClass();
       withoutSubclass.levelUpClass();
     }
-    expect(new Set(withSubclass.knownSpellAbilityIds())).toEqual(new Set(withoutSubclass.knownSpellAbilityIds()));
+    // the default-filled prepared/cantrip subset is identical either way (it
+    // depends only on class/level, never on subclass) — Domain Spells only
+    // ever ADD on top of it, never remove or change it.
+    const withoutIds = withoutSubclass.knownSpellAbilityIds();
+    const withIds = withSubclass.knownSpellAbilityIds();
+    for (const id of withoutIds) expect(withIds).toContain(id);
+    // every Domain Spell is guaranteed known, whether or not it happens to
+    // also be in the small default-prepared subset above.
+    const domainSpellAbilityIds = subclassGrantedSpellIdsUpToLevel("life-domain", withSubclass.level)
+      .map((id) => getSpell(id).abilityId)
+      .filter((id): id is string => !!id);
+    expect(domainSpellAbilityIds.length).toBeGreaterThan(0);
+    for (const id of domainSpellAbilityIds) expect(withIds).toContain(id);
   });
 
   it("stays empty for Oath of Devotion — Paladin has no spellbook in this game at all, even though its class def carries a spellcasting progression for Divine Smite's slot pool", () => {

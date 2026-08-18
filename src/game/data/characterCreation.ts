@@ -278,11 +278,27 @@ export const WARLOCK_LEVELED_SPELL_IDS: string[] = [
  * being non-empty, not off a class merely having `spellcasting` data.
  */
 export function knownSpellIdsForClass(classId: string): string[] {
-  if (classId === "wizard") return [...WIZARD_CANTRIP_IDS, ...WIZARD_LEVELED_SPELL_IDS];
-  if (classId === "cleric") return [...CLERIC_CANTRIP_IDS, ...CLERIC_LEVELED_SPELL_IDS];
-  if (classId === "bard") return [...BARD_CANTRIP_IDS, ...BARD_LEVELED_SPELL_IDS];
-  if (classId === "druid") return [...DRUID_CANTRIP_IDS, ...DRUID_LEVELED_SPELL_IDS];
-  if (classId === "sorcerer") return [...SORCERER_CANTRIP_IDS, ...SORCERER_LEVELED_SPELL_IDS];
-  if (classId === "warlock") return [...WARLOCK_CANTRIP_IDS, ...WARLOCK_LEVELED_SPELL_IDS];
+  return [...cantripIdsForClass(classId), ...leveledSpellIdsForClass(classId)];
+}
+
+/** D-134: just the cantrip half of `knownSpellIdsForClass` — the eligible pool `SpellPreparationSystem` draws a caster's known cantrips from. Empty for a non-caster. */
+export function cantripIdsForClass(classId: string): string[] {
+  if (classId === "wizard") return WIZARD_CANTRIP_IDS;
+  if (classId === "cleric") return CLERIC_CANTRIP_IDS;
+  if (classId === "bard") return BARD_CANTRIP_IDS;
+  if (classId === "druid") return DRUID_CANTRIP_IDS;
+  if (classId === "sorcerer") return SORCERER_CANTRIP_IDS;
+  if (classId === "warlock") return WARLOCK_CANTRIP_IDS;
+  return [];
+}
+
+/** D-134: just the leveled-spell half of `knownSpellIdsForClass` — the eligible pool `SpellPreparationSystem` draws a caster's prepared/known leveled spells (and a Wizard's spellbook) from. Empty for a non-caster. */
+export function leveledSpellIdsForClass(classId: string): string[] {
+  if (classId === "wizard") return WIZARD_LEVELED_SPELL_IDS;
+  if (classId === "cleric") return CLERIC_LEVELED_SPELL_IDS;
+  if (classId === "bard") return BARD_LEVELED_SPELL_IDS;
+  if (classId === "druid") return DRUID_LEVELED_SPELL_IDS;
+  if (classId === "sorcerer") return SORCERER_LEVELED_SPELL_IDS;
+  if (classId === "warlock") return WARLOCK_LEVELED_SPELL_IDS;
   return [];
 }

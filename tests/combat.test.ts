@@ -58,6 +58,12 @@ describe("CombatSystem dice resolution", () => {
     expect(roll.total).toBe(15);
   });
 
+  it("KI-085/D-130: the roll reports back whichever advantage mode it was actually rolled with", () => {
+    expect(CombatSystem.rollAttack(15, 3, RandomService.fixed(12)).advantage).toBe("normal");
+    expect(CombatSystem.rollAttack(15, 3, RandomService.fixed(12), "advantage").advantage).toBe("advantage");
+    expect(CombatSystem.rollAttack(15, 3, RandomService.fixed(12), "disadvantage").advantage).toBe("disadvantage");
+  });
+
   it("misses when the total falls short of AC", () => {
     const roll = CombatSystem.rollAttack(15, 3, RandomService.fixed(10)); // 13 < 15
     expect(roll.hit).toBe(false);
@@ -224,6 +230,270 @@ describe("CombatSystem damage-type resistance (D-127)", () => {
       RandomService.fixed(15),
     );
     expect(r.damageDealt).toBe(5);
+  });
+});
+
+/**
+ * D-131: the full damage-type engine — every SRD damage type, elemental
+ * resistance/vulnerability/immunity for a spell/ability attack (`magical:
+ * true`, set by every BattleScene ability-cast site), and the 5e resolution
+ * rule split (elemental types are NEVER affected by `magical`; only the
+ * three physical types are, exactly like D-127's original Swarm rule).
+ */
+describe("CombatSystem damage-type resistance/vulnerability/immunity (D-131)", () => {
+  it("D-127 regression: the exact pre-D-131 Swarm-vs-physical-weapon behavior is completely unchanged", () => {
+    const swarm = (id: string, health: number): Combatant => ({
+      ...at(id, 1, 0, health),
+      damageResistances: ["bludgeoning", "piercing", "slashing"],
+    });
+    const nonmagicalHit = CombatSystem.applyAttack(
+      swarm("s1", 20),
+      { rangeTiles: 1, damage: 5, attackBonus: 0, damageType: "slashing" },
+      RandomService.fixed(15),
+    );
+    expect(nonmagicalHit.damageDealt).toBe(2); // floor(5/2), unchanged
+    const magicalHit = CombatSystem.applyAttack(
+      swarm("s2", 20),
+      { rangeTiles: 1, damage: 5, attackBonus: 0, damageType: "slashing", magical: true },
+      RandomService.fixed(15),
+    );
+    expect(magicalHit.damageDealt).toBe(5); // bypassed, unchanged
+  });
+
+  it("halves a magical spell attack against an elemental-resistant enemy (elemental types are never bypassed by magical)", () => {
+    const target: Combatant = { ...at("t", 1, 0, 20), damageResistances: ["fire"] };
+    const r = CombatSystem.applyAttack(
+      target,
+      { rangeTiles: 3, damage: 10, attackBonus: 0, damageType: "fire", magical: true },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(5); // still halved — magical never bypasses an elemental type
+  });
+
+  it("zeroes a magical spell attack against an elemental-immune enemy", () => {
+    const target: Combatant = { ...at("t", 1, 0, 20), damageImmunities: ["fire"] };
+    const r = CombatSystem.applyAttack(
+      target,
+      { rangeTiles: 3, damage: 10, attackBonus: 0, damageType: "fire", magical: true },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(0);
+    expect(target.health).toBe(20);
+  });
+
+  it("doubles a magical spell attack against an elemental-vulnerable enemy", () => {
+    const target: Combatant = { ...at("t", 1, 0, 20), damageVulnerabilities: ["cold"] };
+    const r = CombatSystem.applyAttack(
+      target,
+      { rangeTiles: 3, damage: 6, attackBonus: 0, damageType: "cold", magical: true },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(12);
+  });
+
+  it("a magic weapon still bypasses a PHYSICAL immunity (not just resistance)", () => {
+    const target: Combatant = { ...at("t", 1, 0, 20), damageImmunities: ["slashing"] };
+    const nonmagical = CombatSystem.applyAttack(
+      target,
+      { rangeTiles: 1, damage: 8, attackBonus: 0, damageType: "slashing" },
+      RandomService.fixed(15),
+    );
+    expect(nonmagical.damageDealt).toBe(0);
+    const magical = CombatSystem.applyAttack(
+      { ...target, health: 20 },
+      { rangeTiles: 1, damage: 8, attackBonus: 0, damageType: "slashing", magical: true },
+      RandomService.fixed(15),
+    );
+    expect(magical.damageDealt).toBe(8);
+  });
+
+  it("vulnerability is NEVER bypassed by magical, even for a physical type", () => {
+    const target: Combatant = { ...at("t", 1, 0, 20), damageVulnerabilities: ["bludgeoning"] };
+    const r = CombatSystem.applyAttack(
+      target,
+      { rangeTiles: 1, damage: 6, attackBonus: 0, damageType: "bludgeoning", magical: true },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(12); // still doubled
+  });
+
+  it("resistance and vulnerability to the SAME type cancel out per 5e RAW (full damage, not double-halved)", () => {
+    const target: Combatant = {
+      ...at("t", 1, 0, 20),
+      damageResistances: ["necrotic"],
+      damageVulnerabilities: ["necrotic"],
+    };
+    const r = CombatSystem.applyAttack(
+      target,
+      { rangeTiles: 3, damage: 9, attackBonus: 0, damageType: "necrotic", magical: true },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(9); // cancels out to full, unaffected by magical either way
+  });
+});
+
+/**
+ * D-137: a genuinely dual-typed attack (`AttackProfile.damageTypes`) — the
+ * real SRD shape of e.g. Meteor Swarm (fire+bludgeoning, even split) — where
+ * each type's own resistance/vulnerability/immunity resolves independently
+ * against its own portion of the damage, then the portions sum.
+ */
+describe("CombatSystem dual-typed attack resistance (D-137)", () => {
+  it("splits raw damage per portion and applies each type's resistance independently, then sums", () => {
+    const target: Combatant = { ...at("t", 1, 0, 40), damageResistances: ["fire"] };
+    const r = CombatSystem.applyAttack(
+      target,
+      {
+        rangeTiles: 3,
+        damage: 20,
+        attackBonus: 0,
+        damageTypes: [
+          { type: "fire", portion: 0.5 },
+          { type: "bludgeoning", portion: 0.5 },
+        ],
+        magical: true,
+      },
+      RandomService.fixed(15),
+    );
+    // 10 fire halved to 5 (resisted) + 10 bludgeoning at full (no resistance, magical bypass moot) = 15
+    expect(r.damageDealt).toBe(15);
+  });
+
+  it("an uneven split (Ice Storm's real 2d8 bludgeoning / 4d6 cold ratio) resolves each portion against the correct type", () => {
+    const target: Combatant = { ...at("t", 1, 0, 40), damageImmunities: ["cold"] };
+    const r = CombatSystem.applyAttack(
+      target,
+      {
+        rangeTiles: 3,
+        damage: 23,
+        attackBonus: 0,
+        damageTypes: [
+          { type: "bludgeoning", portion: 0.39 },
+          { type: "cold", portion: 0.61 },
+        ],
+        magical: true,
+      },
+      RandomService.fixed(15),
+    );
+    // bludgeoning portion round(23*0.39)=9 taken in full; cold portion (23-9)=14 zeroed by immunity.
+    expect(r.damageDealt).toBe(9);
+  });
+
+  it("the last split absorbs any rounding remainder so portions always sum to the full raw damage", () => {
+    const target = at("t", 1, 0, 40);
+    const r = CombatSystem.applyAttack(
+      target,
+      {
+        rangeTiles: 3,
+        damage: 10,
+        attackBonus: 0,
+        damageTypes: [
+          { type: "fire", portion: 1 / 3 },
+          { type: "cold", portion: 1 / 3 },
+          { type: "lightning", portion: 1 / 3 },
+        ],
+      },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(10); // no resistances at all — the split must still total the original 10
+  });
+
+  it("a physical portion is still bypassed by magical exactly like a single-typed physical attack", () => {
+    const target: Combatant = { ...at("t", 1, 0, 40), damageResistances: ["bludgeoning"] };
+    const r = CombatSystem.applyAttack(
+      target,
+      {
+        rangeTiles: 1,
+        damage: 10,
+        attackBonus: 0,
+        damageTypes: [
+          { type: "bludgeoning", portion: 0.5 },
+          { type: "fire", portion: 0.5 },
+        ],
+        magical: true,
+      },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(10); // bludgeoning half bypassed (magical), fire half unresisted
+  });
+
+  it("damageTypes takes over from damageType when both are present", () => {
+    const target: Combatant = { ...at("t", 1, 0, 40), damageImmunities: ["fire"] };
+    const r = CombatSystem.applyAttack(
+      target,
+      {
+        rangeTiles: 1,
+        damage: 10,
+        attackBonus: 0,
+        damageType: "fire",
+        damageTypes: [{ type: "cold", portion: 1 }],
+      },
+      RandomService.fixed(15),
+    );
+    expect(r.damageDealt).toBe(10); // fire immunity ignored — damageTypes says this hit is actually cold
+  });
+});
+
+/**
+ * D-132: `hitChance` is the analytic hover-preview counterpart to
+ * `rollAttack` — no dice, no RandomService — used by the battle HUD's
+ * hover tooltip to show a BG3-style "N% to hit" without ever consuming a
+ * real roll. The Monte Carlo tests below confirm the closed-form math
+ * actually matches `RandomService.rollD20With`'s real 2d20-keep-higher/
+ * lower mechanics, not just its own internal formula.
+ */
+describe("CombatSystem.hitChance — analytic hover-preview hit probability (D-132)", () => {
+  it("computes the exact probability from the 20 possible d20 values", () => {
+    expect(CombatSystem.hitChance(0, 11)).toBeCloseTo(0.5, 5); // hits on 11-20 (10 of 20)
+    expect(CombatSystem.hitChance(0, 25)).toBeCloseTo(0.05, 5); // only a nat-20 crit can hit
+    expect(CombatSystem.hitChance(20, 5)).toBeCloseTo(0.95, 5); // only a nat-1 fumble can miss
+  });
+
+  it("advantage/disadvantage apply the real 'best/worst of two independent rolls' math, not a flat modifier", () => {
+    const normal = CombatSystem.hitChance(0, 11);
+    expect(CombatSystem.hitChance(0, 11, "advantage")).toBeCloseTo(1 - (1 - normal) ** 2, 5);
+    expect(CombatSystem.hitChance(0, 11, "disadvantage")).toBeCloseTo(normal ** 2, 5);
+  });
+
+  it("respects a widened crit threshold (e.g. Champion's Improved Critical)", () => {
+    // at this AC only a natural 19 or 20 can possibly hit — both crit under a 19 threshold
+    expect(CombatSystem.hitChance(0, 25, "normal", 19)).toBeCloseTo(0.1, 5);
+  });
+
+  it("matches real rolled frequencies from RandomService over a large sample (Monte Carlo, normal)", () => {
+    const random = RandomService.seeded(1234);
+    const attackBonus = 3;
+    const ac = 14;
+    const trials = 20000;
+    let hits = 0;
+    for (let i = 0; i < trials; i++) {
+      if (CombatSystem.rollAttack(ac, attackBonus, random, "normal").hit) hits++;
+    }
+    expect(hits / trials).toBeCloseTo(CombatSystem.hitChance(attackBonus, ac), 1);
+  });
+
+  it("matches real rolled frequencies from RandomService over a large sample (Monte Carlo, advantage)", () => {
+    const random = RandomService.seeded(5678);
+    const attackBonus = 1;
+    const ac = 16;
+    const trials = 20000;
+    let hits = 0;
+    for (let i = 0; i < trials; i++) {
+      if (CombatSystem.rollAttack(ac, attackBonus, random, "advantage").hit) hits++;
+    }
+    expect(hits / trials).toBeCloseTo(CombatSystem.hitChance(attackBonus, ac, "advantage"), 1);
+  });
+
+  it("matches real rolled frequencies from RandomService over a large sample (Monte Carlo, disadvantage)", () => {
+    const random = RandomService.seeded(9012);
+    const attackBonus = 6;
+    const ac = 13;
+    const trials = 20000;
+    let hits = 0;
+    for (let i = 0; i < trials; i++) {
+      if (CombatSystem.rollAttack(ac, attackBonus, random, "disadvantage").hit) hits++;
+    }
+    expect(hits / trials).toBeCloseTo(CombatSystem.hitChance(attackBonus, ac, "disadvantage"), 1);
   });
 });
 

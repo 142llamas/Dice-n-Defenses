@@ -354,6 +354,13 @@ export class WaveSystem {
    * resets each Teleporter's timer to its full interval).
    */
   private teleportCooldowns = new Map<string, number>();
+  /**
+   * Test Mode (D-138): when true, `isDefeated()` always reports false
+   * regardless of `integrityValue` — a debug toggle, not a balance change.
+   * Integrity still visibly decreases on a breach; this only suppresses the
+   * loss condition itself.
+   */
+  private noFail = false;
 
   private readonly spawns: GridPosition[];
   private readonly exits: GridPosition[];
@@ -413,7 +420,12 @@ export class WaveSystem {
   }
 
   isDefeated(): boolean {
-    return this.integrityValue <= 0;
+    return this.noFail ? false : this.integrityValue <= 0;
+  }
+
+  /** Test Mode (D-138): toggle the stronghold-cannot-fall debug flag. */
+  setNoFail(value: boolean): void {
+    this.noFail = value;
   }
 
   isLastWave(): boolean {
@@ -445,6 +457,20 @@ export class WaveSystem {
   /** Move on to the next wave. Caller should check isLastWave() first. */
   advanceToNextWave(): void {
     this.startWave(this.waveIndex + 1);
+  }
+
+  /**
+   * Test Mode (D-138): force the CURRENT wave into its "cleared" state —
+   * clears every active enemy and marks every spawn group as fully spawned,
+   * so `isCurrentWaveComplete()` reads true immediately afterward. A bypass,
+   * not a real clear: awards no reward gold (the caller's job, and
+   * deliberately skipped for a debug skip).
+   */
+  forceEndWave(): void {
+    this.active = [];
+    this.currentWave.spawns.forEach((group, i) => {
+      this.spawnedCounts.set(i, this.scaledGroupCount(group.count));
+    });
   }
 
   /**
@@ -934,6 +960,7 @@ export class WaveSystem {
         hit: !outcome.save.success,
         critical: false,
         fumble: false,
+        advantage: target.savingThrowAdvantage ?? "normal",
       },
     };
   }
@@ -974,6 +1001,22 @@ export class WaveSystem {
       this.spawnedCounts.set(i, already + 1);
     });
     return spawned;
+  }
+
+  /**
+   * Test Mode (D-138): spawn one enemy by id at an exact tile, on demand,
+   * outside the normal wave schedule. Mirrors `spawnDueEnemies`'s own entity
+   * construction (same `Enemy` constructor, same `active`/`nextInstance`
+   * bookkeeping) so a debug-spawned enemy is indistinguishable from a real
+   * one to every other system — but uses the enemy's BASE definition, with
+   * no wave HP-scaling applied. No occupancy check: a debug tool, tester's
+   * responsibility.
+   */
+  spawnAt(enemyId: string, pos: GridPosition): Enemy {
+    const def = getEnemyDefinition(enemyId);
+    const enemy = new Enemy(`${def.id}#${this.nextInstance++}`, def, pos);
+    this.active.push(enemy);
+    return enemy;
   }
 
   /**

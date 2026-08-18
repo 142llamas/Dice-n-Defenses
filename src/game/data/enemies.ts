@@ -410,6 +410,25 @@ export interface EnemyDefinition {
    */
   damageResistances?: DamageType[];
   /**
+   * D-131: damage types this enemy takes DOUBLE damage from — the real SRD
+   * "vulnerability" trait. Unlike resistance/immunity, vulnerability is
+   * NEVER bypassed by a "magical" attack for any damage type (5e's magic-
+   * weapon clause only ever talks about resistance/immunity) — see
+   * `CombatSystem.applyResistance`. If a target is both resistant AND
+   * vulnerable to the same type, they cancel per 5e RAW (full damage).
+   * Absent means no vulnerability, same as every enemy before this decision.
+   */
+  damageVulnerabilities?: DamageType[];
+  /**
+   * D-131: damage types this enemy takes ZERO damage from — the real SRD
+   * "immunity" trait. Follows the same magical-bypass rule as
+   * `damageResistances` (a magic weapon/spell bypasses immunity to
+   * NONMAGICAL bludgeoning/piercing/slashing specifically; every other
+   * damage type is never bypassed) — see `CombatSystem.applyResistance`.
+   * Absent means no immunity, same as every enemy before this decision.
+   */
+  damageImmunities?: DamageType[];
+  /**
    * Phase 21 (D-112), Healer/Debuffer hybrid + Anti-caster: a landed
    * single-target attack against a hero also applies this status effect to
    * it (`Combatant.applyStatus`) — e.g. "poisoned" (a plague-doctor-style
@@ -507,6 +526,9 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     abilities: [],
     assetKey: "enemy-wisp",
     role: "minion",
+    // D-131: an ethereal will-o'-the-wisp reads as force-vulnerable — a
+    // real 5e-flavored trait for ghostly/spectral creatures.
+    damageVulnerabilities: ["force"],
   },
 
   // ----- Phase 7 roster expansion (D-050) -------------------------------
@@ -620,6 +642,9 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "miniboss",
     loreText:
       "No mason shaped the Basalt Colossus — it woke on its own, deep under the old quarry, when enough rubble had piled onto enough rubble to remember what walking was.",
+    // D-131: a stone/rubble construct — no organs to poison, no mind to
+    // unsettle.
+    damageImmunities: ["poison", "psychic"],
   },
 
   // ----- Phase 11.6 roster expansion (D-079) ----------------------------
@@ -695,6 +720,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "boss",
     loreText:
       "Once a smith who begged the deep fire for strength, the Cinderlord no longer remembers his own name — only the furnace-song that answers whenever he opens his mouth to speak.",
+    // D-131: the Cinderlord's whole identity is fire — full immunity, boss-tier.
+    damageImmunities: ["fire"],
   },
 
   // The TIDELORD: the second true BOSS (D-079), water-themed to pair with the
@@ -720,6 +747,10 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "boss",
     loreText:
       "The Tidelord rose the night the old sea wall finally gave out, and it has dragged the drowned village behind it in its wake ever since — it still calls the wreckage its crew.",
+    // D-131: water-themed, so it resists (rather than is immune/vulnerable
+    // to cold, which the theme alone doesn't earn) the classic thing water
+    // douses: fire.
+    damageResistances: ["fire"],
   },
 
   // ----- Phase 13.10 roster expansion (D-095) ---------------------------
@@ -773,6 +804,9 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "minion",
     loreText:
       "The Blightcaller doesn't aim so much as exhale, and the air it exhales into keeps right on rotting after it's gone quiet.",
+    // D-131: a rot/blight minion — resists (not immune to, at this tier)
+    // the poison it deals in.
+    damageResistances: ["poison"],
   },
 
   // The GRAVEMAW: a second MINIBOSS (there was only ever one, basalt-
@@ -797,6 +831,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "miniboss",
     loreText:
       "Old battlefields don't stay empty forever. Enough bone, enough rusted iron, enough time — and something eventually remembers how to want.",
+    // D-131: a bone-and-iron construct guardian — no organs, no mind.
+    damageImmunities: ["poison", "psychic"],
   },
 
   // The BLIGHTMOTHER: a third true BOSS, thematically paired with the
@@ -824,6 +860,10 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "boss",
     loreText:
       "Nothing that walks near the Blightmother's ground stays green for long — she doesn't kill her garden so much as convince it to become her instead.",
+    // D-131: a boss-tier blight — full immunity to the poison she wields,
+    // and a real 5e-flavored resistance to necrotic (she IS the decay).
+    damageImmunities: ["poison"],
+    damageResistances: ["necrotic"],
   },
 
   // ----- Phase 20 roster expansion (D-111) ------------------------------
@@ -997,6 +1037,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "minion",
     loreText:
       "Nobody has ever seen what's actually under an Ironhide's plating, mostly because nothing has ever hit hard enough to find out.",
+    // D-131: a pure-tank construct — no organs under that plating.
+    damageImmunities: ["poison"],
   },
 
   // HOARDER: the roster's first TREASURE-LADEN minion — ordinary stats, but
@@ -1188,6 +1230,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "minion",
     loreText:
       "A Cave Drake's fire doesn't pick favourites. That is, in practice, the whole problem.",
+    // D-131: a lesser drake with a real fire breath weapon.
+    damageResistances: ["fire"],
   },
 
   // FROST WARDEN: a second AOE/BREATH minion, this one a save-or-take-
@@ -1214,6 +1258,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "minion",
     loreText:
       "The Frost Warden never raises its voice, either. The cold does the talking, and everyone standing nearby understands it perfectly.",
+    // D-131: a real cold breath weapon.
+    damageResistances: ["cold"],
   },
 
   // JUGGERNAUT: a new MINIBOSS — a tank-and-siege hybrid, on purpose: it
@@ -1238,6 +1284,9 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "miniboss",
     loreText:
       "A Juggernaut does not go around things. This has never once occurred to it as an option worth considering.",
+    // D-131: an unstoppable, mindless siege construct — no organs, no
+    // thoughts to disrupt.
+    damageImmunities: ["poison", "psychic"],
   },
 
   // WARLORD KORRATH: a new true BOSS — a much bigger AURA/CAPTAIN, buffing
@@ -1314,6 +1363,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "legendary",
     loreText:
       "There is no throne left standing anywhere the Ashen Sovereign has ever chosen to rule. It has stopped noticing this is a pattern.",
+    // D-131: "Ashen" — a legendary capstone built from and wreathed in fire.
+    damageImmunities: ["fire"],
   },
 
   // THE HOLLOW EMPRESS: a second LEGENDARY capstone — a mass dread aura
@@ -1341,6 +1392,12 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     role: "legendary",
     loreText:
       "The Hollow Empress has no court left, no kingdom left, and no memory of either — only the certainty that she is still owed one.",
+    // D-131: a hollowed-out undead queen — the real SRD undead pattern:
+    // immune to poison, resistant to the necrotic decay she embodies,
+    // vulnerable to radiant like most real 5e undead.
+    damageImmunities: ["poison"],
+    damageResistances: ["necrotic"],
+    damageVulnerabilities: ["radiant"],
   },
 
   // ===== Phase 21 (D-112): second wave of archetypes =====
@@ -1404,6 +1461,9 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     assetKey: "enemy-bloodwisp",
     role: "minion",
     loreText: "A Bloodwisp is barely there until it draws blood — then, for a moment, it's a great deal more there.",
+    // D-131: its lifedrink is a necrotic-style life-drain, mechanically —
+    // it resists the same energy it feeds on.
+    damageResistances: ["necrotic"],
   },
   "crimson-leech": {
     id: "crimson-leech",
@@ -1423,6 +1483,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     assetKey: "enemy-crimson-leech",
     role: "minion",
     loreText: "The Crimson Leech doesn't fear a long fight. A long fight is exactly what it's hoping for.",
+    // D-131: same lifedrink-family necrotic resistance as Bloodwisp.
+    damageResistances: ["necrotic"],
   },
 
   // Splitter family: breaks into weaker copies of Living Splinter on death.
@@ -1464,6 +1526,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     assetKey: "enemy-ooze-splitter",
     role: "minion",
     loreText: "Killing an Ooze Splitter doesn't end it. It just gives it two problems to be instead of one.",
+    // D-131: a real ooze — immune to the acid it's made of.
+    damageImmunities: ["acid"],
   },
   "fungal-splitter": {
     id: "fungal-splitter",
@@ -1483,6 +1547,9 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     assetKey: "enemy-fungal-splitter",
     role: "minion",
     loreText: "The Fungal Splitter treats every killing blow it receives as a planting.",
+    // D-131: fungal spores read as poison-resistant (a real 5e trope for
+    // fungal/spore creatures).
+    damageResistances: ["poison"],
   },
 
   // Carrier/Vessel: a high-HP, low-attack piñata that bursts into several
@@ -1506,6 +1573,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     assetKey: "enemy-the-husk",
     role: "miniboss",
     loreText: "The Husk barely fights back. It doesn't need to — it was never the thing that was going to hurt you.",
+    // D-131: a hollowed-out vessel — no living organs left inside to poison.
+    damageImmunities: ["poison"],
   },
 
   // Shielded family: a flat damage-absorbing ward that must be broken
@@ -1571,6 +1640,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     assetKey: "enemy-cinder-wretch",
     role: "minion",
     loreText: "Killing a Cinder Wretch is the easy part. Being anywhere near it when it happens is the actual problem.",
+    // D-131: "Cinder" — a fire-themed explosive.
+    damageResistances: ["fire"],
   },
   "bomber-beetle": {
     id: "bomber-beetle",
@@ -1590,6 +1661,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     assetKey: "enemy-bomber-beetle",
     role: "minion",
     loreText: "A Bomber Beetle's last act is always its loudest.",
+    // D-131: paired with Cinder Wretch in the same explosive/fire family.
+    damageResistances: ["fire"],
   },
 
   // Gold Thief family: a landed hit also steals gold from the party.
@@ -1630,6 +1703,10 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     assetKey: "enemy-coin-wraith",
     role: "minion",
     loreText: "The Coin Wraith was drawn to the stronghold's vault long before it was ever drawn to its heroes.",
+    // D-131: a real "Wraith" — the classic incorporeal-undead pattern.
+    damageImmunities: ["poison"],
+    damageResistances: ["necrotic"],
+    damageVulnerabilities: ["radiant"],
   },
 
   // Teleporter family: periodically jumps straight toward the exit.
@@ -1754,6 +1831,8 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     assetKey: "enemy-plague-warden",
     role: "minion",
     loreText: "The Plague Warden mends its allies with the same touch it uses to poison you — it draws no distinction between the two.",
+    // D-131: immune to its own plague — the classic "plague doctor" trope.
+    damageImmunities: ["poison"],
   },
 
   // Anti-caster: no suppression system of its own — just a Silence-style
@@ -1795,7 +1874,9 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     movementType: "ground",
     rewardGold: 5,
     swarm: true,
-    damageResistances: ["bludgeoning", "piercing", "slashing"],
+    // D-131: on top of the existing (untouched) real SRD Swarm physical
+    // resistance, vermin plausibly resist poison/disease too.
+    damageResistances: ["bludgeoning", "piercing", "slashing", "poison"],
     abilities: [],
     assetKey: "enemy-rat-swarm",
     role: "minion",
@@ -1815,7 +1896,9 @@ export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {
     movementType: "ground",
     rewardGold: 6,
     swarm: true,
-    damageResistances: ["bludgeoning", "piercing", "slashing"],
+    // D-131: same reasoning as Rat Swarm — real Swarm physical resistance
+    // untouched, plus a plausible poison resistance for a vermin swarm.
+    damageResistances: ["bludgeoning", "piercing", "slashing", "poison"],
     abilities: [],
     assetKey: "enemy-locust-swarm",
     role: "minion",

@@ -252,6 +252,33 @@ describe("heroDefinitionFromBuild — subclassId/startingEquipmentId (Phase 13.1
   });
 });
 
+describe("heroDefinitionFromBuild — startingLevel (D-129)", () => {
+  it("passes a build's startingLevel straight through, absent means undefined", () => {
+    expect(heroDefinitionFromBuild(build()).startingLevel).toBeUndefined();
+    expect(heroDefinitionFromBuild(build({ startingLevel: 8 })).startingLevel).toBe(8);
+  });
+});
+
+describe("heroDefinitionFromBuild — manual spell picks (D-135)", () => {
+  it("passes preparedSpellIds/knownCantripIds/spellbookIds straight through, absent means undefined", () => {
+    const def = heroDefinitionFromBuild(build());
+    expect(def.preparedSpellIds).toBeUndefined();
+    expect(def.knownCantripIds).toBeUndefined();
+    expect(def.spellbookIds).toBeUndefined();
+
+    const customized = heroDefinitionFromBuild(
+      build({
+        preparedSpellIds: ["magic-missile"],
+        knownCantripIds: ["fire-bolt"],
+        spellbookIds: ["magic-missile", "shield"],
+      }),
+    );
+    expect(customized.preparedSpellIds).toEqual(["magic-missile"]);
+    expect(customized.knownCantripIds).toEqual(["fire-bolt"]);
+    expect(customized.spellbookIds).toEqual(["magic-missile", "shield"]);
+  });
+});
+
 describe("party validation", () => {
   it("flags duplicate signature abilities across a party", () => {
     const party = [build({ id: "a", abilityId: "cleave" }), build({ id: "b", abilityId: "cleave" })];

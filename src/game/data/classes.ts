@@ -104,15 +104,33 @@ export interface CharacterClassDefinition {
 }
 
 /**
- * Every SRD full-caster class shares the exact same cantrips-known and
- * spell-slot progression tables (Wizard, Cleric, and, in the future, any
- * other full caster this project adds) — factored out here once rather than
- * copy-pasted per class.
+ * Every SRD full-caster class shares the exact same spell-slot progression
+ * table (Wizard, Cleric, Bard, Druid, Sorcerer, and — as a deliberate
+ * simplification, see D-093 — Warlock too) — factored out here once rather
+ * than copy-pasted per class. Cantrips-known, however, genuinely DIFFERS
+ * per class in real SRD 5.2.1 (D-134, verified) — only Wizard and Cleric
+ * actually share `FULL_CASTER_CANTRIPS_KNOWN_BY_LEVEL` below; every other
+ * cantrip-having class has its own table (see `SORCERER_CANTRIPS_KNOWN_BY_LEVEL`/
+ * `BARD_DRUID_WARLOCK_CANTRIPS_KNOWN_BY_LEVEL` further down).
  */
 const FULL_CASTER_CANTRIPS_KNOWN_BY_LEVEL: Record<number, number> = {
   1: 3,
   4: 4,
   10: 5,
+};
+
+/** D-134: Sorcerer's own real SRD 5.2.1 cantrips-known table — higher than Wizard/Cleric's. */
+const SORCERER_CANTRIPS_KNOWN_BY_LEVEL: Record<number, number> = {
+  1: 4,
+  4: 5,
+  10: 6,
+};
+
+/** D-134: Bard, Druid, and Warlock share this real SRD 5.2.1 cantrips-known table — lower than Wizard/Cleric's. */
+const BARD_DRUID_WARLOCK_CANTRIPS_KNOWN_BY_LEVEL: Record<number, number> = {
+  1: 2,
+  4: 3,
+  10: 4,
 };
 
 const FULL_CASTER_SPELL_SLOTS_BY_LEVEL: Record<number, number[]> = {
@@ -758,8 +776,12 @@ export const CLERIC: CharacterClassDefinition = {
  * like every existing class's own inert entries.
  */
 const HALF_CASTER_SPELL_SLOTS_BY_LEVEL: Record<number, number[]> = {
-  1: [],
-  2: [2],
+  // D-134: SRD 5.2.1 moved a half-caster's first spell slot to level 1
+  // (2014 SRD 5.1 started this at level 2) — verified against three
+  // independent sources. Level 2's value is unchanged (still 2 slots), so
+  // no separate level-2 entry is needed under this table's own "only
+  // levels where the value changes" convention.
+  1: [2],
   3: [3],
   4: [3],
   5: [4, 2],
@@ -941,7 +963,7 @@ export const BARD: CharacterClassDefinition = {
   },
   spellcasting: {
     spellcastingAbility: "cha",
-    cantripsKnownByLevel: FULL_CASTER_CANTRIPS_KNOWN_BY_LEVEL,
+    cantripsKnownByLevel: BARD_DRUID_WARLOCK_CANTRIPS_KNOWN_BY_LEVEL,
     spellSlotsByLevel: FULL_CASTER_SPELL_SLOTS_BY_LEVEL,
   },
   features: [
@@ -1106,7 +1128,7 @@ export const DRUID: CharacterClassDefinition = {
   },
   spellcasting: {
     spellcastingAbility: "wis",
-    cantripsKnownByLevel: FULL_CASTER_CANTRIPS_KNOWN_BY_LEVEL,
+    cantripsKnownByLevel: BARD_DRUID_WARLOCK_CANTRIPS_KNOWN_BY_LEVEL,
     spellSlotsByLevel: FULL_CASTER_SPELL_SLOTS_BY_LEVEL,
   },
   features: [
@@ -1434,10 +1456,10 @@ export const PALADIN: CharacterClassDefinition = {
       mechanicallyActive: false,
     },
     {
-      level: 2,
+      level: 1,
       name: "Spellcasting",
       description:
-        "A half-caster's spell slots, using Charisma — starting at level 2, half the pace of a full caster (Wizard/Cleric/Bard/Druid/Sorcerer/Warlock). No cantrips (the SRD's real Paladin has none). Its one real consequence today is powering Divine Smite below.",
+        "A half-caster's spell slots, using Charisma — starting at level 1 (D-134: SRD 5.2.1 moved this earlier than the 2014 rules' level 2), half the pace of a full caster (Wizard/Cleric/Bard/Druid/Sorcerer/Warlock). No cantrips (the SRD's real Paladin has none). Its one real consequence today is powering Divine Smite below.",
       mechanicallyActive: true,
     },
     {
@@ -1570,10 +1592,10 @@ export const RANGER: CharacterClassDefinition = {
       mechanicallyActive: false,
     },
     {
-      level: 2,
+      level: 1,
       name: "Spellcasting",
       description:
-        "A half-caster's spell slots, using Wisdom — starting at level 2, same pace as the Paladin. No cantrips. Its one real consequence today is powering Hunter's Mark below.",
+        "A half-caster's spell slots, using Wisdom — starting at level 1 (D-134: SRD 5.2.1 moved this earlier than the 2014 rules' level 2), same pace as the Paladin. No cantrips. Its one real consequence today is powering Hunter's Mark below.",
       mechanicallyActive: true,
     },
     {
@@ -1714,7 +1736,7 @@ export const SORCERER: CharacterClassDefinition = {
   },
   spellcasting: {
     spellcastingAbility: "cha",
-    cantripsKnownByLevel: FULL_CASTER_CANTRIPS_KNOWN_BY_LEVEL,
+    cantripsKnownByLevel: SORCERER_CANTRIPS_KNOWN_BY_LEVEL,
     spellSlotsByLevel: FULL_CASTER_SPELL_SLOTS_BY_LEVEL,
   },
   features: [
@@ -1832,7 +1854,7 @@ export const WARLOCK: CharacterClassDefinition = {
     // table. What actually makes this a Warlock, mechanically, is the
     // SHORT-rest recharge below (Hero.shortRest's Warlock branch) — the
     // SRD's real, distinctive Pact Magic cadence — not the slot count/shape.
-    cantripsKnownByLevel: FULL_CASTER_CANTRIPS_KNOWN_BY_LEVEL,
+    cantripsKnownByLevel: BARD_DRUID_WARLOCK_CANTRIPS_KNOWN_BY_LEVEL,
     spellSlotsByLevel: FULL_CASTER_SPELL_SLOTS_BY_LEVEL,
   },
   features: [

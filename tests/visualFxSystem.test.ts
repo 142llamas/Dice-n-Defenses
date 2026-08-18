@@ -83,13 +83,35 @@ describe("deathCauseForAbility / getDeathVisual", () => {
     expect(deathCauseForAbility(getAbility("sacred-flame"))).toBe("radiant");
   });
 
-  it("falls back to arcane for an ability with no keyword match, or one outside the 6 explicit causes", () => {
-    expect(deathCauseForAbility(getAbility("cleave"))).toBe("arcane"); // no keyword match at all
-    expect(deathCauseForAbility(getAbility("magic-missile"))).toBe("arcane"); // matches "force", not one of the 6 causes
+  it("falls back to arcane for an ability with no keyword match AND no real damageType", () => {
+    expect(deathCauseForAbility(getAbility("cleave"))).toBe("arcane"); // no keyword match, no damageType (not a spell)
+  });
+
+  it("D-131: a real damageType is the PRIMARY signal, overriding the old keyword-guess entirely", () => {
+    // magic-missile's name/description have no elemental keyword at all (the
+    // pre-D-131 guess fell back to "arcane" here — see the git history of
+    // this test) — now that it carries a verified damageType: "force", that
+    // real data wins outright.
+    expect(getAbility("magic-missile").damageType).toBe("force");
+    expect(deathCauseForAbility(getAbility("magic-missile"))).toBe("force");
+    expect(getCastVisual(getAbility("magic-missile")).color).toBe(getCastVisual(getAbility("eldritch-blast")).color); // both real force damage
   });
 
   it("every death cause resolves to a real, distinct shape+color", () => {
-    const causes = ["physical", "fire", "frost", "poison", "necrotic", "radiant", "lightning", "arcane"] as const;
+    const causes = [
+      "physical",
+      "fire",
+      "frost",
+      "acid",
+      "poison",
+      "necrotic",
+      "radiant",
+      "lightning",
+      "thunder",
+      "psychic",
+      "force",
+      "arcane",
+    ] as const;
     const seen = new Set<string>();
     for (const cause of causes) {
       const visual = getDeathVisual(cause);

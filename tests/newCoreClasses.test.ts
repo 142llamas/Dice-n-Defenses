@@ -78,10 +78,10 @@ describe("CLASS_DEFINITIONS (Phase 13.8, D-093)", () => {
     }
   });
 
-  it("Paladin/Ranger are half-casters: no slots at level 1, no cantrips ever", () => {
+  it("Paladin/Ranger are half-casters: a real slot from level 1 (D-134: SRD 5.2.1 moved this earlier than 2014's level 2), no cantrips ever", () => {
     for (const id of ["paladin", "ranger"]) {
       const def = getClassDefinition(id);
-      expect(spellSlotsForClassAtLevel(def, 1)).toEqual([]);
+      expect(spellSlotsForClassAtLevel(def, 1)).toEqual([2]);
       expect(spellSlotsForClassAtLevel(def, 2)).toEqual([2]);
       expect(cantripsKnownForClassAtLevel(def, 5)).toBe(0);
     }
@@ -305,10 +305,8 @@ describe("Warlock Pact Magic (Phase 13.8, D-093)", () => {
 });
 
 describe("Paladin Divine Smite's slot economy (Phase 13.8, D-093)", () => {
-  it("has no 1st-level slot at level 1, but gains one at level 2 (BattleScene spends it on a landed hit)", () => {
+  it("has a real 1st-level slot from level 1 (D-134: SRD 5.2.1 moved this earlier than 2014's level 2)", () => {
     const hero = paladin();
-    expect(hero.spellSlotsRemainingAt(1)).toBe(0);
-    hero.levelUpClass();
     expect(hero.spellSlotsRemainingAt(1)).toBeGreaterThan(0);
   });
 });

@@ -48,7 +48,62 @@ import type { EquipmentDefinition } from "./equipment";
 
 export type WeaponCategory = "simple" | "martial";
 export type WeaponKind = "melee" | "ranged";
-export type DamageType = "bludgeoning" | "piercing" | "slashing";
+
+/**
+ * D-131: the full real SRD damage-type taxonomy (previously only the three
+ * physical weapon types, since only weapons and the D-127 Swarm mechanic
+ * ever needed one). Every SRD 5e damage type is represented; the elemental
+ * ones (everything except bludgeoning/piercing/slashing) are new as of
+ * D-131 and now used by `AbilityDefinition.damageType` (real castable
+ * spells) and `EnemyDefinition.damageResistances`/`damageVulnerabilities`/
+ * `damageImmunities`. See `PHYSICAL_DAMAGE_TYPES` below for the one rule
+ * split this taxonomy needs: only the three physical types are ever
+ * affected by whether an attack is "magical" (D-127's existing rule) — the
+ * ten elemental types always apply resistance/vulnerability/immunity
+ * unconditionally, matching real 5e (see `CombatSystem.applyResistance`).
+ */
+export type DamageType =
+  | "acid"
+  | "bludgeoning"
+  | "cold"
+  | "fire"
+  | "force"
+  | "lightning"
+  | "necrotic"
+  | "piercing"
+  | "poison"
+  | "psychic"
+  | "radiant"
+  | "slashing"
+  | "thunder";
+
+/**
+ * D-131: the three damage types a magic weapon (or an inherently magical
+ * effect, like every spell in this game) bypasses resistance/immunity for
+ * when the target's resistance/immunity is to the NONMAGICAL version only —
+ * the real SRD "resistance to nonmagical bludgeoning/piercing/slashing"
+ * clause (D-127's original scope, now generalized). Every other damage type
+ * is never affected by "magical" at all — see `CombatSystem.applyResistance`.
+ */
+export const PHYSICAL_DAMAGE_TYPES: ReadonlySet<DamageType> = new Set<DamageType>([
+  "bludgeoning",
+  "piercing",
+  "slashing",
+]);
+
+/**
+ * D-137: one component of a genuinely dual (or multi) typed attack — e.g.
+ * real SRD Meteor Swarm deals half fire, half bludgeoning, and Ice Storm
+ * deals a smaller bludgeoning share alongside a larger cold share. `portion`
+ * is the fraction (0-1) of the attack's total damage that is this type; the
+ * portions across one split should sum to 1 so the whole hit's damage is
+ * accounted for. See `AbilityDefinition.damageTypes`,
+ * `CombatSystem.applyResistance`, and `EquipmentProc`'s `onHitSaveOrDamage`.
+ */
+export interface DamageTypeSplit {
+  readonly type: DamageType;
+  readonly portion: number;
+}
 
 export type WeaponProperty =
   | "ammunition"

@@ -1,4 +1,5 @@
 import type { AbilityDefinition } from "../data/abilities";
+import type { DamageType } from "../data/weapons";
 import { SPELLS, type SpellSchool } from "../data/spells";
 
 /**
@@ -12,18 +13,17 @@ import { SPELLS, type SpellSchool } from "../data/spells";
  * feel visually distinct, but hand-authoring 198 bespoke animations isn't
  * realistic. Instead, every ability is assigned a SHAPE (structurally, from
  * its own real mechanical fields — kind/savingThrow/forcedMoveTiles/etc.,
- * already-verified SRD data) and a COLOR (from its real SRD `school` where
- * one exists, refined by a best-effort keyword match against the ability's
- * own name/description text for a more specific elemental flavor — e.g.
- * "Fire Bolt" reads orange, not generic evocation-orange, though a handful
- * of spells will still get their school's fallback color if no keyword
- * matches). The keyword match is a COSMETIC guess, not verified SRD damage
- * typing — this game has no damage-type field on spells at all, and getting
- * the *feel* right for hundreds of spells matters more here than exhaustive
- * per-spell verification would for a mechanical rule. A small hash of the
- * ability's own id then picks secondary variation (particle count, size,
- * rotation, duration) so two spells sharing a shape+color family still don't
- * animate identically.
+ * already-verified SRD data) and a COLOR. D-131 gave ~47 real castable
+ * spells a verified SRD `damageType` — that field is now the PRIMARY color/
+ * death-cause signal (see `colorForAbility`/`deathCauseForAbility` below).
+ * For everything without one (buffs/heals/summons/control spells with no
+ * real damage type, plus the four original non-spell Phase-4 abilities),
+ * the color still falls back to the pre-D-131 method: a best-effort keyword
+ * match against the ability's own name/description text, or its real SRD
+ * `school` if no keyword matches (see KI-078, now resolved for every spell
+ * that has a real `damageType`). A small hash of the ability's own id then
+ * picks secondary variation (particle count, size, rotation, duration) so
+ * two spells sharing a shape+color family still don't animate identically.
  */
 
 export type ElementTag =
@@ -99,7 +99,40 @@ for (const spell of Object.values(SPELLS)) {
   if (spell.abilityId) ABILITY_SCHOOL[spell.abilityId] = spell.school;
 }
 
+/**
+ * D-131: a verified `DamageType` -> cast color, for the ~47 real castable
+ * spells that now carry one. The three physical types (rare for a spell —
+ * only Earthquake/Insect Plague in this catalogue) get an earthy tone since
+ * neither the cosmetic `ElementTag` set nor `SCHOOL_COLORS` has a "physical"
+ * bucket; every elemental type reuses `ELEMENT_COLORS` where a matching tag
+ * already exists, plus three new tones (acid, thunder — psychic/force
+ * already existed as `ElementTag`s) for the types that didn't.
+ */
+const DAMAGE_TYPE_COLORS: Record<DamageType, number> = {
+  acid: 0x9fe000,
+  bludgeoning: ELEMENT_COLORS.earth,
+  cold: ELEMENT_COLORS.frost,
+  fire: ELEMENT_COLORS.fire,
+  force: ELEMENT_COLORS.force,
+  lightning: ELEMENT_COLORS.lightning,
+  necrotic: ELEMENT_COLORS.necrotic,
+  piercing: ELEMENT_COLORS.earth,
+  poison: ELEMENT_COLORS.poison,
+  psychic: ELEMENT_COLORS.psychic,
+  radiant: ELEMENT_COLORS.radiant,
+  slashing: ELEMENT_COLORS.earth,
+  thunder: 0xc8c8ff,
+};
+
+/**
+ * D-131: `ability.damageType` is now the PRIMARY color signal — real,
+ * verified SRD data — falling back to the pre-D-131 keyword/school guess
+ * only when it's absent (a spell with no real damage type at all: a buff,
+ * heal, summon, control spell, or one of the four non-spell Phase-4
+ * abilities).
+ */
 function colorForAbility(ability: AbilityDefinition): number {
+  if (ability.damageType) return DAMAGE_TYPE_COLORS[ability.damageType];
   const element = inferElement(ability.name) ?? inferElement(ability.description);
   if (element) return ELEMENT_COLORS[element];
   const school = ABILITY_SCHOOL[ability.id];
@@ -167,30 +200,75 @@ export function getCastVisual(ability: AbilityDefinition): CastVisualDescriptor 
   };
 }
 
-export type DeathCause = "physical" | "fire" | "frost" | "poison" | "necrotic" | "radiant" | "lightning" | "arcane";
+export type DeathCause =
+  | "physical"
+  | "fire"
+  | "frost"
+  | "acid"
+  | "poison"
+  | "necrotic"
+  | "radiant"
+  | "lightning"
+  | "thunder"
+  | "psychic"
+  | "force"
+  | "arcane";
 
-export type DeathShape = "collapse" | "emberFade" | "shatter" | "dissolve" | "wither" | "radiantBurst" | "sparkCrackle" | "arcaneFade";
+export type DeathShape =
+  | "collapse"
+  | "emberFade"
+  | "shatter"
+  | "dissolve"
+  | "wither"
+  | "radiantBurst"
+  | "sparkCrackle"
+  | "arcaneFade";
 
 const DEATH_VISUALS: Record<DeathCause, { shape: DeathShape; color: number }> = {
   physical: { shape: "collapse", color: 0xb0b0b0 },
   fire: { shape: "emberFade", color: ELEMENT_COLORS.fire },
   frost: { shape: "shatter", color: ELEMENT_COLORS.frost },
+  acid: { shape: "dissolve", color: 0x9fe000 },
   poison: { shape: "dissolve", color: ELEMENT_COLORS.poison },
   necrotic: { shape: "wither", color: ELEMENT_COLORS.necrotic },
   radiant: { shape: "radiantBurst", color: ELEMENT_COLORS.radiant },
   lightning: { shape: "sparkCrackle", color: ELEMENT_COLORS.lightning },
+  thunder: { shape: "sparkCrackle", color: 0xc8c8ff },
+  psychic: { shape: "arcaneFade", color: ELEMENT_COLORS.psychic },
+  force: { shape: "shatter", color: ELEMENT_COLORS.force },
   arcane: { shape: "arcaneFade", color: ELEMENT_COLORS.arcane },
 };
 
+/** A verified `DamageType` -> `DeathCause`, for D-131's real per-spell damage types. */
+const DAMAGE_TYPE_DEATH_CAUSE: Record<DamageType, DeathCause> = {
+  acid: "acid",
+  bludgeoning: "physical",
+  cold: "frost",
+  fire: "fire",
+  force: "force",
+  lightning: "lightning",
+  necrotic: "necrotic",
+  piercing: "physical",
+  poison: "poison",
+  psychic: "psychic",
+  radiant: "radiant",
+  slashing: "physical",
+  thunder: "thunder",
+};
+
 /**
- * What killed an enemy, collapsed from the richer 12-tag `ElementTag` set
- * down to 8 death causes — psychic/force/shadow/water/earth all read as
- * "arcane" here, since a full 12-shape death system doesn't buy anything a
- * player would actually notice over the 8 that do (burn/frost/poison/
- * necrotic/radiant/lightning are the ones a spell's flavor text usually
- * telegraphs; everything else is "died to magic").
+ * What killed an enemy. D-131: `ability.damageType` is now the PRIMARY
+ * signal — real, verified SRD data — falling back to the pre-D-131 keyword
+ * guess only when it's absent (a spell with no real damage type at all, or
+ * one of the four non-spell Phase-4 abilities), which collapses the richer
+ * `ElementTag` set down to fewer death causes (shadow/water/earth all still
+ * read as "arcane" for a GUESSED cause — a full per-tag death system there
+ * doesn't buy anything a player would actually notice — but every VERIFIED
+ * damage type now gets its own distinct cause, including three that the
+ * pre-D-131 guess-only set never had: acid, thunder, force).
  */
 export function deathCauseForAbility(ability: AbilityDefinition): DeathCause {
+  if (ability.damageType) return DAMAGE_TYPE_DEATH_CAUSE[ability.damageType];
   const element = inferElement(ability.name) ?? inferElement(ability.description);
   switch (element) {
     case "fire":

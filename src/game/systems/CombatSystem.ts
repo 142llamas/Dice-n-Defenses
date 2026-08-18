@@ -2,7 +2,7 @@ import { GridSystem, type GridPosition } from "./GridSystem";
 import { RandomService } from "./RandomService";
 import type { AdvantageMode } from "./RandomService";
 import type { StatusEffectId } from "../data/statusEffects";
-import type { DamageType } from "../data/weapons";
+import { PHYSICAL_DAMAGE_TYPES, type DamageType, type DamageTypeSplit } from "../data/weapons";
 
 /**
  * CombatSystem: pure combat rules. No Phaser, no entity classes.
@@ -113,6 +113,20 @@ export interface Combatant {
    * resistance, same as every combatant before this decision.
    */
   readonly damageResistances?: ReadonlyArray<DamageType>;
+  /**
+   * D-131: damage types this combatant takes DOUBLE damage from — the real
+   * SRD "vulnerability" trait. Never bypassed by `AttackProfile.magical`,
+   * for any damage type (see `CombatSystem.applyResistance`). Absent means
+   * no vulnerability, same as every combatant before this decision.
+   */
+  readonly damageVulnerabilities?: ReadonlyArray<DamageType>;
+  /**
+   * D-131: damage types this combatant takes ZERO damage from — the real
+   * SRD "immunity" trait. Follows the same magical-bypass rule as
+   * `damageResistances` (see `CombatSystem.applyResistance`). Absent means
+   * no immunity, same as every combatant before this decision.
+   */
+  readonly damageImmunities?: ReadonlyArray<DamageType>;
 }
 
 /** A single-target attack profile (a basic attack or a single-target ability). */
@@ -146,9 +160,23 @@ export interface AttackProfile {
    */
   damageType?: DamageType;
   /**
+   * D-137: a genuinely dual (or multi) typed attack — e.g. real SRD Meteor
+   * Swarm (fire+bludgeoning, even split) or Ice Storm (bludgeoning+cold,
+   * uneven split). When present, this takes over from `damageType` for
+   * resistance/vulnerability/immunity purposes: `rawDamage` is divided per
+   * each split's `portion` and each portion resolves resistance
+   * independently against its own type before the portions are summed back
+   * together (real 5e RAW for a spell that deals more than one damage type
+   * in the same instance). `damageType` should still be set alongside this
+   * to the split's "primary" type, since that field remains the one visual
+   * effects/death-cause text read (see `VisualFxSystem`) — this field only
+   * changes the resistance MATH, not the FX color.
+   */
+  damageTypes?: ReadonlyArray<DamageTypeSplit>;
+  /**
    * D-127: true bypasses `damageResistances` entirely (an enchanted weapon,
    * or Boon of Irresistible Offense's "damage always ignores Resistance"
-   * clause). Ignored when `damageType` is absent.
+   * clause). Ignored when `damageType` (and `damageTypes`) are both absent.
    */
   magical?: boolean;
 }
@@ -163,6 +191,13 @@ export interface AttackRoll {
   critical: boolean;
   /** A natural 1: always a miss, regardless of bonuses. */
   fumble: boolean;
+  /**
+   * KI-085/D-130: the advantage mode the d20 was actually rolled with — kept
+   * on the result (not just passed into `rollAttack`) so a caller building a
+   * technical combat-log line can report it after the fact, same reasoning
+   * `attackBonus` gets recovered as `total - d20` rather than stored twice.
+   */
+  advantage: AdvantageMode;
 }
 
 /** The outcome of applying damage to one target. */
@@ -238,16 +273,68 @@ export class CombatSystem {
   }
 
   /**
-   * D-127: halve (round down) a landed hit's raw damage if `target` resists
-   * `profile.damageType` and the attack isn't `magical`. A no-op for an
-   * untyped attack (every spell, and every hero with no weapon equipped) or a
-   * target with no matching resistance — every attack before this decision
-   * behaves identically.
+   * D-131: resolve resistance/vulnerability/immunity for a landed hit's raw
+   * damage, per real 5e RAW. A no-op for an untyped attack (a hero with no
+   * weapon equipped, or an ability with no `damageType`) — every attack
+   * before D-127 behaves identically.
+   *
+   * The one real subtlety (D-127's original rule, generalized): a magic
+   * weapon or magical effect (`profile.magical`) bypasses resistance/
+   * immunity to the NONMAGICAL version of a PHYSICAL damage type
+   * (bludgeoning/piercing/slashing) only — every other damage type (acid,
+   * cold, fire, force, lightning, necrotic, poison, psychic, radiant,
+   * thunder) is never affected by `magical` at all, matching real 5e (those
+   * types don't have a "nonmagical" variant to begin with). Vulnerability
+   * itself is NEVER bypassed by `magical`, for any type — the SRD's
+   * magic-weapon clause only ever talks about resistance/immunity. If a
+   * target is both resistant AND vulnerable to the same type, they cancel
+   * per 5e RAW: full damage, not double-halved.
+   *
+   * D-137: when `profile.damageTypes` is set (a genuinely dual/multi-typed
+   * attack), `rawDamage` is instead divided into one portion per split and
+   * each portion resolves resistance independently against ITS OWN type via
+   * `applyResistanceForType`, then the portions are summed — the real 5e
+   * rule for e.g. Meteor Swarm's fire half and bludgeoning half each
+   * checking the target's own resistance/vulnerability/immunity separately.
+   * The last split absorbs any rounding remainder so the portions always
+   * sum to exactly `rawDamage` before resistance is applied, regardless of
+   * how many splits there are or what order they're listed in.
    */
-  private static applyResistance(rawDamage: number, profile: AttackProfile, target: Combatant): number {
-    if (!profile.damageType || profile.magical) return rawDamage;
-    if (!target.damageResistances?.includes(profile.damageType)) return rawDamage;
-    return Math.floor(rawDamage / 2);
+  static applyResistance(rawDamage: number, profile: AttackProfile, target: Combatant): number {
+    const splits = profile.damageTypes;
+    if (splits && splits.length > 0) {
+      let allocated = 0;
+      let total = 0;
+      splits.forEach((split, i) => {
+        const isLast = i === splits.length - 1;
+        const portion = isLast ? rawDamage - allocated : Math.round(rawDamage * split.portion);
+        allocated += portion;
+        total += CombatSystem.applyResistanceForType(portion, split.type, profile.magical, target);
+      });
+      return total;
+    }
+    const type = profile.damageType;
+    if (!type) return rawDamage;
+    return CombatSystem.applyResistanceForType(rawDamage, type, profile.magical, target);
+  }
+
+  /** The single-type resistance/vulnerability/immunity check `applyResistance` runs once per damage type. */
+  private static applyResistanceForType(
+    amount: number,
+    type: DamageType,
+    magical: boolean | undefined,
+    target: Combatant,
+  ): number {
+    const isPhysical = PHYSICAL_DAMAGE_TYPES.has(type);
+    const magicBypasses = isPhysical && magical === true;
+    const immune = !magicBypasses && (target.damageImmunities?.includes(type) ?? false);
+    if (immune) return 0;
+    const resistant = !magicBypasses && (target.damageResistances?.includes(type) ?? false);
+    const vulnerable = target.damageVulnerabilities?.includes(type) ?? false;
+    if (resistant && vulnerable) return amount;
+    if (resistant) return Math.floor(amount / 2);
+    if (vulnerable) return amount * 2;
+    return amount;
   }
 
   /**
@@ -267,7 +354,37 @@ export class CombatSystem {
     const critical = !fumble && d20 >= critThreshold;
     const total = d20 + attackBonus;
     const hit = !fumble && (critical || total >= targetArmorClass);
-    return { d20, total, targetArmorClass, hit, critical, fumble };
+    return { d20, total, targetArmorClass, hit, critical, fumble, advantage };
+  }
+
+  /**
+   * D-132: analytic hit-probability for a hover preview — no dice rolled, no
+   * RandomService needed. `rollAttack`'s own rule (a natural 1 always misses;
+   * a natural `>= critThreshold` always hits) makes hit/miss monotonic
+   * non-decreasing in the raw d20 value, so:
+   *  - normal: count how many of the 20 possible rolls would hit, /20.
+   *  - advantage (best of two independent rolls): 1 - missChance^2 — the
+   *    attack hits unless BOTH rolls individually would have missed.
+   *  - disadvantage (worst of two): hitChance^2 — BOTH rolls must hit.
+   * Matches `RandomService.rollD20With`'s real 2d20-keep-higher/lower
+   * mechanics exactly (verified by a Monte Carlo test against real rolls).
+   */
+  static hitChance(
+    attackBonus: number,
+    targetArmorClass: number,
+    advantage: AdvantageMode = "normal",
+    critThreshold = 20,
+  ): number {
+    let hits = 0;
+    for (let d20 = 1; d20 <= 20; d20++) {
+      const fumble = d20 === 1;
+      const critical = !fumble && d20 >= critThreshold;
+      if (!fumble && (critical || d20 + attackBonus >= targetArmorClass)) hits++;
+    }
+    const normal = hits / 20;
+    if (advantage === "advantage") return 1 - (1 - normal) * (1 - normal);
+    if (advantage === "disadvantage") return normal * normal;
+    return normal;
   }
 
   /**

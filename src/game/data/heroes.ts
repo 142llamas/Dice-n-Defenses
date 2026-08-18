@@ -1,4 +1,5 @@
 import type { AbilityScores } from "./abilityScores";
+import type { LevelUpPlan } from "../systems/LevelUpPlanSystem";
 
 /**
  * Hero definitions — the shape a playable hero must have, and the shared
@@ -96,4 +97,32 @@ export interface HeroDefinition {
    * e.g. `"hero-fighter"`.
    */
   assetKey?: string;
+  /**
+   * D-129: a pre-battle class level to fast-forward this hero to before wave
+   * 1 — set by `heroDefinitionFromBuild` from `CharacterBuild.startingLevel`.
+   * Undefined/1 means no fast-forward (every existing definition/caller is
+   * unaffected). See `BattleScene.fastForwardHeroToLevel`.
+   */
+  startingLevel?: number;
+  /**
+   * D-133: this hero's Character Creation level-up planner blueprint, if one
+   * was set — set by `heroDefinitionFromBuild` from `CharacterBuild
+   * .levelUpPlan`. Undefined means no plan at all: every ASI/subclass/
+   * spell-pick trigger resolves exactly as it always has (D-129's fixed
+   * defaults pre-battle, unprompted in-battle popups) — every existing
+   * definition/caller is unaffected. See `BattleScene.heroLevelUpPlans`.
+   */
+  levelUpPlan?: LevelUpPlan;
+  /**
+   * D-135: a caster's manually-picked starting prepared leveled spells /
+   * known cantrips / (Wizard only) spellbook, set by `heroDefinitionFromBuild`
+   * from the matching `CharacterBuild` fields. Undefined means "keep the
+   * silent `Hero.growSpellSelections()` auto-fill" — every existing
+   * definition/caller is unaffected. See `BattleScene.buildHeroes`, which
+   * applies these as a wholesale override once a hero's Starting-Level
+   * fast-forward finishes.
+   */
+  preparedSpellIds?: string[];
+  knownCantripIds?: string[];
+  spellbookIds?: string[];
 }

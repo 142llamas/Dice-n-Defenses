@@ -54,6 +54,16 @@ describe("Enemy status effect bookkeeping", () => {
     enemy.applyStatus("slowed", 1); // -2
     expect(enemy.effectiveMovementTiles).toBe(0);
   });
+
+  it("removeStatus() clears an active status early; a no-op if absent (D-138)", () => {
+    const enemy = new Enemy("e#1", getEnemyDefinition("grunt"), { x: 0, y: 0 });
+    enemy.applyStatus("slowed", 5);
+    expect(enemy.hasStatus("slowed")).toBe(true);
+    enemy.removeStatus("slowed");
+    expect(enemy.hasStatus("slowed")).toBe(false);
+    enemy.removeStatus("slowed"); // already gone
+    expect(enemy.hasStatus("slowed")).toBe(false);
+  });
 });
 
 describe("WaveSystem integration: burning", () => {

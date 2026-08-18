@@ -472,6 +472,39 @@ items to `data/magicItems.ts` — three from each of the two families Phase 22
   coloured-shape/name-label equipment presentation, same as every other
   magic item in this project.
 
+D-131 ("a full damage-type mechanical engine," this chat) added no new
+spells/items/enemies to the catalogue, but DOES record a new SRD-derived
+FACT for existing content, the same treatment already given to spell names/
+levels/schools above:
+- **Per-spell `damageType`** on 47 of the ~198 castable spells
+  (`data/abilities.ts`) — WHICH real damage type each real SRD spell deals
+  (Fire Bolt is fire, Fireball is fire, Ray of Frost is cold, Sacred Flame
+  is radiant, Eldritch Blast is force, etc.) is a verified fact about
+  already-logged SRD content, not new copied SRD text — the same category
+  of fact this file already tracks for spell name/level/school. A handful
+  of real spells split damage across two types (Ice Storm: bludgeoning +
+  cold; Flame Strike: fire + radiant; Meteor Swarm: fire + bludgeoning;
+  Storm of Vengeance: thunder/lightning/bludgeoning across rounds) — this
+  engine models one type per hit, so a single representative type was
+  picked by judgment in each case, documented inline in `abilities.ts`.
+  Prismatic Spray (genuinely random-per-ray) and Wish (caster picks any
+  type) have no single real type to assign, so neither was tagged.
+- **The full SRD damage-type taxonomy itself** (`data/weapons.ts`'s
+  `DamageType` union — acid/bludgeoning/cold/fire/force/lightning/
+  necrotic/piercing/poison/psychic/radiant/slashing/thunder) is the
+  standard SRD 5e list, not original content.
+- **Every enemy's new `damageResistances`/`damageVulnerabilities`/
+  `damageImmunities` value is ORIGINAL content**, not SRD-derived — these
+  are original monsters (see the Phase 7/11.6/13.10/20/21/23/24/25 rows
+  above), so no real stat block exists to copy a resistance from; each tag
+  is this project's own judgment call keyed off that enemy's own existing
+  name/lore, same as every other original-content decision in this file.
+  The one exception: the general CONCEPT of "resistance/vulnerability/
+  immunity" and the specific real-5e patterns applied (undead commonly
+  resist necrotic/are vulnerable to radiant; oozes are immune to acid;
+  constructs lack organs to poison) are standard 5e monster-design
+  knowledge, not copied text from any specific stat block.
+
 ## Rules for future chats
 
 - Any asset (image, audio, font) or any rules text taken from outside this project

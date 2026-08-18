@@ -1,6 +1,7 @@
 import type { StatusEffectId } from "./statusEffects";
 import type { AbilityScoreId } from "./abilityScores";
 import type { BuffEffectId } from "./buffEffects";
+import type { DamageType, DamageTypeSplit } from "./weapons";
 
 /**
  * Ability definitions — data, not code (Source of Truth "data-driven content").
@@ -121,6 +122,40 @@ export interface AbilityDefinition {
   altersTerrainId?: string;
   /** Phase 16 (D-106): how many hero turns the placed structure lasts, for an `altersTerrainId` spell. */
   terrainDurationTurns?: number;
+  /**
+   * D-131: this ability's real SRD damage type, set ONLY for a real
+   * castable spell (an id referenced by some `spells.ts` entry's
+   * `abilityId`) whose canonical 5e version deals damage of a specific
+   * type. Left ABSENT for the four original non-spell Phase-4 abilities
+   * (`cleave`/`piercing-shot`/`taunting-slam`/`frost-bolt` — not SRD
+   * content) and for any spell whose nonzero `damage` here is this
+   * project's own stand-in for a real 5e spell that deals NO damage at all
+   * (a control/debuff/buff/heal/summon/terrain/teleport spell given a small
+   * hit-number or duration to fit this game's single-target-attack/ally
+   * engine — e.g. `command`, `charm-person`, `sleep`, `bane`) — inventing a
+   * type for those would fabricate SRD content this project's own "verify,
+   * don't assume" convention (see spells.ts) explicitly avoids. See
+   * `CombatSystem.applyResistance` for how this interacts with an enemy's
+   * `damageResistances`/`damageVulnerabilities`/`damageImmunities`.
+   */
+  damageType?: DamageType;
+  /**
+   * D-137: set ONLY for a spell whose real SRD version genuinely deals TWO
+   * (or more) damage types in the same instance of damage — e.g. Meteor
+   * Swarm (fire+bludgeoning, even split) or Ice Storm (bludgeoning+cold,
+   * uneven split per its actual dice: 2d8 vs. 4d6). Each entry's `portion`
+   * is the fraction of `damage` that type deals; the portions must sum to 1.
+   * `damageType` above should still be set to the split's "primary"/
+   * name-matching type when this is present — see `AttackProfile.damageTypes`
+   * in `CombatSystem` for why (VisualFxSystem's color/death-cause lookup
+   * only ever reads the singular `damageType`, not this array) and for how
+   * the resistance math actually uses this field instead once it's present.
+   * Left absent for every spell that deals only one real type, and for
+   * `storm-of-vengeance` (D-131) — its SRD mix is different types on
+   * DIFFERENT ROUNDS of a multi-round effect, not two types on the SAME hit,
+   * so it doesn't fit this "split one instance of damage" shape.
+   */
+  damageTypes?: ReadonlyArray<DamageTypeSplit>;
 }
 
 export const ABILITIES: Record<string, AbilityDefinition> = {
@@ -180,6 +215,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     kind: "single",
     rangeTiles: 3,
     damage: 3,
+    damageType: "fire",
   },
   "ray-of-frost": {
     id: "ray-of-frost",
@@ -189,6 +225,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 3,
     damage: 2,
     appliesStatus: { statusId: "slowed", durationTurns: 2 },
+    damageType: "cold",
   },
   // Phase 11.3 (DECISIONS D-075): the Cleric's one mechanically-active
   // cantrip (see data/spells.ts). Same treatment as fire-bolt/ray-of-frost:
@@ -206,6 +243,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 3,
     damage: 2,
     savingThrow: { ability: "dex" },
+    damageType: "radiant",
   },
   // Phase 13.7 (D-092): the Wizard's first real LEVELED spell — a 1st-level
   // slot buys unerring force damage, noticeably harder than the free Fire
@@ -220,6 +258,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 8,
     autoHit: true,
     spellSlotLevel: 1,
+    damageType: "force",
   },
   // Phase 13.7 (D-092): the Cleric's first real LEVELED spell, and this
   // game's first ally-targeted effect of any kind — see the new
@@ -243,6 +282,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     kind: "single",
     rangeTiles: 3,
     damage: 2,
+    damageType: "psychic",
   },
   // Phase 13.8 (D-093): the Bard's first leveled spell — this game's second
   // ally-targeted effect (after Cure Wounds), a longer-range heal for less HP.
@@ -265,6 +305,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     kind: "single",
     rangeTiles: 3,
     damage: 3,
+    damageType: "fire",
   },
   // Phase 13.8 (D-093): the Warlock's mechanically-active cantrip — its
   // signature attack, scaling like every other cantrip here.
@@ -275,6 +316,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     kind: "single",
     rangeTiles: 4,
     damage: 4,
+    damageType: "force",
   },
 
   // ---------------------------------------------------------------------
@@ -294,6 +336,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     kind: "single",
     rangeTiles: 3,
     damage: 3,
+    damageType: "acid",
   },
   "chill-touch": {
     id: "chill-touch",
@@ -302,6 +345,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     kind: "single",
     rangeTiles: 3,
     damage: 3,
+    damageType: "necrotic",
   },
   "guidance": {
     id: "guidance",
@@ -321,6 +365,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 3,
     damage: 1,
     appliesStatus: { statusId: "poisoned", durationTurns: 2 },
+    damageType: "poison",
   },
   "resistance": {
     id: "resistance",
@@ -349,6 +394,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     kind: "single",
     rangeTiles: 3,
     damage: 3,
+    damageType: "lightning",
   },
   "true-strike": {
     id: "true-strike",
@@ -392,6 +438,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 1,
     damage: 6,
     spellSlotLevel: 1,
+    damageType: "fire",
   },
   "charm-person": {
     id: "charm-person",
@@ -495,6 +542,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 3,
     damage: 8,
     spellSlotLevel: 1,
+    damageType: "radiant",
   },
   // Phase 16 follow-up (D-106): Hellish Rebuke — a Phase 15 (D-104)
   // catalogue omission, found and added this session. Modeled as a normal
@@ -508,6 +556,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 4,
     damage: 8,
     spellSlotLevel: 1,
+    damageType: "fire",
   },
   "heroism": {
     id: "heroism",
@@ -548,6 +597,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 3,
     damage: 8,
     spellSlotLevel: 1,
+    damageType: "necrotic",
   },
   "mage-armor": {
     id: "mage-armor",
@@ -625,6 +675,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     savingThrow: { ability: "con" },
     forcedMoveTiles: 2,
     spellSlotLevel: 1,
+    damageType: "thunder",
   },
 
   // ---------------------------------------------------------------------
@@ -644,6 +695,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 4,
     damage: 11,
     spellSlotLevel: 2,
+    damageType: "acid",
   },
   "aid": {
     id: "aid",
@@ -708,6 +760,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 3,
     appliesStatus: { statusId: "exposed", durationTurns: 3 },
     spellSlotLevel: 2,
+    damageType: "radiant",
   },
   "calm-emotions": {
     id: "calm-emotions",
@@ -818,6 +871,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 3,
     appliesStatus: { statusId: "burning", durationTurns: 3 },
     spellSlotLevel: 2,
+    damageType: "fire",
   },
   "hold-person": {
     id: "hold-person",
@@ -904,6 +958,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 8,
     savingThrow: { ability: "con" },
     spellSlotLevel: 2,
+    damageType: "radiant",
   },
   "pass-without-trace": {
     id: "pass-without-trace",
@@ -958,6 +1013,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     radiusTiles: 1,
     damage: 8,
     spellSlotLevel: 2,
+    damageType: "fire",
   },
   "shatter": {
     id: "shatter",
@@ -969,6 +1025,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 8,
     savingThrow: { ability: "con" },
     spellSlotLevel: 2,
+    damageType: "thunder",
   },
   "spider-climb": {
     id: "spider-climb",
@@ -1091,6 +1148,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 10,
     savingThrow: { ability: "dex" },
     spellSlotLevel: 3,
+    damageType: "lightning",
   },
   "conjure-animals": {
     id: "conjure-animals",
@@ -1145,6 +1203,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 10,
     savingThrow: { ability: "dex" },
     spellSlotLevel: 3,
+    damageType: "fire",
   },
   "fly": {
     id: "fly",
@@ -1201,6 +1260,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 10,
     savingThrow: { ability: "dex" },
     spellSlotLevel: 3,
+    damageType: "lightning",
   },
   "magic-circle": {
     id: "magic-circle",
@@ -1299,6 +1359,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 3,
     damage: 14,
     spellSlotLevel: 3,
+    damageType: "necrotic",
   },
   "wind-wall": {
     id: "wind-wall",
@@ -1350,6 +1411,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 3,
     damage: 17,
     spellSlotLevel: 4,
+    damageType: "necrotic",
   },
   "compulsion": {
     id: "compulsion",
@@ -1502,6 +1564,16 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 12,
     savingThrow: { ability: "dex" },
     spellSlotLevel: 4,
+    // D-137: real SRD Ice Storm deals 2d8 bludgeoning (avg 9) + 4d6 cold
+    // (avg 14) — an uneven split, ~39%/61% of the total. `damageType`
+    // stays "cold" (the larger, name-matching share) for VisualFxSystem;
+    // `damageTypes` now drives the actual resistance math per D-131's own
+    // rule that this was previously modeling as a single clean type.
+    damageType: "cold",
+    damageTypes: [
+      { type: "bludgeoning", portion: 0.39 },
+      { type: "cold", portion: 0.61 },
+    ],
   },
   "phantasmal-killer": {
     id: "phantasmal-killer",
@@ -1512,6 +1584,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 5,
     appliesStatus: { statusId: "stunned", durationTurns: 4 },
     spellSlotLevel: 4,
+    damageType: "psychic",
   },
   "polymorph": {
     id: "polymorph",
@@ -1609,6 +1682,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 2,
     damage: 14,
     spellSlotLevel: 5,
+    damageType: "cold",
   },
   "conjure-elemental": {
     id: "conjure-elemental",
@@ -1661,6 +1735,14 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 14,
     savingThrow: { ability: "dex" },
     spellSlotLevel: 5,
+    // D-137: real SRD Flame Strike deals fire AND radiant, an even 50/50
+    // split. `damageType` stays "fire" (matching the spell's own name) for
+    // VisualFxSystem; `damageTypes` now drives the actual resistance math.
+    damageType: "fire",
+    damageTypes: [
+      { type: "fire", portion: 0.5 },
+      { type: "radiant", portion: 0.5 },
+    ],
   },
   "greater-restoration": {
     id: "greater-restoration",
@@ -1706,6 +1788,9 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     savingThrow: { ability: "con" },
     appliesStatus: { statusId: "poisoned", durationTurns: 4 },
     spellSlotLevel: 5,
+    // D-131: real SRD Insect Plague deals piercing damage (biting insects) —
+    // one of the rare spells with a genuinely physical damage type.
+    damageType: "piercing",
   },
   "mass-cure-wounds": {
     id: "mass-cure-wounds",
@@ -1831,6 +1916,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 16,
     savingThrow: { ability: "dex" },
     spellSlotLevel: 6,
+    damageType: "lightning",
   },
   "circle-of-death": {
     id: "circle-of-death",
@@ -1842,6 +1928,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 16,
     savingThrow: { ability: "con" },
     spellSlotLevel: 6,
+    damageType: "necrotic",
   },
   "conjure-fey": {
     id: "conjure-fey",
@@ -1873,6 +1960,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 4,
     damage: 23,
     spellSlotLevel: 6,
+    damageType: "force",
   },
   "eyebite": {
     id: "eyebite",
@@ -1917,6 +2005,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 16,
     savingThrow: { ability: "con" },
     spellSlotLevel: 6,
+    damageType: "cold",
   },
   "globe-of-invulnerability": {
     id: "globe-of-invulnerability",
@@ -1937,6 +2026,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 3,
     damage: 23,
     spellSlotLevel: 6,
+    damageType: "necrotic",
   },
   "heal": {
     id: "heal",
@@ -2006,6 +2096,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     savingThrow: { ability: "con" },
     appliesStatus: { statusId: "blinded", durationTurns: 5 },
     spellSlotLevel: 6,
+    damageType: "radiant",
   },
   "true-seeing": {
     id: "true-seeing",
@@ -2074,6 +2165,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 18,
     savingThrow: { ability: "dex" },
     spellSlotLevel: 7,
+    damageType: "fire",
   },
   "divine-word": {
     id: "divine-word",
@@ -2094,6 +2186,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     rangeTiles: 3,
     damage: 26,
     spellSlotLevel: 7,
+    damageType: "necrotic",
   },
   "fire-storm": {
     id: "fire-storm",
@@ -2105,6 +2198,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 18,
     savingThrow: { ability: "dex" },
     spellSlotLevel: 7,
+    damageType: "fire",
   },
   "forcecage": {
     id: "forcecage",
@@ -2217,6 +2311,10 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     radiusTiles: 2,
     damage: 20,
     spellSlotLevel: 8,
+    // D-131: real SRD Earthquake's damage instances (fissures, collapsing
+    // structures) are bludgeoning — one of the rare spells with a genuinely
+    // physical damage type.
+    damageType: "bludgeoning",
   },
   "feeblemind": {
     id: "feeblemind",
@@ -2228,6 +2326,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     appliesStatus: { statusId: "stunned", durationTurns: 7 },
     savingThrow: { ability: "dex" },
     spellSlotLevel: 8,
+    damageType: "psychic",
   },
   "holy-aura": {
     id: "holy-aura",
@@ -2274,6 +2373,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     savingThrow: { ability: "con" },
     appliesStatus: { statusId: "blinded", durationTurns: 7 },
     spellSlotLevel: 8,
+    damageType: "radiant",
   },
 
   // Level 9 (spellSlotLevel: 9).
@@ -2321,6 +2421,15 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     damage: 22,
     savingThrow: { ability: "dex" },
     spellSlotLevel: 9,
+    // D-137: real SRD Meteor Swarm deals fire AND bludgeoning, an even
+    // 50/50 split. `damageType` stays "fire" (matching the spell's own
+    // name) for VisualFxSystem; `damageTypes` now drives the actual
+    // resistance math.
+    damageType: "fire",
+    damageTypes: [
+      { type: "fire", portion: 0.5 },
+      { type: "bludgeoning", portion: 0.5 },
+    ],
   },
   "power-word-kill": {
     id: "power-word-kill",
@@ -2352,6 +2461,10 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     radiusTiles: 2,
     damage: 22,
     spellSlotLevel: 9,
+    // D-131: real SRD Storm of Vengeance mixes thunder/lightning/bludgeoning
+    // across its rounds — lightning picked as the single type (its biggest
+    // single damage instance, the lightning bolt option).
+    damageType: "lightning",
   },
   "time-stop": {
     id: "time-stop",
@@ -2375,6 +2488,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
     savingThrow: { ability: "wis" },
     appliesStatus: { statusId: "stunned", durationTurns: 7 },
     spellSlotLevel: 9,
+    damageType: "psychic",
   },
   "wish": {
     id: "wish",

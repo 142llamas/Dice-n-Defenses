@@ -36,14 +36,14 @@ import { generateFreePlayWaves } from "../systems/FreePlayWaveGenerator";
  * `CampaignProgressSystem` (already built in 11.8) instead of a new store.
  */
 
-interface GatedOption {
+export interface GatedOption {
   id: string;
   name: string;
   /** `null` = always unlocked (the baseline TEST_MAP/basalt-colossus content). */
   unlockCampaignId: string | null;
 }
 
-const MAP_OPTIONS: GatedOption[] = [
+export const MAP_OPTIONS: GatedOption[] = [
   { id: TEST_MAP.id, name: TEST_MAP.name, unlockCampaignId: null },
   { id: EMBERFORD_MAP.id, name: EMBERFORD_MAP.name, unlockCampaignId: "emberford-reach" },
   { id: SALTMERE_MAP.id, name: SALTMERE_MAP.name, unlockCampaignId: "saltmere-shallows" },
@@ -111,7 +111,7 @@ const PRE_21_EXPANDED_MINIONS: string[] = [
   "frost-warden",
 ];
 /** Phase 21 (D-112): every new minion-tier enemy, added to "Expanded" so none of it is dead scaffolding. */
-const EXPANDED_MINIONS: string[] = [
+export const EXPANDED_MINIONS: string[] = [
   ...PRE_21_EXPANDED_MINIONS,
   "frenzied-cultist",
   "bloodwisp",
@@ -262,7 +262,7 @@ export class FreePlayScene extends Phaser.Scene {
     const maxTotalWidth = 1180; // GAME_WIDTH (1280) minus a 100px margin
     const gap = 20;
     const w = Math.min(380, (maxTotalWidth - (options.length - 1) * gap) / options.length);
-    const h = 56;
+    const baseH = 56;
     const totalWidth = options.length * w + (options.length - 1) * gap;
     const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
     // Playtest fix: the label had no wordWrap (only the locked hint below it
@@ -272,6 +272,27 @@ export class FreePlayScene extends Phaser.Scene {
     // wordWrap plus a width-scaled font size keeps every name inside its own
     // button regardless of how many options a row now has.
     const labelFontSize = w >= 300 ? 16 : w >= 180 ? 14 : w >= 110 ? 12 : 10;
+
+    // Playtest fix: the box height stayed fixed at 56 regardless of how many
+    // lines a name actually wrapped to. With the boss row now at 13 options
+    // (down to a ~72px-wide, 10px-font tile), a long name like "The Hollow
+    // Empress" wraps to 3 lines and, at 56px tall, spilled past its own box
+    // into the locked-hint line below (or the next section, for an unlocked
+    // option). Measure every label's REAL wrapped height first and grow every
+    // button in the row to fit the tallest one needed.
+    const measured = options.map((option) => {
+      const probe = this.add.text(0, 0, option.name, {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: `${labelFontSize}px`,
+        fontStyle: "bold",
+        align: "center",
+        wordWrap: { width: w - 8 },
+      });
+      const measuredHeight = probe.height;
+      probe.destroy();
+      return measuredHeight;
+    });
+    const h = Math.max(baseH, Math.max(...measured) + 16);
 
     return options.map((option, i) => {
       const x = startX + i * (w + gap);

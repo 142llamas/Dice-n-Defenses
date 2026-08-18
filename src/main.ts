@@ -7,6 +7,7 @@ import { CompendiumScene } from "./game/scenes/CompendiumScene";
 import { BestiaryScene } from "./game/scenes/BestiaryScene";
 import { CampaignSelectScene } from "./game/scenes/CampaignSelectScene";
 import { FreePlayScene } from "./game/scenes/FreePlayScene";
+import { TestModeScene } from "./game/scenes/TestModeScene";
 import { LoadGameScene } from "./game/scenes/LoadGameScene";
 import { MapBuilderScene } from "./game/scenes/MapBuilderScene";
 import { BrowseSharedMapsScene } from "./game/scenes/BrowseSharedMapsScene";
@@ -50,6 +51,7 @@ const config: Phaser.Types.Core.GameConfig = {
     BestiaryScene,
     CampaignSelectScene,
     FreePlayScene,
+    TestModeScene,
     LoadGameScene,
     MapBuilderScene,
     BrowseSharedMapsScene,

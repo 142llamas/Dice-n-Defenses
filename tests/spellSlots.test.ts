@@ -3,6 +3,9 @@ import { Hero } from "../src/game/entities/Hero";
 import type { HeroDefinition } from "../src/game/data/heroes";
 import { heroDefinitionFromBuild, type CharacterBuild } from "../src/game/systems/CharacterBuildSystem";
 import { WIZARD_CANTRIP_IDS, WIZARD_LEVELED_SPELL_IDS, CLERIC_CANTRIP_IDS, CLERIC_LEVELED_SPELL_IDS } from "../src/game/data/characterCreation";
+import { cantripsKnownForClassAtLevel } from "../src/game/systems/SpellcastingSystem";
+import { getClassDefinition } from "../src/game/data/classes";
+import { preparedSpellCountForClassAtLevel } from "../src/game/systems/SpellPreparationSystem";
 
 /**
  * Phase 13.7 (DECISIONS D-092): a caster hero's real spell-slot economy and
@@ -80,20 +83,28 @@ describe("Hero.knownSpellAbilityIds (Phase 13.7, D-092)", () => {
     expect(heroFrom(fighterBuild).knownSpellAbilityIds()).toEqual([]);
   });
 
-  it("lists the Wizard's full known-spell list (Phase 16, D-106) — not just the one signature ability chosen at creation", () => {
+  it("lists a level-1 Wizard's DEFAULT prepared spells/cantrips (D-134) — a bounded subset of the full SRD list, not the whole thing", () => {
     const hero = heroFrom(wizardBuild()); // signature ability: fire-bolt
-    const expected = [...WIZARD_CANTRIP_IDS, ...WIZARD_LEVELED_SPELL_IDS].sort();
-    expect(hero.knownSpellAbilityIds().sort()).toEqual(expected);
-    expect(hero.knownSpellAbilityIds()).toContain("fire-bolt");
-    expect(hero.knownSpellAbilityIds()).toContain("magic-missile");
+    const known = hero.knownSpellAbilityIds();
+    const cantripCount = cantripsKnownForClassAtLevel(getClassDefinition("wizard"), 1);
+    const preparedCount = preparedSpellCountForClassAtLevel("wizard", 1);
+    expect(known.length).toBe(cantripCount + preparedCount);
+    // every known id is a real member of the full class list (a subset, not something invented)
+    const fullList = [...WIZARD_CANTRIP_IDS, ...WIZARD_LEVELED_SPELL_IDS];
+    expect(known.every((id) => fullList.includes(id))).toBe(true);
+    // the deterministic default (first-in-list-order) picks
+    expect(known).toEqual([...WIZARD_LEVELED_SPELL_IDS.slice(0, preparedCount), ...WIZARD_CANTRIP_IDS.slice(0, cantripCount)]);
   });
 
-  it("lists the Cleric's full known-spell list (Phase 16, D-106)", () => {
+  it("lists a level-1 Cleric's DEFAULT prepared spells/cantrips (D-134) — a bounded subset of the full SRD list", () => {
     const hero = heroFrom(clericBuild());
-    const expected = [...CLERIC_CANTRIP_IDS, ...CLERIC_LEVELED_SPELL_IDS].sort();
-    expect(hero.knownSpellAbilityIds().sort()).toEqual(expected);
-    expect(hero.knownSpellAbilityIds()).toContain("cure-wounds");
-    expect(hero.knownSpellAbilityIds()).toContain("sacred-flame");
+    const known = hero.knownSpellAbilityIds();
+    const cantripCount = cantripsKnownForClassAtLevel(getClassDefinition("cleric"), 1);
+    const preparedCount = preparedSpellCountForClassAtLevel("cleric", 1);
+    expect(known.length).toBe(cantripCount + preparedCount);
+    const fullList = [...CLERIC_CANTRIP_IDS, ...CLERIC_LEVELED_SPELL_IDS];
+    expect(known.every((id) => fullList.includes(id))).toBe(true);
+    expect(known).toEqual([...CLERIC_LEVELED_SPELL_IDS.slice(0, preparedCount), ...CLERIC_CANTRIP_IDS.slice(0, cantripCount)]);
   });
 });
 
@@ -168,5 +179,71 @@ describe("Hero spell slots (Phase 13.7, D-092)", () => {
     const hero = heroWithNoClass();
     hero.longRest();
     expect(hero.spellSlotsRemainingAt(1)).toBe(0);
+  });
+});
+
+describe("Hero prepared spells/known cantrips/spellbook (D-134)", () => {
+  it("levelUpClass grows the prepared-spell list to match the new level's count, keeping everything already prepared", () => {
+    const hero = heroFrom(wizardBuild());
+    const atLevel1 = [...hero.preparedSpellIds];
+    expect(atLevel1.length).toBe(preparedSpellCountForClassAtLevel("wizard", 1));
+    hero.levelUpClass(); // level 2: prepared count 4 -> 5
+    expect(hero.preparedSpellIds.length).toBe(preparedSpellCountForClassAtLevel("wizard", 2));
+    for (const id of atLevel1) expect(hero.preparedSpellIds).toContain(id);
+  });
+
+  it("levelUpClass grows known cantrips only at the levels the count actually changes (1/4/10)", () => {
+    const hero = heroFrom(wizardBuild());
+    expect(hero.knownCantripIds.length).toBe(3); // Wizard: 3 at level 1
+    for (let i = 1; i < 4; i++) hero.levelUpClass(); // reach level 4
+    expect(hero.knownCantripIds.length).toBe(4);
+  });
+
+  it("a Wizard's spellbook grows 6 -> 8 on the level 1 -> 2 level-up, and the prepared list is drawn FROM the spellbook, not the full class list", () => {
+    const hero = heroFrom(wizardBuild());
+    expect(hero.spellbookIds.length).toBe(6);
+    for (const id of hero.preparedSpellIds) expect(hero.spellbookIds).toContain(id);
+    hero.levelUpClass();
+    expect(hero.spellbookIds.length).toBe(8);
+  });
+
+  it("a non-Wizard caster has an empty spellbook always", () => {
+    expect(heroFrom(clericBuild()).spellbookIds).toEqual([]);
+  });
+
+  it("choosePreparedSpells/chooseCantrips overwrite the current selection wholesale", () => {
+    const hero = heroFrom(wizardBuild());
+    hero.choosePreparedSpells(["magic-missile"]);
+    expect(hero.preparedSpellIds).toEqual(["magic-missile"]);
+    hero.chooseCantrips(["ray-of-frost"]);
+    expect(hero.knownCantripIds).toEqual(["ray-of-frost"]);
+    expect(hero.knownSpellAbilityIds()).toEqual(["magic-missile", "ray-of-frost"]);
+  });
+
+  it("learnSpellbookSpells only ever adds to a Wizard's spellbook, never duplicates, and is a no-op for any other class", () => {
+    const wizard = heroFrom(wizardBuild());
+    const before = wizard.spellbookIds.length;
+    wizard.learnSpellbookSpells(["fireball", "fireball"]); // duplicate in the same call
+    expect(wizard.spellbookIds.length).toBe(before + 1);
+    expect(wizard.spellbookIds).toContain("fireball");
+
+    const cleric = heroFrom(clericBuild());
+    cleric.learnSpellbookSpells(["cure-wounds"]);
+    expect(cleric.spellbookIds).toEqual([]);
+  });
+
+  it("chooseSpellbook replaces a Wizard's spellbook wholesale, unlike learnSpellbookSpells' additive behavior", () => {
+    const wizard = heroFrom(wizardBuild());
+    wizard.chooseSpellbook(["magic-missile", "shield"]);
+    expect(wizard.spellbookIds).toEqual(["magic-missile", "shield"]);
+    wizard.chooseSpellbook(["fireball"]);
+    expect(wizard.spellbookIds).toEqual(["fireball"]);
+  });
+
+  it("a non-caster has no prepared spells/cantrips/spellbook at all", () => {
+    const hero = heroWithNoClass();
+    expect(hero.preparedSpellIds).toEqual([]);
+    expect(hero.knownCantripIds).toEqual([]);
+    expect(hero.spellbookIds).toEqual([]);
   });
 });

@@ -6,6 +6,395 @@
 
 ## Open items to verify
 
+- **KI-091 — D-138's Test Mode (a dedicated Main Menu entry point, a live
+  in-battle debug toolbar: Skip Wave, No-Fail Stronghold, a live enemy
+  spawner, a live terrain painter, toggle-based status assignment) is not
+  yet confirmed by Kevin in a browser.** Built and verified headless-only
+  (typecheck, 1251 → 1253 tests, production build all pass — 118 modules, up
+  from 117 — the new `TestModeScene.ts`; `npm run dev` not re-checked this
+  session). To check:
+  - **Entry point**: from the Main Menu, confirm a "Test Mode" button now
+    appears in the Creator Tools row; clicking it opens a map/wave-count
+    picker (every map available, no locked options), and Start leads into
+    the normal Character Creation screen (Starting Level/Team Level still
+    work exactly as before, D-129).
+  - **The Debug Menu**: in battle, confirm a small "Debug Menu (F9)" button
+    appears bottom-right — press F9 or click it, and confirm a full-screen
+    menu opens with Skip Wave, a "No-Fail Stronghold: OFF" toggle, and
+    Spawn Enemy/Paint Terrain/Set Status buttons. Confirm this button/menu
+    is COMPLETELY ABSENT on every other entry point (New Game, Free Play,
+    Campaigns, Co-op) — Test Mode only.
+  - **Skip Wave**: click it mid-wave with enemies still on the board —
+    confirm every enemy token vanishes instantly, no reward gold is logged,
+    and the game proceeds exactly like a real clear (any level-up/rest
+    overlay, then the next wave banner or Victory on the last wave).
+  - **No-Fail Stronghold**: toggle it ON, then let enough enemies breach to
+    normally lose (confirm the Integrity number still visibly drops) — the
+    game should NOT end in Defeat even at/below 0. Toggle it back OFF and
+    confirm a subsequent breach past 0 integrity ends the run normally.
+  - **Spawn Enemy**: click "Spawn Enemy…", confirm a paginated grid of the
+    full enemy roster appears (Prev/Next should work past the first page),
+    pick one, then click several board tiles — confirm a real token spawns
+    on each one and the enemy moves/attacks/breaches on its own next enemy
+    phase exactly like a normally-spawned one. Confirm Done (or Esc) returns
+    to normal play with the enemy grid gone and the board fully clickable
+    again (hero select/move/attack all work normally).
+  - **Paint Terrain**: click "Paint Terrain…", pick a type (try "pit" and
+    something else), click a few tiles — confirm the tile's color changes
+    immediately and (for "pit") the "✕" glyph appears; painting a tile that
+    already had a "✕" glyph to a non-pit type should remove the glyph, not
+    leave it stranded. Confirm no build/occupancy check blocks the paint
+    (painting under a hero/structure is expected to "just work," by design).
+  - **Set Status**: click "Set Status…", pick a status, click a hero then an
+    enemy — confirm each gets the status (its usual on-token status badge
+    should appear) and a second click on the SAME status chip against the
+    SAME target clears it again (badge disappears). Try a status on a
+    still-hidden stealth enemy/Mimic and confirm it applies even though the
+    enemy's own token still reads as anonymous.
+  - **Keyboard play**: with a debug picker grid open, confirm Tab/arrow keys
+    navigate its grid the same way Build/Gear's grid already does, and that
+    1-4 (hero select) is correctly disabled while any debug picker mode is
+    active (matching Build/Gear's own existing behavior).
+  - **Known, deliberate limits, not bugs**: Terrain painting has no
+    placement validation at all (see D-138) — this is the debug tool's own
+    point, not an oversight. A debug-applied status uses a fixed long
+    duration (99 turns) rather than a duration picker — toggle it off again
+    with a second click rather than waiting it out. Skip Wave awards no
+    reward gold, by design (a bypass, not a real clear).
+
+- **KI-090 — D-134's real SRD 5.2.1 spell-preparation economy is now fully
+  built across all three phases (D-134/D-135/D-136); NONE of it is yet
+  confirmed by Kevin in a browser.** To check Phase 2 (Character Creation's
+  spell-picker UI, D-135):
+  - **The "Spells" row**: in Character Creation, confirm every caster's
+    column now shows a "Spells" row below "Plan Levels" (Fighter/Rogue/
+    Barbarian/Monk and Paladin/Ranger — the latter despite having a real
+    spell-slot economy, see below — should show "Spells: N/A"; every other
+    class should show "Spells: Auto-fill (click to customize)").
+  - **The picker wizard**: click it for a Wizard and confirm three screens
+    in order — Spellbook, Known Cantrips, then Prepared Spells (drawn from
+    whatever spellbook was just picked, not the full class list) — each a
+    toggle grid pre-checked with a valid default, with a "Confirm (x/max)"
+    that only advances at the exact count. Click it for a Cleric/Druid/
+    Sorcerer/Bard/Warlock and confirm just two screens (Cantrips, then
+    Prepared); confirm the row shows "Spells: N/A" and does nothing for
+    Fighter/Rogue/Barbarian/Monk/Paladin/Ranger.
+  - **Editing the spellbook**: for a Wizard, toggle a couple of spellbook
+    entries off after already having picked some as "prepared" from them,
+    and confirm any now-stranded prepared picks are silently dropped
+    (`showSpellStepScreen`'s own pruning) rather than left dangling.
+  - **Confirm and re-open**: Save & Close, then reopen the same slot's
+    picker and confirm it shows exactly what was picked, not a fresh
+    auto-fill; confirm Cancel discards a session's edits and keeps the
+    previous pick (or auto-fill, if never customized).
+  - **Phase 3 — in-battle (D-136, now BUILT, not yet browser-confirmed)**:
+    a "Prepare Spells" screen tied to the existing `showRestChoice`'s Long
+    Rest option, and a level-up spell-swap step for the classes that swap on
+    level-up instead. To check:
+    - **Long Rest, a Wizard/Cleric/Druid in the party**: choose Long Rest
+      from the between-waves Rest choice and confirm a "Known Cantrips"
+      (Wizard only) then "Prepared Spells (Long Rest)" toggle-grid screen
+      opens per eligible hero, pre-checked with its CURRENT selection, with
+      a `Confirm (x/max)` that only advances at the exact count — toggling
+      nothing and hitting Confirm should leave the hero completely
+      unchanged. Confirm a non-caster or Paladin/Ranger never gets a screen
+      at Long Rest at all.
+    - **Long Rest, then actually changing something**: toggle a different
+      spell in, Confirm, then open that hero's in-battle spellbook overlay
+      (Q) and confirm the new pick shows there instead of the old one.
+    - **Level-up, a Sorcerer/Bard/Warlock in the party**: play to any
+      level-up for one of these three and confirm a "Replace a Cantrip"
+      screen (list of currently-known entries + "Keep current — no swap")
+      appears, followed by a "Replace a Prepared Spell" screen — picking an
+      entry on the first screen should open a "Learn a New Cantrip/Prepared
+      Spell" screen (the eligible pool minus what's already known); picking
+      one there should log a "swaps X for Y" combat-log line and commit;
+      "◀ Back" from the Learn screen should return to the Drop screen with
+      nothing changed yet; "Keep current — no swap" should skip straight to
+      the next step/hero with nothing changed.
+    - **Level-up, a Cleric/Druid in the party**: confirm ONLY a cantrip-swap
+      screen appears at level-up (no prepared-spell screen — their prepared
+      list only fully relists at Long Rest, never on level-up).
+    - **This recurs at EVERY qualifying level-up, not once** — confirm a
+      Sorcerer/Bard/Warlock gets this same swap opportunity again at their
+      NEXT level-up too (not just the first time), and that "Keep current"
+      each time is a fast, harmless way to blow through it if the player
+      doesn't want to bother.
+    - **A hero on an "auto" Plan Levels mode**: confirm NO spell-swap popup
+      ever appears for that hero at either trigger (silently keeps its
+      current selection instead) — this is a deliberate scope boundary, not
+      a bug (see D-136: a recurring swap opportunity has no plannable slot
+      the way a one-time ASI/subclass/spell-mastery pick does).
+    - **Paladin/Ranger**: confirm neither ever gets a spell-swap screen at
+      either trigger (same empty-pool reason as Character Creation, below).
+  - **A real, standing limitation, not a bug**: Paladin/Ranger have a real,
+    nonzero prepared-spell-count table (their half-caster spell-slot
+    economy is real), but an EMPTY eligible spell pool — their one in-game
+    consequence (Divine Smite/Hunter's Mark) lives outside the normal spell
+    list — so neither class gets a "Spells" step at all, in Character
+    Creation or in battle. This is `eligibleLeveledSpellPool`'s existing,
+    pre-D-135 scope boundary, not something any later session changed.
+  - **Also known, deliberate limits, not bugs (D-136)**: a Wizard's
+    spellbook itself never grows or changes at Long Rest — only what's
+    PREPARED from it does; `Hero.learnSpellbookSpells` stays uncalled. No
+    Character Creation "Plan Levels" integration for the recurring swap
+    opportunity — see D-136's own reasoning for why that's permanent, not
+    deferred.
+  - See **D-134**/**D-135**/**D-136** in `DECISIONS.md` for the complete
+    verified rule set and the full phase breakdown.
+
+- **KI-089 — D-133's level-by-level Character Creation planner (pre-pick
+  every future ASI/subclass/spell-pick choice, per hero, with Auto/Prompt/
+  Fresh modes) is not yet confirmed by Kevin in a browser.** Built and
+  verified headless-only (typecheck, 1168 → 1188 tests, production build all
+  pass — 116 modules, up from 115; `npm run dev` not re-checked this
+  session). To check:
+  - **The "Plan Levels" row**: in Character Creation, confirm every hero
+    column now shows a "Plan Levels: Off" row below Starting Level, and that
+    the rest of the column (and the Team Level/party size/difficulty/Start
+    Battle/Save Party/Back to Menu rows below it) all sit one row lower than
+    before with no overlap or off-canvas clipping.
+  - **The wizard overlay — Mode select**: click it and confirm a full-screen
+    overlay opens with 4 options (Auto-follow/Prompted/Always fresh/Cancel).
+    Picking "Always choose fresh" should close the overlay immediately with
+    no further steps; "Cancel" should close it with nothing changed.
+  - **Walking the ladder**: pick "Prompted each level" for a Fighter (or any
+    later-choice class) and confirm it steps through a Subclass screen at
+    level 3, then an ASI screen at level 4 offering both ability-raise modes
+    AND a real list of eligible feats (should include at least the
+    prerequisite-free origin feats and, for a Fighter specifically, the
+    Fighting Style feats). Pick a feat with its own sub-choice (Grappler, or
+    Magic Initiate for a caster class) and confirm a follow-up screen asks
+    for the ability/spell-list before advancing. Confirm "◀ Back" returns to
+    the previous screen with your prior pick still remembered, and "Skip"
+    advances without setting anything for that level.
+  - **Wizard/Warlock spell picks**: plan a Wizard through to level 18/20 (or
+    a Warlock to 11) and confirm the Spell Mastery/Signature Spells/Mystic
+    Arcanum screens show real eligible spells, not an empty list.
+  - **The planner's own label updates**: after "Save & Close", confirm the
+    row now reads "Plan Levels: Auto" or "Plan Levels: Prompt" instead of
+    "Off". Reopening it should show your prior picks still selected
+    (gold-outlined) at each step, not reset to blank.
+  - **Class-change reset**: after planning a hero, click its Class row to
+    cycle to a different class, then reopen Plan Levels and confirm it's
+    back to "Off"/no steps answered (a stale plan for the OLD class must not
+    silently apply to the new one).
+  - **In battle — Auto mode**: start a battle with an Auto-mode hero at a
+    Starting Level high enough to have already used its plan (e.g. a
+    planned feat instead of the default ability-raise) and confirm the
+    fast-forwarded hero actually HAS that feat, not the default raise. Then
+    play to a real in-battle level-up for that hero and confirm NO popup
+    appears at all for that level-up (only the usual "reaches level N!" log
+    line), and that its plan's choice was applied (check its feat/ability
+    list).
+  - **In battle — Prompted mode**: start a Prompted-mode hero at level 1 and
+    play to its first ASI level-up. Confirm the usual popup still appears,
+    but with a gold-outlined "★ "-prefixed option matching whatever was
+    planned for that level — and confirm every OTHER option is still fully
+    clickable (picking a different option should override the plan for that
+    level, not be blocked).
+  - **A hero with no plan at all**: confirm a hero whose "Plan Levels" row
+    was never touched behaves EXACTLY as before D-133 — unprompted popups,
+    D-129's same fast-forward defaults.
+
+- **KI-088 — D-132's AC/damage visibility (selected-hero AC on the status
+  line, a hover tooltip with HP/AC and a hit% preview) is not yet confirmed
+  by Kevin in a browser.** Built and verified headless-only (typecheck,
+  1162 → 1168 tests, production build all pass — 115 modules, unchanged;
+  `npm run dev` not re-checked this session). To check:
+  - **Selected-hero AC**: select any hero and confirm its own entry on the
+    status line now shows `AC {n}` right after its HP (e.g. "Fighter Lv4
+    24/24hp AC 15 move:ready act:ready"), while the other 3 heroes' entries
+    are unchanged (no AC shown for them). Deselect (Esc) and confirm the AC
+    disappears from that hero's entry.
+  - **Hover tooltip — a hero**: with the mouse (or the keyboard cursor, via
+    the arrow keys), hover any hero's tile and confirm a small tooltip
+    appears above it reading "`{Hero}` / HP `{n}`/`{max}` · AC `{n}`" —
+    for BOTH the currently selected hero and any other, unselected hero.
+  - **Hover tooltip — an enemy, no hero selected**: hover an enemy with no
+    hero currently selected (`Esc` first) and confirm the tooltip shows only
+    "`{Enemy}` / HP `{n}`/`{max}` · AC `{n}`" — no hit% line.
+  - **Hover tooltip — an enemy, hero selected, in range**: select a hero,
+    then hover an enemy within its basic-attack range and confirm a third
+    line appears: "`{n}`% to hit". Move the SAME hero next to a higher-AC
+    enemy and confirm the percentage drops; equip/grant it Advantage (Vex,
+    Grappler vs. a restrained target, a Lucky point) and confirm the
+    percentage jumps accordingly without the hero actually attacking or
+    spending anything (hovering must never consume a Lucky point, Vex, or
+    Boon of Fate — only actually attacking should).
+  - **Hover tooltip — an enemy out of range**: hover an enemy the selected
+    hero cannot currently reach and confirm the tooltip still shows HP/AC
+    but NO hit% line (matches the same case where an actual attack attempt
+    would be silently refused as out of range).
+  - **Hover tooltip — a still-hidden stealth/Mimic enemy**: hover a
+    not-yet-revealed stealth enemy (Shadowfang/Nightblade) or an
+    undisguised Mimic and confirm NO tooltip appears at all — its HP/AC
+    should stay as hidden as its own "?" token/name already are.
+  - **Known, deliberate limits, not bugs**: no hit% preview while aiming an
+    ability/spell (`aimingAbility`/`aimingSpell`/`aimingTileSpell`) — only a
+    basic-attack target gets one, since that's the only case in this game
+    where you point at one candidate at a time before committing. No
+    tooltip for a structure/trap tile — hero/enemy only, per the ask.
+
+- **KI-087 — D-131's full damage-type mechanical engine (every SRD damage
+  type, 47 real per-spell damage types, resistance/vulnerability/immunity
+  for 24 enemies, and a full save-based-spell resistance hookup) is not yet
+  confirmed by Kevin in a browser.** Built and verified headless-only
+  (typecheck, 1149 → 1162 tests, production build all pass — 115 modules,
+  unchanged; `npm run dev` not re-checked this session). To check:
+  - **Fire resistance halves damage**: in Free Play or Bestiary, find a
+    fire-resistant enemy (Cave Drake, Cinder Wretch, Bomber Beetle) and cast
+    Fire Bolt/Burning Hands/Fireball into it — confirm the combat log/
+    Technical Log (L) shows roughly HALF the usual damage number compared
+    to a same-AC non-resistant enemy.
+  - **Fire immunity zeroes damage**: cast a fire spell into Cinderlord or
+    Ashen Sovereign (both fire-IMMUNE) and confirm the hit deals exactly 0
+    damage, with a log line that still reads as a landed hit (not a miss).
+  - **Cold vulnerability doubles damage**: The Hollow Empress and Coin
+    Wraith are RADIANT-vulnerable, not cold — cast Sacred Flame or Guiding
+    Bolt (both radiant) into either and confirm roughly DOUBLE the usual
+    damage number.
+  - **A save-based spell also respects all of this**: cast Fireball (a
+    `savingThrow`-based spell) into a fire-resistant enemy (Cave Drake) and
+    confirm the post-save damage is ALSO halved, not full — this exercises
+    the brand-new `SavingThrowSystem` hookup, previously untested in a real
+    battle.
+  - **Cast-flourish and death-fade colors now reflect real data**: cast
+    Magic Missile (real `damageType: "force"`) and confirm its flourish/any
+    death it causes reads as a pale force color, not the old generic
+    "arcane" purple it used to fall back to — the clearest visible sign
+    this session's VisualFxSystem change (KI-078's resolution) actually
+    took effect.
+  - **A construct enemy no-sells poison**: cast Poison Spray at Basalt
+    Colossus, Gravemaw, Ironhide, or Juggernaut (all poison-immune) and
+    confirm 0 damage.
+  - **Known, deliberate limits, not bugs**: only 47 of ~198 castable spells
+    have a real `damageType` — every buff/heal/summon/terrain/teleport
+    spell, and every control/debuff spell whose `damage` here is this
+    project's own stand-in for a real 5e spell that deals no damage at all
+    (`command`, `charm-person`, `sleep`, `bane`, `fear`, etc. — see D-131),
+    correctly has none; casting one of those still won't show a
+    resistance/vulnerability interaction, by design. Only 24 of the roster's
+    ~63 enemies got new resistance/vulnerability/immunity data — most plain
+    minions (Grunt, Runner, Marauder, etc.) deliberately got nothing, same
+    "not every enemy needs a tag" reasoning D-131 itself documents. No
+    Hero-side damage-type resistance exists (out of scope — nothing deals
+    typed elemental damage TO a hero in this game).
+
+- **KI-086 — D-130's session (gear-purchase UX clarity, a level-up popup, a
+  live Game Speed control, a two-tier battle log) is not yet confirmed by
+  Kevin in a browser.** Built and verified headless-only (typecheck, all
+  1149 tests, production build all pass — 115 modules, unchanged; `npm run
+  dev` not re-checked this session). To check:
+  - **Gear-purchase wording**: open Gear (G), select an item with no hero
+    yet chosen — confirm the status-line hint now reads "click an item
+    below to select it, then click a hero to BUY it — gear equips
+    immediately, potions are carried for later use (P)..."; select an item
+    and confirm its hint says "...click a hero to buy & equip it for `{cost}`g..."
+    (or "buy & carry it (use later with P)..." for a potion). Confirm the
+    proximity-lock message (when no hero is near a Shop tile) now reads
+    "Move a hero to a Shop tile to buy/equip Gear."
+  - **Level-up popup**: play until a hero levels up WITHOUT gaining an
+    ASI/subclass/spell-pick (e.g. any level that isn't 4/8/12/16/19-ish for
+    most classes) and confirm a "`{hero}` reaches level `{N}`!" popup with a
+    single Continue button now appears — previously this was a log line
+    only, no popup at all. Confirm a hero that DOES gain a real choice that
+    same wave-clear still only gets ONE popup (its own ASI/subclass/
+    spell-pick overlay), not both. Confirm a Starting-Level hero (D-129, Free
+    Play/New Game) entering battle already leveled up does NOT get a flood of
+    these popups — that path is silent by design.
+  - **Live Game Speed**: from the Main Menu, confirm the top-right control now
+    reads "Game Speed: Normal/Fast/Instant" (was "Animation: ..."). In a
+    battle, press "S" and confirm a "Game speed: `{X}`" line appears in the
+    combat log and the setting actually changes (compare an enemy phase at
+    Normal vs. Instant — the whole turn should resolve visibly faster at
+    Instant, not just individual tweens). Confirm changing it via "S"
+    mid-battle also updates what the Main Menu control shows next time you're
+    there (same `localStorage` key).
+  - **Two-tier battle log**: play a few attacks, then press "L" and confirm a
+    "Technical Log" overlay opens showing lines like "`{attacker}` -> `{target}`:
+    d20 `{n}` +`{bonus}` = `{total}` vs `{AC}` -> HIT, `{n}` damage" for hero
+    attacks (incl. multi-attack, off-hand, Cleave), enemy attacks, retaliation,
+    ability/spell attacks, and summon attacks. Confirm the existing small
+    combat-log line below the grid is UNCHANGED (still the short
+    plain-English line) — the technical detail is only in this new overlay,
+    not folded into it. Confirm Esc or the Close button dismisses it, and it
+    blocks board input while open (same as the tutorial overlay).
+  - **Known, deliberate limits, not bugs**: the technical log only covers
+    ATTACK/SAVE rolls (the same 7 places `attackVerb`/`logCombat` already
+    handled) — a skill check (e.g. a Rogue's Hide roll) is not captured. No
+    purchase-only stash/inventory exists — Kevin explicitly chose to keep the
+    single click-item-then-click-hero flow rather than build one. See D-130
+    for the full method.
+
+- **KI-085 — Kevin's playtest report (D-128/D-129/D-130): three text-overflow
+  bugs fixed, a Free Play/New Game Starting Level feature built, gear-purchase
+  UX clarified (no bug, a wording fix — D-130), a Tide-map build-restriction
+  report investigated (no bug found, needs a specific repro), a level-up
+  popup/live Game Speed/two-tier battle log all built (D-130, see KI-086), one
+  confirmed gap not yet built (AC/damage visibility), and three large items
+  still awaiting a design discussion with Kevin before being built.** To check:
+  - **Compendium tab/class-button labels** (any screen with 8+ same-row
+    buttons): confirm every label now shrinks to stay inside its own
+    button instead of spilling into a neighbor.
+  - **Free Play's Map (7) and Finale Boss (13) rows**: confirm every label,
+    including the longest names ("Cinderfall Rift (volcanic, collapsing
+    bridge)", "The Hollow Empress"), now stays fully inside its own button
+    with no bleed into the locked-hint line below it.
+  - **Character Creation's subclass-picker row**: confirm the "Subclass:
+    chosen in battle at level N (M options)" message (shown for any class
+    other than Cleric/Sorcerer/Warlock) now stays inside its own button
+    instead of running over both edges.
+  - **NEW (D-129) — Starting Level control**: in Character Creation (reached
+    via either "New Game" or Free Play — same scene), confirm each hero
+    column shows a "Level: N" row below its stats preview that cycles 1-20
+    on click, and that the stats preview (HP/ATK) updates to roughly match
+    that level. Confirm the new "Team Level: N (all heroes)" button in the
+    bottom-controls area sets every slot to the same level in one click, and
+    that a slot can still be bumped individually afterward. Start a battle
+    with a level 8+ hero and confirm it actually enters combat already at
+    that level (HUD level readout, HP, attack numbers) — including, for a
+    caster, that it already has the right number of spell slots, and for any
+    class whose class table grants a subclass/ASI before that level, that it
+    already has one (auto-picked silently — no popup, see D-129 for exactly
+    which default each auto-pick uses). Also confirm a FRESH party now
+    defaults to Hero 1 = Human, Heroes 2-4 = AI (previously all four
+    defaulted to Human) — Kevin's explicit ask, so a solo playtest needs no
+    manual toggling.
+  - **Important — confirm which build Kevin is actually playing.** Kevin
+    confirmed (2026-08-15) his live site was current as of his last playtest
+    report — the D-126/D-127 overflow-bug persistence in that report was a
+    real, unfixed gap (now fixed by D-128), not a stale-deploy artifact. This
+    note stays here as a standing first check for any FUTURE "still broken"
+    report, since it's an easy thing to rule out early.
+  - **"Cannot purchase gear" — RESOLVED, no bug, a UX wording fix (D-130)**:
+    Kevin later confirmed he CAN buy gear — the click-item-then-click-hero
+    flow was just never described as a purchase anywhere on screen. See
+    KI-086 for the wording fix and its own checklist.
+  - **"How can I see AC and damage?"**: confirmed a real gap, still not fixed
+    — `armorClass`/attack bonus/attack damage are computed live in `Hero.ts`
+    but never shown anywhere during battle (only HP). Needs a scope decision
+    (where to add it — the crowded status line is already at its own
+    wrap-width limit per KI-083) before building.
+  - **The "Tide map" build-restriction report — RESOLVED, no bug, confirmed
+    2026-08-16**: Kevin confirmed this was his own mistake — he hadn't
+    realized a hero needs to be within `BUILD_RANGE_TILES` (3) of a tile to
+    build on it. Matches D-130's own investigation exactly (the flood zone
+    sits well outside build range of the hero-start column). No code change
+    needed.
+  - **Level-up popup, live Game Speed, and a two-tier battle log — all BUILT
+    this session (D-130)**: see KI-086 for the full checklist.
+  - **Still awaiting a design discussion with Kevin before being built** (not
+    self-scoped, same D-070/D-078/D-113 precedent as always for a system this
+    size): ~~a debug/test mode (playable at any level, infinite/no-fail
+    stronghold HP, free status assignment, wave-skip, manual enemy/terrain
+    placement)~~ — **BUILT by D-138** (see KI-091); ~~a level-by-level Character Creation planner (pick every
+    future level-up choice in advance, then choose at add-to-game time
+    whether to auto-follow that blueprint, be prompted each level, or always
+    choose fresh)~~ — **BUILT by D-133** (see KI-089); ~~damage types on
+    every spell (flagged as deliberately out of scope by D-127 itself, now
+    an explicit ask)~~ — **BUILT by D-131** (see KI-087).
+
 - **KI-084 — D-127's four foundational systems (nonmagical damage-type
   resistance, Blindsense/Feral Senses, charge-based items, ability-score-
   setting items) are not yet confirmed by Kevin in a browser.** Built and
@@ -46,9 +435,13 @@
     spell save DCs rise by the same amount. Try equipping Gauntlets of
     Ogre Power on an already-Strength-20+ hero (a high-STR Barbarian) and
     confirm NO change (the real SRD "no effect if already higher" rule).
-  - **Known, deliberate limits, not bugs**: damage-type resistance only
-    ever applies to a real equipped weapon's attack, never a spell (no
-    spell in this game has a damage type at all); only 3 charge items and
+  - ~~Known, deliberate limits, not bugs: damage-type resistance only ever
+    applies to a real equipped weapon's attack, never a spell (no spell in
+    this game has a damage type at all)~~ — **RESOLVED by D-131** (see
+    KI-087): 47 real castable spells now carry a verified damage type, and
+    both attack-roll and save-based spell casts route through the same
+    resistance/vulnerability/immunity engine a weapon attack always has.
+    Only 3 charge items and
     3 ability-score items exist, not the full real SRD families of either;
     the ASI-picker's displayed ability score does NOT reflect an equipped
     item's override (shows the hero's true underlying score). See D-127
@@ -226,31 +619,31 @@
     a manuscript-style serif (EB Garamond), not the plain sans-serif system
     font every screen used before this session. If either looks like a
     generic sans-serif, the CDN link in `index.html` may not be reachable —
-    worth a look at the browser's network tab.
+    worth a look at the browser's network tab. -Confirmed
   - **Every button's hover and click feedback**: mouse over any button on
     Main Menu/Compendium/Bestiary and confirm it brightens, its border gilds,
     and it lifts very slightly; click one and confirm a quick press-down
     "squish" plays before the action fires. Every button on all three
     screens should behave identically — this was the literal, explicit ask
     ("add behavior for the (stylized) buttons for when they are hovered and
-    when they are clicked").
+    when they are clicked"). -Confirmed
   - **Main Menu's new grouped layout**: "New Game" should read as the single
     most prominent button; "Continue Your Journey" (Load Game/Campaigns/Free
     Play/Co-op), "Know Your Foe" (Compendium/Bestiary), and "Creator Tools"
     (Map Builder/Browse Shared Maps) should each read as a distinct labeled
     group, not one undifferentiated list. Confirm nothing overlaps at the
     canvas's native 1280x1080 and that the drawn tower-and-shield crest below
-    the button groups doesn't collide with anything.
+    the button groups doesn't collide with anything. -Confirmed
   - **Compendium's parchment reading panel**: confirm every one of the 10
     category tabs is readable and clickable at its new smaller ornate-tab
     size, and that long detail text (Classes/Spells/Equipment's paginated
     pages especially) still wraps cleanly inside the parchment panel with no
-    text running past its border.
+    text running past its border. -Confirmed
   - **Bestiary's new pagination**: this session added Prev/Next paging to
     Bestiary for the first time (see the note below) — confirm the roster
     now reads as clean pages of ~10 entries with a group heading (Minions/
     Miniboss/Bosses/Legendary) appearing wherever a group starts, rather
-    than one giant overflowing block.
+    than one giant overflowing block. -Confirmed
   - **Known, deliberate limit, not a bug**: `BattleScene`'s HUD and every
     other scene are UNCHANGED — Kevin's own instruction was to start with
     just these three screens, with the same branding explicitly planned to
@@ -300,22 +693,27 @@
   - Confirm each spell's cast plays a visible flourish (a traveling bolt, a
     ring pulse, a falling judgment, etc.) roughly matching its real effect
     (an AoE spell should visibly burst at the chosen tile; a heal should
-    sparkle over the target; a teleport should fade-and-reappear).
+    sparkle over the target; a teleport should fade-and-reappear). -Confirmed
   - Confirm two different spells of the same general TYPE (e.g. two attack-
     roll bolts) still look distinguishable from each other in color/size/
-    speed, not identical — this was the actual ask this session.
+    speed, not identical — this was the actual ask this session. 
   - Confirm an enemy killed by fire (Fire Bolt, Burning Hands, a burning
     status tick) fades differently than one killed by a plain weapon
     attack, and differently again from one killed by a cold/poison/
-    necrotic/radiant spell.
+    necrotic/radiant spell. 
   - Confirm the "Instant" animation-speed setting skips both the cast
     flourish and the death flourish outright, same as every other tween in
     this scene.
-  - **Known, deliberate limit, not a bug**: the cast COLOR is a best-effort
+  - ~~Known, deliberate limit, not a bug: the cast COLOR is a best-effort
     keyword guess against each spell's name/description text, not a
     verified SRD damage type (this game has no damage-type field on spells
     at all) — a handful of spells may read a shade off from their "real"
-    element. See D-122.
+    element.~~ — **RESOLVED by D-131** (see KI-087): 47 of ~198 castable
+    spells now carry a verified SRD `damageType`, which `getCastVisual`/
+    `deathCauseForAbility` read as the PRIMARY signal — the keyword guess
+    is now only a fallback for a spell that genuinely has no real damage
+    type (a buff/heal/summon/control spell). See D-122 for the rest of this
+    session's original scope.
 
 - **KI-077 — D-121's basic-attack lunge is not yet confirmed by Kevin in a
   browser.** Built and verified headless-only (typecheck, all 1026 tests,
@@ -324,7 +722,7 @@
   enemy, then let an enemy attack a hero back.
   - Confirm the attacker's token visibly nudges toward its target and
     springs back, on top of the existing hit-flash, on both hero→enemy and
-    enemy→hero swings.
+    enemy→hero swings. -Confirmed
   - Confirm the lunge respects the Settings animation-speed control —
     "Instant" should skip the lunge outright (same as it already skips
     move/hit-flash tweens), not play it at some minimum speed.
@@ -347,21 +745,21 @@
     is visible and jumps straight to closing the box from any line;
     confirm clicking anywhere on the parchment panel, and pressing
     Space/Enter, both advance to the next line exactly like the Continue
-    button does.
+    button does. -Confirmed
   - **"Show Sample (with a decision)"**: confirm the "Skip ▶▶" button is
     ABSENT for this entire sequence (including on its first line, before
     the decision line is even reached) — this is the one behavior this
     session most needs eyes on, since it's a real gating rule, not just
-    styling.
+    styling. -Confirmed
   - **Click-target overlap**: confirm clicking the Continue or Skip button
     only ever triggers that button (not a double-advance from the
-    panel/scrim's own click-to-advance handler underneath it).
+    panel/scrim's own click-to-advance handler underneath it). -Confirmed
   - **Known, deliberate limit, not a bug**: nothing actually plays out
     over time yet (no text-reveal animation, no audio), so every skip
     control's practical effect today is identical to normal advancing —
     the visible difference (jumping straight to the end vs. one line at a
     time) is the only thing to confirm; the interrupt seam itself has
-    nothing to visibly interrupt yet.
+    nothing to visibly interrupt yet. -Confirmed
 
 - **KI-075 — The new stylized parchment dialogue box (D-119) is not yet
   confirmed by Kevin in a browser.** Built and verified headless-only
@@ -393,20 +791,20 @@
   browser, so none of the following has actually been SEEN:
   - **The canvas is no longer visibly off-center** (`main.ts`'s
     `scale.autoCenter` changed from `CENTER_BOTH` to `NO_CENTER`, letting
-    `index.html`'s flex centering do it alone).
+    `index.html`'s flex centering do it alone). - Confirmed
   - **The Gear button no longer overlaps the "Wave N / M · Phase" banner**
     at any wave count/phase combination — confirm especially the widest
     real string, "Wave 10 / 10  ·  Between Waves," and that the banner's
-    font doesn't shrink so far it becomes hard to read.
+    font doesn't shrink so far it becomes hard to read. - Confirmed
   - **The Main Menu**: "New Game" (was "Create Party (new)") now sits in the
     old START button's slot; Enter/Space go straight to character creation;
     every button below it shifted up 90px — confirm nothing overlaps and the
-    bottom instructions text still reads correctly.
+    bottom instructions text still reads correctly. - Confirmed
   - **A battle is only reachable via "New Game" now** — confirm there is no
     way left to reach a battle with the old classic roster (Ash/Wren/Bram/
     Mira are gone from the game entirely) and that Co-op's "Start Battle"
     still works, now defaulting both players into a small Fighter/Wizard/
-    Rogue/Cleric party instead.
+    Rogue/Cleric party instead. -Confirmed
   - **Known, deliberate, unverifiable-without-art limits, not bugs**: the
     hero-sprite loading plumbing added this session (`SPRITE_MANIFEST`,
     `createTokenSprite`) has an empty manifest, so it can never visibly do
@@ -848,17 +1246,17 @@
     buttons and a "Page N/M" label below the grid; clicking Next/Prev should
     move to the next/previous page; arrow-key navigation (Tab into "grid"
     focus, then arrow keys) should cross a page boundary seamlessly when
-    moving past the last row of a page.
+    moving past the last row of a page. - Confirmed
   - **Equipping a weapon changes a hero's actual combat numbers**: equip a
     Dagger (1d4, melee) on a hero, note its Attack profile, then swap to a
     Greatsword (2d6, Heavy/Two-Handed) — the hero's basic-attack damage
     should visibly jump; equip a Longbow (Ammunition) and confirm the hero
     can now attack from 3 tiles away instead of 1. Unequipping the weapon
-    entirely should return the hero to its exact original numbers.
+    entirely should return the hero to its exact original numbers. 
   - **A Versatile weapon's grip**: equip a Longsword (1d8/1d10 versatile)
     with no Shield — damage should reflect the bigger 1d10 die; then equip a
     Shield too — damage should drop to reflect the smaller 1d8 die, and AC
-    should rise by 2.
+    should rise by 2. 
   - **Two-Handed + Shield conflict**: try to equip a Shield while a
     Two-Handed weapon (Greatsword, Greataxe, etc.) is equipped, and vice
     versa — both directions should be REFUSED with a message, no gold spent.

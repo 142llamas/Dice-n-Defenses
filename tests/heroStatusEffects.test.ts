@@ -42,6 +42,16 @@ describe("Hero status effect bookkeeping", () => {
     expect(hero.hasStatus("poisoned")).toBe(false);
   });
 
+  it("removeStatus() clears an active status early; a no-op if absent (D-138)", () => {
+    const hero = testHero();
+    hero.applyStatus("poisoned", 5);
+    expect(hero.hasStatus("poisoned")).toBe(true);
+    hero.removeStatus("poisoned");
+    expect(hero.hasStatus("poisoned")).toBe(false);
+    hero.removeStatus("poisoned"); // already gone
+    expect(hero.hasStatus("poisoned")).toBe(false);
+  });
+
   it("refreshes to the LONGER duration instead of stacking", () => {
     const hero = testHero();
     hero.applyStatus("silenced", 1);
