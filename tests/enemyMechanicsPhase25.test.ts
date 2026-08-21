@@ -84,7 +84,18 @@ describe("Opportunistic wall bash (ordinary melee enemies, D-116)", () => {
     });
     ws.startWave(0);
 
-    const t1 = ws.tickEnemyPhase({ heroTargets: [heroAt("hero-1", { x: 0, y: 1 })], ...wallContext(build) });
+    const hero = heroAt("hero-1", { x: 0, y: 1 });
+    const wallCtx = wallContext(build);
+    // Enemy AI/Movement Redesign (D-139): a wall bash is only opportunistic
+    // when no hero fight is forced this phase — box the grunt in with BOTH
+    // the wall ahead (1,0) and the hero behind (0,1), its only two
+    // neighbors from this corner spawn, so it's genuinely forced to fight
+    // instead of bashing.
+    const t1 = ws.tickEnemyPhase({
+      heroTargets: [hero],
+      ...wallCtx,
+      isBlocked: (p) => wallCtx.isBlocked(p) || (p.x === hero.position.x && p.y === hero.position.y),
+    });
     expect(t1.attacks).toHaveLength(1);
     expect(t1.structureAttacks).toHaveLength(0);
   });

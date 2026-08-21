@@ -4,21 +4,7 @@ import { GameMap } from "../src/game/systems/GameMap";
 import { PathfindingSystem } from "../src/game/systems/PathfindingSystem";
 import { WaveSystem } from "../src/game/systems/WaveSystem";
 import { RandomService } from "../src/game/systems/RandomService";
-import { Hero } from "../src/game/entities/Hero";
-import type { HeroDefinition } from "../src/game/data/heroes";
 import type { WaveDefinition } from "../src/game/data/waves";
-
-const TEST_HERO_DEF: HeroDefinition = {
-  id: "hero-test",
-  name: "Test Hero",
-  movementTiles: 4,
-  maxHealth: 12,
-  attackDamage: 4,
-  attackRangeTiles: 1,
-  attackBonus: 4,
-  baseArmorClass: 10,
-  abilityId: "cleave",
-};
 
 /**
  * Playtest fix: "Enemies are allowed to stack on top of each other." These
@@ -128,30 +114,28 @@ describe("D-067: enemies may walk THROUGH each other, but never share a landing 
     const ws = new WaveSystem(map, pf, [wave], { startingIntegrity: 20, random: RandomService.fixed() });
     ws.startWave(0);
 
-    // A lone hero at (5,0) is used only as an attack lure (heroTargets), NOT
-    // as a movement blocker (no `isBlocked` passed) â€” this isolates the
-    // enemy-vs-enemy rule from hero-vs-enemy blocking, which is unchanged.
-    // Grunt (attackRangeTiles 1, movementTiles 2) reaches (4,0) after two
-    // ticks, comes within range, and holds there permanently, giving a
-    // deterministic, stationary occupant to test passage through.
-    const heroTargets = [new Hero(TEST_HERO_DEF, { x: 5, y: 0 })];
-
-    ws.tickEnemyPhase({ heroTargets }); // A: spawns (0,0) -> (2,0)
-    ws.tickEnemyPhase({ heroTargets }); // A: (2,0) -> (4,0)
-    const holdTick = ws.tickEnemyPhase({ heroTargets }); // A: in range, attacks and holds
-    expect(holdTick.attacks).toHaveLength(1);
+    // Grunt A (movementTiles 2) reaches (4,0) after two ticks; a long stun
+    // then freezes it there as a deterministic, stationary occupant to test
+    // passage through â€” deliberately no hero anywhere in this test, since
+    // the Enemy AI/Movement Redesign (D-139/D-140) changed WHEN and WHY an
+    // enemy fights a hero, not this enemy-vs-enemy passthrough rule, which
+    // this isolates from hero engagement entirely.
+    ws.tickEnemyPhase(); // turn1: A spawns (0,0) -> (2,0)
+    ws.tickEnemyPhase(); // turn2: A (2,0) -> (4,0)
     const enemyA = ws.enemies[0];
     expect(enemyA.position).toEqual({ x: 4, y: 0 });
+    enemyA.applyStatus("stunned", 99);
 
-    ws.tickEnemyPhase({ heroTargets }); // B: spawns (0,0) -> (2,0); A still holds
-    const backOffTick = ws.tickEnemyPhase({ heroTargets }); // B: (2,0) -> wants (4,0) (A's tile)
+    ws.tickEnemyPhase(); // turn3: A stunned, holds; B not due yet (startTurn 4)
+    ws.tickEnemyPhase(); // turn4: B spawns (0,0) -> (2,0); A still holds
+    const backOffTick = ws.tickEnemyPhase(); // turn5: B (2,0) -> wants (4,0) (A's tile)
     const enemyB = ws.enemies.find((e) => e !== enemyA)!;
     // B's 2-tile budget would land it exactly on A â€” it must back off to the
     // nearest earlier free tile instead of sharing A's tile.
     expect(enemyB.position).toEqual({ x: 3, y: 0 });
     expect(backOffTick.moves.find((m) => m.enemy === enemyB)?.to).toEqual({ x: 3, y: 0 });
 
-    const passThroughTick = ws.tickEnemyPhase({ heroTargets }); // B: (3,0) -> (5,0), via A's tile
+    const passThroughTick = ws.tickEnemyPhase(); // B: (3,0) -> (5,0), via A's tile
     // B walked STRAIGHT THROUGH A's stationary tile (4,0) as an intermediate
     // step (no detour) and landed past it, since passing through is now
     // allowed â€” only sharing the FINAL tile is forbidden.

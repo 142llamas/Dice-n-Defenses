@@ -9,6 +9,8 @@
  * on this same pattern: logic here, rendering in the scenes.
  */
 
+import { TILE_FEET, DIAGONAL_COST_FEET, roundToTileUnit } from "./DiagonalMovement";
+
 export interface GridPosition {
   x: number; // column index, 0-based
   y: number; // row index, 0-based
@@ -91,5 +93,27 @@ export class GridSystem {
    */
   static manhattanDistance(a: GridPosition, b: GridPosition): number {
     return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  }
+
+  /**
+   * Enemy AI/Movement Redesign step 4 (D-142): diagonal-aware point-to-point
+   * distance in tile-units, using the SAME weighted cost model D-141 gave
+   * movement — a cardinal step costs 5ft, a diagonal step costs true
+   * Euclidean 5*sqrt(2)ft, and only the final cumulative total rounds to the
+   * nearest 5ft tile-unit (never per-step). This is the octile-distance
+   * shortest path between the two tiles over open ground: as many diagonal
+   * steps as possible, then straight cardinal steps for the remainder.
+   *
+   * Ignores walls/occupancy entirely, same as `manhattanDistance` always
+   * has — attack/spell/aura range checks have never considered line of
+   * sight or blocked tiles, only movement does.
+   */
+  static diagonalDistance(a: GridPosition, b: GridPosition): number {
+    const dx = Math.abs(a.x - b.x);
+    const dy = Math.abs(a.y - b.y);
+    const diagonalSteps = Math.min(dx, dy);
+    const straightSteps = Math.abs(dx - dy);
+    const feet = straightSteps * TILE_FEET + diagonalSteps * DIAGONAL_COST_FEET;
+    return roundToTileUnit(feet) / TILE_FEET;
   }
 }

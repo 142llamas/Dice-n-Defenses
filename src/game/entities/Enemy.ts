@@ -25,6 +25,28 @@ const SWARM_IMMUNE_STATUSES: ReadonlySet<StatusEffectId> = new Set<StatusEffectI
 ]);
 
 /**
+ * Enemy AI/Movement Redesign §2 (D-140): the default Aggressiveness (0-100)
+ * for an enemy definition with no explicit `def.aggressiveness` override —
+ * derived from tags this roster already carries rather than a value hand-set
+ * on all ~63 entries. Objective-focused archetypes (siege/trapSense/pure
+ * runners) default low — they were never going to seek a fight, per §3 of
+ * the redesign spec. Bosses/legendaries default low so they race the clock
+ * per §1's whole point, unless they're ALSO one of the hunter-flavored tags
+ * below (checked first, so a rare enrage-boss still reads as a hunter).
+ * Berserker (`enrage`)/Lifedrinker (`lifedrinkPercent`)/stealth-ambush
+ * archetypes default high — they're explicitly meant to seek a fight. Every
+ * other enemy (the ordinary minion majority) gets a middling default.
+ */
+function defaultAggressiveness(def: EnemyDefinition): number {
+  if (def.enrage || def.lifedrinkPercent || def.stealth) return 85;
+  if (def.ignoresHeroes) return 0;
+  if (def.trapSense || def.siegeDamageMultiplier) return 10;
+  if (def.role === "boss" || def.role === "legendary") return 15;
+  if (def.role === "miniboss") return 40;
+  return 55;
+}
+
+/**
  * Phase 12.1 (D-101): a plain-data copy of one live `Enemy` instance, for
  * `BattleStateSnapshot`. Deliberately stores `defId` (looked up via
  * `getEnemyDefinition` on restore) rather than the whole `EnemyDefinition`
@@ -107,6 +129,17 @@ export class Enemy implements Combatant {
   private shieldHp: number;
   /** Phase 21 (D-112): the Multi-Phase Boss archetype's active override, once its HP threshold is crossed — see `activeDef`. */
   private phaseOverride: EnemyPhaseOverride | null = null;
+  /**
+   * Enemy AI/Movement Redesign, self-defense (D-146): set by
+   * `BattleScene.showHeroHit` the instant a hero's attack lands on this
+   * enemy, and consumed by `WaveSystem.tickEnemyPhase` the moment this
+   * enemy's own turn comes around — a genuinely TEMPORARY, one-phase aggro
+   * spike, never a persisted grudge. Deliberately NOT part of
+   * `EnemySnapshot`/`WaveStateSnapshot`, same documented imprecision as
+   * `WaveSystem`'s other per-instance timers (a restored battle just starts
+   * every enemy un-provoked).
+   */
+  private provoked = false;
 
   constructor(instanceId: string, def: EnemyDefinition, spawn: GridPosition) {
     this.instanceId = instanceId;
@@ -184,6 +217,21 @@ export class Enemy implements Combatant {
 
   get movementTiles(): number {
     return this.activeDef.movementTiles;
+  }
+
+  /** Enemy AI/Movement Redesign §2 (D-140): this enemy's detour-tolerance stat — see `defaultAggressiveness` for the fallback when `def.aggressiveness` is absent. */
+  get aggressiveness(): number {
+    return this.activeDef.aggressiveness ?? defaultAggressiveness(this.activeDef);
+  }
+
+  /** Enemy AI/Movement Redesign step 5 (D-143): true doubles this enemy's movement budget on a phase it doesn't attack — see `EnemyDefinition.sprints`'s own comment. Absent (default) means false, unchanged from every enemy before this decision. */
+  get sprints(): boolean {
+    return this.activeDef.sprints ?? false;
+  }
+
+  /** Enemy AI/Movement Redesign §3 (D-145): which siege wall-targeting behavior this enemy uses once no wall is already in its own attack range — see `EnemyDefinition.siegeTargeting`'s own comment. Absent defaults to `"reassessing"`. */
+  get siegeTargeting(): "committed" | "reassessing" {
+    return this.activeDef.siegeTargeting ?? "reassessing";
   }
 
   /**
@@ -295,6 +343,36 @@ export class Enemy implements Combatant {
   /** Break this enemy's stealth (or a Mimic's disguise) permanently for the rest of the battle. */
   reveal(): void {
     this.revealed = true;
+  }
+
+  /**
+   * Enemy AI/Movement Redesign, self-defense (D-146): true if a hero has
+   * landed a hit on this enemy since its last own turn. `WaveSystem` reads
+   * this to let an enemy that's already within its own attack range of a
+   * hero strike back THIS phase instead of whatever unconditional priority
+   * action (siege wall, trap disarm, a detour) it would otherwise take —
+   * see `WaveSystem.tickEnemyPhase`'s own comment for the full mechanic.
+   * `def.ignoresHeroes` enemies (the deliberate "doesn't care about heroes
+   * at all" archetype) are exempted by `WaveSystem`, not here.
+   */
+  get isProvoked(): boolean {
+    return this.provoked;
+  }
+
+  /** Called by `BattleScene` whenever a hero's attack lands on this enemy. */
+  markProvoked(): void {
+    this.provoked = true;
+  }
+
+  /**
+   * Consumed once this enemy's own turn has been resolved, whether or not it
+   * actually had a target to retaliate against this phase — a genuinely
+   * TEMPORARY spike, not a persisted grudge. An enemy that never reaches its
+   * own turn this phase at all (stunned, charmed, killed by a burn tick
+   * first) simply carries the flag into its next real turn instead.
+   */
+  clearProvoked(): void {
+    this.provoked = false;
   }
 
   /** Phase 21 (D-112): this enemy's remaining damage-absorbing ward (the Shielded archetype). 0 if it never had one, or it's been broken through. */

@@ -65,13 +65,16 @@ describe("Berserker enemies (def.enrage)", () => {
     // move (its own 2-tile movementTiles would otherwise reach this short
     // lane's exit before a hero ever enters the picture).
     const hero = heroAt("hero-1", { x: 1, y: 0 });
-    const full = ws.tickEnemyPhase({ heroTargets: [hero] });
+    // A 1-wide lane, so blocking the hero's own tile seals the only route —
+    // forced melee (Enemy AI/Movement Redesign §1, D-139).
+    const isBlocked = (p: GridPosition) => p.x === 1 && p.y === 0;
+    const full = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked });
     const enemy = full.spawned[0];
     expect(full.attacks[0].result.damageDealt).toBe(3); // base attackDamage, no bonus yet
 
     enemy.health = 4; // 60% missing of 10 -> floor(60/25) = 2 steps
     const hero2 = heroAt("hero-2", { x: 1, y: 0 });
-    const wounded = ws.tickEnemyPhase({ heroTargets: [hero2] });
+    const wounded = ws.tickEnemyPhase({ heroTargets: [hero2], isBlocked });
     expect(wounded.attacks[0].result.damageDealt).toBe(3 + 2); // +1 dmg/step * 2 steps
   });
 });
@@ -90,10 +93,13 @@ describe("Lifedrinker enemies (def.lifedrinkPercent)", () => {
     // the enemy never gets a free, targetless move that could otherwise
     // carry it straight to this short lane's exit.
     const hero = heroAt("hero-1", { x: 1, y: 0 });
-    const t1 = ws.tickEnemyPhase({ heroTargets: [hero] });
+    // A 1-wide lane, so blocking the hero's own tile seals the only route —
+    // forced melee (Enemy AI/Movement Redesign §1, D-139).
+    const isBlocked = (p: GridPosition) => p.x === 1 && p.y === 0;
+    const t1 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked });
     const enemy = t1.spawned[0]; // maxHealth 8
     enemy.health = 2; // wounded, so the heal-cap-at-maxHealth case isn't the one exercised here
-    const t2 = ws.tickEnemyPhase({ heroTargets: [hero] });
+    const t2 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked });
     expect(t2.attacks[0].result.damageDealt).toBe(3); // bloodwisp's attackDamage
     // lifedrinkPercent 50% of 3 = 1 (floored)
     expect(t2.lifedrinks).toHaveLength(1);
@@ -247,7 +253,9 @@ describe("Gold Thief enemies (def.goldTheftAmount)", () => {
     });
     ws.startWave(0);
     const hero = heroAt("hero-1", { x: 1, y: 0 });
-    const t1 = ws.tickEnemyPhase({ heroTargets: [hero] }); // spawn + attack, same tick
+    // A 1-wide lane, so blocking the hero's own tile seals the only route —
+    // forced melee (Enemy AI/Movement Redesign §1, D-139).
+    const t1 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 1 && p.y === 0 }); // spawn + attack, same tick
     expect(t1.spawned[0].def.goldTheftAmount).toBeGreaterThan(0);
     expect(t1.attacks).toHaveLength(1);
     expect(t1.attacks[0].result.roll?.hit).toBe(true);
@@ -317,7 +325,12 @@ describe("Mimic enemies (def.mimicDisguise)", () => {
     const t1 = ws.tickEnemyPhase();
     const mimic = t1.spawned[0];
     const adjacent = heroAt("hero-1", { x: mimic.position.x + 1, y: mimic.position.y });
-    const t2 = ws.tickEnemyPhase({ heroTargets: [adjacent] });
+    // A 1-wide lane, so blocking the hero's own tile seals the only route —
+    // forced melee (Enemy AI/Movement Redesign §1, D-139).
+    const t2 = ws.tickEnemyPhase({
+      heroTargets: [adjacent],
+      isBlocked: (p) => p.x === adjacent.position.x && p.y === adjacent.position.y,
+    });
     expect(mimic.isRevealed).toBe(true);
     expect(t2.mimicReveals).toHaveLength(1);
     expect(t2.attacks).toHaveLength(1); // springs to life and attacks immediately
@@ -514,20 +527,23 @@ describe("Multi-Phase Boss (def.phaseChange)", () => {
     // immediately rather than getting a free, targetless move that could
     // otherwise carry it straight to this short lane's exit.
     const hero = heroAt("hero-1", { x: 1, y: 0 });
-    const t1 = ws.tickEnemyPhase({ heroTargets: [hero] });
+    // A 1-wide lane, so blocking the hero's own tile seals the only route —
+    // forced melee (Enemy AI/Movement Redesign §1, D-139).
+    const isBlocked = (p: GridPosition) => p.x === 1 && p.y === 0;
+    const t1 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked });
     const king = t1.spawned[0]; // maxHealth 60, attackDamage 5, no aoeAttack yet
     expect(king.hasEnteredNextPhase).toBe(false);
     expect(king.attackDamage).toBe(5);
 
     king.health = 30; // exactly 50% — crosses the threshold
-    const t2 = ws.tickEnemyPhase({ heroTargets: [hero] });
+    const t2 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked });
     expect(t2.phaseChanges).toHaveLength(1);
     expect(king.hasEnteredNextPhase).toBe(true);
     expect(king.attackDamage).toBe(9); // the override's new attackDamage
     expect(t2.attacks[0].result.damageDealt).toBe(9); // takes effect the SAME phase it crosses
 
     // Doesn't re-fire on a later phase.
-    const t3 = ws.tickEnemyPhase({ heroTargets: [hero] });
+    const t3 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked });
     expect(t3.phaseChanges).toHaveLength(0);
   });
 

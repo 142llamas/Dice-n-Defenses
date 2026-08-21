@@ -158,11 +158,15 @@ describe("WaveSystem integration: blinded", () => {
     ws.startWave(0);
     const t1 = ws.tickEnemyPhase();
     const grunt = t1.spawned[0];
-    grunt.position = { x: 4, y: 0 };
+    grunt.position = { x: 3, y: 0 };
     grunt.applyStatus("blinded", 1);
-    const heroTarget: Combatant = { id: "hero1", position: { x: 5, y: 0 }, health: 20, armorClass: 10 };
+    // Not the exit tile itself (a goal tile is always enterable regardless of
+    // isBlocked, so a hero standing exactly on it can never fully seal a
+    // route) — one tile short of it instead, so blocking it genuinely boxes
+    // the grunt in with no detour (Enemy AI/Movement Redesign §1, D-139).
+    const heroTarget: Combatant = { id: "hero1", position: { x: 4, y: 0 }, health: 20, armorClass: 10 };
 
-    const t2 = ws.tickEnemyPhase({ heroTargets: [heroTarget] });
+    const t2 = ws.tickEnemyPhase({ heroTargets: [heroTarget], isBlocked: (p) => p.x === 4 && p.y === 0 });
     expect(t2.attacks).toHaveLength(1);
     expect(spy).toHaveBeenCalledWith("disadvantage");
   });
@@ -247,11 +251,12 @@ describe("WaveSystem integration: sapped/toppled roll the enemy's own attack wit
     ws.startWave(0);
     const t1 = ws.tickEnemyPhase();
     const grunt = t1.spawned[0];
-    grunt.position = { x: 4, y: 0 };
+    grunt.position = { x: 3, y: 0 };
     grunt.applyStatus(statusId, 1);
-    const heroTarget: Combatant = { id: "hero1", position: { x: 5, y: 0 }, health: 20, armorClass: 10 };
+    // Not the exit tile itself — see the blinded test above for why.
+    const heroTarget: Combatant = { id: "hero1", position: { x: 4, y: 0 }, health: 20, armorClass: 10 };
 
-    const t2 = ws.tickEnemyPhase({ heroTargets: [heroTarget] });
+    const t2 = ws.tickEnemyPhase({ heroTargets: [heroTarget], isBlocked: (p) => p.x === 4 && p.y === 0 });
     expect(t2.attacks).toHaveLength(1);
     expect(spy).toHaveBeenCalledWith("disadvantage");
   });
@@ -288,11 +293,12 @@ describe("WaveSystem integration: frightened rolls the enemy's own attack with d
     ws.startWave(0);
     const t1 = ws.tickEnemyPhase();
     const grunt = t1.spawned[0];
-    grunt.position = { x: 4, y: 0 };
+    grunt.position = { x: 3, y: 0 };
     grunt.applyStatus("frightened", 1);
-    const heroTarget: Combatant = { id: "hero1", position: { x: 5, y: 0 }, health: 20, armorClass: 10 };
+    // Not the exit tile itself — see the blinded test above for why.
+    const heroTarget: Combatant = { id: "hero1", position: { x: 4, y: 0 }, health: 20, armorClass: 10 };
 
-    const t2 = ws.tickEnemyPhase({ heroTargets: [heroTarget] });
+    const t2 = ws.tickEnemyPhase({ heroTargets: [heroTarget], isBlocked: (p) => p.x === 4 && p.y === 0 });
     expect(t2.attacks).toHaveLength(1);
     expect(spy).toHaveBeenCalledWith("disadvantage");
   });

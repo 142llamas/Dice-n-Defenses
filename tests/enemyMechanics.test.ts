@@ -77,8 +77,11 @@ describe("Siege enemies (siegeDamageMultiplier)", () => {
       random: RandomService.fixed(),
     });
     ws.startWave(0);
+    // A 1-wide lane, so blocking the hero's own tile seals the only route —
+    // forced melee (Enemy AI/Movement Redesign §1, D-139).
     const t1 = ws.tickEnemyPhase({
       heroTargets: [heroAt("hero-1", { x: 1, y: 0 })],
+      isBlocked: (p) => p.x === 1 && p.y === 0,
       wallHpAt: () => null,
       damageWall: () => false,
     });
@@ -112,13 +115,16 @@ describe("Stealth enemies (def.stealth)", () => {
     });
     ws.startWave(0);
     const hero = heroAt("hero-1", { x: 1, y: 0 }); // adjacent to the spawn tile
-    const t1 = ws.tickEnemyPhase({ heroTargets: [hero] });
+    // A 1-wide lane, so blocking the hero's own tile seals the only route —
+    // forced melee (Enemy AI/Movement Redesign §1, D-139).
+    const isBlocked = (p: GridPosition) => p.x === 1 && p.y === 0;
+    const t1 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked });
     expect(t1.attacks).toHaveLength(1);
     const enemy = t1.attacks[0].enemy;
     expect(enemy.isRevealed).toBe(true);
 
     // A second strike no longer counts as an ambush, but stays revealed.
-    const t2 = ws.tickEnemyPhase({ heroTargets: [hero] });
+    const t2 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked });
     expect(t2.attacks).toHaveLength(1);
     expect(t2.attacks[0].enemy.isRevealed).toBe(true);
   });
@@ -128,7 +134,7 @@ describe("Stealth enemies (def.stealth)", () => {
 
 describe("Aura buff enemies (def.auraBuff)", () => {
   it("buffs a DIFFERENT nearby ally's damage, but never its own", () => {
-    const { map, pf } = setup(["S.S...X"]); // battlepriest at (0,0), grunt at (2,0)
+    const { map, pf } = setup(["S.S.X"]); // battlepriest at (0,0), grunt at (2,0), exit at (4,0)
     const ws = new WaveSystem(
       map,
       pf,
@@ -141,8 +147,17 @@ describe("Aura buff enemies (def.auraBuff)", () => {
       { startingIntegrity: 20, random: RandomService.fixed(15) }, // guarantees a hit, never a crit
     );
     ws.startWave(0);
-    const hero = heroAt("hero-1", { x: 1, y: 0 }); // range 1 of both (0,0) and (2,0)
-    const t1 = ws.tickEnemyPhase({ heroTargets: [hero] });
+    // Enemy AI/Movement Redesign (D-139): each enemy only fights when
+    // truly boxed in on its OWN forward route, so a hero must sit directly
+    // ahead of EACH of them (not merely "in range") to force both to
+    // attack this same tick, while battlepriest (0,0) and grunt (2,0) stay
+    // exactly 2 tiles apart — battlepriest's own aura radius.
+    const heroNearPriest = heroAt("hero-priest", { x: 1, y: 0 });
+    const heroNearGrunt = heroAt("hero-grunt", { x: 3, y: 0 });
+    const t1 = ws.tickEnemyPhase({
+      heroTargets: [heroNearPriest, heroNearGrunt],
+      isBlocked: (p) => (p.x === 1 || p.x === 3) && p.y === 0,
+    });
     expect(t1.attacks).toHaveLength(2);
     const byEnemyId = new Map(t1.attacks.map((a) => [a.enemy.def.id, a.result.damageDealt]));
     expect(byEnemyId.get("battlepriest")).toBe(2); // its own base damage, un-boosted
@@ -242,7 +257,11 @@ describe("AoE/breath enemies (def.aoeAttack)", () => {
     ws.startWave(0);
     const heroA = heroAt("hero-a", { x: 1, y: 0 });
     const heroB = heroAt("hero-b", { x: 2, y: 0 });
-    const t1 = ws.tickEnemyPhase({ heroTargets: [heroA, heroB] });
+    // A 1-wide lane, so blocking either hero's tile seals the only route —
+    // forced melee (Enemy AI/Movement Redesign §1, D-139) even for an
+    // attackRangeTiles-2 breath weapon.
+    const isBlocked = (p: GridPosition) => (p.x === 1 || p.x === 2) && p.y === 0;
+    const t1 = ws.tickEnemyPhase({ heroTargets: [heroA, heroB], isBlocked });
     expect(t1.attacks).toHaveLength(2);
     const ids = t1.attacks.map((a) => a.target.id).sort();
     expect(ids).toEqual(["hero-a", "hero-b"]);
@@ -259,7 +278,10 @@ describe("AoE/breath enemies (def.aoeAttack)", () => {
     ws.startWave(0);
     const heroA = heroAt("hero-a", { x: 1, y: 0 });
     const heroB = heroAt("hero-b", { x: 2, y: 0 });
-    const t1 = ws.tickEnemyPhase({ heroTargets: [heroA, heroB] });
+    const t1 = ws.tickEnemyPhase({
+      heroTargets: [heroA, heroB],
+      isBlocked: (p) => (p.x === 1 || p.x === 2) && p.y === 0,
+    });
     expect(t1.attacks).toHaveLength(2);
     for (const atk of t1.attacks) {
       expect(atk.result.roll?.hit).toBe(true); // "hit" means the save failed

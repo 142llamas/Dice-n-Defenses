@@ -151,6 +151,92 @@ describe("MovementSystem.blocksStopping (D-067: pass through, never stop)", () =
   });
 });
 
+describe("MovementSystem.routeThroughWaypoints (drag-and-drop pinned corners)", () => {
+  it("a single waypoint matches findPath's own result and distance", () => {
+    const start = { x: 0, y: 2 };
+    const dest = { x: 4, y: 2 };
+    const route = move.routeThroughWaypoints([dest], { start, budget: 4 });
+    expect(route).not.toBeNull();
+    expect(route!.path).toEqual(move.findPath(dest, { start, budget: 4 }));
+    expect(route!.usedTiles).toBe(4);
+    expect(route!.withinBudget).toBe(true);
+  });
+
+  it("sums each leg's OWN rounded distance rather than rounding the raw grand total once", () => {
+    // (3,0) -> (4,1) -> (3,2): two single-diagonal-hop legs, well clear of
+    // the (2,1) wall so neither leg's corner-cutting check is involved. A
+    // lone diagonal hop costs 5*sqrt(2)~=7.071ft, which rounds to 5ft (1
+    // tile) on its own — so two of them sum to 2 tiles (10ft) under this
+    // method's "round after each leg" rule. Rounding the raw 14.142ft
+    // grand total just once would instead give 3 tiles (15ft) — this test
+    // pins down which convention is actually implemented.
+    const start = { x: 3, y: 0 };
+    const route = move.routeThroughWaypoints([{ x: 4, y: 1 }, { x: 3, y: 2 }], { start, budget: 10 });
+    expect(route).not.toBeNull();
+    expect(route!.usedTiles).toBe(2);
+    expect(route!.path).toEqual([{ x: 4, y: 1 }, { x: 3, y: 2 }]);
+  });
+
+  it("withinBudget is false when the summed legs exceed budget, but the full route/distance are still returned, not null", () => {
+    const start = { x: 3, y: 0 };
+    const route = move.routeThroughWaypoints([{ x: 4, y: 1 }, { x: 3, y: 2 }], { start, budget: 1 });
+    expect(route).not.toBeNull();
+    expect(route!.usedTiles).toBe(2);
+    expect(route!.withinBudget).toBe(false);
+    expect(route!.path).toEqual([{ x: 4, y: 1 }, { x: 3, y: 2 }]);
+  });
+
+  it("returns null when an intermediate waypoint (not just the final one) is a wall", () => {
+    const start = { x: 1, y: 1 };
+    const route = move.routeThroughWaypoints([{ x: 2, y: 1 }, { x: 3, y: 1 }], { start, budget: 10 });
+    expect(route).toBeNull();
+  });
+
+  it("returns null when an intermediate waypoint is occupied", () => {
+    const start = { x: 0, y: 0 };
+    const route = move.routeThroughWaypoints([{ x: 1, y: 0 }, { x: 2, y: 0 }], {
+      start,
+      budget: 10,
+      isOccupied: (p) => p.x === 1 && p.y === 0,
+    });
+    expect(route).toBeNull();
+  });
+
+  it("a waypoint equal to the current running position collapses to a no-op leg, not a null result", () => {
+    const start = { x: 0, y: 2 };
+    const dest = { x: 2, y: 2 };
+    // First waypoint duplicates `start` itself.
+    const withNoOp = move.routeThroughWaypoints([start, dest], { start, budget: 4 });
+    const plain = move.routeThroughWaypoints([dest], { start, budget: 4 });
+    expect(withNoOp).toEqual(plain);
+    // Two consecutive identical pins mid-chain.
+    const pin = { x: 1, y: 2 };
+    const withDuplicatePin = move.routeThroughWaypoints([pin, pin, dest], { start, budget: 4 });
+    expect(withDuplicatePin).toEqual(plain);
+  });
+
+  it("blocksStopping rejects only the FINAL waypoint — an intermediate pin on a stopping-blocked (but enterable) tile is fine", () => {
+    const start = { x: 0, y: 2 };
+    const blocksStopping = (p: GridPosition) => p.x === 1 && p.y === 2;
+    const asFinal = move.routeThroughWaypoints([{ x: 1, y: 2 }], { start, budget: 5, blocksStopping });
+    expect(asFinal).toBeNull();
+    const asIntermediate = move.routeThroughWaypoints([{ x: 1, y: 2 }, { x: 3, y: 2 }], {
+      start,
+      budget: 5,
+      blocksStopping,
+    });
+    expect(asIntermediate).not.toBeNull();
+    expect(asIntermediate!.path[asIntermediate!.path.length - 1]).toEqual({ x: 3, y: 2 });
+  });
+
+  it("still routes around a wall within a single leg (no-corner-cutting is unchanged — already covered by findPath/DiagonalMovement's own tests, this just confirms routeThroughWaypoints doesn't bypass it)", () => {
+    const route = move.routeThroughWaypoints([{ x: 3, y: 1 }], { start: { x: 1, y: 1 }, budget: 10 });
+    expect(route).not.toBeNull();
+    expect(route!.path.length).toBeGreaterThan(2);
+    expect(has(route!.path, { x: 2, y: 1 })).toBe(false); // never steps on the wall
+  });
+});
+
 describe("MovementSystem purity", () => {
   it("does not mutate the query's start position", () => {
     const start = { x: 0, y: 0 };

@@ -24,11 +24,20 @@ const at = (id: string, x: number, y: number, health: number, armorClass = 10): 
 });
 
 describe("CombatSystem range and targeting", () => {
-  it("uses Manhattan distance and excludes the attacker's own tile", () => {
-    expect(CombatSystem.range({ x: 0, y: 0 }, { x: 2, y: 1 })).toBe(3);
+  it("D-142: uses diagonal-aware distance (matching D-141's movement metric) and excludes the attacker's own tile", () => {
+    expect(CombatSystem.range({ x: 0, y: 0 }, { x: 2, y: 1 })).toBe(2); // was 3 under plain Manhattan
     expect(CombatSystem.isInRange({ x: 0, y: 0 }, { x: 0, y: 0 }, 1)).toBe(false);
     expect(CombatSystem.isInRange({ x: 0, y: 0 }, { x: 1, y: 0 }, 1)).toBe(true);
     expect(CombatSystem.isInRange({ x: 0, y: 0 }, { x: 2, y: 0 }, 1)).toBe(false);
+  });
+
+  it("D-142: a diagonally-adjacent target reads as range 1, not 2 (closes KI-093)", () => {
+    expect(CombatSystem.range({ x: 0, y: 0 }, { x: 1, y: 1 })).toBe(1);
+    expect(CombatSystem.isInRange({ x: 0, y: 0 }, { x: 1, y: 1 }, 1)).toBe(true);
+  });
+
+  it("D-142: two diagonal steps in a row round to 3 tiles, not 2 (matches D-141's own compounding-rounding rule)", () => {
+    expect(CombatSystem.range({ x: 0, y: 0 }, { x: 2, y: 2 })).toBe(3);
   });
 
   it("lists only living candidates within range", () => {
@@ -582,7 +591,9 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
   it("a ranged Runner attacks a hero from two tiles away", () => {
     const ws = laneSystem(["S...X"], oneRunner);
     const hero = at("h", 2, 0, 10); // two tiles from the spawn at (0,0)
-    const report = ws.tickEnemyPhase({ heroTargets: [hero] });
+    // A 1-wide lane, so blocking the hero's own tile seals the only route —
+    // forced melee (Enemy AI/Movement Redesign §1, D-139) even for a ranged attacker.
+    const report = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 2 && p.y === 0 });
     expect(report.attacks.length).toBe(1);
     expect(hero.health).toBe(9); // runner attackDamage 1, range 2
   });
@@ -593,7 +604,9 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
     // save SUCCEEDS, so no damage lands despite the attack "connecting."
     const ws = laneSystem(["S...X"], oneBlightcaller);
     const hero = at("h", 2, 0, 10); // two tiles from the spawn, within range 2
-    const report = ws.tickEnemyPhase({ heroTargets: [hero] });
+    // A 1-wide lane, so blocking the hero's own tile seals the only route —
+    // forced melee (Enemy AI/Movement Redesign §1, D-139).
+    const report = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 2 && p.y === 0 });
     expect(report.attacks.length).toBe(1);
     expect(hero.health).toBe(10); // saved — no damage
     expect(report.attacks[0].result.roll?.hit).toBe(false); // hit = the save FAILED
@@ -603,21 +616,22 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
   it("a Blightcaller's forced save deals full damage on a failure (natural 1 always fails)", () => {
     const ws = laneSystem(["S...X"], oneBlightcaller, RandomService.fixed(1));
     const hero = at("h", 2, 0, 10);
-    const report = ws.tickEnemyPhase({ heroTargets: [hero] });
+    const report = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 2 && p.y === 0 });
     expect(hero.health).toBe(7); // blightcaller attackDamage 3
     expect(report.attacks[0].result.roll?.hit).toBe(true);
   });
 
   it("a target's own savingThrowBonus can resist a Blightcaller that a lower bonus would not", () => {
     // total = 10 (fixed roll) + bonus; DC is 12, so bonus 2 fails (12) but bonus 3 succeeds (13).
+    const blockHeroTile = (p: { x: number; y: number }) => p.x === 2 && p.y === 0;
     const ws1 = laneSystem(["S...X"], oneBlightcaller, RandomService.fixed(10));
     const weakHero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, savingThrowBonus: 1 };
-    ws1.tickEnemyPhase({ heroTargets: [weakHero] });
+    ws1.tickEnemyPhase({ heroTargets: [weakHero], isBlocked: blockHeroTile });
     expect(weakHero.health).toBeLessThan(10); // 10+1=11 < DC 12 -> fails, takes damage
 
     const ws2 = laneSystem(["S...X"], oneBlightcaller, RandomService.fixed(10));
     const strongHero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, savingThrowBonus: 3 };
-    ws2.tickEnemyPhase({ heroTargets: [strongHero] });
+    ws2.tickEnemyPhase({ heroTargets: [strongHero], isBlocked: blockHeroTile });
     expect(strongHero.health).toBe(10); // 10+3=13 >= DC 12 -> succeeds, no damage
   });
 
@@ -630,7 +644,7 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
     const spy = vi.spyOn(random, "rollD20With");
     const ws = laneSystem(["S...X"], oneBlightcaller, random);
     const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, savingThrowAdvantage: "advantage" };
-    ws.tickEnemyPhase({ heroTargets: [hero] });
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 2 && p.y === 0 });
     expect(spy).toHaveBeenCalledWith("advantage");
   });
 
@@ -639,21 +653,21 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
     const spy = vi.spyOn(random, "rollD20With");
     const ws = laneSystem(["S...X"], oneBlightcaller, random);
     const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10 };
-    ws.tickEnemyPhase({ heroTargets: [hero] });
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 2 && p.y === 0 });
     expect(spy).toHaveBeenCalledWith("normal");
   });
 
   it("Evasion halves (instead of fully applying) a Blightcaller's damage on a FAILED save (Rogue/Monk, D-124)", () => {
     const ws = laneSystem(["S...X"], oneBlightcaller, RandomService.fixed(1)); // nat 1 always fails
     const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, evasionHalvesFailedSave: true };
-    ws.tickEnemyPhase({ heroTargets: [hero] });
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 2 && p.y === 0 });
     expect(hero.health).toBe(9); // blightcaller attackDamage 3, halved (floored) to 1
   });
 
   it("without Evasion, the same failed save deals full damage", () => {
     const ws = laneSystem(["S...X"], oneBlightcaller, RandomService.fixed(1));
     const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10 };
-    ws.tickEnemyPhase({ heroTargets: [hero] });
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 2 && p.y === 0 });
     expect(hero.health).toBe(7); // full 3 damage
   });
 
@@ -663,7 +677,7 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
     const ws = laneSystem(["S...X"], oneBlightcaller, random);
     const rerollFailedSave = vi.fn(() => true);
     const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, rerollFailedSave };
-    ws.tickEnemyPhase({ heroTargets: [hero] });
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 2 && p.y === 0 });
     expect(rerollFailedSave).toHaveBeenCalledTimes(1);
     expect(spy).toHaveBeenCalledTimes(2); // the original roll, then the reroll
   });
@@ -673,7 +687,7 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
     const ws = laneSystem(["S...X"], oneBlightcaller, random);
     const rerollFailedSave = vi.fn(() => true);
     const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, rerollFailedSave };
-    ws.tickEnemyPhase({ heroTargets: [hero] });
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 2 && p.y === 0 });
     expect(rerollFailedSave).not.toHaveBeenCalled();
   });
 
@@ -683,7 +697,7 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
     const ws = laneSystem(["S...X"], oneBlightcaller, random);
     const rerollFailedSave = vi.fn(() => false);
     const hero: Combatant = { id: "h", position: { x: 2, y: 0 }, health: 10, rerollFailedSave };
-    ws.tickEnemyPhase({ heroTargets: [hero] });
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 2 && p.y === 0 });
     expect(rerollFailedSave).toHaveBeenCalledTimes(1);
     expect(spy).toHaveBeenCalledTimes(1); // no reroll actually happened
     expect(hero.health).toBe(7); // still takes full damage
@@ -696,7 +710,7 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
     const spy = vi.spyOn(random, "rollD20With");
     const ws = laneSystem(["S.X"], oneShadowfang, random);
     const hero: Combatant = { id: "h", position: { x: 1, y: 0 }, health: 10, armorClass: 10, deniesAttackerAdvantage: () => true };
-    ws.tickEnemyPhase({ heroTargets: [hero] });
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 1 && p.y === 0 });
     expect(spy).toHaveBeenCalledWith("normal");
   });
 
@@ -705,7 +719,7 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
     const spy = vi.spyOn(random, "rollD20With");
     const ws = laneSystem(["S.X"], oneShadowfang, random);
     const hero: Combatant = { id: "h", position: { x: 1, y: 0 }, health: 10, armorClass: 10 };
-    ws.tickEnemyPhase({ heroTargets: [hero] });
+    ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 1 && p.y === 0 });
     expect(spy).toHaveBeenCalledWith("advantage");
   });
 

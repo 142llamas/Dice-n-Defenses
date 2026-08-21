@@ -1,6 +1,71 @@
 # Project Status
 
-## Test Mode (D-138) — DONE this session
+## Enemy AI / Movement Redesign — every pure-systems piece DONE (D-139 through D-146); only §4's hero-side UI remains
+
+A full design session with Kevin resolved a long-standing tension between
+this game's tower-defense identity and its D&D-combat identity. Seven
+pieces of the redesign are now built: enemies decouple "taking damage" from
+"being stopped" (§1: always advance unless truly blocked with no detour —
+built as **D-139**), carry a per-enemy Aggressiveness stat governing how
+much extra route length they'll tolerate before forcing a fight instead of
+detouring (§2 — built as **D-140**), both heroes and enemies can move
+diagonally with true Euclidean cost, rounded to the nearest 5ft only for
+budget comparisons (§5 — build sequence step 3, built as **D-141**), attack
+range/spell-ability range/aura radius all use that same diagonal-aware
+distance metric (step 4, built as **D-142** — closes **KI-093**), an enemy
+that lands an attack now spends any leftover movement budget continuing
+toward the exit instead of stopping outright, plus an opt-in Sprint
+capability that doubles movement on a non-fighting phase (step 5,
+enemy-only half of §4, built as **D-143**), a siege enemy with no
+destructible wall already in its own attack range evaluates the walls it
+could plausibly reach and walks toward whichever one would shorten its
+route to the exit the most (§3's siege half, step 6, built as **D-145**),
+and — the most recent piece — a high-tier AoE/breath attacker (boss/
+legendary `aoeAttack`, e.g. Ashen Sovereign, The Hollow Empress) evaluates
+every tile it could stop on and repositions to line up 2+ heroes at once
+instead of just marching toward the exit and hitting whoever ends up in
+range (§3's AoE half, step 7, built as **D-146**). All seven are pure
+systems/AI/targeting-math work, mechanically verified headless (typecheck,
+1253 → 1299 tests, production build all pass) — see
+**KI-092**/**KI-093**/**KI-094**/**KI-096**/**KI-097** for the
+gameplay-feel playtest still outstanding.
+
+**Also built alongside D-146, at Kevin's request — a related but separate
+gap, not originally part of the redesign spec**: self-defense (provoked
+retaliation). An enemy a hero just landed a hit on now strikes back on its
+own next turn if that hero is still in its attack range, instead of
+obliviously continuing an unconditional priority action (a siege enemy
+bashing a wall, a Saboteur disarming a trap) while getting cut down.
+`ignoresHeroes` pure runners (Sprinter, Bolt Runner) are exempt — the
+"doesn't care about heroes at all" archetype Kevin explicitly asked to
+preserve. See **D-146**/**KI-097**.
+
+**Still to build**: only the hero-side split-movement UI remains from the
+original spec (§4's last piece, the one step needing a browser pass — build
+the numeric remaining-budget tracking on `Hero` together with it, not
+before). **`PHASE_HANDOFF.md` has the complete remaining spec for the next
+chat to continue from directly.**
+
+## Drag-and-drop hero move with pinned waypoints — DONE (D-144)
+
+Kevin's own ask, planned via `EnterPlanMode` given the real interaction-
+design forks involved (see `C:\Users\kevinb\.claude\plans\abstract-growing-valley.md`
+for the approved plan): click-and-hold a selected hero's own token to pick
+it up, live-preview the move distance as the pointer moves, right-click to
+pin a chain of waypoints around corners, release to drop. Coexists with —
+does not replace — the existing click-to-select/click-to-confirm move flow,
+which is unchanged for a player who never holds and drags. New
+`MovementSystem.routeThroughWaypoints` (pure, unit-tested) computes the
+multi-leg route/distance; `BattleScene.ts` gained the drag input handling,
+live preview rendering, and drop resolution, plus hero moves now tween
+(previously an instant snap) both here and in the existing Confirm-button
+flow. Vision (the existing stealth-reveal mechanic) correctly stays keyed
+to the hero's real position on drop only, by construction. Typecheck, 1278
+→ 1286 tests, production build, and `npm run dev` (HTTP 200) all pass — see
+**KI-095** for the (unusually large, given how mouse-dependent this is)
+in-browser checklist still outstanding.
+
+## Test Mode (D-138) — DONE previous session
 
 KI-085's last remaining large item — every other item on that list (Starting
 Level, the level-up planner, damage types, spell-prep economy) had already

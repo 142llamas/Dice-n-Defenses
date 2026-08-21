@@ -465,6 +465,50 @@ export interface EnemyDefinition {
    * always).
    */
   trapSense?: { rangeTiles: number };
+  /**
+   * Enemy AI/Movement Redesign §2 (D-140): 0-100, how willing this enemy is
+   * to accept a longer route to avoid a hero blocking its shortest one (0 =
+   * always detours, however long; 100 = never detours AND actively diverts
+   * off its goal-path to chase a hero it can see). Absent = derived from
+   * this enemy's existing tags by `Enemy.aggressiveness`'s own default table
+   * (bosses/legendaries low, siege/trapSense/ignoresHeroes archetypes low —
+   * all already objective-focused rather than hero-seeking — enrage/
+   * lifedrinkPercent/stealth "hunter"-flavored archetypes high, everything
+   * else an ordinary middling value) rather than a value on all ~63 roster
+   * entries — an explicit override here is only for an enemy whose default
+   * would be wrong for its intended personality.
+   */
+  aggressiveness?: number;
+  /**
+   * Enemy AI/Movement Redesign step 5 (D-143): true doubles this enemy's
+   * movement budget on any phase it does NOT attack (the real SRD Dash
+   * trade — the whole "action" goes to movement, so it costs nothing extra
+   * to enforce: this branch of `WaveSystem.tickEnemyPhase` structurally
+   * never also attacks). Absent (the default, and true of every current
+   * roster entry) means an enemy moves at its plain `movementTiles`, same
+   * as every enemy before this decision — no roster content was rebalanced
+   * to use this; it's a pure new capability, deliberately not yet assigned
+   * to any enemy (see KNOWN_ISSUES.md).
+   */
+  sprints?: boolean;
+  /**
+   * Enemy AI/Movement Redesign §3 (D-145), siege wall-targeting: which of the
+   * two assignable "which wall should I seek out?" behaviors this siege enemy
+   * uses once no wall is ALREADY within its own attack range (that immediate
+   * case is unchanged — see `siegeDamageMultiplier`'s own comment). Absent
+   * (every current roster siege entry) defaults to `"reassessing"` via
+   * `Enemy.siegeTargeting` — see `WaveSystem.bestWallTarget` for how "shortens
+   * the route most" is actually decided, bounded to this enemy's own current
+   * movement reach.
+   *   - `"committed"` picks a target wall once and keeps walking toward that
+   *     SAME wall every subsequent phase (even if a better candidate later
+   *     appears) until it's destroyed, at which point it picks again.
+   *   - `"reassessing"` re-evaluates every phase from a blank slate, so it can
+   *     switch targets mid-approach if the board changes (another wall gets
+   *     destroyed elsewhere, say).
+   * Meaningless without `siegeDamageMultiplier` also set.
+   */
+  siegeTargeting?: "committed" | "reassessing";
 }
 
 export const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = {

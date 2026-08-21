@@ -2,6 +2,236 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Smart AoE positioning + a new self-defense mechanic (D-146)
+
+Closes the Enemy AI/Movement Redesign's last pure-systems piece (§3's AoE
+half), plus a related gap Kevin raised in the same session. See **D-146**
+in `DECISIONS.md`.
+
+Added:
+- **Smart AoE/breath positioning**: a high-tier AoE attacker (`aoeAttack` +
+  `role: "boss"`/`"legendary"` — Ashen Sovereign, The Hollow Empress, and
+  Sundered King once it phase-changes into `aoeAttack`) now evaluates every
+  tile it could stop on this phase and, if one would catch 2+ heroes in its
+  breath at once, walks there instead of just marching toward the exit and
+  hitting whoever ends up in range. Minion-tier AoE enemies (Cave Drake,
+  Frost Warden) are unaffected — same simple behavior as before.
+- **Self-defense (provoked retaliation)**: a hero landing a hit on an enemy
+  now marks it "provoked" for exactly one of its own upcoming turns. If a
+  hero is still within that enemy's attack range when its turn comes
+  around, it strikes back instead of continuing whatever unconditional
+  priority action it was doing (a siege enemy bashing a wall, a Saboteur
+  disarming a trap) — so an enemy under attack doesn't just stand there and
+  take it. `ignoresHeroes` pure runners (Sprinter, Bolt Runner) are exempt,
+  by design — the "doesn't care about heroes at all" archetype Kevin asked
+  to preserve.
+- **`PathfindingSystem.reachableTiles`** (new): every tile reachable within
+  a movement budget, for comparing many candidate stop tiles at once.
+
+Fixed: nothing (both additive AI behaviors).
+
+Tests: 1292 → 1299 (+7, `tests/enemyEngagementRedesign.test.ts`). Typecheck,
+all 1299 tests, and the production build (119 modules, unchanged) all pass.
+Pure `src/game/systems/`/`src/game/entities/Enemy.ts` work plus a one-line
+`BattleScene.ts` hook — no browser needed to verify the logic itself, though
+the resulting gameplay feel still needs Kevin's own pass (see KI-097).
+
+## [Unreleased] — 0.2.0-dev — Enemy AI/Movement Redesign, step 6: real siege wall-targeting (D-145)
+
+Step 6 of the redesign's build sequence — §3's siege half. See **D-145** in
+`DECISIONS.md`.
+
+Added:
+- **Siege wall-targeting**: a siege enemy (`siegeDamageMultiplier`) with no
+  destructible wall already in its own attack range now evaluates the
+  walls it could plausibly reach and walks toward whichever one would
+  shorten its route to the exit the most, instead of only ever reacting to
+  a wall it happened to already be standing next to.
+- **`EnemyDefinition.siegeTargeting?: "committed" | "reassessing"`**: two
+  assignable variants for how sticky that pick is. `"reassessing"` (the
+  default) re-evaluates fresh every phase; `"committed"` keeps walking
+  toward the same wall until it's destroyed, then re-picks. Not yet
+  assigned to any roster enemy — a pure new capability, same as Sprint.
+- **`EnemyPhaseContext.allWalls`**: a new context hook listing every
+  destructible wall on the board, wired in `BattleScene.ts`.
+
+Fixed: nothing (additive AI behavior).
+
+Tests: 1286 → 1292 (+6, `tests/enemyEngagementRedesign.test.ts`). Typecheck,
+all 1292 tests, and the production build (119 modules, unchanged) all pass.
+Pure `src/game/systems/`/context-wiring work — no browser needed to verify
+the logic itself, though the resulting gameplay feel still needs Kevin's
+own pass (see KI-096).
+
+## [Unreleased] — 0.2.0-dev — Drag-and-drop hero move with pinned waypoints (D-144)
+
+Kevin's own ask: click-and-hold a hero token to pick it up, live-preview
+the move distance, right-click to pin a chain of waypoints around corners,
+release to drop. See **D-144** in `DECISIONS.md`.
+
+Added:
+- **`MovementSystem.routeThroughWaypoints`**: routes through a chain of
+  waypoints in order, returning the full concatenated path and total tile
+  distance even when it exceeds the movement budget (`withinBudget: false`
+  rather than a silent truncation or `null`).
+- **Click-and-hold a selected hero's own token, drag, and release to move**
+  — coexists with the existing click → confirm flow, which is completely
+  unchanged for a plain click.
+- **Right-click while dragging pins a waypoint**; right-clicking again
+  adds another, chaining around multiple corners.
+- **A live "N tiles" distance readout** follows the pointer while dragging,
+  and the previewed route recolors when it would exceed the hero's
+  movement budget.
+- **Hero moves now tween** (both the new drag-drop and the existing
+  Confirm-button flow) instead of snapping instantly, matching how enemy
+  moves already look.
+
+Fixed: nothing (additive feature) — vision/stealth-reveal correctly stays
+keyed to the hero's real position on drop, never the live drag preview, by
+construction (the preview never calls `hero.moveTo`).
+
+Tests: 1278 → 1286 (+8, all in `tests/movement.test.ts`). Typecheck, all
+1286 tests, and the production build (119 modules, unchanged) all pass;
+`npm run dev` re-checked (HTTP 200). The new `BattleScene.ts` input/
+rendering code has no automated test, per this project's standing
+limitation for Phaser-only work — this feature needs Kevin's own
+in-browser pass more than almost anything built so far (see KI-095).
+
+## [Unreleased] — 0.2.0-dev — Enemy AI/Movement Redesign, part 4: enemy-side move-attack-move + Sprint AI (D-143)
+
+Step 5 of the redesign's build sequence — the enemy-only half of §4's
+remaining scope, a pure `WaveSystem` AI change with no UI. See **D-143** in
+`DECISIONS.md`.
+
+Added:
+- **Move-attack-move**: an enemy that lands a forced-fight attack now
+  spends any leftover movement budget continuing toward the exit
+  afterward, instead of ending its phase the instant the attack lands —
+  can even carry it all the way to a breach in the same phase.
+- **Sprint** (`EnemyDefinition.sprints?: boolean`): doubles an enemy's
+  movement budget on any phase it doesn't attack — the real SRD Dash
+  trade. Not yet assigned to any roster enemy — a pure new capability,
+  deliberately not a rebalance.
+
+Fixed:
+- A pre-existing reporting gap: an attacking enemy's pre-attack walk
+  previously produced no `EnemyMove` event at all, even though its
+  position had changed. Now reported correctly, while the non-attacking
+  advance path's existing report-even-when-empty behavior is unchanged.
+
+Tests: 1275 → 1278 (+3; 2 pre-existing tests updated to reflect enemies now
+correctly continuing to move after a landed attack). Typecheck, all 1278
+tests, and the production build (119 modules, unchanged) all pass. Pure
+`src/game/systems/` AI work — no browser needed to verify the mechanic
+itself; the resulting gameplay feel still needs Kevin's own playtest pass.
+
+## [Unreleased] — 0.2.0-dev — Enemy AI/Movement Redesign, part 3: range/radius rework (D-142)
+
+Step 4 of the redesign's build sequence — unifies attack range, spell/
+ability range, and aura radius with the same diagonal-aware distance
+movement has used since D-141. See **D-142** in `DECISIONS.md`.
+
+Added:
+- **`GridSystem.diagonalDistance(a, b)`**: the octile-distance point-to-point
+  metric between two tiles, using D-141's own cost constants and rounding
+  rule. `manhattanDistance` is unchanged and still used for build-range/
+  shop-proximity checks (out of this decision's scope).
+
+Changed:
+- **`CombatSystem.range` now diagonal-aware** — every attack, aura radius,
+  and AoE/breath check that routes through `CombatSystem` (all of
+  `WaveSystem`'s enemy combat, plus hero basic attacks) picked this up in
+  one place.
+- **`BattleScene`'s 8 direct spell/ability-range checks** (heal, AoE-at-
+  range, teleport-self, summon, terrain spells, tile-targeting preview, and
+  Bardic Inspiration's nearest-ally pick) switched to the same metric.
+
+Fixed:
+- **KI-093** (the Manhattan-vs-diagonal seam D-141 flagged as a known
+  interim gap): a hero or enemy diagonally adjacent to a target now
+  correctly reads as being in range 1, not 2.
+
+Tests: 1272 → 1275 (+3; 1 pre-existing `CombatSystem.range` test updated to
+reflect the new diagonal-aware value). Typecheck, all 1275 tests, and the
+production build (119 modules, unchanged) all pass. Pure systems/targeting-
+math work — no browser needed to verify the metric itself; the resulting
+gameplay feel still needs Kevin's own playtest pass.
+
+## [Unreleased] — 0.2.0-dev — Enemy AI/Movement Redesign, part 2: diagonal movement (D-141)
+
+Step 3 of the redesign's build sequence — a genuine pathfinding algorithm
+swap (four-directional BFS → 8-directional weighted search), per Kevin's
+exact cost-model spec. See **D-141** in `DECISIONS.md`.
+
+Added:
+- **New shared module `src/game/systems/DiagonalMovement.ts`**: true
+  Euclidean diagonal cost (5√2ft), exact cumulative-distance tracking
+  (rounded to the nearest 5ft only for budget comparisons, never per-step),
+  and a no-corner-cutting rule — the weighted-search core both
+  `MovementSystem` (hero-side) and `PathfindingSystem` (enemy-side) now
+  share.
+- **Heroes and enemies can both move diagonally now** — `MovementSystem`/
+  `PathfindingSystem` both run 8-directional weighted search instead of
+  4-directional BFS. No `BattleScene` change needed for the hero side: the
+  existing move-range/path-preview UI already just renders whatever
+  `reachableTiles`/`findPath` return.
+- **`PathfindingSystem.routeToNearestGoal` now returns `RoutedPosition[]`**
+  (each tile's exact cumulative distance included) instead of a plain tile
+  array, so `WaveSystem` can slice a route to a movement budget correctly
+  now that steps no longer cost the same amount uniformly.
+- **`WaveSystem.affordablePrefixLength`**: the shared "how far along this
+  route does the movement budget reach" primitive `advanceEnemy`,
+  `walkAlongRoute`, and `tryTeleport` all now use, replacing the old
+  `Math.min(budget, route.length)` array-count math.
+
+Tests: 1265 → 1272 (+7 new in `tests/diagonalMovement.test.ts`; 6
+pre-existing tests updated — 5 for the new `distanceFeet` field on route
+tiles, 1 repositioned per **KI-093**, a real, foreseen interim seam where
+attack-range checks still use Manhattan distance until step 4 unifies the
+metric). Typecheck, all 1272 tests, and the production build (119 modules,
+up from 118) all pass. Pure `src/game/systems/` work — no browser needed to
+verify the algorithm itself; see **KI-093** for what still needs Kevin's
+playtest pass, and `PHASE_HANDOFF.md` for the remaining pieces (range/radius
+rework, siege/AoE positioning, enemy-side Sprint/split-movement AI, the
+hero-side split-movement UI).
+
+## [Unreleased] — 0.2.0-dev — Enemy AI/Movement Redesign, part 1: engagement priority + Aggressiveness (D-139/D-140)
+
+The first two pieces of the Enemy AI/Movement Redesign (design-only in the
+previous session, logged as its own section in `PROJECT_STATUS.md`): every
+enemy now always attempts to advance toward its goal by default — ranged
+damage taken along the way never slows or redirects it — and forced melee
+happens only when a hero physically blocks its ONE AND ONLY route, no
+detour available at all. See **D-139**/**D-140** in `DECISIONS.md`.
+
+Added:
+- **Every enemy always advances by default**; forced melee triggers only
+  when boxed in with no detour (`WaveSystem.tickEnemyPhase`'s core
+  engagement decision, rebuilt around `PathfindingSystem`'s existing
+  hero/wall-aware routing).
+- **`EnemyDefinition.aggressiveness?`/`Enemy.aggressiveness`**: an optional
+  0-100 per-enemy detour-tolerance stat. Absent = derived from existing
+  tags (bosses/legendaries low, siege/trapSense/pure-runner archetypes low,
+  enrage/lifedrinker/stealth "hunter" archetypes high, everything else
+  middling) rather than hand-set on the whole ~63-enemy roster.
+- **`WaveSystem.detourTolerance`/`walkAlongRoute`/`huntRoute`**: the
+  tolerance formula, the "walk the direct route and stop short instead of
+  detouring" movement for an enemy that decides a detour isn't worth it,
+  and the aggressiveness-100 top-end behavior — actively diverting off-path
+  to chase a visible hero even when nothing is blocking its route at all.
+
+Tests: 1253 → 1265 (+12: 28 pre-existing tests that had relied on the OLD
+"any hero in range attacks" behavior as an incidental attack trigger were
+updated to recreate a genuine physical block instead; 6 new tests cover the
+three named redesign scenarios plus Aggressiveness's tolerance behavior and
+default bucketing, in the new `tests/enemyEngagementRedesign.test.ts`).
+Typecheck, all 1265 tests, and the production build (118 modules, unchanged)
+all pass. Pure `src/game/systems/` work — no browser needed to verify this
+part of the redesign; see **KI-092** in `KNOWN_ISSUES.md` for the overall
+gameplay-feel playtest that's still outstanding, and `PHASE_HANDOFF.md` for
+the remaining pieces (movement budget, diagonal movement, siege/AoE
+positioning, the hero-side split-movement UI).
+
 ## [Unreleased] — 0.2.0-dev — Test Mode (D-138)
 
 KI-085's last remaining large item: a dedicated Main Menu entry point into a

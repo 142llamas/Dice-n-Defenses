@@ -34,7 +34,9 @@ describe("PathfindingSystem.routeToNearestGoal", () => {
     });
     expect(route).not.toBeNull();
     expect(route!.length).toBe(5); // five steps east
-    expect(route![route!.length - 1]).toEqual({ x: 5, y: 0 });
+    // D-141: route tiles now also carry `distanceFeet` (real Euclidean cost),
+    // so match on x/y only rather than an exact object shape.
+    expect(route![route!.length - 1]).toMatchObject({ x: 5, y: 0 });
     expect(has(route!, { x: 0, y: 0 })).toBe(false); // start excluded
   });
 
@@ -46,7 +48,7 @@ describe("PathfindingSystem.routeToNearestGoal", () => {
     expect(route).not.toBeNull();
     // It must never step on a wall tile.
     for (const step of route!) expect(detourMap.isWalkable(step)).toBe(true);
-    expect(route![route!.length - 1]).toEqual({ x: 4, y: 2 });
+    expect(route![route!.length - 1]).toMatchObject({ x: 4, y: 2 });
   });
 
   it("picks the nearest of several exits", () => {
@@ -55,7 +57,7 @@ describe("PathfindingSystem.routeToNearestGoal", () => {
     const pf = new PathfindingSystem(m);
     const route = pf.routeToNearestGoal({ start: { x: 4, y: 0 }, goals: m.data.exits });
     expect(route).not.toBeNull();
-    expect(route![route!.length - 1]).toEqual({ x: 0, y: 0 }); // the closer exit
+    expect(route![route!.length - 1]).toMatchObject({ x: 0, y: 0 }); // the closer exit
     expect(route!.length).toBe(4);
   });
 

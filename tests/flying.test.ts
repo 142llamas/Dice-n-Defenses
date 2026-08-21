@@ -42,7 +42,8 @@ describe("PathfindingSystem ignoreWalls (flying)", () => {
     // Flying routing flies straight over the wall to the exit.
     const route = pf.routeToNearestGoal({ start, goals, ignoreWalls: true });
     expect(route).not.toBeNull();
-    expect(route![route!.length - 1]).toEqual({ x: 2, y: 0 });
+    // D-141: route tiles now also carry `distanceFeet`, so match x/y only.
+    expect(route![route!.length - 1]).toMatchObject({ x: 2, y: 0 });
     // It DID step on the wall tile (that's the point) but never left the map.
     expect(route!.some((p) => at(p, 1, 0))).toBe(true);
     for (const step of route!) expect(map.isInBounds(step)).toBe(true);
@@ -60,7 +61,7 @@ describe("PathfindingSystem ignoreWalls (flying)", () => {
       ignoreWalls: true,
     });
     expect(route).not.toBeNull();
-    expect(route![route!.length - 1]).toEqual({ x: 2, y: 2 });
+    expect(route![route!.length - 1]).toMatchObject({ x: 2, y: 2 });
     for (const step of route!) expect(map.isInBounds(step)).toBe(true);
   });
 });

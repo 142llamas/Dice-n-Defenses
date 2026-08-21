@@ -30,9 +30,12 @@ import { PHYSICAL_DAMAGE_TYPES, type DamageType, type DamageTypeSplit } from "..
  * of Truth "controlled randomness": rolls flow through a service tests can
  * seed). `RandomService.fixed()` is the test-facing deterministic double.
  *
- * Range uses Manhattan distance, matching the game's four-directional movement
- * and `GridSystem.manhattanDistance`. Range does NOT consider walls or line of
- * sight (LOS is a later grid-layer concern in the Source of Truth).
+ * Range uses `GridSystem.diagonalDistance` (D-142, Enemy AI/Movement Redesign
+ * step 4) — the same diagonal-aware weighted distance D-141 gave movement,
+ * so a diagonally-adjacent target reads as range 1, not 2. Range does NOT
+ * consider walls or line of sight (LOS is a later grid-layer concern in the
+ * Source of Truth) and never applies D-141's no-corner-cutting rule, which
+ * is movement-only.
  */
 
 /** The minimum a combatant must expose to take part in combat. */
@@ -215,9 +218,9 @@ export interface AttackResult {
 }
 
 export class CombatSystem {
-  /** Tiles between two positions (Manhattan). 0 means the same tile. */
+  /** Tiles between two positions (diagonal-aware, D-142). 0 means the same tile. */
   static range(a: GridPosition, b: GridPosition): number {
-    return GridSystem.manhattanDistance(a, b);
+    return GridSystem.diagonalDistance(a, b);
   }
 
   /** True if `to` is a distinct tile within `rangeTiles` of `from`. */

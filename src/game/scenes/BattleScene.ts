@@ -387,6 +387,24 @@ export class BattleScene extends Phaser.Scene {
    * range" vs "ability range" doesn't rely solely on two similar warm hues. */
   private targetGlyphs: Phaser.GameObjects.Text[] = [];
   private pathDots: Phaser.GameObjects.Arc[] = [];
+  /**
+   * Drag-and-drop hero move: the hero id whose OWN tile a `pointerdown` just
+   * landed on while it was already `heroSelected` — armed but not yet a
+   * real drag until the pointer actually moves off that tile (see
+   * `wireInput`'s `pointermove`). A plain click (down then up with no
+   * movement in between) never promotes past this, so it stays exactly as
+   * cheap/no-op as any other click.
+   */
+  private dragArmedHeroId: string | null = null;
+  /**
+   * The in-progress drag itself, once armed and the pointer has moved off
+   * the hero's own tile. `pins` are right-click-placed waypoints, oldest
+   * first — the previewed/final route runs hero.position -> pins... ->
+   * wherever the pointer currently is (see `MovementSystem.routeThroughWaypoints`).
+   */
+  private heroDrag: { heroId: string; pins: GridPosition[] } | null = null;
+  /** Right-click-pinned waypoint markers, drawn only during an active drag. */
+  private dragPinMarks: Phaser.GameObjects.Arc[] = [];
   private activeRing!: Phaser.GameObjects.Arc;
   private hoverRect!: Phaser.GameObjects.Rectangle;
   /** D-132: the HP/AC (and, while a hero is selected and aiming at an enemy, hit%) hover tooltip. */
@@ -1990,6 +2008,13 @@ export class BattleScene extends Phaser.Scene {
         return s && s.hp !== undefined ? { instanceId: s.instanceId, defId: s.defId } : null;
       },
       damageWall: (instanceId, damage) => this.buildSystem.damageStructure(instanceId, damage).destroyed,
+      // Enemy AI/Movement Redesign §3 (D-145): every destructible wall on the
+      // board, for a siege enemy's own "which wall should I seek out?" scan
+      // once none is already within its immediate attack range.
+      allWalls: () =>
+        this.buildSystem.structures
+          .filter((s) => s.kind === "wall" && s.hp !== undefined)
+          .map((s) => ({ instanceId: s.instanceId, defId: s.defId, position: { ...s.position } })),
       // Phase 25 (D-116): a Saboteur/Warren Stalker's own sense-range scan
       // for a placed trap to disarm, and the callback that actually removes
       // one.
@@ -3058,7 +3083,7 @@ export class BattleScene extends Phaser.Scene {
     for (let y = 0; y < this.map.rows; y++) {
       for (let x = 0; x < this.map.cols; x++) {
         const tile = { x, y };
-        if (GridSystem.manhattanDistance(hero.position, tile) > ability.rangeTiles) continue;
+        if (GridSystem.diagonalDistance(hero.position, tile) > ability.rangeTiles) continue;
         if (ability.kind === "aoeAtRange") {
           this.markTarget(tile, COLORS.abilityTarget, "◆");
         } else if (this.isTileEmptyForPlacement(tile)) {
@@ -3076,7 +3101,7 @@ export class BattleScene extends Phaser.Scene {
    * enemy-targeting helper provides.
    */
   private livingAlliesInRange(from: GridPosition, rangeTiles: number): Hero[] {
-    return this.heroes.filter((h) => h.isAlive() && GridSystem.manhattanDistance(from, h.position) <= rangeTiles);
+    return this.heroes.filter((h) => h.isAlive() && GridSystem.diagonalDistance(from, h.position) <= rangeTiles);
   }
 
   /**
@@ -3132,6 +3157,174 @@ export class BattleScene extends Phaser.Scene {
   private clearPath(): void {
     for (const d of this.pathDots) d.destroy();
     this.pathDots = [];
+  }
+
+  private clearDragPinMarks(): void {
+    for (const m of this.dragPinMarks) m.destroy();
+    this.dragPinMarks = [];
+  }
+
+  /**
+   * Drag-and-drop hero move: right-click while `heroDrag` is active pins a
+   * waypoint at the pointer's current tile — pinning again adds ANOTHER
+   * waypoint in a chain, so a long move can be routed around several
+   * corners one pin at a time. A duplicate of the last pin (or of the
+   * hero's own position, if there are no pins yet) is ignored rather than
+   * added, matching `MovementSystem.routeThroughWaypoints`'s own "adjacent
+   * duplicate waypoint is a no-op" rule. A no-op when no drag is active
+   * (the native context menu is already suppressed scene-wide regardless).
+   */
+  private addDragPin(tile: GridPosition | null, worldX: number, worldY: number): void {
+    if (!this.heroDrag || !tile) return;
+    const hero = this.heroById(this.heroDrag.heroId);
+    if (!hero) return;
+    const last = this.heroDrag.pins[this.heroDrag.pins.length - 1] ?? hero.position;
+    if (GridSystem.equals(last, tile)) return;
+    this.heroDrag.pins.push({ ...tile });
+    this.updateDragPreview(tile, worldX, worldY);
+  }
+
+  /**
+   * Drag-and-drop hero move: called on every `pointermove` while `heroDrag`
+   * is active (in place of the normal `updateHoverAt`/`showPath` hover
+   * flow) and once more right after a pin is added. Moves the dragged
+   * token to the raw pointer position (the "picked up" feel — not snapped
+   * to a tile), then redraws the pinned-corner markers and the previewed
+   * route through them to `tile`, reusing `showPath`'s own dot styling
+   * (recolored to the existing "rejected" tint when the full pinned route
+   * is unreachable or over budget) and a live tile-count readout via the
+   * existing hover tooltip object (mutually exclusive with its normal
+   * hero/enemy-hover use, since that's skipped entirely while dragging).
+   */
+  private updateDragPreview(tile: GridPosition | null, worldX: number, worldY: number): void {
+    if (!this.heroDrag) return;
+    const hero = this.heroById(this.heroDrag.heroId);
+    const token = hero ? this.heroTokens.get(hero.id) : undefined;
+    if (!hero || !token) return;
+
+    token.circle.setPosition(worldX, worldY);
+    token.label.setPosition(worldX, worldY - 4);
+    token.hp.setPosition(worldX, worldY + TILE_SIZE * 0.2);
+    token.sprite?.setPosition(worldX, worldY);
+
+    if (tile) {
+      const c = this.grid.tileToWorldCenter(tile);
+      this.hoverRect.setPosition(c.x, c.y).setVisible(true);
+    } else {
+      this.hoverRect.setVisible(false);
+    }
+
+    this.clearPath();
+    this.clearDragPinMarks();
+    for (const pin of this.heroDrag.pins) {
+      const c = this.grid.tileToWorldCenter(pin);
+      this.dragPinMarks.push(this.add.circle(c.x, c.y, 8, COLORS.abilityTarget, 0.9).setDepth(5));
+    }
+
+    if (!tile) {
+      this.unitTooltip.setVisible(false);
+      return;
+    }
+    const route = this.movement.routeThroughWaypoints([...this.heroDrag.pins, tile], {
+      start: hero.position,
+      budget: hero.movementBudget(),
+      isOccupied: (p) => this.isHeroMovementBlocked(p),
+      blocksStopping: (p) => this.isHeroStoppingBlocked(p, hero.id),
+    });
+    const dotColor = route && route.withinBudget ? COLORS.pathStep : COLORS.tileRejected;
+    for (const step of route?.path ?? []) {
+      const c = this.grid.tileToWorldCenter(step);
+      this.pathDots.push(this.add.circle(c.x, c.y, 6, dotColor, 0.95).setDepth(4));
+    }
+    const label = route
+      ? `${route.usedTiles} tile${route.usedTiles === 1 ? "" : "s"}${route.withinBudget ? "" : " — out of range"}`
+      : "Blocked";
+    this.showUnitTooltipAt(tile, label);
+  }
+
+  /**
+   * Drag-and-drop hero move: releasing the left button while `heroDrag` is
+   * active. `tile` is wherever the pointer was released (null off-board).
+   * Picking the hero up and putting it straight back down (no pins, drop
+   * tile is its own tile) is a silent cancel; a route that's unreachable or
+   * over budget snaps the token back with the same rejection flash/message
+   * `handleClick`'s illegal-move path already uses, staying in
+   * `heroSelected` rather than falling back to `idle` — a deliberate drag
+   * is a stronger signal than a stray illegal click. A real, in-budget
+   * route commits exactly like `confirmMove`.
+   */
+  private resolveDrop(tile: GridPosition | null): void {
+    const drag = this.heroDrag;
+    this.heroDrag = null;
+    this.clearDragPinMarks();
+    this.clearPath();
+    this.unitTooltip.setVisible(false);
+    if (!drag) return;
+
+    const hero = this.heroById(drag.heroId);
+    const token = hero ? this.heroTokens.get(hero.id) : undefined;
+    if (!hero || !token) return;
+
+    if (!tile || (drag.pins.length === 0 && GridSystem.equals(tile, hero.position))) {
+      this.placeToken(token, hero.position); // picked up, put back down — snap back, no message
+      return;
+    }
+
+    const route = this.movement.routeThroughWaypoints([...drag.pins, tile], {
+      start: hero.position,
+      budget: hero.movementBudget(),
+      isOccupied: (p) => this.isHeroMovementBlocked(p),
+      blocksStopping: (p) => this.isHeroStoppingBlocked(p, hero.id),
+    });
+    if (!route || !route.withinBudget) {
+      this.rejectAt(tile, "Out of range");
+      this.placeToken(token, hero.position);
+      this.setInteraction({ kind: "heroSelected", heroId: hero.id });
+      return;
+    }
+
+    hero.moveTo(tile);
+    this.moveHeroToken(token, hero.position);
+    this.checkTreasureAt(hero);
+    this.setInteraction({ kind: "heroSelected", heroId: hero.id });
+  }
+
+  /**
+   * Esc while a drag is active cancels it — same "picked up, put back
+   * down" snap-back `resolveDrop` uses for a no-op drop, just triggered by
+   * the keyboard instead of a pointer release. Checked first in
+   * `handleEscape` so it takes priority over every other Esc behavior.
+   */
+  private cancelDrag(): void {
+    const drag = this.heroDrag;
+    this.heroDrag = null;
+    this.dragArmedHeroId = null;
+    this.clearDragPinMarks();
+    this.clearPath();
+    this.unitTooltip.setVisible(false);
+    if (!drag) return;
+    const hero = this.heroById(drag.heroId);
+    const token = hero ? this.heroTokens.get(hero.id) : undefined;
+    if (hero && token) this.placeToken(token, hero.position);
+  }
+
+  /**
+   * Tweens a hero's token to `to` with the same pacing/instant-speed
+   * fallback `moveEnemyToken` already established for enemies — used by
+   * both `confirmMove` and a successful drag-and-drop drop, so a hero's
+   * move reads with the same polish an enemy's already has.
+   */
+  private moveHeroToken(token: Token, to: GridPosition): void {
+    const c = this.grid.tileToWorldCenter(to);
+    const duration = this.scaledDuration(ANIM_MS);
+    if (duration <= 0) {
+      this.placeToken(token, to);
+      return;
+    }
+    this.tweens.add({ targets: token.circle, x: c.x, y: c.y, duration });
+    this.tweens.add({ targets: token.label, x: c.x, y: c.y - 4, duration });
+    this.tweens.add({ targets: token.hp, x: c.x, y: c.y + TILE_SIZE * 0.2, duration });
+    if (token.sprite) this.tweens.add({ targets: token.sprite, x: c.x, y: c.y, duration });
   }
 
   private showConfirmButtons(show: boolean): void {
@@ -3304,6 +3497,12 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private wireInput(): void {
+    // Drag-and-drop hero move: a right-click while dragging pins a
+    // waypoint, so the native browser context menu must never appear over
+    // the canvas. Safe scene-wide — no other right-click behavior exists
+    // anywhere else in BattleScene.
+    this.input.mouse?.disableContextMenu();
+
     this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
       const tile = this.grid.worldToTile({ x: pointer.worldX, y: pointer.worldY });
       // The mouse and the keyboard cursor share one "current tile" concept,
@@ -3311,12 +3510,46 @@ export class BattleScene extends Phaser.Scene {
       // pointer last was, and moving the mouse never leaves a stale keyboard
       // cursor position behind.
       if (tile) this.cursorPos = tile;
+
+      if (this.dragArmedHeroId && tile) {
+        const armedHero = this.heroById(this.dragArmedHeroId);
+        if (armedHero && !GridSystem.equals(tile, armedHero.position)) {
+          this.heroDrag = { heroId: this.dragArmedHeroId, pins: [] };
+          this.dragArmedHeroId = null;
+        }
+      }
+      if (this.heroDrag) {
+        this.updateDragPreview(tile, pointer.worldX, pointer.worldY);
+        return;
+      }
       this.updateHoverAt(tile);
     });
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       const tile = this.grid.worldToTile({ x: pointer.worldX, y: pointer.worldY });
+      if (pointer.rightButtonDown()) {
+        this.addDragPin(tile, pointer.worldX, pointer.worldY);
+        return;
+      }
       this.handleClick(tile);
+      // Arm a potential drag only when this click just (re)selected the
+      // hero whose own tile it landed on — mirrors `handleClick`'s existing
+      // "clicking a hero (re)selects it" branch exactly, and only while a
+      // move is actually legal to attempt (same `hero.canMove()` gate
+      // `showRange`/`isLegalMove` already use).
+      if (this.turns.current === "player" && !this.inputLocked() && tile && this.ui.kind === "heroSelected") {
+        const heroHere = this.heroAt(tile);
+        if (heroHere && heroHere.id === this.ui.heroId && heroHere.canMove()) {
+          this.dragArmedHeroId = heroHere.id;
+        }
+      }
+    });
+
+    this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      this.dragArmedHeroId = null;
+      if (!this.heroDrag) return;
+      const tile = this.grid.worldToTile({ x: pointer.worldX, y: pointer.worldY });
+      this.resolveDrop(tile);
     });
 
     this.input.keyboard?.on("keydown-E", () => this.endPlayerTurn());
@@ -3692,6 +3925,12 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private handleEscape(): void {
+    // Drag-and-drop hero move: Esc cancels an in-progress drag before any
+    // other Esc behavior gets a chance to run.
+    if (this.heroDrag) {
+      this.cancelDrag();
+      return;
+    }
     if (
       this.choosingAsi ||
       this.choosingSubclass ||
@@ -3744,7 +3983,7 @@ export class BattleScene extends Phaser.Scene {
     if (!hero) return;
     hero.moveTo(this.ui.dest);
     const token = this.heroTokens.get(hero.id);
-    if (token) this.placeToken(token, hero.position);
+    if (token) this.moveHeroToken(token, hero.position);
     this.checkTreasureAt(hero);
     this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
@@ -4522,7 +4761,7 @@ export class BattleScene extends Phaser.Scene {
       this.setInteraction({ kind: "heroSelected", heroId: hero.id });
       return;
     }
-    if (GridSystem.manhattanDistance(hero.position, target.position) > ability.rangeTiles) {
+    if (GridSystem.diagonalDistance(hero.position, target.position) > ability.rangeTiles) {
       this.rejectAt(target.position, `${target.name} is out of range`);
       this.returnToAimingMode(hero, ability.id);
       return;
@@ -4605,7 +4844,7 @@ export class BattleScene extends Phaser.Scene {
     }
     // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
     if (hero.isHidden) hero.reveal();
-    if (GridSystem.manhattanDistance(hero.position, tile) > ability.rangeTiles) {
+    if (GridSystem.diagonalDistance(hero.position, tile) > ability.rangeTiles) {
       this.rejectAt(tile, "Out of range");
       this.setInteraction({ kind: "aimingTileSpell", heroId: hero.id, abilityId: ability.id });
       return;
@@ -4704,7 +4943,7 @@ export class BattleScene extends Phaser.Scene {
     }
     // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
     if (hero.isHidden) hero.reveal();
-    if (GridSystem.manhattanDistance(hero.position, tile) > ability.rangeTiles || !this.isTileEmptyForPlacement(tile)) {
+    if (GridSystem.diagonalDistance(hero.position, tile) > ability.rangeTiles || !this.isTileEmptyForPlacement(tile)) {
       this.rejectAt(tile, "Can't teleport there");
       this.setInteraction({ kind: "aimingTileSpell", heroId: hero.id, abilityId: ability.id });
       return;
@@ -4732,7 +4971,7 @@ export class BattleScene extends Phaser.Scene {
     }
     // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
     if (hero.isHidden) hero.reveal();
-    if (GridSystem.manhattanDistance(hero.position, tile) > ability.rangeTiles || !this.isTileEmptyForPlacement(tile)) {
+    if (GridSystem.diagonalDistance(hero.position, tile) > ability.rangeTiles || !this.isTileEmptyForPlacement(tile)) {
       this.rejectAt(tile, "Can't summon there");
       this.setInteraction({ kind: "aimingTileSpell", heroId: hero.id, abilityId: ability.id });
       return;
@@ -4797,7 +5036,7 @@ export class BattleScene extends Phaser.Scene {
     }
     // D-125: casting any spell breaks this hero's own hidden state, same as a basic attack.
     if (hero.isHidden) hero.reveal();
-    if (GridSystem.manhattanDistance(hero.position, tile) > ability.rangeTiles) {
+    if (GridSystem.diagonalDistance(hero.position, tile) > ability.rangeTiles) {
       this.rejectAt(tile, "Out of range");
       this.setInteraction({ kind: "aimingTileSpell", heroId: hero.id, abilityId: ability.id });
       return;
@@ -5167,7 +5406,7 @@ export class BattleScene extends Phaser.Scene {
     const others = this.heroes.filter((h) => h.id !== hero.id && h.isAlive());
     if (others.length === 0) return null;
     return others.reduce((best, h) =>
-      GridSystem.manhattanDistance(hero.position, h.position) < GridSystem.manhattanDistance(hero.position, best.position)
+      GridSystem.diagonalDistance(hero.position, h.position) < GridSystem.diagonalDistance(hero.position, best.position)
         ? h
         : best,
     );
@@ -5447,6 +5686,11 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private showHeroHit(enemy: Enemy): void {
+    // D-146: every hero-vs-enemy landed-hit call site in this scene already
+    // funnels through here for the flash flourish, which makes this the one
+    // place to also mark the enemy provoked for `WaveSystem`'s self-defense
+    // check — no need to touch each individual attack/spell/ability call site.
+    enemy.markProvoked();
     const c = this.grid.tileToWorldCenter(enemy.position);
     this.flashTile(c.x, c.y, COLORS.hitFlash, 0.7, 260);
   }
