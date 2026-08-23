@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { GAME_WIDTH, GAME_HEIGHT, COLORS } from "../config";
+import { GAME_WIDTH, COLORS } from "../config";
 
 /**
  * uiTheme — a shared fantasy/parchment presentation kit for Main Menu,
@@ -230,10 +230,17 @@ function drawDiamond(g: Phaser.GameObjects.Graphics, x: number, y: number, r: nu
  * unconditionally, so a row sized for a smaller roster silently ran off both
  * edges of the canvas once the underlying data grew (12 Compendium classes
  * at 138px each, 10 category tabs at 138px each — both well past 1280px
- * wide). `maxWidth` (default: canvas width minus a 40px margin each side)
- * shrinks every item evenly to fit instead; callers use the returned
+ * wide). `maxWidth` (callers pass canvas width minus a 40px margin each
+ * side) shrinks every item evenly to fit instead; callers use the returned
  * `itemWidth` to size their button/box so the drawn box always matches the
  * positions actually used.
+ *
+ * D-157: this function has no `scene` parameter, so its `maxWidth` default
+ * can't read a live viewport — every call site now passes an explicit
+ * `maxWidth` derived from its own already-in-scope live width instead of
+ * relying on a default. The parameter (and its old `GAME_WIDTH`-derived
+ * default) stays for now as a documented fallback, not because anything
+ * still uses it.
  */
 export function centeredRowX(
   count: number,
@@ -261,11 +268,20 @@ export function centeredRowX(
  * corner diamonds — replaces the previous flat `setBackgroundColor("#0e0e14")`
  * every menu-adjacent scene used. Drawn once at a low depth; callers add
  * their own content on top.
+ *
+ * D-157: reads the scene's live `scale.width`/`scale.height` instead of the
+ * fixed `GAME_WIDTH`/`GAME_HEIGHT` constants — under the old `Scale.FIT`
+ * these were always numerically identical, so this was a no-op change in
+ * behavior; under the new `Scale.RESIZE` cutover the real canvas size can
+ * now differ, and every caller already redraws this from scratch inside its
+ * own resize-triggered `rebuildLayout()`, so this alone makes the backdrop
+ * fill the true live canvas on every resize with no caller changes needed.
  */
 export function drawScreenBackdrop(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
+  const { width, height } = scene.scale;
   const g = scene.add.graphics().setDepth(-10);
   g.fillGradientStyle(COLORS.menuBgNear, COLORS.menuBgNear, COLORS.menuBgFar, COLORS.menuBgFar, 1, 1, 1, 1);
-  g.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  g.fillRect(0, 0, width, height);
 
   // Vignette: darken the four corners without an image asset — four soft
   // radial-ish blots via low-alpha filled circles, same "deterministic
@@ -273,19 +289,19 @@ export function drawScreenBackdrop(scene: Phaser.Scene): Phaser.GameObjects.Grap
   g.fillStyle(COLORS.menuVignette, 0.35);
   const corners: [number, number][] = [
     [0, 0],
-    [GAME_WIDTH, 0],
-    [0, GAME_HEIGHT],
-    [GAME_WIDTH, GAME_HEIGHT],
+    [width, 0],
+    [0, height],
+    [width, height],
   ];
-  for (const [cx, cy] of corners) g.fillCircle(cx, cy, GAME_WIDTH * 0.42);
+  for (const [cx, cy] of corners) g.fillCircle(cx, cy, width * 0.42);
 
   // An inset double frame with corner diamonds — the "carved border" look
   // an ornate menu screen needs, cheap to draw, no asset required.
   const margin = 18;
   g.lineStyle(3, COLORS.bronze, 0.9);
-  g.strokeRect(margin, margin, GAME_WIDTH - margin * 2, GAME_HEIGHT - margin * 2);
+  g.strokeRect(margin, margin, width - margin * 2, height - margin * 2);
   g.lineStyle(1, COLORS.bronzeDark, 0.8);
-  g.strokeRect(margin + 8, margin + 8, GAME_WIDTH - (margin + 8) * 2, GAME_HEIGHT - (margin + 8) * 2);
+  g.strokeRect(margin + 8, margin + 8, width - (margin + 8) * 2, height - (margin + 8) * 2);
   for (const [cx, cy] of corners) {
     const dx = cx === 0 ? margin + 8 : -margin - 8;
     const dy = cy === 0 ? margin + 8 : -margin - 8;
@@ -294,16 +310,26 @@ export function drawScreenBackdrop(scene: Phaser.Scene): Phaser.GameObjects.Grap
   return g;
 }
 
-/** A small drifting-ember/dust-mote ambience layer — cheap atmosphere, no image asset. Deterministic starting positions (this project's stated preference over per-run randomness for anything visual). */
+/**
+ * A small drifting-ember/dust-mote ambience layer — cheap atmosphere, no
+ * image asset. Deterministic starting positions (this project's stated
+ * preference over per-run randomness for anything visual).
+ *
+ * D-157: same live-viewport fix as `drawScreenBackdrop` above — reads the
+ * scene's real `scale.width`/`scale.height` instead of the fixed
+ * `GAME_WIDTH`/`GAME_HEIGHT` constants, so motes spread across the whole
+ * live canvas once `Scale.RESIZE` makes that differ from 1280x1080.
+ */
 export function spawnAmbientMotes(scene: Phaser.Scene, count = 16): Phaser.GameObjects.GameObject[] {
+  const { width, height } = scene.scale;
   const motes: Phaser.GameObjects.GameObject[] = [];
   for (let i = 0; i < count; i++) {
     // A fixed, spread-out deterministic layout (golden-angle placement) —
     // looks organically scattered without calling RandomService (a gameplay
     // system this purely-cosmetic loop has no business touching).
     const angle = i * 137.5;
-    const x = (Math.abs(Math.sin(angle)) * GAME_WIDTH * 0.94 + GAME_WIDTH * 0.03) % GAME_WIDTH;
-    const y = GAME_HEIGHT - ((i * 97) % GAME_HEIGHT);
+    const x = (Math.abs(Math.sin(angle)) * width * 0.94 + width * 0.03) % width;
+    const y = height - ((i * 97) % height);
     const size = 1.5 + (i % 4) * 0.6;
     const dot = scene.add.circle(x, y, size, COLORS.gilt, 0.35 + (i % 3) * 0.1).setDepth(-5);
     motes.push(dot);
@@ -316,7 +342,7 @@ export function spawnAmbientMotes(scene: Phaser.Scene, count = 16): Phaser.GameO
       repeat: -1,
       ease: "Sine.easeInOut",
       onRepeat: () => {
-        dot.y = GAME_HEIGHT + 20;
+        dot.y = height + 20;
         dot.setAlpha(0.35 + (i % 3) * 0.1);
       },
     });
@@ -340,6 +366,31 @@ export function createSectionLabel(scene: Phaser.Scene, x: number, y: number, te
     })
     .setOrigin(0.5)
     .setDepth(depth);
+}
+
+/**
+ * D-154: the start of a shared responsive-layout convention. Reads the
+ * scene's OWN live canvas size rather than the fixed `GAME_WIDTH`/
+ * `GAME_HEIGHT` constants. D-157 flipped the game over to `Scale.RESIZE`
+ * (see `main.ts`), so outside of `BattleScene` (deliberately locked back to
+ * a fixed `Scale.FIT` 1280x1080 for now — see `BattleScene.create()`) this
+ * now reflects the real live browser window size, not a constant.
+ */
+export function getViewport(scene: Phaser.Scene): { width: number; height: number } {
+  return { width: scene.scale.width, height: scene.scale.height };
+}
+
+/**
+ * Registers `rebuild` to run whenever the scene's canvas size changes, and
+ * unregisters it on scene shutdown so a stale handler never fires against a
+ * torn-down scene. D-157: now that `Scale.RESIZE` is live (outside
+ * `BattleScene`), this fires on a REAL window resize with `getViewport`
+ * returning the new live size, not just a harmless no-op CSS-scale event.
+ */
+export function onViewportResize(scene: Phaser.Scene, rebuild: () => void): void {
+  const handler = (): void => rebuild();
+  scene.scale.on(Phaser.Scale.Events.RESIZE, handler);
+  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => scene.scale.off(Phaser.Scale.Events.RESIZE, handler));
 }
 
 /**

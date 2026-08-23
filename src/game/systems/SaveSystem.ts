@@ -174,6 +174,56 @@ export function getSaveSlot(file: SaveFile, slotId: string): SaveSlot | undefine
   return file.slots.find((s) => s.id === slotId);
 }
 
+export interface SavePartyInput {
+  loadedSlotId: string | undefined;
+  builds: CharacterBuild[];
+  partySize: number;
+  difficultyId: DifficultyId;
+  /** Caller-supplied timestamp (e.g. `Date.now()`) — kept out of this pure function so it stays deterministically testable. */
+  now: number;
+}
+
+export interface SavePartyResult {
+  file: SaveFile;
+  slotId: string;
+  slotName: string;
+  createdNew: boolean;
+}
+
+/**
+ * D-152: the create-or-update decision `CharacterCreationScene.onSaveParty`
+ * and the in-battle pause menu's "Save Party" both need — update the
+ * already-loaded slot if there is one, else create a new one (capped at
+ * `MAX_SAVE_SLOTS`), so both callers share one tested decision instead of
+ * duplicating it. Returns `null` when a new slot was needed but the cap is
+ * already reached, or when `loadedSlotId` doesn't match any existing slot.
+ */
+export function saveOrUpdatePartySlot(file: SaveFile, input: SavePartyInput): SavePartyResult | null {
+  if (input.loadedSlotId) {
+    const updated = updateSaveSlot(file, input.loadedSlotId, {
+      party: input.builds,
+      partySize: input.partySize,
+      difficultyId: input.difficultyId,
+      updatedAt: input.now,
+    });
+    const slot = getSaveSlot(updated, input.loadedSlotId);
+    if (!slot) return null;
+    return { file: updated, slotId: slot.id, slotName: slot.name, createdNew: false };
+  }
+  if (file.slots.length >= MAX_SAVE_SLOTS) return null;
+  const id = `save-${input.now}`;
+  const name = `${input.builds[0].name}'s Party`;
+  const created = createSaveSlot(file, {
+    id,
+    name,
+    createdAt: input.now,
+    party: input.builds,
+    partySize: input.partySize,
+    difficultyId: input.difficultyId,
+  });
+  return { file: created, slotId: id, slotName: name, createdNew: true };
+}
+
 /**
  * Insert or replace a slot WHOLESALE, preserving every one of its own
  * fields (including its own `createdAt`/`updatedAt`) — unlike

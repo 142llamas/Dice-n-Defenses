@@ -125,4 +125,11 @@ export interface HeroDefinition {
   preparedSpellIds?: string[];
   knownCantripIds?: string[];
   spellbookIds?: string[];
+  /**
+   * D-148: this hero's curated action hotkey bar, set by
+   * `heroDefinitionFromBuild` from `CharacterBuild.actionHotkeys`. Undefined
+   * means every slot starts empty — every existing definition/caller is
+   * unaffected. See `BattleScene.buildHeroes`.
+   */
+  actionHotkeys?: (string | undefined | null)[];
 }

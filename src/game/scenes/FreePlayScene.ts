@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { GAME_WIDTH, CAMPAIGN_PROGRESS_STORAGE_KEY } from "../config";
+import { CAMPAIGN_PROGRESS_STORAGE_KEY } from "../config";
 import { TEST_MAP } from "../data/testMap";
 import { EMBERFORD_MAP } from "../data/emberfordMap";
 import { SALTMERE_MAP } from "../data/saltmereMap";
@@ -12,6 +12,7 @@ import { getCampaignDefinition } from "../data/campaigns";
 import { loadCampaignProgress, isCampaignCompleted } from "../systems/CampaignProgressSystem";
 import { DIFFICULTY_IDS, getDifficultyDefinition, type DifficultyId } from "../data/difficulty";
 import { generateFreePlayWaves } from "../systems/FreePlayWaveGenerator";
+import { getViewport, onViewportResize } from "./uiTheme";
 
 /**
  * FreePlayScene — Phase 11.9 (D-071): a config screen for free-play mode
@@ -161,6 +162,7 @@ export class FreePlayScene extends Phaser.Scene {
   private selectedWaveCount = 7;
   private selectedMinionSource: MinionSource = "standard";
   private selectedDifficultyId: DifficultyId = "normal";
+  private layoutRoot?: Phaser.GameObjects.Container;
 
   constructor() {
     super("FreePlayScene");
@@ -174,8 +176,26 @@ export class FreePlayScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor("#0e0e14");
 
+    this.rebuildLayout();
+
+    this.input.keyboard?.on("keydown-ESC", () => this.leave());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.input.removeAllListeners();
+      this.input.keyboard?.removeAllListeners();
+    });
+    onViewportResize(this, () => this.rebuildLayout());
+  }
+
+  // D-154: rebuilds this scene's whole layout against the current viewport,
+  // reusing the existing build methods verbatim (snapshot-diff into a fresh
+  // container, same convention `LoadGameScene`/`CampaignSelectScene` established).
+  private rebuildLayout(): void {
+    this.layoutRoot?.destroy();
+    const before = new Set<Phaser.GameObjects.GameObject>(this.children.list);
+    const { width } = getViewport(this);
+
     this.add
-      .text(GAME_WIDTH / 2, 40, "Free Play", {
+      .text(width / 2, 40, "Free Play", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "36px",
         color: "#e8e8f0",
@@ -187,25 +207,23 @@ export class FreePlayScene extends Phaser.Scene {
 
     this.add
       .text(
-        GAME_WIDTH / 2,
+        width / 2,
         90,
         "Mix and match: pick a map, a finale boss, a wave count, a minion pool, and a difficulty, then Start.",
         { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#8a8aa0" },
       )
       .setOrigin(0.5);
 
-    this.buildMapSection(130);
-    this.buildBossSection(255);
-    this.buildWaveCountSection(370);
-    this.buildMinionSection(460);
-    this.buildDifficultySection(550);
-    this.buildStartButton(650);
+    this.buildMapSection(width, 130);
+    this.buildBossSection(width, 255);
+    this.buildWaveCountSection(width, 370);
+    this.buildMinionSection(width, 460);
+    this.buildDifficultySection(width, 550);
+    this.buildStartButton(width, 650);
 
-    this.input.keyboard?.on("keydown-ESC", () => this.leave());
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.input.removeAllListeners();
-      this.input.keyboard?.removeAllListeners();
-    });
+    const created = this.children.list.filter((c) => !before.has(c));
+    this.layoutRoot = this.add.container(0, 0);
+    this.layoutRoot.add(created);
 
     this.refreshAll();
   }
@@ -255,16 +273,17 @@ export class FreePlayScene extends Phaser.Scene {
    * D-046/D-055/D-085.
    */
   private buildOptionRow(
+    width: number,
     y: number,
     options: GatedOption[],
     onSelect: (id: string) => void,
   ): OptionButton[] {
-    const maxTotalWidth = 1180; // GAME_WIDTH (1280) minus a 100px margin
+    const maxTotalWidth = width - 100; // matches the original 1280-wide 1180 margin
     const gap = 20;
     const w = Math.min(380, (maxTotalWidth - (options.length - 1) * gap) / options.length);
     const baseH = 56;
     const totalWidth = options.length * w + (options.length - 1) * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const startX = width / 2 - totalWidth / 2 + w / 2;
     // Playtest fix: the label had no wordWrap (only the locked hint below it
     // did), so a real map/boss name ("Cinderfall Rift (volcanic, collapsing
     // bridge)", "The Hollow Empress") rendered at a fixed 16px overflowed a
@@ -328,39 +347,39 @@ export class FreePlayScene extends Phaser.Scene {
     });
   }
 
-  private buildMapSection(labelY: number): void {
+  private buildMapSection(width: number, labelY: number): void {
     this.add
-      .text(GAME_WIDTH / 2, labelY, "Map", {
+      .text(width / 2, labelY, "Map", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#c8c8d8",
         fontStyle: "bold",
       })
       .setOrigin(0.5);
-    this.mapButtons = this.buildOptionRow(labelY + 40, MAP_OPTIONS, (id) => {
+    this.mapButtons = this.buildOptionRow(width, labelY + 40, MAP_OPTIONS, (id) => {
       this.selectedMapId = id;
       this.refreshAll();
     });
   }
 
-  private buildBossSection(labelY: number): void {
+  private buildBossSection(width: number, labelY: number): void {
     this.add
-      .text(GAME_WIDTH / 2, labelY, "Finale Boss", {
+      .text(width / 2, labelY, "Finale Boss", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#c8c8d8",
         fontStyle: "bold",
       })
       .setOrigin(0.5);
-    this.bossButtons = this.buildOptionRow(labelY + 40, BOSS_OPTIONS, (id) => {
+    this.bossButtons = this.buildOptionRow(width, labelY + 40, BOSS_OPTIONS, (id) => {
       this.selectedBossId = id;
       this.refreshAll();
     });
   }
 
-  private buildWaveCountSection(labelY: number): void {
+  private buildWaveCountSection(width: number, labelY: number): void {
     this.add
-      .text(GAME_WIDTH / 2, labelY, "Wave Count", {
+      .text(width / 2, labelY, "Wave Count", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#c8c8d8",
@@ -372,7 +391,7 @@ export class FreePlayScene extends Phaser.Scene {
     const h = 44;
     const gap = 20;
     const totalWidth = WAVE_COUNT_PRESETS.length * w + (WAVE_COUNT_PRESETS.length - 1) * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const startX = width / 2 - totalWidth / 2 + w / 2;
     const y = labelY + 40;
 
     this.waveCountButtons = WAVE_COUNT_PRESETS.map((preset, i) => {
@@ -392,9 +411,9 @@ export class FreePlayScene extends Phaser.Scene {
     });
   }
 
-  private buildMinionSection(labelY: number): void {
+  private buildMinionSection(width: number, labelY: number): void {
     this.add
-      .text(GAME_WIDTH / 2, labelY, "Minion Source", {
+      .text(width / 2, labelY, "Minion Source", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#c8c8d8",
@@ -410,7 +429,7 @@ export class FreePlayScene extends Phaser.Scene {
     const h = 44;
     const gap = 30;
     const totalWidth = options.length * w + (options.length - 1) * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const startX = width / 2 - totalWidth / 2 + w / 2;
     const y = labelY + 40;
 
     this.minionButtons = options.map((opt, i) => {
@@ -431,9 +450,9 @@ export class FreePlayScene extends Phaser.Scene {
   }
 
   /** Reuses `CharacterCreationScene`'s existing difficulty-picker pattern: one button that cycles the tier. */
-  private buildDifficultySection(labelY: number): void {
+  private buildDifficultySection(width: number, labelY: number): void {
     this.add
-      .text(GAME_WIDTH / 2, labelY, "Difficulty", {
+      .text(width / 2, labelY, "Difficulty", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#c8c8d8",
@@ -443,11 +462,11 @@ export class FreePlayScene extends Phaser.Scene {
 
     const y = labelY + 40;
     this.difficultyButton = this.add
-      .rectangle(GAME_WIDTH / 2, y, 280, 40, 0x2a2a3a)
+      .rectangle(width / 2, y, 280, 40, 0x2a2a3a)
       .setStrokeStyle(1, 0x4a4a5a)
       .setInteractive({ useHandCursor: true });
     this.difficultyLabel = this.add
-      .text(GAME_WIDTH / 2, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e8e8f0" })
+      .text(width / 2, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e8e8f0" })
       .setOrigin(0.5);
     this.difficultyButton.on("pointerover", () => this.difficultyButton.setFillStyle(0x3a3a4a));
     this.difficultyButton.on("pointerout", () => this.difficultyButton.setFillStyle(0x2a2a3a));
@@ -458,12 +477,12 @@ export class FreePlayScene extends Phaser.Scene {
     });
   }
 
-  private buildStartButton(y: number): void {
+  private buildStartButton(width: number, y: number): void {
     this.startButton = this.add
-      .rectangle(GAME_WIDTH / 2, y, 260, 54, 0x4caf72)
+      .rectangle(width / 2, y, 260, 54, 0x4caf72)
       .setInteractive({ useHandCursor: true });
     this.add
-      .text(GAME_WIDTH / 2, y, "Start", {
+      .text(width / 2, y, "Start", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "20px",
         color: "#0e0e14",

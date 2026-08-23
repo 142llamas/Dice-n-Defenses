@@ -108,6 +108,11 @@ export const COLORS = {
   buildValid: 0x6ad08a, // ghost preview on a legal build tile
   buildInvalid: 0xd06a6a, // ghost preview on an illegal build tile
   trapFlash: 0xffb0c8, // brief flash when a trap hurts an enemy
+  // Phase 22 (magic-item expansion), D-151: the Cape of Billowing's drawn
+  // cape graphic (`BattleScene.updateHeroCapes`) was wrongly reusing
+  // `heroActive` (the selection-highlight color) — its own dedicated color,
+  // a deep placeholder red, until real art exists.
+  capeBillowingPlaceholder: 0xb0202a,
   // D-119 (dialogue box): a stylized parchment-look panel for chapter-
   // boundary story text, drawn with Graphics rather than an image asset
   // (matches Phase 22's Cape of Billowing precedent — real drawing code

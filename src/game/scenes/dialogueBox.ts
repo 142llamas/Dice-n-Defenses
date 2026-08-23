@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { GAME_WIDTH, GAME_HEIGHT, COLORS } from "../config";
+import { COLORS } from "../config";
 import { canSkipSequence, type DialogueLine } from "../systems/DialogueSystem";
 
 /**
@@ -104,8 +104,15 @@ export class DialogueBoxController {
 
   private build(): void {
     const { scene } = this;
-    const cx = GAME_WIDTH / 2;
-    const cy = GAME_HEIGHT / 2;
+    // D-157: reads the scene's live canvas size (was fixed GAME_WIDTH/
+    // GAME_HEIGHT) so the scrim fills the true canvas post-Scale.RESIZE.
+    // Known limitation, same as CharacterCreationScene's wizard overlay: a
+    // resize firing while this dialogue is already open won't re-size an
+    // already-drawn scrim (only a fresh `build()`/`renderLine()` reads the
+    // live size) — not fixed here, since this box is dismissed/advanced far
+    // more often than a browser window is actually resized mid-read.
+    const cx = scene.scale.width / 2;
+    const cy = scene.scale.height / 2;
 
     // Clicking anywhere on the dim background also advances (D-120's "skip
     // past the current screen" ask) — topOnly input (Phaser's default)
@@ -113,7 +120,7 @@ export class DialogueBoxController {
     // never double-counted here, as long as those stay at a higher depth
     // than this scrim.
     const scrim = scene.add
-      .rectangle(cx, cy, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65)
+      .rectangle(cx, cy, scene.scale.width, scene.scale.height, 0x000000, 0.65)
       .setDepth(40)
       .setInteractive();
     scrim.on("pointerdown", () => this.advance());
@@ -261,8 +268,8 @@ export class DialogueBoxController {
 
   private renderLine(): void {
     const line = this.lines[this.index];
-    const cx = GAME_WIDTH / 2;
-    const cy = GAME_HEIGHT / 2;
+    const cx = this.scene.scale.width / 2;
+    const cy = this.scene.scale.height / 2;
     const hasPortrait = !!line.speakerName;
 
     this.portraitFrame.setVisible(hasPortrait);

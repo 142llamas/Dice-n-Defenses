@@ -22,15 +22,19 @@ export interface SkillDefinition {
   description: string;
 }
 
+// D-150: alphabetical by name (Kevin's Compendium-organization request) — the
+// only consumer of this array's order is the Compendium's own Skills tab;
+// `SKILL_PROFICIENCIES_BY_CLASS` and every other lookup here is keyed by id,
+// not position, so reordering is safe.
 export const SKILL_ORDER = [
-  "athletics",
   "acrobatics",
-  "stealth",
+  "athletics",
+  "insight",
+  "intimidation",
   "investigation",
   "perception",
-  "insight",
   "persuasion",
-  "intimidation",
+  "stealth",
 ] as const;
 
 export const SKILLS: Record<string, SkillDefinition> = {

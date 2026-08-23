@@ -1,6 +1,6 @@
 import Phaser from "phaser";
-import { GAME_WIDTH } from "../config";
 import { firebaseReady } from "../cloud/firebaseApp";
+import { getViewport, onViewportResize } from "./uiTheme";
 import { initAuth, type AuthState } from "../cloud/AuthClient";
 import { createSession, joinSession, subscribeToSession, deleteSession, startBattle } from "../cloud/CoopSessionSync";
 import {
@@ -71,6 +71,15 @@ export class CoopLobbyScene extends Phaser.Scene {
   private choiceObjects: Phaser.GameObjects.GameObject[] = [];
   private joinObjects: Phaser.GameObjects.GameObject[] = [];
   private sessionObjects: Phaser.GameObjects.GameObject[] = [];
+  // D-154: every object in this scene is built ONCE in `create()` and only
+  // ever toggled visible/text-updated afterward (never destroyed and
+  // recreated) — this scene's join-code `<input>` is a real DOM element that
+  // would drop whatever the player already typed (and keyboard focus) if
+  // rebuilt from scratch, so unlike every other scene converted this
+  // session, resize-reactivity here means REPOSITIONING existing objects in
+  // place, not a destroy-and-recreate `rebuildLayout()`. Each entry is an
+  // object centered at `viewportWidth / 2 + dx` at a fixed `y`.
+  private centeredObjects: { obj: { setPosition(x: number, y: number): unknown }; dx: number; y: number }[] = [];
 
   constructor() {
     super("CoopLobbyScene");
@@ -92,50 +101,64 @@ export class CoopLobbyScene extends Phaser.Scene {
     this.choiceObjects = [];
     this.joinObjects = [];
     this.sessionObjects = [];
+    this.centeredObjects = [];
 
     this.cameras.main.setBackgroundColor("#0e0e14");
+    const cx = getViewport(this).width / 2;
 
-    this.add
-      .text(GAME_WIDTH / 2, 40, "Cooperative Play", {
+    const title = this.add
+      .text(cx, 40, "Cooperative Play", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "36px",
         color: "#e8e8f0",
         fontStyle: "bold",
       })
       .setOrigin(0.5);
+    this.centeredObjects.push({ obj: title, dx: 0, y: 40 });
 
     this.buildSmallButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
     this.input.keyboard?.on("keydown-ESC", () => this.leave());
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardown());
+    onViewportResize(this, () => this.repositionLayout());
 
     if (!firebaseReady) {
-      this.add
-        .text(GAME_WIDTH / 2, 200, "Cooperative play needs a configured Firebase project.", {
+      const notice = this.add
+        .text(cx, 200, "Cooperative play needs a configured Firebase project.", {
           fontFamily: "system-ui, Arial, sans-serif",
           fontSize: "16px",
           color: "#e0a860",
         })
         .setOrigin(0.5);
+      this.centeredObjects.push({ obj: notice, dx: 0, y: 200 });
       return;
     }
 
     this.statusText = this.add
-      .text(GAME_WIDTH / 2, 130, "Connecting…", {
+      .text(cx, 130, "Connecting…", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#8a8aa0",
       })
       .setOrigin(0.5);
+    this.centeredObjects.push({ obj: this.statusText, dx: 0, y: 130 });
 
     initAuth((state) => {
       this.authState = state;
       this.refresh();
     });
 
-    this.buildChoiceSection();
-    this.buildJoinSection();
-    this.buildSessionSection();
+    this.buildChoiceSection(cx);
+    this.buildJoinSection(cx);
+    this.buildSessionSection(cx);
     this.refresh();
+  }
+
+  // D-154: moves every registered object back to `viewportWidth / 2 + dx` at
+  // its own fixed `y` — safe to call anytime (including on the DOM `<input>`,
+  // which keeps its typed value and focus since it's never rebuilt).
+  private repositionLayout(): void {
+    const cx = getViewport(this).width / 2;
+    for (const { obj, dx, y } of this.centeredObjects) obj.setPosition(cx + dx, y);
   }
 
   private teardown(): void {
@@ -172,10 +195,10 @@ export class CoopLobbyScene extends Phaser.Scene {
     return { rect, label };
   }
 
-  private buildChoiceSection(): void {
+  private buildChoiceSection(cx: number): void {
     const y = 220;
     const { rect: createRect, label: createLabel } = this.buildSmallButton(
-      GAME_WIDTH / 2 - 170,
+      cx - 170,
       y,
       300,
       54,
@@ -184,9 +207,10 @@ export class CoopLobbyScene extends Phaser.Scene {
       () => this.onCreateSession(),
     );
     this.createButton = createRect;
+    this.centeredObjects.push({ obj: createRect, dx: -170, y }, { obj: createLabel, dx: -170, y });
 
     const { rect: joinRect, label: joinLabel } = this.buildSmallButton(
-      GAME_WIDTH / 2 + 170,
+      cx + 170,
       y,
       300,
       54,
@@ -198,14 +222,15 @@ export class CoopLobbyScene extends Phaser.Scene {
       },
     );
     this.joinButton = joinRect;
+    this.centeredObjects.push({ obj: joinRect, dx: 170, y }, { obj: joinLabel, dx: 170, y });
 
     this.choiceObjects = [createRect, createLabel, joinRect, joinLabel];
   }
 
-  private buildJoinSection(): void {
+  private buildJoinSection(cx: number): void {
     const y = 310;
     const inputDom = this.add
-      .dom(GAME_WIDTH / 2 - 100, y)
+      .dom(cx - 100, y)
       .createFromHTML(
         `<input type="text" maxlength="${SESSION_CODE_LENGTH}" placeholder="CODE" style="
           width: 160px; height: 44px; font-size: 22px; font-family: monospace;
@@ -224,18 +249,20 @@ export class CoopLobbyScene extends Phaser.Scene {
       if (e.key === "Enter") this.onSubmitJoinCode();
     });
     this.joinCodeInput = inputDom;
+    this.centeredObjects.push({ obj: inputDom, dx: -100, y });
 
-    const { rect, label } = this.buildSmallButton(GAME_WIDTH / 2 + 110, y, 160, 44, "Join", 0x4caf72, () =>
+    const { rect, label } = this.buildSmallButton(cx + 110, y, 160, 44, "Join", 0x4caf72, () =>
       this.onSubmitJoinCode(),
     );
     this.joinSubmitButton = rect;
+    this.centeredObjects.push({ obj: rect, dx: 110, y }, { obj: label, dx: 110, y });
 
     this.joinObjects = [inputDom, rect, label];
   }
 
-  private buildSessionSection(): void {
+  private buildSessionSection(cx: number): void {
     this.sessionCodeText = this.add
-      .text(GAME_WIDTH / 2, 260, "", {
+      .text(cx, 260, "", {
         fontFamily: "monospace",
         fontSize: "48px",
         color: "#e8e8f0",
@@ -243,18 +270,20 @@ export class CoopLobbyScene extends Phaser.Scene {
         letterSpacing: 6,
       } as Phaser.Types.GameObjects.Text.TextStyle)
       .setOrigin(0.5);
+    this.centeredObjects.push({ obj: this.sessionCodeText, dx: 0, y: 260 });
 
     this.participantsText = this.add
-      .text(GAME_WIDTH / 2, 340, "", {
+      .text(cx, 340, "", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "18px",
         color: "#c8c8d8",
         align: "center",
       })
       .setOrigin(0.5);
+    this.centeredObjects.push({ obj: this.participantsText, dx: 0, y: 340 });
 
     const { rect: startRect, label: startLabel } = this.buildSmallButton(
-      GAME_WIDTH / 2,
+      cx,
       400,
       260,
       48,
@@ -264,10 +293,12 @@ export class CoopLobbyScene extends Phaser.Scene {
     );
     this.startBattleButton = startRect;
     this.startBattleLabel = startLabel;
+    this.centeredObjects.push({ obj: startRect, dx: 0, y: 400 }, { obj: startLabel, dx: 0, y: 400 });
 
-    const { rect, label } = this.buildSmallButton(GAME_WIDTH / 2, 460, 220, 44, "Leave", 0x8a3a3a, () =>
+    const { rect, label } = this.buildSmallButton(cx, 460, 220, 44, "Leave", 0x8a3a3a, () =>
       this.onLeaveSession(),
     );
+    this.centeredObjects.push({ obj: rect, dx: 0, y: 460 }, { obj: label, dx: 0, y: 460 });
 
     this.sessionObjects = [this.sessionCodeText, this.participantsText, startRect, startLabel, rect, label];
   }

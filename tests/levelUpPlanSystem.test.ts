@@ -5,11 +5,13 @@ import {
   emptyLevelUpPlan,
   fastForwardHero,
   futureChoiceSteps,
+  levelUpDeltaSummary,
   resolveAsiForLevel,
   resolveSpellPickForRequest,
   resolveSubclassForClass,
   simulateHeroForPlanning,
   type LevelUpPlan,
+  type LevelUpStatSnapshot,
 } from "../src/game/systems/LevelUpPlanSystem";
 
 /**
@@ -210,5 +212,44 @@ describe("futureChoiceSteps (D-133)", () => {
     const steps = futureChoiceSteps("fighter");
     const levels = steps.map((s) => s.level);
     expect(levels).toEqual([...levels].sort((a, b) => a - b));
+  });
+});
+
+describe("levelUpDeltaSummary (D-148)", () => {
+  const snapshot = (overrides: Partial<LevelUpStatSnapshot> = {}): LevelUpStatSnapshot => ({
+    maxHealth: 10,
+    armorClass: 15,
+    attackBonus: 4,
+    ...overrides,
+  });
+
+  it("reports an HP increase with an explicit + sign", () => {
+    const summary = levelUpDeltaSummary(snapshot(), snapshot({ maxHealth: 16 }), undefined, 2);
+    expect(summary).toBe("+6 max HP");
+  });
+
+  it("reports an AC change as before→after", () => {
+    const summary = levelUpDeltaSummary(snapshot(), snapshot({ armorClass: 16 }), undefined, 2);
+    expect(summary).toBe("AC 15→16");
+  });
+
+  it("reports an attack bonus change with signs on both sides", () => {
+    const summary = levelUpDeltaSummary(snapshot(), snapshot({ attackBonus: 5 }), undefined, 2);
+    expect(summary).toBe("attack +4→+5");
+  });
+
+  it("names every class feature gained at the new level, real Fighter data (Action Surge at level 2)", () => {
+    const summary = levelUpDeltaSummary(snapshot(), snapshot({ maxHealth: 16 }), "fighter", 2);
+    expect(summary).toBe("+6 max HP, new feature: Action Surge");
+  });
+
+  it("falls back to a plain no-change message when nothing moved", () => {
+    const summary = levelUpDeltaSummary(snapshot(), snapshot(), undefined, 2);
+    expect(summary).toBe("No stat changes this level.");
+  });
+
+  it("omits feature text when classId is undefined (the classic fixed roster)", () => {
+    const summary = levelUpDeltaSummary(snapshot(), snapshot({ maxHealth: 16 }), undefined, 3);
+    expect(summary).toBe("+6 max HP");
   });
 });

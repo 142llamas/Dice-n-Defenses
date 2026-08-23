@@ -2,216 +2,213 @@
 
 ## Version and phase
 
-- **Version:** 0.2.0-dev, unchanged. This session built **D-146** — two
-  pieces: (1) Enemy AI/Movement Redesign step 7, §3's AoE half: smart
-  breath-weapon positioning for high-tier AoE enemies, and (2) a NEW
-  mechanic Kevin raised in the same session, not originally part of the
-  redesign spec — self-defense (provoked retaliation), so an enemy that's
-  absorbing hits from a hero while doing something else (bashing a wall,
-  disarming a trap) fights back instead of ignoring its attacker.
-- **Date:** August 20, 2026 (same day as D-145). Continues the Enemy
-  AI/Movement Redesign sessions of August 19 (D-139 through D-143) and
-  earlier today (D-145) at the suggested next step; D-144 (drag-and-drop
-  hero move) remains a separate, unrelated feature still awaiting Kevin's
-  own in-browser pass (KI-095) — nothing here touches or depends on it.
-- Tests: 1292 → **1299** (+7, all in `tests/enemyEngagementRedesign.test.ts`).
-  Typecheck, all 1299 tests, and the production build (119 modules,
-  unchanged — no new files) all pass. `npm run dev` was NOT re-checked this
-  session — the only rendering-layer touch is a one-line addition inside an
-  existing function (`BattleScene.showHeroHit`), no new input/rendering
-  wiring.
+- **Version:** 0.2.0-dev, unchanged. This session built **D-158**: KI-034's
+  redesign — replaced `BattleScene`'s packed bottom status/hint line with a
+  real hero roster strip, a much smaller contextual message line, and hover
+  tooltips for item descriptions.
+- **Date:** August 22, 2026 (same day as D-154 through D-157, the 11th
+  decision logged in this long multi-day session).
+- Tests: unchanged at **1349** — presentation-layer-only pass, no new pure-
+  system rule, no new test file needed (`BattleScene.ts` has zero test
+  coverage by this project's own architecture rule). Typecheck, all 1349
+  tests, and the production build (126 modules, unchanged — no new files)
+  all pass. `npm run dev` + an HTTP check confirmed the server boots (200).
 
-## D-146: smart AoE positioning + self-defense — what it is
+## What Kevin picked this session
 
-Read **D-146** in `DECISIONS.md` for the full write-up. In short:
+Asked directly (again) whether to scope KI-034 or keep going on the
+responsive-canvas roadmap — this time, after a fourth confirmed mention, he
+picked **KI-034**. Offered three concrete redesign directions with ASCII
+mockups (roster strip + short hint / roster strip + help-on-demand /
+contextual action bar with real buttons); he picked the **contextual action
+bar** direction. Given the size and delicacy of rewriting live, untestable
+battle UI, this went through `EnterPlanMode` before any code changed — see
+the approved plan's reasoning (also captured in full in `DECISIONS.md`
+D-158) for why most of the old hint text turned out to already be redundant
+with something else on screen.
 
-**Smart AoE/breath positioning** (closes the redesign's last pure-systems
-piece, §3's AoE half):
+## D-158: what it is (see D-158 in DECISIONS.md for the complete writeup)
 
-- **`WaveSystem.qualifiesForSmartPositioning`** (new, private static): true
-  for an `activeDef.aoeAttack` enemy whose `role` is `"boss"` or
-  `"legendary"` — reusing `role` as this project's existing tier concept.
-  Minion-tier AoE enemies (Cave Drake, Frost Warden) keep the old simple
-  behavior unchanged.
-- **`PathfindingSystem.reachableTiles`** (new): every tile reachable within
-  a movement budget, each carrying its exact cumulative distance — for
-  comparing many candidate stop tiles at once (unlike `routeToNearestGoal`,
-  which targets one goal). Includes the start tile itself at distance 0.
-- **`WaveSystem.bestPositioningTile`** (new, private static): among those
-  tiles, the one hitting the most heroes within `attackRangeTiles` at
-  once — null if the best any tile can do is 1 or fewer.
-- Wired as the FIRST check inside `tickEnemyPhase`'s existing
-  `canEngageHeroes` block, ahead of the §1/§2 detour/hunt logic — a
-  qualifying enemy with a beneficial tile walks there and fights from it,
-  even when nothing was otherwise blocking its path.
+1. **A real hero roster strip** — per-hero boxed widgets (name/level, a
+   green/yellow/red HP bar with exact numbers overlaid, a green border
+   matching the existing board-token selection-ring color when selected,
+   and a reserved-but-usually-blank AC/move/act/gear detail line for
+   whichever hero is selected) replaces the old packed `heroPart` text.
+   First HP-bar-style widget in this codebase — no prior convention
+   existed to match (confirmed via an Explore pass during planning).
+2. **`Enemies: N`** moved to a new small `enemyCountText` in the top HUD,
+   next to Integrity/Gold — updated directly inside `refreshStatus()` (not
+   folded into `updateHud()`, which runs at different, less frequent call
+   sites, to avoid it ever going stale).
+3. **A new, much smaller `messageText`** carries only what had no other
+   home: aiming-mode instructions (no Cancel button exists for those), the
+   `Tab: aim on board` / `Tab: pick item` keyboard-focus indicator
+   (genuinely non-obvious state, no other display surface — exactly what
+   KI-034's own checklist tests), Test Mode's 3 debug-picker one-liners,
+   and `rejectAt()`'s transient rejection messages (same "persists until
+   the next refresh" behavior as before, just isolated to its own line).
+4. **Building/equipping item-description previews moved to a hover
+   tooltip** — `setHoveredItem(id)` now calls the SAME shared
+   `this.tooltip` (D-132's `TooltipController`, already used for board-
+   tile/hero/enemy hover) instead of rebuilding text, positioned at the
+   hovered item's own button. Still driven by BOTH mouse `pointerover` and
+   keyboard grid-focus navigation — the exact dual-input wiring KI-034's
+   own checklist depends on, preserved deliberately. Fixed a related gap
+   while doing this: pressing Tab to enter the item grid used to bypass
+   this path entirely (it set the old field directly), so it never
+   previewed the newly-focused item until the next arrow key — now it does,
+   immediately.
+5. **Removed the fully-unused `hoveredItemId` field** — caught by `tsc`'s
+   unused-property check once every read site (all inside the deleted hint
+   text) was gone.
+6. **"How to Play"** gained one clause ("or press 1-4") — the only mention
+   of that hotkey left once the live hint's universal tail was removed.
 
-**Self-defense (provoked retaliation)** — a new mechanic, not in the
-original redesign spec, added at Kevin's explicit request this session:
-
-- **`Enemy.markProvoked()`/`.isProvoked`/`.clearProvoked()`** (new): a
-  single boolean, set by `BattleScene.showHeroHit` (already the one funnel
-  every hero-vs-enemy landed hit passes through for its flash flourish) and
-  consumed the instant that enemy's own turn in `tickEnemyPhase` begins —
-  genuinely temporary, never persisted.
-- **`WaveSystem.tickEnemyPhase`**: a provoked enemy (not `ignoresHeroes`)
-  still within a hero's attack range on its own turn fights that hero
-  instead of its usual unconditional priority action (siege wall, trap
-  disarm) — checked BEFORE those branches, then reverts to normal priority
-  the very next phase. No movement, no chase — attacks from wherever it
-  already stands, matching Kevin's literal ask.
-- **`ignoresHeroes` is the exemption** Kevin explicitly asked for (an "uber
-  powerful siege monster that literally doesn't care about the heroes at
-  all") — the existing pure-runner flag, reused as-is.
-
-**Next chat**: no browser pass is strictly required to verify the LOGIC
-(pure `WaveSystem`/`Enemy`/one-line `BattleScene` hook, fully covered by
-`tests/enemyEngagementRedesign.test.ts`'s new blocks), but the resulting
-gameplay FEEL — does a legendary's breath attack visibly reposition to
-catch multiple heroes, does a sieging enemy visibly turn and hit back when
-attacked — needs Kevin's own pass eventually. See **KI-097** in
-`KNOWN_ISSUES.md` for the checklist.
-
-## The Enemy AI/Movement Redesign is now closed except for one piece
-
-Every piece of the original design-session spec is now built EXCEPT:
-
-#### §4's last piece — Hero-side split-movement UI (the only step needing a browser pass)
-
-- The player needs a way to move partway, attack, then move again — touches
-  `BattleScene`'s input/turn-sequencing, not just the systems layer.
-  Sprint's hero-side half (a UI button) belongs here too.
-- Build the underlying numeric remaining-budget tracking on `Hero` TOGETHER
-  WITH this UI, not before it (the "no dead scaffolding" precedent).
-- **Worth noting**: D-144's drag-and-drop work already added real
-  multi-waypoint routing (`MovementSystem.routeThroughWaypoints`) and a
-  tween-based `moveHeroToken` — whoever builds this piece should check
-  whether either is directly reusable here, rather than duplicating them.
-  D-145's `bestWallTarget`/D-146's `bestPositioningTile` (both "evaluate
-  several candidates, walk toward the best one via `routeToNearestGoal` +
-  `walkAlongRoute`, letting the walk stop naturally at the first real
-  blocker") may also be a useful reference for how a hero-side "move, then
-  commit to attacking from wherever you land" step could be structured,
-  though the hero side has its own existing `MovementSystem`/`showRange`/
-  `showPath` machinery that isn't a direct parallel.
-
-If Kevin wants MORE self-defense/retaliation depth beyond what D-146 built
-(e.g. a numeric aggro score instead of a one-shot boolean, or a provoked
-enemy that chases rather than only fighting when already in range), that
-would be a fresh, separate design decision — D-146's own writeup in
-`DECISIONS.md` explains why the simpler one-shot-flag/in-range-only version
-was chosen (it's what Kevin literally described, and matches this
-project's "flat, untuned first-pass" convention for every other AI
-behavior number).
+**Deliberate, flagged tradeoff**: `idle`/`heroSelected`/`confirmingMove`'s
+old hints (move/attack color legend, "Ability (Q) · Potion (P) · Character
+(C)", "Confirm or Cancel the move") are gone entirely, not shortened —
+every piece already has a visible button label or board highlight. This
+relies on that being self-evident on a repeat playthrough, with "How to
+Play" (H) as the fallback. Kevin picked this direction knowing it was the
+outcome, not a default assumed on his behalf.
 
 ## Important files
 
-- **`src/game/systems/WaveSystem.ts`** (D-146) — new
-  `qualifiesForSmartPositioning`/`bestPositioningTile` (private static),
-  the smart-positioning branch inside the `canEngageHeroes` block (now also
-  gated `&& !forcedFight`), the new `hasProvokedTarget` computation +
-  `enemy.clearProvoked()` call right after the per-enemy loop's hoisted
-  variables, and `&& !hasProvokedTarget` added to the siege/`trapSense`
-  priority branches' conditions.
-- **`src/game/systems/PathfindingSystem.ts`** (D-146) — new
-  `reachableTiles` method.
-- **`src/game/entities/Enemy.ts`** (D-146) — new private `provoked` field
-  plus `isProvoked`/`markProvoked`/`clearProvoked`. Deliberately NOT part
-  of `EnemySnapshot` (same documented imprecision as `WaveSystem`'s other
-  per-instance timers).
-- **`src/game/scenes/BattleScene.ts`** (D-146) — one new line inside the
-  existing `showHeroHit` method (`enemy.markProvoked()`); no other call
-  site touched, no new call sites added.
-- **`tests/enemyEngagementRedesign.test.ts`** (D-146) — two new describe
-  blocks: `§3 (D-146): smart AoE/breath positioning for high-tier enemies`
-  (3 tests) and `Self-defense (D-146): a provoked enemy retaliates instead
-  of continuing its priority action` (4 tests).
+- **`src/game/scenes/BattleScene.ts`** — the only file touched:
+  - New fields: `heroSlotBoxes`/`heroSlotNameText`/`heroSlotHpBarBg`/
+    `heroSlotHpBarFg`/`heroSlotHpText`/`heroSlotDetailText` (parallel
+    arrays, one entry per roster slot), `enemyCountText`, `messageText`.
+    Removed: `statusText`, `hoveredItemId`.
+  - `buildHud()`: builds the roster-slot widgets + `enemyCountText` +
+    `messageText`; no longer builds a single wrapped `statusText`.
+  - New `layoutHeroSlots()`: called once at the end of `buildHud()`
+    (`buildHeroes()` already ran earlier in `create()`, so `this.heroes` is
+    final) — positions exactly `this.heroes.length` slots via
+    `centeredRowX` (newly imported from `./uiTheme`), hides the rest.
+  - `refreshStatus()`: rewritten — updates roster-slot content, HP bar
+    width via `.setSize()` (NOT a direct `.width =` assignment — Phaser
+    `Rectangle` shapes need `setSize()` to actually redraw their geometry),
+    `enemyCountText`, and `messageText`'s now much-shorter mode-dependent
+    content.
+  - `rejectAt()`: writes to `messageText` instead of the removed
+    `statusText`.
+  - `setHoveredItem()`: routes through `this.tooltip.showAt()`/`.hide()`.
+  - `setInteraction()`: calls `this.setHoveredItem(null)` (not a raw field
+    reset) so a stale tooltip is hidden on every mode change too.
+  - `toggleKeyboardFocus()`: calls `this.setHoveredItem(...)` (not a raw
+    field set) — the fix for item #4's Tab-into-grid gap above.
+  - `showTutorial()`: one added clause.
+  - No changes needed to `buildItemGrid`, `showShopUI`/`showEquipUI`/
+    `showDebugPickerUI`, or any other keyboard-focus/Tab logic.
 
 ## Commands verified
 
 - `npm run typecheck` — clean.
-- `npm test` — **1299/1299** passing (1292 → 1299, all new tests in
-  `tests/enemyEngagementRedesign.test.ts`).
-- `npm run build` — production build succeeds, 119 modules (unchanged).
-- `npm run dev` — NOT re-checked this session (no input/rendering wiring
-  changed beyond the one-line `showHeroHit` addition).
+- `npm test` — **1349/1349** passing (unchanged from last session).
+- `npm run build` — production build succeeds, 126 modules (unchanged — no
+  new files this pass).
+- `npm run dev` — booted and served HTTP 200.
 
 ## Manual tests completed
 
-None — pure `src/game/systems/`/`src/game/entities/Enemy.ts` work plus one
-line inside an existing `BattleScene.ts` method, fully covered by the new
-automated tests. The gameplay FEEL still needs Kevin's own in-browser
-pass — see **KI-097**'s checklist in `KNOWN_ISSUES.md`.
+None — no browser available in this environment, and this is a
+substantial, delicate rewrite of LIVE battle UI (not a menu screen), so
+Kevin's own in-browser pass matters more here than almost anything else
+logged this session. See **KI-110**'s own checklist — in particular,
+re-confirm KI-034's own keyboard-only-play behaviors under this rewrite
+specifically (arrow-key cursor, Enter/Space parity, Tab grid/board focus
+switching, no page-scroll on arrows/space, a full mouse-free battle), not
+just assume they still hold because the surrounding code "looks similar."
+Also worth a specific look: the HP bar's color thresholds at full/half/
+near-death HP, the hover tooltip appearing correctly for BOTH a mouse hover
+and pure-keyboard grid navigation, and no HUD overlap on Frostbound Hollow
+(9 rows, this file's own recurring tightness stress-test).
 
 ## Known issues
 
-- **KI-097** (new, D-146): smart AoE positioning's and self-defense's
-  gameplay feel are not yet confirmed by Kevin.
-- Everything else unchanged from D-145's handoff (KI-096/KI-095/KI-094/
-  KI-093/KI-092 and everything before them) — in particular, **D-144's
-  drag-and-drop hero move (KI-095) is still Kevin's oldest outstanding
-  in-browser checklist** and is completely independent of this session's
-  work; either thread can be picked up next.
+- **KI-110** (new, D-158): this session's own in-browser checklist.
+- **KI-034**: the system Kevin hated is gone — addressed by D-158. Left
+  open (not deleted) since its own remaining checklist items need a fresh
+  confirmation pass under the new implementation, tracked via KI-110.
+- **KI-109** (D-157): still outstanding from last session — the
+  `Scale.RESIZE` cutover's own in-browser checklist, and the FIRST point in
+  the whole responsive-canvas roadmap where that confirmation is
+  load-bearing (everything converted so far was correct-by-construction but
+  never actually exercised under a changing viewport). Step 4
+  (`BattleScene`'s `TILE_SIZE` dynamic-scaling) still should NOT start until
+  this ships and is confirmed.
+- **KI-108** (D-156), **KI-107** (D-155), **KI-106** (D-154): still
+  outstanding, unchanged.
+- **KI-105** (D-153), **KI-104** (D-152), **KI-103** (D-151), **KI-102**
+  (D-150), **KI-101** (D-149) — all from earlier this same multi-day
+  session — still outstanding.
+- **KI-100** (D-148) and **KI-099** (D-147): still outstanding, untouched.
+- KI-098's remaining threads, unchanged: Progression systems, and the
+  lower-priority overworld campaign redesign.
+- **KI-097/096/095/094/093/092** (Enemy AI/Movement Redesign) and D-148's
+  deferred pieces 6b/9b remain unchanged.
 
-## Deferred items
+## Deferred items — the responsive-canvas roadmap (unchanged this session)
 
-Only the hero-side split-movement UI (§4's last piece) remains unbuilt from
-the original Enemy AI/Movement Redesign spec — see above. If Kevin wants
-deeper self-defense mechanics (a numeric aggro score, a provoked enemy that
-chases rather than only fighting in-range), that's a fresh design decision,
-not something this session self-scoped into.
+D-154's original numbered list — this session worked KI-034 instead, so
+nothing here moved:
+
+1. ~~The remaining ~5 harder scenes~~ **DONE (D-155)**.
+2. ~~`CharacterCreationScene`/`MapBuilderScene`'s own resize-reactivity~~
+   **DONE (D-156)**.
+3. ~~The actual `Scale.RESIZE` cutover~~ **DONE (D-157) — still awaiting
+   Kevin's in-browser confirmation (KI-109), which is now load-bearing.**
+4. **`BattleScene`'s `TILE_SIZE` dynamic-scaling** — NOT STARTED. Deserves
+   its own fully dedicated session(s). Do NOT start until KI-109 is
+   confirmed in a real browser.
+5. **Raising `MAX_MAP_COLS`/`MAX_MAP_ROWS`** — pointless until step 4 ships.
 
 ## Decisions made
 
-**D-146** — logged in full in `DECISIONS.md`. Per this project's
-convention, log a new D-NNN as each further piece ships, whichever thread
-(the hero-side split-movement UI, deeper self-defense, or a D-144 follow-up
-once Kevin has playtested it) gets picked up next.
+**D-158** — logged in full in `DECISIONS.md`: the hero roster strip,
+decluttered message line, hover-tooltip item previews, and the
+`hoveredItemId` field removal. No new `CONTENT_SOURCES.md` entry needed —
+no new content, no new art/audio assets, all original UI code.
 
 ## Content or license additions
 
-None — D-146 added no new spells/items/enemies/heroes, and no new
-`EnemyDefinition` data fields (self-defense reuses the existing
-`ignoresHeroes` flag for its opt-out; smart positioning reads the existing
-`role`/`aoeAttack` fields rather than adding a new one).
+None.
 
 ## Next chat instructions
 
-1. **Ask Kevin which thread he wants continued** if it isn't obvious from
-   context — the hero-side split-movement UI (§4's last piece, needs a
-   browser pass to build), D-144's own in-browser confirmation pass (still
-   outstanding from two sessions ago), or feedback on this session's D-146
-   work once Kevin has played it, are all independent of each other.
-2. **If continuing with new AI/systems work**: the Enemy AI/Movement
-   Redesign's original spec is fully closed except the hero-side UI piece —
-   there's no more "next step" to look up in this document; any further AI
-   work would be a fresh ask from Kevin.
-3. **If Kevin reports feedback on D-146 (smart positioning or
-   self-defense)**: check `KNOWN_ISSUES.md`'s KI-097 checklist first for
-   what was already flagged as worth a specific look.
-4. **If Kevin reports feedback on D-145 (siege wall-targeting)**: check
-   KI-096's own checklist first.
-5. **If Kevin reports feedback on D-144 (the drag-and-drop move, still
-   unplayed as of this handoff)**: check KI-095's own checklist first.
-6. **Log a new D-NNN as each further piece ships**, per this project's
-   standing convention.
+1. **Get Kevin's own in-browser confirmation of BOTH KI-109 (D-157's
+   `Scale.RESIZE` cutover) and KI-110 (D-158's roster-strip redesign)
+   before either the responsive-canvas roadmap or anything else in
+   `BattleScene` proceeds.** Both are substantial, delicate, previously-
+   untestable-here changes; neither has had a single real browser check
+   yet. If he reports anything wrong, KI-110's checklist is the first place
+   to check (this session's change touches the most recently-edited code).
+2. **If continuing the responsive-canvas roadmap once KI-109 is
+   confirmed**: step 4, `BattleScene`'s own `TILE_SIZE` dynamic-scaling,
+   deserves its own fully dedicated session — do not tack it onto
+   something else, and do not start it before KI-109 ships.
+3. **KI-034 no longer needs asking about** — it shipped as D-158 this
+   session. Don't re-offer it as an open scope choice next time.
+4. **If picking up more of KI-098**: Progression systems (initiative, XP
+   distribution, 1-20 campaign pacing) is the one remaining unscoped
+   thread besides the responsive-canvas roadmap and the lower-priority
+   overworld campaign redesign.
+5. **Log a new D-NNN as each further piece ships** (next number: D-159).
 
 ## Suggested git steps (not run here; use GitHub Desktop)
 
-Commit `src/game/systems/WaveSystem.ts`, `src/game/systems/PathfindingSystem.ts`,
-`src/game/entities/Enemy.ts`, `src/game/scenes/BattleScene.ts` (all D-146);
-the updated test file (`tests/enemyEngagementRedesign.test.ts`); and the
+Commit `src/game/scenes/BattleScene.ts` (modified, no new files). Plus the
 doc updates (`DECISIONS.md`, `KNOWN_ISSUES.md`, `CHANGELOG.md`,
 `PROJECT_STATUS.md`, this file).
 
 ## Handoff package contents
 
-- [x] Source files: `src/game/systems/WaveSystem.ts`,
-      `src/game/systems/PathfindingSystem.ts`, `src/game/entities/Enemy.ts`,
-      `src/game/scenes/BattleScene.ts` (all modified, no new files)
+- [x] Source files: `src/game/scenes/BattleScene.ts` (modified, no new files)
 - [x] package.json / package-lock.json (unchanged)
 - [x] README.md (unchanged)
-- [x] DECISIONS.md (updated — D-146 appended)
-- [x] KNOWN_ISSUES.md (updated — KI-097 added)
+- [x] DECISIONS.md (updated — D-158 appended, after D-157)
+- [x] KNOWN_ISSUES.md (updated — KI-110 added; KI-034 marked addressed,
+      left open pending re-confirmation)
 - [x] CHANGELOG.md (updated — a new Unreleased section)
 - [x] CONTENT_SOURCES.md (unchanged — no new content)
 - [x] ASSET_PLAN.md (unchanged)
@@ -219,8 +216,8 @@ doc updates (`DECISIONS.md`, `KNOWN_ISSUES.md`, `CHANGELOG.md`,
 - [x] FIREBASE_SETUP.md (unchanged)
 - [x] PHASE_12_MULTIPLAYER_FEASIBILITY.md (unchanged)
 - [x] CAMPAIGN_STORY_DESIGN.md (unchanged)
-- [x] PROJECT_STATUS.md (updated — the Enemy AI Redesign section folded D-146
-      in and moved to the top; D-144's own section otherwise unchanged)
+- [x] PROJECT_STATUS.md (updated — new D-158 section added at the top)
 - [x] PHASE_HANDOFF.md (this file, fully rewritten)
-- [x] Tests: 1292 → 1299 (+7 total this session)
+- [x] Tests: unchanged at 1349 (no new tests needed — presentation-only,
+      zero existing coverage of the touched file)
 - [x] No node_modules, dist, secrets, or service-account credentials

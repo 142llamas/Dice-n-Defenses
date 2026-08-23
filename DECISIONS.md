@@ -6954,7 +6954,1055 @@ still needs Kevin's own pass — see the new **KI-097**.
 Only §4's last bullet — the hero-side split-movement UI, which needs a
 browser pass by its own nature — remains from the original spec.
 
-## Carried forward from the Source of Truth (not re-decided here)
+### D-147 — Character Creation overhaul, pieces 1-5: choice-picker overlay, real hero naming, Point Buy, class/race previews, subclass-row clarity
+
+Kevin's 2026-08-21 feedback session called Character Creation "garbage" and
+asked for it to move much closer to a real character builder (DnDBeyond-
+level) — logged in full as KI-098. Given the scope, planned via
+`EnterPlanMode` into five independently-testable pieces rather than one
+giant change, per this project's standing practice for a system this size
+(see D-133/D-135/D-136's precedent). Investigation before planning also
+resolved two of Kevin's open questions with NO code change: spell-class
+gating was already real (external per-class allow-lists in
+`data/characterCreation.ts`, consumed by `SpellPreparationSystem`) —
+Kevin's suspicion that all spells were open to all casters was incorrect;
+and subclass picking already existed in Character Creation for the three
+level-1-choice classes (Cleric/Sorcerer/Warlock).
+
+**Piece 1 — a reusable choice-picker overlay, replacing click-to-cycle for
+Class/Race/Gear/Subclass:**
+
+- **`CharacterCreationScene.openChoicePicker`** (new): a thin wrapper around
+  the scene's existing `renderPlanPrompt` — the same dim-backdrop/title/
+  button-grid primitive the Level Planner (D-133) and Spell Picker (D-135)
+  wizards already share via `levelPlanOverlay`/`clearLevelPlanOverlay`.
+  Picking an option applies it and closes immediately; Cancel discards the
+  click. A full-screen overlay was chosen over any inline-expanding widget
+  specifically because this scene's per-hero column already sits close to
+  `GAME_HEIGHT`'s headroom (documented fragility, KI-083) — an overlay
+  draws on top and can't disturb the column's hardcoded row-by-row layout.
+- Class, Race, Gear, and Subclass rows converted to open this picker
+  instead of cycling one option at a time. Name (superseded by piece 2),
+  ability scores (superseded by piece 3), and Signature Action are
+  unchanged in this piece — Signature Action was deliberately left as a
+  cycle button (a short, ~4-option list per class, where cycling was never
+  the actual complaint).
+
+**Piece 2 — real hero naming:**
+
+- The Name row is now a genuine HTML `<input>` (`this.add.dom(...)
+  .createFromHTML(...)`), this project's SECOND use of one — the first was
+  `CoopLobbyScene`'s join-code field (KI-062), whose exact technique this
+  reuses: `stopPropagation()` on keydown so typing doesn't leak into the
+  scene's own hotkeys, and `main.ts`'s pre-existing `dom.createContainer`
+  config. The starting value is set as a JS property (`node.value = ...`),
+  never baked into the HTML string, so a loaded save's name can't break or
+  inject into the markup.
+- `SlotState.nameIndex` (an index into `CHARACTER_NAME_POOL`) became
+  `SlotState.name: string`; the pool still seeds a fresh slot's default.
+  `refreshSlot` no longer writes to the name field at all (writing back
+  into a live DOM input the player is actively typing into would fight
+  their cursor position) — the input is now the sole source of truth for
+  its own value between explicit rebuilds.
+- New validation: a blank/whitespace-only name (newly possible now that a
+  name is free text) blocks Start Battle, same as a duplicate name already
+  did — `refreshAll`'s existing duplicate-name check gained a sibling
+  `blankName` check.
+
+**Piece 3 — Point Buy as a second ability-score method:**
+
+- **`PointBuyAllocator`** (new, `CharacterBuildSystem.ts`) implements the
+  same `scores(): AbilityScores` contract `StandardArrayAllocator` already
+  had — formalized as a new shared `AbilityScoreAllocator` interface both
+  now implement. Real SRD 5.2.1 point-buy: a 27-point budget, the exact
+  published cost table (8-13 cost 1 point per step, 13→14 and 14→15 cost 2
+  each), floor 8/ceiling 15. `increase`/`decrease` silently refuse a move
+  that would exceed the budget or leave the valid range — the same
+  "can't-produce-an-invalid-state" guarantee `StandardArrayAllocator` gets
+  by construction (a permutation), just enforced per-call here instead.
+  `pointBuyAllocatorFromScores` mirrors `allocatorFromScores`'s defensive
+  reconstruction-from-save pattern.
+- **A single PARTY-WIDE toggle** ("Ability Scores: Standard Array / Point
+  Buy"), not per-hero — matching real 5e practice, where this is a
+  table-wide ruleset choice. Placed side-by-side with the pre-existing Team
+  Level control on the same row (`buildPartyWideAbilityControls`, replacing
+  the old single-button `buildTeamLevelControl`) rather than adding a new
+  row — again to avoid `GAME_HEIGHT`-headroom risk (KI-083). Switching the
+  method resets every slot's allocator to a FRESH instance of the newly
+  chosen kind; no attempted conversion between the two.
+- Each of the six per-hero ability rows now carries BOTH a Standard-Array
+  cycle button and a Point-Buy +/- stepper pair, occupying the same row
+  position, with only the set matching the current method visible/
+  interactive (`refreshAbilityScoreControls`, run after `setSlotActive` so
+  it has final say). Point Buy's remaining-points readout rides on the
+  first (STR) row's own label — deliberately not a new line/row, for the
+  same layout-fragility reason — reusing the existing measure-then-shrink
+  font logic (renamed from `fitSubclassLabelToWidth` to the more general
+  `fitLabelToColumnWidth`, now serving two different labels) in case the
+  longer "Points Left: N/27" text would otherwise overflow the button.
+- `CharacterBuild` gained an optional `abilityScoreMethod?: "standardArray"
+  | "pointBuy"` field (undefined means "standardArray," identical to every
+  pre-D-147 build) so a saved/loaded party reconstructs the right allocator
+  kind without guessing from the numbers alone.
+- New tests in `tests/characterBuildSystem.test.ts`: the cost table exactly
+  (including the two non-1-point steps), refusing past the cap, refusing
+  below the floor, refusing an unaffordable increase even under the cap,
+  round-tripping via `pointBuyAllocatorFromScores`, and a defensive
+  out-of-range clamp.
+
+**Piece 4 — class preview:**
+
+- **`CharacterClassDefinition.previewSummary: string`** (new, required
+  field, all 12 classes) — a one-sentence, original (not SRD-copied) "what
+  does this class play like" summary grounded in this project's OWN
+  modeled mechanics (Rage, Sneak Attack, Divine Smite, Metamagic, etc.),
+  not generic flavor text. Surfaced as each option's `desc` in the Piece 1
+  Class picker — no new overlay needed, since `renderPlanPrompt` already
+  supports a `desc` per choice.
+
+**Piece 5 — race preview (real data only) + subclass-row clarity:**
+
+- Race picker options show `speedTiles` and each trait's `name` as their
+  `desc` — deliberately NO invented ability-score bonus. The picker's own
+  title states plainly that SRD 5.2.1 (the ruleset this project's spell-
+  prep economy, D-134, already committed to) moved ability-score increases
+  from Race to Background, so none are missing here — Kevin's request to
+  "show what bonuses... they'd get from picking that race" read like a
+  2014-edition assumption, and inventing one would have silently reversed
+  an existing locked decision (D-134) without Kevin's sign-off.
+- **`subclassSummary`** (existing method) reworded for a later-choice
+  class: previously said only "chosen in battle at level N (M options)," as
+  if creation-time planning weren't possible; now explicitly names "Plan
+  Levels" (D-133) as where that pick can already be made ahead of time, and
+  shows the planned subclass's name once one is set.
+
+Tests: 1299 → **1308** (+9, all in `tests/characterBuildSystem.test.ts`'s new
+`PointBuyAllocator`/`pointBuyAllocatorFromScores` blocks). Typecheck, all
+1308 tests, and the production build (119 modules, unchanged — no new
+source files, only edits to existing ones) all pass. `npm run dev` serves
+HTTP 200. No browser available in this environment — the picker overlays'
+actual click-through, the DOM name field's real typing behavior, and Point
+Buy's live math all still need Kevin's own pass; see the new **KI-099** for
+the full checklist.
+
+**Deliberately not built this pass** (see KI-098 for the complete original
+list): "add more races" (unblocked by piece 1's picker, but a content-
+writing task, not a UI-mechanism one); move-speed-scales-with-map-size (a
+systems/balance topic); the Battle HUD/action-selection redesign,
+initiative, XP-split toggle, and overworld campaign (all separately
+tracked, Kevin picked Character Creation specifically this session).
+
+### D-148 — Battle HUD / actions / character sheet overhaul: selection-gated panel, a real action registry, level-up deltas, a new Character Sheet scene with hotkeys, generalized tooltips, an equip preview
+
+KI-098's OTHER strong pain point (Kevin's stated #1), picked over D-147's
+Character Creation thread's competing priorities this time. Planned via
+`EnterPlanMode` into ~9 pieces; Kevin explicitly chose to attempt the whole
+sequence in one session rather than splitting it across sessions when asked.
+
+**Piece 1 — selection-gated hero panel:** `refreshStatus()`
+(`BattleScene.ts`) now prints only name/level/HP for every hero in the
+always-on roster strip; AC (D-132), move/act readiness, and gear count moved
+into a `detail` block shown ONLY for the currently selected hero. Kept as a
+single `statusText` reformat rather than a second `Text` object, to avoid
+touching the fragile `statusBlockHeight`/`cy` layout math the D-126/KI-083
+wrap-height fix depends on.
+
+**Piece 2 — `HeroActionRegistry`:** new pure `src/game/systems/
+HeroActionRegistry.ts` — `listHeroActions(hero)`/`firstAvailableHeroAction
+(hero, kind)` replace `showBonusActionButtonFor`/`showClassActionButtonFor`'s
+hand-written 13-feature `if/else` chains with one ordered table, each entry
+just wrapping the hero's existing `canUseX()` getter (a pure extraction, no
+new rule). `tests/heroActionRegistry.test.ts` (+14) proves every entry's
+availability matches its direct `canUseX()` call.
+
+**Piece 8 — level-up popup shows real deltas:** `applyClassLevelUps`
+(`BattleScene.ts`) now snapshots `effectiveMaxHealth`/`armorClass`/
+`effectiveAttackBonus` before `levelUpClass()`, and a new pure
+`levelUpDeltaSummary(before, after, classId, newLevel)`
+(`LevelUpPlanSystem.ts`) turns the before/after pair plus any class feature
+gained at the new level (`getClassDefinition(...).features`, same field
+`CompendiumScene`'s `classFeatureBlocks` reads) into real text — fed into
+`showLevelUpAckQueue`'s "Continue" button as its `desc`. Scoped deliberately
+to the PLAIN ack popup only (KI-085/D-130's "even when no choice was
+required" gap) — the subclass/ASI/spell-pick overlays already state their
+own choice being made and were left alone. `tests/levelUpPlanSystem.test.ts`
+(+6) covers the pure summary function directly.
+
+**Piece 0 — a real second Phaser scene for the sheet, paused/resumed over
+BattleScene:** nothing in this codebase had exercised `scene.launch` +
+`scene.pause()`/`scene.resume()` before (the existing `BattleStateSnapshot`,
+D-101, was built for a hypothetical multiplayer-sync feature and is never
+called from any scene — not a ready-made vehicle for this). Chose this over
+an in-BattleScene overlay `Container` specifically so the sheet gets
+`uiTheme.ts`'s parchment/Cinzel styling for free and doesn't grow
+`BattleScene.ts` (already 8000+ lines) further. De-risked by static
+inspection rather than a throwaway spike-then-rebuild: grepped for any raw
+`window`/`setInterval`/`setTimeout` listener in `BattleScene.ts` that might
+bypass Phaser's scene-pause gating (none exist — every timed/animated thing
+runs through `this.time.delayedCall`/`this.tweens.add`, both scene-scoped
+and known to pause automatically with the scene), so the real Stats-tab
+content (piece 4) was built directly instead of a "hero name + Close button"
+throwaway. **This is the one part of this session's work that most needs
+Kevin's own in-browser confirmation** — see KI-100 below.
+
+**Piece 3 — the action hotkey bar, new `Hero` state:** `Hero._actionHotkeys`
+(`ACTION_HOTKEY_SLOT_COUNT = 6` slots, `string | undefined` each) is a
+curated, slot-ordered SUBSET of what a hero could do — distinct from
+`knownSpellAbilityIds()`/`HeroActionRegistry` themselves, which answer "what
+COULD this hero use." `setActionHotkey(slot, id)` validates against both of
+those plus the hero's frozen `abilityId` before accepting, silently
+refusing anything else (same convention as `PointBuyAllocator`), and accepts
+`null` as well as `undefined` for "clear" — `JSON.stringify` turns an
+`undefined` array element into `null`, so a save round-trip genuinely
+produces `null`, not `undefined`. Threaded through `CharacterBuild` →
+`HeroDefinition` → `Hero` exactly mirroring `preparedSpellIds`' three-hop
+chain (D-135); also added to `HeroSnapshot`/`toSnapshot`/
+`restoreMutableState` for parity with every other mutable battle field.
+Deliberately did NOT add a defensive check to `SaveSystem.isCharacterBuild`
+— that function only ever validates REQUIRED fields (checked before adding
+anything, to match real convention over the plan's original guess).
+`tests/heroActionHotkeys.test.ts` (+9) covers validation and a real save/
+load round-trip via the existing fake-`SaveStorage` harness.
+
+**Piece 7 — generalized the tooltip primitive (built ahead of pieces 4-6
+since they depend on it):** `unitTooltip`'s floating, canvas-clamped
+`Text`-object mechanic (D-132) is now `src/game/scenes/tooltip.ts`'s
+`createTooltipController`/`attachHoverTooltip` — one controller (one Text
+object) per scene, reusable by any interactive Phaser object, not just grid
+tiles. `BattleScene`'s OWN tile-hover tooltip was migrated onto this shared
+controller (not left running in parallel) so the generalization is
+proven by its first real caller, not just built and left unused.
+
+**Piece 4 — Character Sheet, Stats tab (read-only):** ability scores (with
+modifiers), AC/HP/movement/proficiency bonus, class/subclass/level, and a
+"available right now" list built from `HeroActionRegistry` plus the caster/
+non-caster action check. Opened via a new "Character (C)" button/keybind
+next to the selected-hero HUD row (visible only while a hero is selected),
+which calls `this.scene.launch("CharacterSheetScene", { hero })` +
+`this.scene.pause()` — the LIVE `Hero` instance is passed (Phaser scene data
+isn't serialized for an in-process `launch`), so hotkey edits apply
+instantly with no sync step on Close/resume.
+
+**Piece 5 — Spellbook tab:** every id in `knownSpellAbilityIds()` (the whole
+known list, not filtered to `canCastSpell()` like the in-battle Q menu),
+grouped by `AbilityDefinition.spellSlotLevel ?? 0` with a level-selector row
+matching `CompendiumScene`'s `SPELL_LEVEL_LABELS` pattern — closing Kevin's
+"gross flat list" complaint about `renderSpellbookOverlay`'s permanently-
+visible description text; full rules text now shows on hover instead (Piece
+7's tooltip).
+
+**Piece 6a — Hotkeys tab (sheet-side editing only):** click a slot to arm
+it, then click any currently-available `HeroActionRegistry` action or known
+spell to pin it there (`hero.setActionHotkey`); a Clear Slot control when a
+slot is armed.
+
+**Piece 6b — NOT built this pass, deliberately deferred:** replacing
+`BattleScene`'s four fixed action buttons/keybinds (Q/R/F/T →
+`onAbilityButton`/`onBonusActionButton`/`onActionSurgeButton`/
+`onClassActionButton`) with a hotkey-row driven by `hero.actionHotkeys()`.
+The plan itself flagged this as the epic's largest, riskiest single change
+and explicitly allowed splitting it out. Rebuilding BattleScene's core,
+heavily-tested action-input model around a brand-new, entirely unverified
+hotkey-editing UI — before Kevin has even tried that UI once — would risk
+"replacing a working system" (this project's rule 1) for a feature that
+might still need shape changes after his first pass. The existing Q/R/F/T
+buttons are completely untouched and still work exactly as before; only
+`HeroActionRegistry` now backs two of them internally (piece 2).
+
+**Piece 9a — equip hover preview:** hovering a hero token on the board while
+an item is selected in equip mode now appends a before/after AC/attack-bonus
+line to the existing D-132 hover tooltip (`updateUnitTooltip`), computed via
+a throwaway `Hero.fromSnapshot(hero.toSnapshot())` clone so hovering never
+touches the live hero, gold, or requires walking `equipGearOnHero`'s full
+cost/attunement/grip validation (irrelevant to a pure preview). This
+directly answers Kevin's "no before/after stat comparison" complaint without
+touching the click-item-then-click-hero-token flow itself.
+
+**Piece 9b — NOT scoped, deliberately deferred:** the actual equip-flow
+redesign (likely an Inventory tab inside the new sheet, replacing the
+click-item-then-click-board-token gesture). Kevin gave no target UX for this
+beyond "confirmed bad" — per this project's "preserve working systems" rule,
+guessing at a replacement design wasn't attempted.
+
+Tests: 1308 → **1337** (+29: 14 `heroActionRegistry`, 6 `levelUpPlanSystem`,
+9 `heroActionHotkeys`). Typecheck, all 1337 tests, and the production build
+(122 modules, +3: `HeroActionRegistry.ts`, `tooltip.ts`,
+`CharacterSheetScene.ts`) all pass. `npm run dev` serves HTTP 200. No
+browser available in this environment — every piece here is UI/UX by
+nature, and piece 0's scene-pause mechanism specifically has never been
+exercised anywhere in this codebase before; see the new KI-100 for the full
+in-browser checklist, led by that mechanism.
+
+### D-149 — Two confirmed bugs from Kevin's 2026-08-21 playtest: the waypoint-pinning defect (D-144) and the Main Menu title/corner-control overlap
+
+Picked up over KI-098's other still-open threads, per Kevin's own steer that
+day: fix the two confirmed bugs before starting a new feature thread.
+
+**Waypoint pinning:** the real defect was in `BattleScene.wireInput`'s global
+`pointerup` handler, not in `addDragPin`/`routeThroughWaypoints` (both were
+already correct — a pin genuinely gets pushed onto `heroDrag.pins` on every
+right-click, and `MovementSystem.routeThroughWaypoints` already loops over
+however many waypoints are passed). The `pointerup` handler fired on ANY
+button release, including the right button's own release right after
+`pointerdown`'s `rightButtonDown()` branch had just pinned a waypoint — so
+it immediately called `resolveDrop`, committing the hero to that first pin
+and ending the drag before a second right-click could ever add another one.
+Fixed by returning early on `pointer.rightButtonReleased()` so only a LEFT-
+button release can end/resolve a drag.
+
+This also explains the linked complaint ("the move-range highlight doesn't
+update to assume movement from the latest pinned waypoint onward"): once the
+drag was ending after the first pin, there was never a second pin for the
+highlight to reflect. Fixed independently anyway, since the highlight itself
+was ALSO stale even for the single-pin case — `showRange`'s reachable-tile
+highlight is drawn once when a hero is selected and was never recomputed
+once a drag started pinning waypoints. New `updateDragRangeHighlight()`
+(`BattleScene.ts`) reroots the highlight at the latest pin (or the hero's own
+tile with zero pins) with whatever movement budget the pinned legs haven't
+already spent — computed via the same `routeThroughWaypoints` the drop/
+preview logic already uses for consistency — and is called every time
+`addDragPin` changes the chain.
+
+**Main Menu overlap:** the title text (`MainMenuScene.buildTitle`) at its
+fixed 58px size can render wide enough to reach into the top-right Settings/
+Account controls' bounding box (x 980-1240, y 10-110) — the flanking
+decorative line either side of the title was hand-positioned at a guessed
+±300px half-width that undershoots the font's real rendered width. Rather
+than hardcode a smaller guessed size, this measures the title's real
+`getBounds()` against that corner region and shrinks the font 2px at a time
+(floor 40px) until they stop overlapping — the same "measure, don't guess"
+approach `uiTheme.fitLabelToWidth` already uses for button labels, so the
+fix holds regardless of exactly how wide Cinzel (or its fallback) actually
+renders in a given browser.
+
+Both fixes are headless-verified only (typecheck/1337 tests/build all
+pass) — see the new KI-101 for the two specific things to re-check in a real
+browser: right-click a hero mid-drag twice and confirm both pins land with
+the highlight following each one, and confirm the Main Menu's top-right
+corner no longer touches the title at any window size tried.
+
+### D-150 — Compendium/Bestiary organization: alphabetized categories, new Buildings/Traps tabs, Bestiary role tabs
+
+Picked by Kevin over Maps & Map Builder, Progression systems, and small
+polish items, from KI-098's remaining threads.
+
+**Alphabetization:** `CLASS_DEFINITIONS` (`data/classes.ts`) and
+`SKILL_ORDER` (`data/skills.ts`) were re-sorted alphabetically IN PLACE — an
+Explore-agent survey confirmed each array's only order-sensitive consumer
+besides this Compendium display is its own file's order-independent
+lookup, so reordering the source is safe (and gives Compendium's own
+Classes selector row the same alphabetical order as a side effect).
+`SUBCLASS_DEFINITIONS`, `RACE_DEFINITIONS`, `FEAT_IDS`, and `POTION_ORDER`
+were deliberately left UNTOUCHED at their declared order and instead get a
+display-only sorted copy (`[...ARRAY].sort(...)`) inside
+`CompendiumScene.ts`'s `flatCategoryText`, because each backs real
+order-sensitive behavior elsewhere that alphabetizing would have silently
+changed: `CharacterBuildSystem.subclassIdForNewBuild` reads a class's two
+subclasses by index (0 = SRD one, 1 = original one) out of
+`SUBCLASS_DEFINITIONS`' own declared order; `RACE_IDS[0]` (derived from
+`RACE_DEFINITIONS`) is the default new-build race; `FEAT_IDS` and
+`POTION_ORDER` drive the ASI/feat-picker overlay and the Shop grid's item
+order respectively. Same reasoning kept `STATUS_EFFECT_ORDER` (on-token
+badge render order, debug status picker) untouched too. `classFeatureBlocks`
+and every class/subclass `features` array stay level-ordered, not
+alphabetized — sorting those would scramble a level-1-through-20 table into
+nonsense.
+
+**Buildings/Traps Compendium tabs:** `STRUCTURE_DEFINITIONS`
+(`data/structures.ts`) had no Compendium category at all before this —
+seeing wall/trap/platform detail required opening the Build shop mid-battle.
+Split into "Buildings" (kind `wall` + `platform`, since a Gate is still
+`kind: "wall"` with `blocksHeroes: false`) and "Traps" (kind `trap`), each
+grouped by sub-type (wall vs. platform; ground- vs. flying-targeted trap)
+then alphabetized within the group, matching Kevin's "grouped by type, then
+alphabetical" phrasing exactly. Both tabs show ALL entries including the two
+`cost: 0` spell-conjured structures (Spectral Wall, Web Patch) that never
+appear in `SHOP_ORDER` — same "Compendium shows all data, not just what's
+purchasable right now" convention every other category already follows —
+tagged "spell-conjured, not shop-buyable" instead of a gold cost.
+
+**Bestiary role tabs:** replaced the single flat, role-grouped, continuously
+-paginated scroll with real tabs — one button per `GROUPS` entry (Minions/
+Miniboss/Bosses/Legendary), mirroring `CompendiumScene.buildTabs`'s exact
+pattern (`centeredRowX` + `createOrnateButton`, `variant: "tab"`,
+`setSelected` highlighting). `buildRoster` now filters to just the selected
+tab's role instead of flattening every group into one list; Prev/Next pages
+within that role only, resetting to page 1 on a tab switch. The per-role
+heading (previously drawn inline wherever a new group started mid-scroll)
+is now a single persistent line at the top of the panel showing the
+selected role's name and count.
+
+**Artificer question, resolved (no code change):** confirmed Artificer's
+absence from the Compendium is intentional, not an oversight — grep found
+zero references anywhere in `src/`. Artificer is sourced from Tasha's
+Cauldron of Everything, not core SRD 5.2.1, so this project's SRD-only
+content rule (`SOURCE_OF_TRUTH.md` §3) already correctly excludes it.
+
+No rule changes, no new tests (both scenes are presentation-only per this
+project's architecture split — `src/game/scenes/` renders and takes input,
+it doesn't hold testable rules — and neither had a prior test file).
+Typecheck, all 1337 tests, and the production build (122 modules) all pass.
+
+### D-151 — KI-098 small polish items: Cape of Billowing recolor, Exit Game control
+
+Both of KI-098's "Small polish items" — the last quick, low-risk pair left
+in that list.
+
+**Cape of Billowing recolor:** the drawn cape graphic
+(`BattleScene.updateHeroCapes`) was found to be wrongly reusing
+`COLORS.heroActive` (the selected-hero token highlight color, a light
+green) — not a deliberate placeholder choice, just the wrong constant. Gave
+it its own dedicated color, `COLORS.capeBillowingPlaceholder` (a deep red,
+`0xb0202a`, `config.ts`), matching Kevin's literal ask ("recolor red") and
+fixing what was actually a stray color reuse rather than an intentional
+placeholder.
+
+**Exit Game control:** added to `MainMenuScene`, mirroring the version
+tag's corner on the opposite side (bottom-left, well clear of every other
+row/control). Real constraint worth recording: a web page cannot force-
+close a browser tab it didn't itself open via script — `window.close()`
+silently no-ops for a normal tab (this is a deliberate browser security
+restriction, not a bug to work around). The button still calls
+`window.close()` first (so it DOES work in whichever context actually
+permits it — a script-opened window, or a future desktop/PWA wrapper), then
+unconditionally swaps its own label to "You may now close this tab" and
+disables itself — so clicking it always visibly does something, rather
+than silently no-op'ing in the overwhelmingly common browser-tab case.
+
+No rule changes, no new tests (both are presentation-only: a color
+constant and a menu button). Typecheck, all 1337 tests, and the production
+build (122 modules) all pass.
+
+### D-152 — A real in-battle pause menu (Resume/Save Party/Save & Exit/Load Game/Exit to Main Menu/Controls/Game Speed)
+
+Kevin asked directly for an in-game menu with (at minimum) "Save and Exit"
+and "Exit" with an unsaved-progress warning, plus optionally Save, Load,
+Audio settings, Controls, and Visual/graphics settings. Planned via
+`EnterPlanMode` after a research pass into what's real vs. what would be
+dead scaffolding.
+
+**A real pre-existing gap this closes**: `BattleScene.handleEscape`'s final
+`else` branch (nothing else going on) used to call
+`this.scene.start("MainMenuScene")` **immediately, with zero confirmation or
+save** — a silent, unwarned exit that's been there since Esc's very first
+context-sensitive handling. The new pause menu is that fallback now.
+
+**Scope decisions, each with a real reason, not a guess:**
+- **"Save" does not, and cannot today, resume this exact battle.**
+  `SaveSystem`/`SaveSlot` only ever stores a party BUILD (race/class/
+  ability scores — the `CharacterBuild[]` shape), never wave/gold/board
+  state. `BattleStateSnapshot` (D-101) CAN fully serialize a live battle but
+  was built for a hypothetical multiplayer feature and is wired into
+  nothing — reusing it here would be a materially bigger feature than "add
+  a menu," so it wasn't attempted. "Save Party" is worded honestly as
+  saving the party's build for a FUTURE battle, not a checkpoint.
+- **Audio settings: not built.** Confirmed via grep that zero audio system
+  exists anywhere in `src/` (KI-029 still accurate). Building a settings
+  control for a system that doesn't exist is exactly the dead-scaffolding
+  pattern Kevin has explicitly corrected before.
+- **Visual/graphics settings: reused, not reinvented.** The one real
+  setting in the whole game is Game Speed (`SettingsSystem.
+  animationSpeed`) — the menu's "Game Speed" button calls `BattleScene.
+  cycleGameSpeed()` (changed from `private` to public, and now RETURNS the
+  new `AnimationSpeed` instead of `void`) — the exact same logic the
+  existing in-battle "S" hotkey already uses, not a second copy of it.
+- **Controls: a read-only reference list** of the real current keybindings
+  (compiled from an actual grep of every `keydown-` handler in
+  `BattleScene.ts`, not guessed) — no rebinding system exists or was added.
+
+**The real gap that had to be closed to make Save/Load possible at all**:
+`BattleScene` only ever received `HeroDefinition[]` (the already-expanded
+per-hero shape `heroDefinitionFromBuild` produces), never the original
+`CharacterBuild[]` — and confirmed via Explore-agent grep, `HeroDefinition`
+has NO `raceId` field at all (race is baked into a plain `movementTiles`
+number and discarded), so reconstructing a `CharacterBuild` from a live
+`Hero`/`HeroDefinition` is genuinely lossy, not just tedious. Fixed at the
+source instead: `CharacterCreationScene`'s "Start Battle" handler — the ONE
+place in the codebase that still has the real `CharacterBuild[]` in hand —
+now forwards `originalParty` (that array) and `loadedSlotId` into
+`BattleScene`'s init data alongside the existing `heroDefinitions`.
+`CoopLobbyScene`'s own `scene.start("BattleScene", ...)` call is untouched,
+so a coop battle simply has no `originalParty` — Save/Save & Exit disable
+themselves with an "(unavailable in Co-op)" label rather than guessing at
+data that doesn't exist.
+
+**New shared pure function**: `SaveSystem.saveOrUpdatePartySlot(file, input)`
+— the exact create-or-update-slot decision `CharacterCreationScene.
+onSaveParty` already had inline, extracted so `BattleScene.saveParty()`
+(the pause menu's "Save Party"/"Save & Exit" action) can reuse it instead of
+duplicating the branching a second time. `onSaveParty` itself was refactored
+to call it too — same behavior, now covered by one shared, tested decision.
+Takes a caller-supplied `now: number` timestamp rather than calling
+`Date.now()` internally, keeping it pure/deterministically testable (4 new
+tests in `tests/saveSystem.test.ts`).
+
+**Mechanism**: `PauseMenuScene` (new) reuses D-148's exact
+`CharacterSheetScene` precedent — `scene.launch("PauseMenuScene", {
+battleScene: this })` + `scene.pause()` to open, `scene.stop()` +
+`scene.resume("BattleScene")` to return. A NEW always-visible "Menu (Esc)"
+HUD button (bottom-left corner, mirroring Test Mode's own Debug-Menu-button
+corner on the opposite side) and `handleEscape`'s fallback both call a
+single self-guarding `openPauseMenu()` — it silently no-ops during an
+active hero drag, any forced-choice overlay (ASI/subclass/spell-pick/
+level-up-ack/rest/spell-prep), or another full-screen overlay (tutorial/
+technical log/debug menu/end-of-battle), the same set `handleEscape`'s own
+priority chain already protects. Opening the menu deliberately does NOT
+disturb build/equip/aiming-mode UI state — it freezes the whole scene, so
+whatever was going on resumes exactly as it was.
+
+Tests: 1337 → **1341** (+4, all in `tests/saveSystem.test.ts` for
+`saveOrUpdatePartySlot`; `PauseMenuScene` itself has no test file, matching
+every other presentation-only scene in this project). Typecheck, all 1341
+tests, and the production build (123 modules, +1: `PauseMenuScene.ts`) all
+pass. `npm run dev` serves HTTP 200. No browser available in this
+environment — see the new KI-104 for the in-browser checklist.
+
+**Explicitly NOT built, and why** (see this decision's own plan for the
+full reasoning): a save that resumes the exact battle in progress (would
+require wiring `BattleStateSnapshot` into `SaveSystem` — a future item, not
+this one); cloud-sync push from the new mid-battle Save (local-only for
+this first pass, same "defer secondary integration" precedent D-083's
+original scoping already set — the same slot syncs normally next time the
+player saves from `CharacterCreationScene`/`LoadGameScene`); a save-slot
+rename/naming prompt (matches the existing auto-named convention — no
+rename UI exists anywhere in this project today either).
+
+### D-153 — Real Settings screen: Game Speed moved off Main Menu's old corner button, plus real Master/Music/SFX volume and Mute controls (no audio content yet)
+
+Kevin asked directly to "start adding in audio settings stuff even though
+there is no music or sound effects yet" — a deliberate reversal of D-060/
+D-152's standing "no audio settings — nothing to control" call. Asked to
+pin the scope given that history; Kevin chose the real-infrastructure
+option over a UI-only stub or a full push including placeholder SFX: a
+genuinely-working `AudioManager` + settings UI, silent only because no
+audio asset exists, not because the control itself is fake.
+
+**`SettingsSystem.ts` (`systems/`, still Phaser-free)** gains `masterVolume`/
+`musicVolume`/`sfxVolume` (0-100, a 5-step 0/25/50/75/100 cycle — the same
+"one click cycles" interaction `nextAnimationSpeed` already established;
+no slider widget exists anywhere in this project) and a `muted` boolean,
+each defaulting to 75/75/75/false. `loadSettings` validates each field
+independently and falls back to its own default on a corrupt/out-of-range
+stored value, same defensive pattern as `animationSpeed` already had.
+
+**`scenes/AudioManager.ts` (new)** — Phaser-dependent, so it lives in
+`scenes/` next to `uiTheme.ts`/`tooltip.ts`, not `systems/`. `applySettings`
+sets `scene.sound.mute`/`scene.sound.volume` directly — real, global, and
+audible-if-anything-were-loaded the instant they're set, since `scene.sound`
+is the SAME shared manager (`game.sound`) from every scene. Music/SFX have
+no Phaser bus equivalent, so `AudioManager` tracks every sound IT played via
+`playMusic`/`playSfx` and re-applies that sound's own category volume on
+every settings change. `playMusic`/`playSfx` are safe no-ops (return `null`)
+when the given key isn't a loaded audio asset — which is every key today
+(KI-029) — so nothing anywhere needs to guard a call to them.
+
+**`SettingsScene.ts` (new)** — one screen for every setting, replacing
+Main Menu's old single "Game Speed" cycle button. Two entry modes reuse
+D-148/D-152's already-proven nested-scene mechanism rather than inventing a
+third:
+- **Standalone** (Main Menu's new "Settings" button): `scene.start`, Game
+  Speed read/written straight to `localStorage`, same as the old button did.
+- **Overlay** (Pause Menu's row, renamed from "Game Speed: {label}" to
+  "Settings"): `scene.launch` + `scene.pause()` — the exact call Pause Menu
+  itself already uses over `BattleScene` — with the live `BattleScene`
+  instance handed through, so Game Speed still changes LIVE mid-battle
+  (D-130) via the same `cycleGameSpeed()` the old inline row called
+  directly.
+
+**A real bug this surfaced and fixed**: `BattleScene.cycleGameSpeed()` and
+Main Menu's old button both persisted settings as a bare
+`{ animationSpeed }` literal — harmless while that was the only field, but
+would have silently WIPED the new volume/mute fields on every Game Speed
+change once they existed. `cycleGameSpeed()` now spreads the freshly-loaded
+settings before overriding just `animationSpeed`; Main Menu's button no
+longer touches `animationSpeed` at all (moved onto `SettingsScene`).
+
+Tests: 1341 → **1344** (+3, all in `tests/settings.test.ts`: invalid-volume
+fallback, `nextVolume`'s 5-step cycle, `toggleMuted`; the existing round-trip
+test grew to cover the full field set instead of adding a separate test).
+`AudioManager.ts`/`SettingsScene.ts` have no test file, matching every other
+Phaser-dependent presentation module in this project (`uiTheme.ts`,
+`PauseMenuScene.ts`, etc.). Typecheck, all 1344 tests, and the production
+build (125 modules, +2) all pass. `npm run dev` serves HTTP 200. No browser
+available in this environment — see the new **KI-105** for the in-browser
+checklist (should be silent, but every row should respond with no console
+error).
+
+### D-154 — Responsive-canvas foundation (7 scenes, `Scale.FIT` retained this pass), Map Builder click-and-drag paint tool + real map-name field
+
+Kevin picked KI-098's "Maps & Map Builder" thread this session. Investigating
+"larger maps" found every map capped near 20x9 tiles purely because
+`BattleScene` draws at a fixed 64px tile size inside a fixed 1280x1080
+canvas (`Scale.FIT`, letterboxed to the browser window) — no scrolling or
+dynamic scaling exists in battle today. Asked how to solve it, Kevin wanted
+more than a third canvas-size bump (this project has done that twice
+before, D-055/D-078): a genuinely responsive, full-screen canvas — and,
+asked directly, confirmed this should apply to the WHOLE app, every scene,
+not just battles.
+
+That is a real, multi-session architecture change: ~12 scene files each do
+fixed-pixel absolute layout off `GAME_WIDTH`/`GAME_HEIGHT`, and
+`BattleScene.ts` alone is 8049 lines with 88 `GAME_WIDTH`/`GAME_HEIGHT`
+references and 68 separate `TILE_SIZE` references spanning sprites, VFX,
+tooltips, D-144's drag-and-drop hit-testing, structures, auras, and status
+badges. Asked to prioritize given that reality, Kevin chose "foundation +
+simple menus first" — prove the pattern safely on low-risk scenes, hold
+`BattleScene`'s actual size-payoff conversion for its own dedicated future
+session.
+
+**The foundation (`uiTheme.ts`)**: `getViewport(scene)` reads the scene's
+own live `scene.scale.width/height` instead of the fixed constants;
+`onViewportResize(scene, rebuild)` subscribes `rebuild` to
+`Phaser.Scale.Events.RESIZE`, unsubscribing on scene shutdown. Deliberately
+NOT cutting over to `Phaser.Scale.RESIZE` this pass: under the current
+`Scale.FIT`, `scene.scale.width/height` stays pinned to 1280x1080
+regardless of the real window size (only the CSS display size changes), so
+routing a scene through this convention today is a zero-behavior-change
+refactor — verified by pinning `computeCornerControlsRegion` (see below) to
+today's exact numbers. Flipping to `Scale.RESIZE` is the one moment the
+real window size starts flowing into scenes, and doing that before most
+scenes are converted would leave every UNCONVERTED scene rendering its old
+fixed-1280x1080-coordinate content top-left-anchored inside a
+now-differently-sized real canvas — a visible regression across most of the
+app. That cutover is explicitly held for a later session, once enough/all
+scenes are converted.
+
+**Per-scene convention**: a `rebuildLayout()` method destroys-and-recreates
+everything the scene draws (reusing the exact same positioning code that
+already worked, rather than a second incremental-reposition code path that
+could drift from it), called once from `create()` and again on every
+`onViewportResize` firing. `MainMenuScene` uses a snapshot-diff variant
+(record `this.children.list` before/after building, reparent whatever's new
+into a fresh container) rather than hand-editing every one of its ten
+`buildX()` methods to explicitly target a container — mechanically simpler,
+same effect. One real bug this surfaced and fixed in the SAME pass:
+`MainMenuScene.buildAccountControl` called `initAuth(...)` — a real Firebase
+subscription — every time it ran, which would have re-subscribed on every
+resize; `initAuth` now runs once in `create()`, with `this.authState`/
+`this.authResolved` fields feeding a `refreshAccountLabel()` the rebuilt
+button reads from instead.
+
+**7 scenes converted** (lowest `GAME_WIDTH`/`GAME_HEIGHT` reference count,
+no DOM input, no pagination — the safest scenes to prove the pattern on
+before ever touching `BattleScene`/`MapBuilderScene`): `PauseMenuScene`,
+`SettingsScene`, `CampaignSelectScene`, `MainMenuScene`, `LoadGameScene`,
+`TestModeScene`, `BestiaryScene`. `BestiaryScene` needed one extra bit of
+care beyond the mechanical rename: `this.page`/`this.groupIndex` are reset
+to 0 only in `create()`, never in `rebuildLayout()`, so a resize doesn't
+silently snap the player back to page 1/Minions mid-browse.
+
+**One layout computation extracted to a pure, tested function**, per this
+decision's own precedent-setting goal: `MainMenuScene.buildTitle`'s
+bounds-measurement loop (D-149's own fix — shrinks the title font until it
+clears the Settings/Account corner controls) had its corner-controls
+rectangle hardcoded as `new Rectangle(980, 10, 260, 100)`, a magic box tied
+to the fixed 1280-wide canvas. `computeCornerControlsRegion(viewportWidth)`
+(new, `systems/mainMenuLayout.ts` — deliberately NOT in `scenes/`, since
+that whole directory imports Phaser at module scope and this project's test
+environment is plain Node with no DOM/canvas, so nothing under `scenes/`
+can ever be imported by a Vitest test) replaces it, parameterized by
+viewport width; `tests/mainMenuLayout.test.ts` pins it to the exact old
+values at 1280 and checks it stays anchored to the right edge at three other
+widths. This is the pattern any future scene conversion's non-trivial
+layout math should follow.
+
+**Map Builder: real click-and-drag continuous paint tool.** `MapBuilderScene`
+previously wired only `pointerdown` — genuinely one tile per click. Now
+tracks `isPainting`/`lastPaintedTile`; `pointerdown` paints and arms
+painting, `pointermove` paints whatever NEW tile the pointer crosses while
+armed (skipping a repaint of the same tile), and a scene-wide `pointerup`
+(not just over the grid, since a drag can end after the pointer leaves it)
+disarms. No new pure-system function needed — `MapBuilderSystem` has no
+undo/history to coordinate with, and this is pure presentation-layer mouse
+tracking reusing the existing `paintTile` mutator per tile touched.
+
+**Map Builder: a real map-name field.** Replaced the fixed 8-name
+`MAP_NAME_POOL` cycle button with a real DOM `<input>` — this project's
+THIRD such field, following the exact pattern `CharacterCreationScene`'s
+hero name (D-147) and `CoopLobbyScene`'s join code (D-102) already
+established (`this.add.dom(...).createFromHTML(...)`, grab the real
+`<input>` via `querySelector`, an `"input"` listener writing into the
+draft, a `"keydown"` listener calling `stopPropagation()` so typing never
+fires the scene's own hotkeys). New `isValidMapName(name)` in
+`MapBuilderSystem.ts` (non-empty after trim, ≤40 chars — independent of the
+`<input>`'s own `maxlength` attribute, which a future non-UI caller
+wouldn't be bound by) gates Publish specifically, mirroring D-147's
+blank-hero-name block on Start Battle — Playtest is unaffected, since a
+personal test run has no name-sharing concern. `firestore.rules`' own
+`isValidSharedMap` needed no change — only the input MECHANISM changed, not
+`SharedMapRecord.name`'s stored shape.
+
+**Deliberately NOT this session** (see `KNOWN_ISSUES.md`'s new entry for
+the complete list and reasoning): the `Scale.RESIZE` cutover itself; the
+remaining ~5 harder scenes (`CompendiumScene`, `CharacterSheetScene`,
+`BrowseSharedMapsScene`, `FreePlayScene`, `CoopLobbyScene` — each has a DOM
+input needing in-place repositioning instead of destroy-and-recreate, or
+pagination math needing re-deriving per viewport); `CharacterCreationScene`
+and `MapBuilderScene`'s OWN resize-reactivity (`MapBuilderScene`'s grid
+already dynamically fits `tileSize` to available space, just not on a live
+resize event yet); `BattleScene`'s `TILE_SIZE` dynamic-scaling — the actual
+"bigger maps in battle" payoff, deliberately held for its own fully
+dedicated future session given its size and risk; raising
+`MAX_MAP_COLS`/`MAX_MAP_ROWS` (pointless until `BattleScene` can render
+past the current ~20x9 ceiling — it would let Kevin draft maps that break
+in a real battle).
+
+Tests: 1344 → **1349** (+5: 2 in `tests/mainMenuLayout.test.ts`, 3 in
+`tests/mapBuilder.test.ts` for `isValidMapName`). Typecheck, all 1349
+tests, and the production build (126 modules, +1: `mainMenuLayout.ts`) all
+pass. `npm run dev` serves HTTP 200. No browser available in this
+environment — see the new **KI-106** for the complete checklist, especially
+the paint-tool's actual drag feel and the 7 converted scenes' at-normal-
+window-size appearance, neither of which a resize-behavior test can verify.
+
+### D-155 — Responsive-canvas roadmap step 1: the remaining 5 harder scenes converted (`CompendiumScene`, `CharacterSheetScene`, `BrowseSharedMapsScene`, `FreePlayScene`, `CoopLobbyScene`)
+
+Continuing D-154's roadmap in the exact order its own "Deferred items" list
+laid out: item 1, the five scenes flagged as needing more than the
+mechanical `rebuildLayout()` treatment. All five now follow the same
+`getViewport`/`onViewportResize` convention as the first 7 — this is still a
+zero-behavior-change refactor under today's `Scale.FIT` (verified by the
+full test/typecheck/build pass below), not a visible change.
+
+**`CompendiumScene`**: the trickiest of the "pagination" scenes — a
+per-class selector (Classes), a per-level selector (Spells), and Prev/Next
+paging shared by three different categories, all previously centered on the
+fixed `PANEL_WIDTH = GAME_WIDTH - PANEL_LEFT * 2` module constant. Converted
+to the same `rebuildLayout()` chrome-only pattern `BestiaryScene` established
+(destroy/diff/rebuild the title, Back button, tabs, parchment panel, and the
+persistent `detailText` object; `this.category`/`classId`/`spellLevel`/`page`
+only reset in `create()`, never in `rebuildLayout()`, so a resize can't bounce
+the reader back to Classes/page 1). The three sub-selector/pagination
+builder methods that run OUTSIDE `rebuildLayout()` (triggered by the reader's
+own tab/selector clicks, not a resize) now call `getViewport(this).width`
+directly rather than receiving it as a parameter, matching `MainMenuScene`'s
+own per-method convention.
+
+**`CharacterSheetScene`**: launched as a real second Phaser scene over a
+PAUSED `BattleScene` (`scene.launch`/`scene.pause`, D-148) — a resize firing
+while this is on top must rebuild only this scene's own chrome, never touch
+the paused battle underneath it. Same `rebuildLayout()` (chrome: backdrop,
+hero-name title, Close button, the 3 tabs) plus the existing `renderTab()`/
+`clearContent()` machinery (unchanged) for the actual Stats/Spellbook/Hotkeys
+content, which already tracked its own objects for destroy-and-rebuild on
+every tab switch — extending that same machinery to also fire on a resize
+needed no new bookkeeping. Two of its three tab-render methods had a local
+variable named `width` shadowing the new viewport width (the Spellbook/
+Hotkeys grids' own card width); renamed those to `cardW` to avoid the clash
+rather than rename the viewport read.
+
+**`BrowseSharedMapsScene`**: fetches from Firestore (`listSharedMaps`) —
+critically, a resize must re-render the already-fetched `this.maps` state
+and must NEVER re-hit the network. Split the one-time `loadPage()` fetch
+(now called once from `create()`, guarded by `firebaseReady`, same as
+`LoadGameScene`/`MainMenuScene`'s "subscribe/fetch once, refresh display on
+every rebuild" precedent) from the chrome-building `rebuildLayout()`. A new
+`hasLoadedOnce` flag guards `rebuildLayout()`'s own trailing
+`renderMapList()` call — without it, the very FIRST `rebuildLayout()` call
+(which runs synchronously inside `create()`, before `loadPage()`'s promise
+has resolved) would flash a false "No maps have been published yet" message
+for one frame before the real list arrives.
+
+**`FreePlayScene`**: never went through D-123's ornate-theme restyle (still
+plain rectangle buttons, `CampaignSelectScene`'s original style), so this
+was the mechanical `rebuildLayout()` treatment applied fresh rather than
+retrofitted onto an already-converted-looking scene — six section-builder
+methods (map/boss/wave-count/minion/difficulty/start) now take `width` as an
+explicit parameter, matching `LoadGameScene`'s established style for
+non-ornate scenes, instead of reading a shared field.
+
+**`CoopLobbyScene`**: the one genuinely different case, called out by name
+in D-154's own roadmap note. This scene builds every object exactly ONCE in
+`create()` and only ever toggles visibility/text afterward (`choose`/`join`/
+`in-session` mode switching) — it never destroys and rebuilds its own
+content, unlike every other scene converted so far. Its join-code `<input>`
+(this project's first-ever DOM form field, D-102) would drop whatever the
+player had already typed and lose keyboard focus if destroyed and recreated
+on a resize. Rather than force this scene into the destroy-and-recreate
+convention, it gets its own lighter mechanism: a `centeredObjects` list of
+`{ obj, dx, y }` entries (every object centered at `viewportWidth / 2 + dx`
+at a fixed `y`) populated once at creation time, and a `repositionLayout()`
+that calls `.setPosition(cx + dx, y)` on each — moving existing objects
+(including the `<input>`) rather than replacing them. This is the pattern
+any FUTURE scene with a persistent DOM element or other can't-destroy state
+should follow instead of `rebuildLayout()`.
+
+**Deliberately still not this session** (unchanged from D-154's own list,
+see `KNOWN_ISSUES.md`): the `Scale.RESIZE` cutover itself; `CharacterCreationScene`
+and `MapBuilderScene`'s OWN resize-reactivity; `BattleScene`'s `TILE_SIZE`
+dynamic-scaling (the actual "bigger maps in battle" payoff); raising
+`MAX_MAP_COLS`/`MAX_MAP_ROWS`.
+
+No new tests — every change here is presentation-layer Phaser scene code
+with no new pure-system rule (matching every other scene-conversion pass in
+D-154), verified by typecheck + the full existing suite + a production
+build + an `npm run dev` HTTP-200 check, same as D-154 itself. Tests remain
+at **1349** (unchanged). Typecheck clean, all 1349 tests pass, production
+build succeeds (126 modules, unchanged — no new files). `npm run dev` serves
+HTTP 200. No browser available in this environment — see the new **KI-107**
+for the complete in-browser checklist; every converted scene should look and
+behave IDENTICALLY to before at a normal window size (still a pure
+regression check, not a "does resizing work" check).
+
+### D-156 — Responsive-canvas roadmap step 2: `MapBuilderScene` and `CharacterCreationScene`'s own resize-reactivity
+
+Continuing D-154/D-155's roadmap: step 2, the two remaining scenes not yet
+converted. Both keep persistent DOM `<input>` fields (map name;
+`CharacterCreationScene`'s 4 hero-name fields), so neither can use the
+destroy-and-recreate `rebuildLayout()` convention most scenes use — same
+constraint `CoopLobbyScene` (D-155) established its own reposition-in-place
+mechanism for.
+
+**`MapBuilderScene`**: its grid already dynamically fit `tileSize` to
+available space (`rebuildGridSystem`, pre-existing), just not on a live
+resize event — wiring it in was the "small" piece the roadmap predicted.
+The module-level `GRID_AREA_RIGHT` constant (derived from the old static
+`GAME_WIDTH` import) is gone, replaced by a `gridAreaRight` computed live
+inside `rebuildGridSystem()`. Adopted the same `centeredObjects: { obj, dx,
+y }[]` + `repositionLayout()` mechanism `CoopLobbyScene` introduced: every
+piece of chrome built once in `create()` (title, description, size/name
+controls including the DOM name field, palette tabs, footer) registers its
+own `{ obj, dx, y }`; a resize repositions all of them, then re-derives grid
+geometry and re-runs `renderPaletteSwatches()`/`renderGrid()` — both were
+ALREADY fully destroy-and-recreate on every call (tab switch / any paint),
+so re-invoking them against the live viewport width was enough to keep them
+correctly sized without new bookkeeping for either.
+
+**`CharacterCreationScene`**: the largest scene in this whole effort by
+`GAME_WIDTH`/`GAME_HEIGHT` reference count, as flagged — but investigating
+found every single one of those references reduces to the exact same shape,
+`viewportWidth / 2 + a fixed constant`. `columnCenterX(width, slot)`
+(previously a module-level function reading a `GAME_WIDTH`-derived constant,
+now parameterized on live width) makes this explicit: the width-dependent
+term is `width / 2`, identical across all 4 hero-column slots, the bottom
+controls, Start/Back, and the level-planner/spell-picker wizard overlay
+(`renderPlanPrompt`) alike. That let this session skip
+`CoopLobbyScene`/`MapBuilderScene`'s per-object `{ obj, dx, y }` registration
+almost entirely: a single `repositionLayout()` computes `shift = (newWidth -
+viewportWidthAtLastLayout) / 2` and adds it to the live `.x` of literally
+every current child in `this.children.list` — correct for every object in
+this scene (Rectangle/Text/DOMElement all expose `.x`, and this scene never
+uses a Container or Graphics object), including the 4 name `<input>`s, which
+keep their typed text and keyboard focus since nothing is destroyed. Far
+less code than hand-registering ~150+ individual widgets across 4 slot
+columns would have needed.
+
+**Known, accepted limitation**: if the wizard overlay (`renderPlanPrompt`,
+shared by the Level Planner/Spell Picker/choice-picker) happens to be open
+at the exact moment a resize fires, its full-screen dim backdrop's WIDTH/
+HEIGHT (not just position) would need updating too — the generic shift only
+moves it, since `renderPlanPrompt` only reads live `getViewport(this)`
+sizing when it's freshly (re)drawn. Self-heals the instant the player clicks
+any option (which redraws the whole overlay from scratch at the current
+size). Not worth a dedicated fix while `Scale.RESIZE` isn't live yet — under
+today's `Scale.FIT` this can never actually happen, since the viewport width
+never changes regardless of window resizing.
+
+With both scenes done, every scene in the app except `BattleScene` itself
+now follows the `getViewport`/`onViewportResize` convention in one of its
+two forms (destroy-and-rebuild, or reposition-in-place).
+
+No new tests — presentation-layer Phaser scene code only, no new
+pure-system rule (same as every prior pass in this roadmap). Tests remain at
+**1349**. Typecheck clean, all 1349 tests pass, production build succeeds
+(126 modules, unchanged — no new files). `npm run dev` serves HTTP 200. No
+browser available in this environment — see the new **KI-108** for the
+in-browser checklist; both scenes should look and behave IDENTICALLY to
+before at a normal window size, with the Map Builder's paint tool and both
+scenes' DOM `<input>` fields worth a specific close look since they're the
+two genuinely new interactions this pass touched.
+
+### D-157 — Responsive-canvas roadmap step 3: the actual `Scale.RESIZE` cutover
+
+The roadmap's own step 3 (`PHASE_HANDOFF.md`): flip `main.ts`'s scale mode
+from `Scale.FIT` to `Scale.RESIZE`, the moment the real browser window size
+starts mattering anywhere — every non-`BattleScene` scene had already been
+converted to build its layout off `getViewport`/`onViewportResize` (D-154/
+D-155/D-156), so this was finally unblocked. Kevin picked this over
+scoping KI-034 (the bottom status/hint-line redesign, confirmed a fourth
+time this session as something he wants changed but hasn't picked yet).
+
+**The cutover itself**: `main.ts`'s `scale.mode` is now `Phaser.Scale.RESIZE`.
+`BattleScene` — the one scene with no `getViewport` conversion of its own
+yet (88 `GAME_WIDTH`/`GAME_HEIGHT` references, step 4's own dedicated future
+scope) — locks the canvas back to the old fixed-resolution `Scale.FIT`
+behavior for the duration of a battle: `create()` now sets
+`this.scale.scaleMode = Phaser.Scale.FIT`, explicitly calls
+`this.scale.displaySize.setAspectMode(Phaser.Scale.FIT)` (Phaser only ever
+applies a scale mode's aspect-fit behavior from its own boot-time config
+parsing, never on a later manual `scaleMode` reassignment — skipping this
+would have made "FIT" silently stretch-fill instead of letterbox-fitting),
+then `setGameSize(GAME_WIDTH, GAME_HEIGHT)` to restore the fixed 1280x1080
+resolution. Its existing `SHUTDOWN` handler (already there for input-listener
+cleanup) now also hands the canvas back to `Scale.RESIZE` the instant a
+battle actually ends — every exit path (defeat/victory, Save & Exit, Exit to
+Main Menu, Load Game) already calls `this.scene.stop("BattleScene")` before
+starting the next scene, so this fires reliably on all of them. Menu scenes
+reached while a battle is merely PAUSED underneath (Character Sheet, Pause
+Menu, Settings launched from it) share this same locked-FIT canvas rather
+than fighting over mode, since `scene.scale` is one Game-wide manager, not
+one per scene — they were already using `getViewport` correctly, so nothing
+about them changes.
+
+**Bugs this surfaced before they ever shipped** (found by reasoning through
+what "the real window size differs from 1280x1080" actually breaks, not by
+browser testing — none is available here): several places read the fixed
+`GAME_WIDTH`/`GAME_HEIGHT` constants directly instead of a scene's live
+viewport, which was invisible dead code under `Scale.FIT` (the two were
+always numerically identical) but would have been immediately, visibly wrong
+the moment `Scale.RESIZE` made them differ — at ANY normal window size, not
+just on a manual resize:
+- `uiTheme.ts`'s `drawScreenBackdrop`/`spawnAmbientMotes` (the shared D-123
+  parchment-theme backdrop + ember motes used by Main Menu, Compendium,
+  Bestiary, Character Sheet, Settings, Pause Menu, and more) drew against a
+  fixed 1280x1080 — now reads the scene's live `scale.width`/`scale.height`.
+  Every caller already redraws this from scratch inside its own
+  resize-triggered `rebuildLayout()`, so this alone was enough to make the
+  backdrop actually fill the true live canvas on resize, no caller changes.
+- `uiTheme.ts`'s `centeredRowX` has no `scene` parameter, so its `maxWidth`
+  default couldn't read a live viewport — every one of its ~11 call sites
+  across `BestiaryScene`, `CharacterSheetScene` (×3), `CompendiumScene` (×4),
+  `MainMenuScene` (×3), and `MapBuilderScene` relied on that stale default
+  instead of passing one explicitly. Each now passes its own
+  already-in-scope live width minus the existing 40px-per-side margin.
+- `tooltip.ts`'s hover-tooltip X clamp used fixed `GAME_WIDTH` — now clamps
+  against the scene's live `scale.width`.
+- `dialogueBox.ts`'s full-screen dim scrim (used by `CompendiumScene`'s
+  dialogue preview today, and future chapter-transition dialogue) was sized
+  to fixed `GAME_WIDTH`/`GAME_HEIGHT` — now reads the scene's live
+  `scale.width`/`scale.height` at build time. Known, accepted limitation
+  (same shape as `CharacterCreationScene`'s wizard-overlay one below): a
+  resize firing while the dialogue is already open won't resize an
+  already-drawn scrim, only a fresh open reads the live size — not worth
+  fixing, since this box is dismissed/advanced far more often than a browser
+  window is resized mid-read.
+
+**Still an accepted, unfixed limitation**: `CharacterCreationScene`'s wizard
+overlay (`renderPlanPrompt`, D-156) has the identical dim-backdrop-stale-
+until-next-redraw gap. D-156 deferred it with the rationale "not worth a
+dedicated fix while `Scale.RESIZE` isn't live yet" — that condition no longer
+holds, but the edge case (resizing the browser at the exact moment this
+specific overlay is open, mid-Character-Creation) is narrow and self-heals on
+the player's next click, so it stays deferred rather than chased down this
+session; flagged explicitly here rather than silently left stale.
+
+No new tests — presentation-layer Phaser/scale-manager plumbing only, no new
+pure-system rule. Tests remain at **1349**. Typecheck clean, all 1349 tests
+pass, production build succeeds (126 modules, unchanged — no new files).
+`npm run dev` serves HTTP 200. **This is the first step in the whole
+roadmap where a real in-browser pass is not just recommended but load-
+bearing**: everything converted so far was correct-by-construction but
+never actually exercised under a changing viewport, since `Scale.FIT` never
+let the real window size matter. See the new **KI-109** for the full
+checklist — Kevin's own confirmation that resizing the browser window now
+visibly, correctly re-lays-out every menu screen (and that battles still
+look and scale exactly as they did before) is required before step 4
+(`BattleScene`'s own `TILE_SIZE` dynamic-scaling) can start.
+
+### D-158 — KI-034: replaced `BattleScene`'s packed status/hint line with a real hero roster strip + contextual buttons/tooltips
+
+Kevin confirmed, across four separate sessions, that every individual
+behavior of the bottom status/hint line worked correctly but said he hated
+the whole system it was part of and wanted it redesigned — asked directly a
+fourth time this session (via `EnterPlanMode`, given the size and delicacy
+of the change), he picked the "contextual action bar (icon buttons)"
+direction over two other offered mockups.
+
+`refreshStatus()` (`BattleScene.ts`) used to rebuild one packed, word-wrapped
+`statusText` on every refresh: every hero's name/level/HP (with AC/move/act/
+gear string-appended for whichever hero was selected), the enemy count, and
+a giant mode-dependent hint paragraph (different content for 10+ `ui.kind`
+values, plus a near-universal trailing tail of keyboard-shortcut reminders).
+Investigating turned up that most of that hint text was already redundant
+with something else already on screen: the Ability/Potion/Character Sheet/
+Confirm/Cancel buttons already carry their own "(Q)"/"(P)"/"(C)"/"(Enter)"/
+"(Esc)" labels; blue/red move/attack tile highlighting is already visible
+the instant a hero is selected; the banner already shows `PHASE_LABELS`
+during the enemy phase (making the hint's own "resolving…" redundant); and
+the "How to Play" overlay (`showTutorial()`, reachable any time via H)
+already documents Q/P/E/B/G and arrow-key play.
+
+**What changed:**
+1. **A real visual hero roster strip** replaces the packed `heroPart`
+   string: `MAX_ROSTER_SLOTS` (4) per-hero widgets (box + name/level text +
+   a real HP bar — background/foreground `Rectangle`s scaled by
+   `health / effectiveMaxHealth`, colored green/yellow/red by threshold,
+   with the exact "12/15" numbers overlaid — plus a detail line, reserved
+   in EVERY box but populated only for the selected, living hero, so box
+   height never jumps on selection change). Built once in `buildHud()`;
+   `layoutHeroSlots()` (new) positions exactly `this.heroes.length` of them
+   via `centeredRowX` (imported from `uiTheme.ts`, the same helper every
+   other variable-count centered row in this codebase already uses) and
+   hides the rest — called once, since party size (1-4) never changes
+   mid-battle. The selected-hero border reuses `COLORS.heroActive` (the
+   existing board-token selection-ring color), not `uiTheme.ts`'s separate
+   gold/gilt menu-selection convention, which belongs to the D-123 parchment
+   theme `BattleScene` deliberately hasn't adopted. First HP-bar-style
+   widget in this codebase — an Explore pass during planning confirmed no
+   prior convention existed to match, so this establishes one.
+2. **`enemies: N` moved to a new small `enemyCountText`**, top HUD, next to
+   Integrity/Gold — updated directly inside `refreshStatus()` (not folded
+   into `updateHud()`'s own less-frequent call sites, to guarantee it never
+   goes stale between the two methods' different trigger points).
+3. **A new small `messageText`** replaces the rest of the old packed line —
+   usually empty. Carries only what had no other home: aiming-mode
+   instructions (`aimingAbility`/`choosingSpell`/`aimingSpell`/
+   `aimingTileSpell` — no Cancel button exists for these, unlike
+   `confirmingMove`, which was dropped as redundant with the Confirm/Cancel
+   buttons themselves), the `Tab: aim on board` / `Tab: pick item` focus
+   indicator (genuinely non-obvious keyboard-mode state, no other display
+   surface, and exactly what KI-034's own checklist tests), Test Mode's
+   three debug-picker one-liners (lower polish bar, no better home), and
+   `rejectAt()`'s transient rejection messages (`Out of range`, `Not enough
+   gold for X`, etc. — now written here instead of the old shared field,
+   same "persists until the next real refresh" behavior as before).
+4. **The building/equipping item-description preview moved to a hover
+   tooltip** — `setHoveredItem(id)` now calls the SAME shared
+   `this.tooltip` (`TooltipController`, D-132, already used for board-tile/
+   hero/enemy hover) instead of triggering a full text rebuild, positioned
+   at the hovered item's own button `(x, y)` (found by index into
+   `SHOP_ORDER`/`visibleGearCatalog()`, matching `shopButtons`/
+   `equipItemButtons` — no signature changes needed to `buildItemGrid` or
+   its `onHover` wiring). Critically, `setHoveredItem` is called from BOTH
+   mouse `pointerover` AND keyboard grid-focus navigation
+   (`moveGridFocus`/`toggleKeyboardFocus`) — preserved exactly, so the
+   tooltip stays exactly as keyboard-accessible as the text it replaced.
+   Fixed a latent gap while doing this: `toggleKeyboardFocus` (Tab) used to
+   set the old `hoveredItemId` field directly rather than calling
+   `setHoveredItem`, so tabbing INTO the grid never previewed the
+   newly-focused item until the next arrow-key move — now routes through
+   `setHoveredItem` like every other hover/focus path, fixing this too.
+5. **Removed the now-fully-unused `hoveredItemId` field** — every one of
+   its 4 read sites was inside the deleted hint-construction code; its
+   remaining writes became pure dead state once `setHoveredItem` started
+   resolving tooltip position from its own `id` parameter directly instead
+   of a stored field (caught by `tsc`'s unused-property check, not manual
+   inspection).
+6. **"How to Play"** gained one clause ("or press 1-4") — the only mention
+   of that hotkey now that the live hint's universal trailing tail is gone.
+
+**Deliberate, flagged tradeoff**: the `idle`/`heroSelected`/`confirmingMove`
+hints (e.g. "blue = move · red = attack · Ability (Q) · Potion (P) ·
+Character (C) · Esc to deselect") are gone entirely, not shortened — the
+redundancy analysis above showed every piece of them already has a visible
+button label or board highlight. This relies on that being self-evident on
+a repeat playthrough, with the How to Play overlay (H) as the fallback for
+a first-timer. Kevin picked the action-bar direction knowing this was the
+"declutter" outcome, not a default assumed on his behalf.
+
+No new tests — presentation-layer Phaser scene code only, `BattleScene.ts`
+has zero test coverage by this project's own architecture rule (confirmed
+via an Explore pass before starting: no file under `tests/` references
+`statusText`/`refreshStatus`/`combatLogText`, or imports `BattleScene`
+directly). Tests remain at **1349**. Typecheck clean, all 1349 tests pass,
+production build succeeds (126 modules, unchanged — no new files). `npm run
+dev` serves HTTP 200. No browser available in this environment — this is a
+substantial, delicate rewrite of live battle UI that genuinely needs Kevin's
+own in-browser pass; see the new **KI-110** for the full checklist,
+including re-confirming KI-034's own existing keyboard-only-play items
+still hold (arrow-key cursor, Enter/Space parity, Tab grid/board focus
+switching, no page-scroll on arrows/space, a full mouse-free battle) since
+this rewrite touches the exact code paths those depend on.
 
 - **LOCKED:** "Stronghold Integrity" is the shared loss resource; "Breach Damage"
   is what escaping enemies remove from it; "Tile" is the logical distance unit.

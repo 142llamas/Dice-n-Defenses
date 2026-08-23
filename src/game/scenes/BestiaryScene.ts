@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { GAME_WIDTH, GAME_HEIGHT, BESTIARY_STORAGE_KEY } from "../config";
+import { BESTIARY_STORAGE_KEY } from "../config";
 import { ENEMY_DEFINITIONS, type EnemyDefinition, type EnemyRole } from "../data/enemies";
 import {
   loadBestiaryProgress,
@@ -7,7 +7,17 @@ import {
   isKilled,
   type BestiaryProgress,
 } from "../systems/BestiarySystem";
-import { createOrnateButton, drawScreenBackdrop, drawParchmentPanel, FONT_DISPLAY, FONT_BODY, type OrnateButtonHandle } from "./uiTheme";
+import {
+  createOrnateButton,
+  centeredRowX,
+  drawScreenBackdrop,
+  drawParchmentPanel,
+  getViewport,
+  onViewportResize,
+  FONT_DISPLAY,
+  FONT_BODY,
+  type OrnateButtonHandle,
+} from "./uiTheme";
 
 /**
  * BestiaryScene — Phase 11.6 (D-079): a read-only, unlock-on-encounter enemy
@@ -37,20 +47,22 @@ import { createOrnateButton, drawScreenBackdrop, drawParchmentPanel, FONT_DISPLA
  * reveals fully; once killed at least once it additionally gets a small
  * "[Defeated]" tag. Progress is re-read fresh every time this scene is
  * entered, so a just-finished battle's discoveries show up immediately.
+ *
+ * D-150: replaced the single flat, role-grouped, continuously-paginated
+ * scroll with real tabs — one per `GROUPS` entry — per Kevin's "tabs by
+ * enemy role/type instead of one long scroll" request. Each tab now filters
+ * the roster down to just that role before paginating, so Prev/Next only
+ * ever pages within the role you're currently looking at; switching roles
+ * resets to page 1, same as switching a Compendium category tab already
+ * does.
  */
 
 const PANEL_LEFT = 60;
-const PANEL_TOP = 150;
-const PANEL_WIDTH = GAME_WIDTH - PANEL_LEFT * 2;
-const PANEL_HEIGHT = 800;
+const PANEL_TOP = 168;
+const PANEL_HEIGHT = 782;
 const TEXT_PAD_X = 42;
 const TEXT_PAD_Y = 28;
 const ENTRIES_PER_PAGE = 10;
-
-interface RosterEntry {
-  def: EnemyDefinition;
-  groupLabel: string;
-}
 
 const GROUPS: { label: string; match: (role: EnemyRole | undefined) => boolean }[] = [
   { label: "Minions", match: (role) => role === undefined || role === "minion" },
@@ -63,12 +75,15 @@ const GROUPS: { label: string; match: (role: EnemyRole | undefined) => boolean }
 
 export class BestiaryScene extends Phaser.Scene {
   private sectionObjects: Phaser.GameObjects.Text[] = [];
-  private roster: RosterEntry[] = [];
+  private roster: EnemyDefinition[] = [];
   private progress!: BestiaryProgress;
   private page = 0;
+  private groupIndex = 0;
+  private tabButtons: OrnateButtonHandle[] = [];
   private pageLabel!: Phaser.GameObjects.Text;
   private prevButton!: OrnateButtonHandle;
   private nextButton!: OrnateButtonHandle;
+  private layoutRoot?: Phaser.GameObjects.Container;
 
   constructor() {
     super("BestiaryScene");
@@ -77,10 +92,37 @@ export class BestiaryScene extends Phaser.Scene {
   create(): void {
     this.sectionObjects = [];
     this.page = 0;
+    this.groupIndex = 0;
+    this.progress = loadBestiaryProgress(window.localStorage, BESTIARY_STORAGE_KEY);
+    this.roster = this.buildRoster();
+
+    this.rebuildLayout();
+
+    this.input.keyboard?.on("keydown-ESC", () => this.leave());
+
+    // Same explicit teardown discipline as every other scene (D-043): avoid
+    // accumulating listeners across repeated menu <-> Bestiary visits.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.input.removeAllListeners();
+      this.input.keyboard?.removeAllListeners();
+    });
+    onViewportResize(this, () => this.rebuildLayout());
+  }
+
+  // D-154: rebuilds the whole screen against the current viewport,
+  // deliberately preserving `this.page`/`this.groupIndex` (only `create()`
+  // resets those) so a resize doesn't silently snap back to page 1/Minions.
+  private rebuildLayout(): void {
+    this.layoutRoot?.destroy();
+    const before = new Set<Phaser.GameObjects.GameObject>(this.children.list);
+    this.tabButtons = [];
+    const { width, height } = getViewport(this);
+    const panelWidth = width - PANEL_LEFT * 2;
+
     drawScreenBackdrop(this);
 
     this.add
-      .text(GAME_WIDTH / 2, 42, "Bestiary", {
+      .text(width / 2, 42, "Bestiary", {
         fontFamily: FONT_DISPLAY,
         fontSize: "34px",
         color: "#f0dfa8",
@@ -95,8 +137,8 @@ export class BestiaryScene extends Phaser.Scene {
 
     this.add
       .text(
-        GAME_WIDTH / 2,
-        90,
+        width / 2,
+        84,
         "Enemies you have encountered in battle are recorded here. Undiscovered creatures show as “???”.",
         {
           fontFamily: FONT_BODY,
@@ -108,32 +150,61 @@ export class BestiaryScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(1);
 
-    drawParchmentPanel(this, GAME_WIDTH / 2, PANEL_TOP + PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT, 2);
-    this.buildPaginationControls();
+    this.buildTabs(width);
 
-    this.input.keyboard?.on("keydown-ESC", () => this.leave());
+    drawParchmentPanel(this, width / 2, PANEL_TOP + PANEL_HEIGHT / 2, panelWidth, PANEL_HEIGHT, 2);
+    this.buildPaginationControls(width, height);
 
-    // Same explicit teardown discipline as every other scene (D-043): avoid
-    // accumulating listeners across repeated menu <-> Bestiary visits.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.input.removeAllListeners();
-      this.input.keyboard?.removeAllListeners();
+    const created = this.children.list.filter((c) => !before.has(c));
+    this.layoutRoot = this.add.container(0, 0);
+    this.layoutRoot.add(created);
+
+    this.renderPage(panelWidth);
+  }
+
+  /** D-150: one tab per role group, mirroring `CompendiumScene.buildTabs`'s pattern. */
+  private buildTabs(width: number): void {
+    const y = 122;
+    const w = 150;
+    const gap = 8;
+    const panelWidth = width - PANEL_LEFT * 2;
+    const { xs, itemWidth } = centeredRowX(GROUPS.length, w, gap, width / 2, width - 80);
+    GROUPS.forEach((group, i) => {
+      const handle = createOrnateButton(
+        this,
+        xs[i],
+        y,
+        itemWidth,
+        34,
+        group.label,
+        () => {
+          this.groupIndex = i;
+          this.page = 0;
+          this.refreshTabHighlights();
+          this.roster = this.buildRoster();
+          this.renderPage(panelWidth);
+        },
+        { variant: "tab", depth: 5 },
+      );
+      this.tabButtons.push(handle);
     });
+    this.refreshTabHighlights();
+  }
 
-    this.progress = loadBestiaryProgress(window.localStorage, BESTIARY_STORAGE_KEY);
-    this.roster = this.buildRoster();
-    this.renderPage();
+  private refreshTabHighlights(): void {
+    GROUPS.forEach((_, i) => this.tabButtons[i].setSelected(i === this.groupIndex));
   }
 
   private leave(): void {
     this.scene.start("MainMenuScene");
   }
 
-  private buildPaginationControls(): void {
-    const y = GAME_HEIGHT - 45;
+  private buildPaginationControls(width: number, height: number): void {
+    const y = height - 45;
+    const panelWidth = width - PANEL_LEFT * 2;
     this.prevButton = createOrnateButton(
       this,
-      GAME_WIDTH / 2 - 110,
+      width / 2 - 110,
       y,
       130,
       36,
@@ -141,14 +212,14 @@ export class BestiaryScene extends Phaser.Scene {
       () => {
         if (this.page > 0) {
           this.page--;
-          this.renderPage();
+          this.renderPage(panelWidth);
         }
       },
       { variant: "tool", depth: 5 },
     );
 
     this.pageLabel = this.add
-      .text(GAME_WIDTH / 2, y, "", {
+      .text(width / 2, y, "", {
         fontFamily: FONT_BODY,
         fontSize: "15px",
         color: "#c8b888",
@@ -158,35 +229,30 @@ export class BestiaryScene extends Phaser.Scene {
 
     this.nextButton = createOrnateButton(
       this,
-      GAME_WIDTH / 2 + 110,
+      width / 2 + 110,
       y,
       130,
       36,
       "Next ▶",
       () => {
         this.page++;
-        this.renderPage();
+        this.renderPage(panelWidth);
       },
       { variant: "tool", depth: 5 },
     );
   }
 
-  /** Flattens every role group (in fixed display order) into one list, tagging each entry with its group label and whether it's the first entry of that group — so a page can show a heading only where a group actually starts. */
-  private buildRoster(): RosterEntry[] {
-    const all = Object.values(ENEMY_DEFINITIONS);
-    const entries: RosterEntry[] = [];
-    for (const group of GROUPS) {
-      const defs = all.filter((d) => group.match(d.role));
-      defs.forEach((def) => entries.push({ def, groupLabel: group.label }));
-    }
-    return entries;
+  /** D-150: only the CURRENTLY SELECTED tab's role, now that role is chosen by tab rather than shown as one continuous grouped scroll. */
+  private buildRoster(): EnemyDefinition[] {
+    const group = GROUPS[this.groupIndex];
+    return Object.values(ENEMY_DEFINITIONS).filter((d) => group.match(d.role));
   }
 
   private totalPages(): number {
     return Math.max(1, Math.ceil(this.roster.length / ENTRIES_PER_PAGE));
   }
 
-  private renderPage(): void {
+  private renderPage(panelWidth: number): void {
     for (const obj of this.sectionObjects) obj.destroy();
     this.sectionObjects = [];
 
@@ -195,46 +261,33 @@ export class BestiaryScene extends Phaser.Scene {
     const pageEntries = this.roster.slice(this.page * ENTRIES_PER_PAGE, (this.page + 1) * ENTRIES_PER_PAGE);
 
     const textLeft = PANEL_LEFT + TEXT_PAD_X;
-    const wrapWidth = PANEL_WIDTH - TEXT_PAD_X * 2;
-    let y = PANEL_TOP + TEXT_PAD_Y;
+    const wrapWidth = panelWidth - TEXT_PAD_X * 2;
 
-    let currentGroup: string | null = null;
-    const flushRun = (runEntries: RosterEntry[]) => {
-      if (runEntries.length === 0) return;
-      const body = this.add
-        .text(textLeft, y, runEntries.map((e) => this.entryText(e.def, this.progress)).join("\n\n"), {
+    const heading = this.add
+      .text(textLeft, PANEL_TOP + TEXT_PAD_Y, `${GROUPS[this.groupIndex].label} (${this.roster.length})`, {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "20px",
+        color: "#7a3a20",
+        fontStyle: "bold",
+      })
+      .setDepth(3);
+    this.sectionObjects.push(heading);
+
+    const body = this.add
+      .text(
+        textLeft,
+        PANEL_TOP + TEXT_PAD_Y + heading.height + 12,
+        pageEntries.map((def) => this.entryText(def, this.progress)).join("\n\n"),
+        {
           fontFamily: FONT_BODY,
           fontSize: "15px",
           color: "#2a1a10",
           lineSpacing: 6,
           wordWrap: { width: wrapWidth },
-        })
-        .setDepth(3);
-      this.sectionObjects.push(body);
-      y += body.height + 22;
-    };
-
-    let run: RosterEntry[] = [];
-    pageEntries.forEach((entry) => {
-      const startsNewGroup = entry.groupLabel !== currentGroup;
-      if (startsNewGroup) {
-        flushRun(run);
-        run = [];
-        currentGroup = entry.groupLabel;
-        const heading = this.add
-          .text(textLeft, y, entry.groupLabel, {
-            fontFamily: FONT_DISPLAY,
-            fontSize: "20px",
-            color: "#7a3a20",
-            fontStyle: "bold",
-          })
-          .setDepth(3);
-        this.sectionObjects.push(heading);
-        y += heading.height + 8;
-      }
-      run.push(entry);
-    });
-    flushRun(run);
+        },
+      )
+      .setDepth(3);
+    this.sectionObjects.push(body);
 
     this.pageLabel.setText(`Page ${this.page + 1}/${totalPages}`);
     this.prevButton.setDisabled(this.page === 0);

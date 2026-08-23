@@ -6,7 +6,9 @@ import {
   loadSettings,
   markTutorialSeen,
   nextAnimationSpeed,
+  nextVolume,
   saveSettings,
+  toggleMuted,
   type SettingsStorage,
 } from "../src/game/systems/SettingsSystem";
 
@@ -38,16 +40,40 @@ describe("SettingsSystem", () => {
     expect(loadSettings(storage, "k").animationSpeed).toBe("normal");
   });
 
+  it("loadSettings falls back to default volumes/mute on an invalid stored value", () => {
+    const storage = fakeStorage();
+    storage.setItem("k", JSON.stringify({ masterVolume: 999, musicVolume: -5, sfxVolume: "loud", muted: "yes" }));
+    const settings = loadSettings(storage, "k");
+    expect(settings.masterVolume).toBe(DEFAULT_SETTINGS.masterVolume);
+    expect(settings.musicVolume).toBe(DEFAULT_SETTINGS.musicVolume);
+    expect(settings.sfxVolume).toBe(DEFAULT_SETTINGS.sfxVolume);
+    expect(settings.muted).toBe(DEFAULT_SETTINGS.muted);
+  });
+
   it("saveSettings then loadSettings round-trips", () => {
     const storage = fakeStorage();
-    saveSettings(storage, "k", { animationSpeed: "fast" });
-    expect(loadSettings(storage, "k")).toEqual({ animationSpeed: "fast" });
+    const full = { animationSpeed: "fast" as const, masterVolume: 50, musicVolume: 25, sfxVolume: 100, muted: true };
+    saveSettings(storage, "k", full);
+    expect(loadSettings(storage, "k")).toEqual(full);
   });
 
   it("nextAnimationSpeed cycles normal -> fast -> instant -> normal", () => {
     expect(nextAnimationSpeed("normal")).toBe("fast");
     expect(nextAnimationSpeed("fast")).toBe("instant");
     expect(nextAnimationSpeed("instant")).toBe("normal");
+  });
+
+  it("nextVolume cycles 0 -> 25 -> 50 -> 75 -> 100 -> 0", () => {
+    expect(nextVolume(0)).toBe(25);
+    expect(nextVolume(25)).toBe(50);
+    expect(nextVolume(50)).toBe(75);
+    expect(nextVolume(75)).toBe(100);
+    expect(nextVolume(100)).toBe(0);
+  });
+
+  it("toggleMuted flips the flag", () => {
+    expect(toggleMuted(false)).toBe(true);
+    expect(toggleMuted(true)).toBe(false);
   });
 
   it("durationScaleFor: normal is 1x, fast shrinks, instant is 0 (skip the tween)", () => {

@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   CURRENT_SAVE_VERSION,
   DEFAULT_SAVE_FILE,
+  MAX_SAVE_SLOTS,
   createSaveSlot,
   deleteSaveSlot,
   getSaveSlot,
   loadSaveFile,
+  saveOrUpdatePartySlot,
   saveSaveFile,
   updateSaveSlot,
   upsertSaveSlot,
+  type SaveFile,
   type SaveStorage,
 } from "../src/game/systems/SaveSystem";
 import type { CharacterBuild } from "../src/game/systems/CharacterBuildSystem";
@@ -196,6 +199,96 @@ describe("SaveSystem", () => {
     const updated = upsertSaveSlot(file, replacement);
     expect(getSaveSlot(updated, "a")).toEqual(replacement);
     expect(updated.slots).toHaveLength(1);
+  });
+
+  it("saveOrUpdatePartySlot creates a new slot when no loadedSlotId is given", () => {
+    const result = saveOrUpdatePartySlot(DEFAULT_SAVE_FILE, {
+      loadedSlotId: undefined,
+      builds: [build()],
+      partySize: 1,
+      difficultyId: "normal",
+      now: 100,
+    });
+    expect(result).not.toBeNull();
+    expect(result?.createdNew).toBe(true);
+    expect(result?.slotName).toBe("Kael's Party");
+    expect(result?.file.slots).toHaveLength(1);
+    expect(getSaveSlot(result!.file, result!.slotId)).toMatchObject({
+      name: "Kael's Party",
+      createdAt: 100,
+      updatedAt: 100,
+      partySize: 1,
+      difficultyId: "normal",
+    });
+  });
+
+  it("saveOrUpdatePartySlot updates the existing slot in place when loadedSlotId matches", () => {
+    const file = createSaveSlot(DEFAULT_SAVE_FILE, {
+      id: "a",
+      name: "Ash's Party",
+      createdAt: 100,
+      party: [build()],
+      partySize: 1,
+      difficultyId: "normal",
+    });
+    const result = saveOrUpdatePartySlot(file, {
+      loadedSlotId: "a",
+      builds: [build({ name: "Renamed" })],
+      partySize: 2,
+      difficultyId: "hard",
+      now: 200,
+    });
+    expect(result?.createdNew).toBe(false);
+    expect(result?.slotId).toBe("a");
+    expect(result?.file.slots).toHaveLength(1);
+    const slot = getSaveSlot(result!.file, "a");
+    expect(slot?.party[0].name).toBe("Renamed");
+    expect(slot?.partySize).toBe(2);
+    expect(slot?.difficultyId).toBe("hard");
+    expect(slot?.updatedAt).toBe(200);
+    expect(slot?.name).toBe("Ash's Party"); // untouched, matching updateSaveSlot's own behavior
+  });
+
+  it("saveOrUpdatePartySlot returns null when loadedSlotId doesn't match any slot", () => {
+    const file = createSaveSlot(DEFAULT_SAVE_FILE, {
+      id: "a",
+      name: "Ash's Party",
+      createdAt: 100,
+      party: [build()],
+      partySize: 1,
+      difficultyId: "normal",
+    });
+    const result = saveOrUpdatePartySlot(file, {
+      loadedSlotId: "missing",
+      builds: [build()],
+      partySize: 1,
+      difficultyId: "normal",
+      now: 200,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("saveOrUpdatePartySlot returns null when creating a new slot would exceed MAX_SAVE_SLOTS", () => {
+    let file: SaveFile = DEFAULT_SAVE_FILE;
+    for (let i = 0; i < MAX_SAVE_SLOTS; i++) {
+      file = createSaveSlot(file, {
+        id: `slot-${i}`,
+        name: `Party ${i}`,
+        createdAt: i,
+        party: [build()],
+        partySize: 1,
+        difficultyId: "normal",
+      });
+    }
+    expect(file.slots).toHaveLength(MAX_SAVE_SLOTS);
+    const result = saveOrUpdatePartySlot(file, {
+      loadedSlotId: undefined,
+      builds: [build()],
+      partySize: 1,
+      difficultyId: "normal",
+      now: 999,
+    });
+    expect(result).toBeNull();
   });
 
   it("saveSaveFile then loadSaveFile round-trips", () => {

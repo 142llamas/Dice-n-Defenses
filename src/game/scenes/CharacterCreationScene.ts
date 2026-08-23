@@ -1,5 +1,6 @@
 import Phaser from "phaser";
-import { GAME_WIDTH, GAME_HEIGHT, SAVE_STORAGE_KEY } from "../config";
+import { SAVE_STORAGE_KEY } from "../config";
+import { getViewport, onViewportResize } from "./uiTheme";
 import { ABILITY_SCORE_IDS, ABILITY_SCORE_NAMES, modifierFor, type AbilityScoreId } from "../data/abilityScores";
 import { CHARACTER_NAME_POOL, CREATABLE_CLASS_IDS, STARTING_GEAR_IDS, signatureActionIdsForClass } from "../data/characterCreation";
 import { getAbility } from "../data/abilities";
@@ -35,17 +36,21 @@ import type { ParsedMap } from "../data/testMap";
 import {
   StandardArrayAllocator,
   allocatorFromScores,
+  PointBuyAllocator,
+  pointBuyAllocatorFromScores,
+  POINT_BUY_BUDGET,
   heroDefinitionFromBuild,
   hasDuplicateAbilities,
   hasDuplicateNames,
   subclassIdForNewBuild,
+  type AbilityScoreAllocator,
   type CharacterBuild,
 } from "../systems/CharacterBuildSystem";
 import {
   MAX_SAVE_SLOTS,
-  createSaveSlot,
   getSaveSlot,
   loadSaveFile,
+  saveOrUpdatePartySlot,
   saveSaveFile,
   updateSaveSlot,
   type SaveFile,
@@ -158,24 +163,43 @@ import { pushSlot } from "../cloud/CloudSaveSync";
  * original one at creation — instead of a fixed auto-assignment. A
  * later-choice class is unaffected here; its own second option shows up as
  * a second button in `BattleScene`'s existing overlay instead.
+ *
+ * D-147 (Character Creation overhaul, piece 1): Kevin's playtest feedback
+ * called the click-to-cycle button system "sucks" and asked for a real
+ * dropdown/list-style choice instead — see KI-098. Class, Race, Gear, and
+ * Subclass now open a full-screen choice-picker overlay (`openChoicePicker`,
+ * a thin wrapper around the existing `renderPlanPrompt` — the same overlay
+ * primitive the Level Planner/Spell Picker wizards already share) listing
+ * every option at once instead of cycling one at a time. Name (still a
+ * cycle-through-a-preset-pool button; real free-text naming is piece 2),
+ * ability scores, and Signature Action are unchanged in this piece.
  */
 
 const MAX_PARTY_SIZE = 4;
 const MIN_PARTY_SIZE = 1;
 const COLUMN_WIDTH = 290;
 const COLUMN_GAP = 10;
-const FIRST_COLUMN_LEFT =
-  (GAME_WIDTH - (MAX_PARTY_SIZE * COLUMN_WIDTH + (MAX_PARTY_SIZE - 1) * COLUMN_GAP)) / 2;
 
-function columnCenterX(slot: number): number {
-  return FIRST_COLUMN_LEFT + slot * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_WIDTH / 2;
+/**
+ * D-156: takes the viewport width live instead of the old `GAME_WIDTH`-derived
+ * module constant `FIRST_COLUMN_LEFT`. Every x-coordinate in this whole scene
+ * (all 4 slot columns, the bottom controls, Start/Back, the wizard overlay)
+ * reduces to this same shape — `width / 2 + a fixed offset` — which is what
+ * lets `repositionLayout()` below handle a live resize with one constant
+ * shift applied to every current child object, instead of rebuilding anything.
+ */
+function columnCenterX(width: number, slot: number): number {
+  const firstColumnLeft = (width - (MAX_PARTY_SIZE * COLUMN_WIDTH + (MAX_PARTY_SIZE - 1) * COLUMN_GAP)) / 2;
+  return firstColumnLeft + slot * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_WIDTH / 2;
 }
 
 interface SlotState {
-  nameIndex: number;
+  /** D-147 (piece 2): free-text hero name, editable via a DOM `<input>` (see `buildSlotUi`'s name row) — previously an index into `CHARACTER_NAME_POOL`. The pool is still used to seed a fresh slot's default. */
+  name: string;
   classIndex: number;
   raceIndex: number;
-  allocator: StandardArrayAllocator;
+  /** D-147 (piece 3): whichever kind matches the scene's current party-wide `abilityScoreMethod` — swapped wholesale (not converted) when the method toggle is clicked. */
+  allocator: AbilityScoreAllocator;
   abilityIndex: number;
   controlledBy: HeroControlMode;
   /** Phase 13.11 (D-096): index into `STARTING_GEAR_IDS`, offset by 1 — 0 means "None". */
@@ -203,10 +227,17 @@ interface SlotState {
 
 interface SlotWidgets {
   controlLabel: Phaser.GameObjects.Text;
-  nameLabel: Phaser.GameObjects.Text;
+  /** D-147 (piece 2): a real DOM `<input>`, not a Text label — its own value is read live on each "input" event, not re-set by `refreshSlot`. */
+  nameInput: Phaser.GameObjects.DOMElement;
+  /** The raw `<input>` node inside `nameInput`, kept separately so `setSlotActive` can toggle `.disabled` — a Phaser `Rectangle`'s `disableInteractive` doesn't apply to a real HTML element. */
+  nameInputNode: HTMLInputElement;
   classLabel: Phaser.GameObjects.Text;
   raceLabel: Phaser.GameObjects.Text;
   abilityScoreLabels: Record<AbilityScoreId, Phaser.GameObjects.Text>;
+  /** D-147 (piece 3): the six Standard-Array cycle-row rectangles — visible/interactive only while the party-wide method is "standardArray". */
+  standardArrayRowButtons: Phaser.GameObjects.Rectangle[];
+  /** D-147 (piece 3): the twelve Point-Buy +/- rectangles (one pair per ability) — visible/interactive only while the method is "pointBuy". */
+  pointBuyButtons: Phaser.GameObjects.Rectangle[];
   signatureLabel: Phaser.GameObjects.Text;
   gearLabel: Phaser.GameObjects.Text;
   subclassLabel: Phaser.GameObjects.Text;
@@ -238,6 +269,15 @@ export class CharacterCreationScene extends Phaser.Scene {
   private teamLevelValue = 1;
   private teamLevelButton!: Phaser.GameObjects.Rectangle;
   private teamLevelLabel!: Phaser.GameObjects.Text;
+  /**
+   * D-147 (piece 3): a party-wide ability-score allocation method — real 5e
+   * practice treats this as a table-wide ruleset choice, not a per-hero one.
+   * Switching it resets every slot's allocator to a FRESH instance of the
+   * new kind (no attempted conversion between the two).
+   */
+  private abilityScoreMethod: "standardArray" | "pointBuy" = "standardArray";
+  private abilityScoreMethodButton!: Phaser.GameObjects.Rectangle;
+  private abilityScoreMethodLabel!: Phaser.GameObjects.Text;
   /** Phase 11.8 (D-071): forwarded unchanged to BattleScene; `undefined` when
    * reached via the plain "Create Party" button (no campaign selected). */
   private campaignId?: string;
@@ -290,6 +330,19 @@ export class CharacterCreationScene extends Phaser.Scene {
   private spellPickSteps: SpellPickStepKind[] = [];
   private spellPickStepIndex = 0;
 
+  /**
+   * D-156: the viewport width `create()` laid this scene out against. Every
+   * x-coordinate in this scene is `width / 2 + a fixed offset` (see
+   * `columnCenterX`'s own comment), so a live resize just shifts every
+   * current child object's `x` by `(newWidth - this) / 2` — see
+   * `repositionLayout()` — rather than destroying and rebuilding anything
+   * (this scene has 4 persistent DOM `<input>` name fields that would lose
+   * typed text and focus if rebuilt, the same constraint `CoopLobbyScene`
+   * and `MapBuilderScene` already established their own reposition-in-place
+   * mechanisms for).
+   */
+  private viewportWidthAtLastLayout = 0;
+
   constructor() {
     super("CharacterCreationScene");
   }
@@ -321,9 +374,11 @@ export class CharacterCreationScene extends Phaser.Scene {
     initAuth((state) => (this.authState = state));
 
     this.cameras.main.setBackgroundColor("#0e0e14");
+    const width = getViewport(this).width;
+    this.viewportWidthAtLastLayout = width;
 
     this.add
-      .text(GAME_WIDTH / 2, 36, "BUILD YOUR PARTY", {
+      .text(width / 2, 36, "BUILD YOUR PARTY", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "32px",
         color: "#e8e8f0",
@@ -333,12 +388,18 @@ export class CharacterCreationScene extends Phaser.Scene {
 
     this.add
       .text(
-        GAME_WIDTH / 2,
+        width / 2,
         72,
-        "Click a name, class, race, or ability to cycle it. Click an ability score to reassign it.",
+        "Type a hero's name directly. Click a class, race, gear, or subclass to choose from a list. Click an ability score or signature action to cycle it.",
         { fontFamily: "system-ui, Arial, sans-serif", fontSize: "15px", color: "#8a8aa0" },
       )
       .setOrigin(0.5);
+
+    // D-147 (piece 3): the method is party-wide, so it's read once from
+    // whichever build a loaded party's first slot used — every slot in a
+    // save made through this scene shares the same method, since it can
+    // only ever be changed via the one party-wide toggle below.
+    this.abilityScoreMethod = this.loadedParty?.[0]?.abilityScoreMethod === "pointBuy" ? "pointBuy" : "standardArray";
 
     for (let slot = 0; slot < MAX_PARTY_SIZE; slot++) {
       const loadedBuild = this.loadedParty?.[slot];
@@ -346,7 +407,7 @@ export class CharacterCreationScene extends Phaser.Scene {
         loadedBuild
           ? this.slotStateFromBuild(loadedBuild)
           : {
-              nameIndex: slot,
+              name: CHARACTER_NAME_POOL[slot % CHARACTER_NAME_POOL.length],
               classIndex: 0,
               raceIndex: 0,
               allocator: new StandardArrayAllocator(),
@@ -364,20 +425,49 @@ export class CharacterCreationScene extends Phaser.Scene {
               spellPicks: {},
             },
       );
-      this.widgets.push(this.buildSlotUi(slot));
+      this.widgets.push(this.buildSlotUi(width, slot));
     }
     if (this.loadedParty) {
       this.partySize = Math.min(MAX_PARTY_SIZE, Math.max(MIN_PARTY_SIZE, this.loadedParty.length));
     }
 
-    this.buildBottomControls();
-    this.buildStartButton();
-    this.buildBackButton();
+    this.buildBottomControls(width);
+    this.buildStartButton(width);
+    this.buildBackButton(width);
     this.refreshAll();
+
+    onViewportResize(this, () => this.repositionLayout());
   }
 
-  private buildSlotUi(slot: number): SlotWidgets {
-    const x = columnCenterX(slot);
+  /**
+   * D-156: shifts every current child object's `x` by however much the
+   * viewport's center has moved — correct for every object in this scene
+   * (see `columnCenterX`'s comment) without destroying/rebuilding anything,
+   * so the 4 name `<input>`s keep their typed text and keyboard focus. A
+   * no-op under today's `Scale.FIT` (the viewport width never actually
+   * changes), same as every other D-154/D-155/D-156 conversion.
+   *
+   * Known limitation: if the wizard overlay (`renderPlanPrompt`) happens to
+   * be open at the exact moment a resize fires, its dim backdrop's WIDTH/
+   * HEIGHT (not just position) would need updating too to stay full-screen —
+   * this shift only moves it, since it reads live `getViewport(this)` sizing
+   * only when freshly (re)drawn. Self-heals the instant the player clicks
+   * any option, which redraws it from scratch at the current size. Not worth
+   * a dedicated fix while `Scale.RESIZE` isn't live yet.
+   */
+  private repositionLayout(): void {
+    const newWidth = getViewport(this).width;
+    const shift = (newWidth - this.viewportWidthAtLastLayout) / 2;
+    if (shift === 0) return;
+    for (const obj of this.children.list) {
+      const positionable = obj as unknown as { x?: unknown };
+      if (typeof positionable.x === "number") (positionable as { x: number }).x += shift;
+    }
+    this.viewportWidthAtLastLayout = newWidth;
+  }
+
+  private buildSlotUi(width: number, slot: number): SlotWidgets {
+    const x = columnCenterX(width, slot);
     const allObjects: Phaser.GameObjects.GameObject[] = [];
     const interactiveButtons: Phaser.GameObjects.Rectangle[] = [];
 
@@ -418,20 +508,36 @@ export class CharacterCreationScene extends Phaser.Scene {
     allObjects.push(controlButton, controlLabel);
     interactiveButtons.push(controlButton);
 
-    const nameButton = this.add
-      .rectangle(x, 165, COLUMN_WIDTH - 20, 34, 0x2a2a3a)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    const nameLabel = this.add
-      .text(x, 165, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e8e8f0", fontStyle: "bold" })
+    // D-147 (piece 2): a real DOM `<input>` (this project's second use of one
+    // — see `CoopLobbyScene`'s join-code field, KI-062, for the first and
+    // `main.ts`'s `dom.createContainer` config both rely on). The starting
+    // value is set as a JS property, not baked into the HTML string, so a
+    // loaded save's name can't break/inject into the markup. Typing updates
+    // `s.name` live and re-runs `refreshAll` (for duplicate/blank-name
+    // validation) but never writes back INTO the input itself, so the
+    // player's cursor position/selection is never disturbed mid-edit.
+    const nameInput = this.add
+      .dom(
+        x,
+        165,
+      )
+      .createFromHTML(
+        `<input type="text" maxlength="24" placeholder="Hero Name" style="
+          width: ${COLUMN_WIDTH - 20}px; height: 34px; font-size: 16px;
+          font-family: system-ui, Arial, sans-serif; font-weight: bold;
+          text-align: center; background: #2a2a3a; color: #e8e8f0;
+          border: 1px solid #4a4a5a; border-radius: 4px; outline: none;
+          box-sizing: border-box;
+        " />`,
+      )
       .setOrigin(0.5);
-    nameButton.on("pointerover", () => nameButton.setFillStyle(0x3a3a4a));
-    nameButton.on("pointerout", () => nameButton.setFillStyle(0x2a2a3a));
-    nameButton.on("pointerdown", () => {
-      const s = this.slots[slot];
-      s.nameIndex = (s.nameIndex + 1) % CHARACTER_NAME_POOL.length;
+    const nameNode = nameInput.node.querySelector("input") as HTMLInputElement;
+    nameNode.value = this.slots[slot].name;
+    nameNode.addEventListener("input", () => {
+      this.slots[slot].name = nameNode.value;
       this.refreshAll();
     });
+    nameNode.addEventListener("keydown", (e: KeyboardEvent) => e.stopPropagation());
 
     const classButton = this.add
       .rectangle(x, 200, COLUMN_WIDTH - 20, 26, 0x222a2e)
@@ -444,15 +550,27 @@ export class CharacterCreationScene extends Phaser.Scene {
     classButton.on("pointerout", () => classButton.setFillStyle(0x222a2e));
     classButton.on("pointerdown", () => {
       const s = this.slots[slot];
-      s.classIndex = (s.classIndex + 1) % CREATABLE_CLASS_IDS.length;
-      s.abilityIndex = 0; // the new class's action list has a different shape — start from its first entry
-      // D-133: a different class has an entirely different choice ladder —
-      // a stale plan would be meaningless at best, wrong at worst.
-      s.levelUpPlan = emptyLevelUpPlan();
-      // D-135: same reasoning — a different class has an entirely different
-      // spell list, so a stale manual pick would be meaningless too.
-      s.spellPicks = {};
-      this.refreshAll();
+      this.openChoicePicker(
+        "Choose a Class",
+        CREATABLE_CLASS_IDS.map((id, i) => ({
+          label: getClassDefinition(id).name,
+          // D-147 (piece 4): a one-sentence "what does this class play
+          // like" preview, shown right on the picker so the player doesn't
+          // have to leave Character Creation to find out.
+          desc: getClassDefinition(id).previewSummary,
+          highlighted: i === s.classIndex,
+          onPick: () => {
+            s.classIndex = i;
+            s.abilityIndex = 0; // the new class's action list has a different shape — start from its first entry
+            // D-133: a different class has an entirely different choice ladder —
+            // a stale plan would be meaningless at best, wrong at worst.
+            s.levelUpPlan = emptyLevelUpPlan();
+            // D-135: same reasoning — a different class has an entirely different
+            // spell list, so a stale manual pick would be meaningless too.
+            s.spellPicks = {};
+          },
+        })),
+      );
     });
 
     const raceButton = this.add
@@ -466,15 +584,40 @@ export class CharacterCreationScene extends Phaser.Scene {
     raceButton.on("pointerout", () => raceButton.setFillStyle(0x2a2622));
     raceButton.on("pointerdown", () => {
       const s = this.slots[slot];
-      s.raceIndex = (s.raceIndex + 1) % RACE_IDS.length;
-      this.refreshAll();
+      // D-147 (piece 5): each option's desc shows what's actually real
+      // (speed, flavor traits) — deliberately no invented ability-score
+      // bonus. This project's spell-prep economy (D-134) already committed
+      // to real SRD 5.2.1, which moved ability-score increases from Race to
+      // Background — no race grants one there either, so nothing is
+      // missing here, and the picker's title says so plainly.
+      this.openChoicePicker(
+        "Choose a Race — SRD 5.2.1 ties ability-score increases to Background, not Race, so none are missing below.",
+        RACE_IDS.map((id, i) => {
+          const race = getRaceDefinition(id);
+          return {
+            label: race.name,
+            desc: `Speed: ${race.speedTiles} tiles/turn · ${race.traits.map((t) => t.name).join(", ")}`,
+            highlighted: i === s.raceIndex,
+            onPick: () => {
+              s.raceIndex = i;
+            },
+          };
+        }),
+      );
     });
 
     const abilityScoreLabels = {} as Record<AbilityScoreId, Phaser.GameObjects.Text>;
+    // D-147 (piece 3): kept OUT of `interactiveButtons` — their interactivity
+    // is managed by `refreshAbilityScoreControls` (which also has to weigh
+    // the party-wide method), not the generic active/inactive-slot toggle.
+    const standardArrayRowButtons: Phaser.GameObjects.Rectangle[] = [];
+    const pointBuyButtons: Phaser.GameObjects.Rectangle[] = [];
     const abilityRowsTop = 270;
     const abilityRowHeight = 30;
     ABILITY_SCORE_IDS.forEach((ability, row) => {
       const y = abilityRowsTop + row * abilityRowHeight;
+
+      // Standard Array mode: the whole row is one cycle button (unchanged since Phase 11.1).
       const rowButton = this.add
         .rectangle(x, y, COLUMN_WIDTH - 20, 24, 0x22222e)
         .setStrokeStyle(1, 0x32324a)
@@ -485,12 +628,56 @@ export class CharacterCreationScene extends Phaser.Scene {
       rowButton.on("pointerover", () => rowButton.setFillStyle(0x2a2a3a));
       rowButton.on("pointerout", () => rowButton.setFillStyle(0x22222e));
       rowButton.on("pointerdown", () => {
-        this.slots[slot].allocator.cycle(ability);
+        if (this.abilityScoreMethod !== "standardArray") return;
+        (this.slots[slot].allocator as StandardArrayAllocator).cycle(ability);
         this.refreshAll();
       });
+
+      // D-147 (piece 3): Point Buy mode — a +/- stepper layered at the same
+      // row position (higher depth so it visually and input-wise sits above
+      // `rowButton`), shown/interactive only while the method is "pointBuy"
+      // (`refreshAbilityScoreControls` toggles both sets' visibility and
+      // interactivity together, so only one set is ever clickable). `label`
+      // above is shared by both modes — the score/modifier text it shows is
+      // computed identically either way (see `refreshSlot`).
+      const minusButton = this.add
+        .rectangle(x - 100, y, 26, 22, 0x2a2a3a)
+        .setStrokeStyle(1, 0x4a4a5a)
+        .setDepth(1)
+        .setInteractive({ useHandCursor: true });
+      const minusLabel = this.add
+        .text(x - 100, y, "-", { fontFamily: "monospace", fontSize: "16px", color: "#e8e8f0", fontStyle: "bold" })
+        .setOrigin(0.5)
+        .setDepth(2);
+      minusButton.on("pointerover", () => minusButton.setFillStyle(0x3a3a4a));
+      minusButton.on("pointerout", () => minusButton.setFillStyle(0x2a2a3a));
+      minusButton.on("pointerdown", () => {
+        if (this.abilityScoreMethod !== "pointBuy") return;
+        (this.slots[slot].allocator as PointBuyAllocator).decrease(ability);
+        this.refreshAll();
+      });
+
+      const plusButton = this.add
+        .rectangle(x + 100, y, 26, 22, 0x2a2a3a)
+        .setStrokeStyle(1, 0x4a4a5a)
+        .setDepth(1)
+        .setInteractive({ useHandCursor: true });
+      const plusLabel = this.add
+        .text(x + 100, y, "+", { fontFamily: "monospace", fontSize: "16px", color: "#e8e8f0", fontStyle: "bold" })
+        .setOrigin(0.5)
+        .setDepth(2);
+      plusButton.on("pointerover", () => plusButton.setFillStyle(0x3a3a4a));
+      plusButton.on("pointerout", () => plusButton.setFillStyle(0x2a2a3a));
+      plusButton.on("pointerdown", () => {
+        if (this.abilityScoreMethod !== "pointBuy") return;
+        (this.slots[slot].allocator as PointBuyAllocator).increase(ability);
+        this.refreshAll();
+      });
+
       abilityScoreLabels[ability] = label;
-      allObjects.push(rowButton);
-      interactiveButtons.push(rowButton);
+      standardArrayRowButtons.push(rowButton);
+      pointBuyButtons.push(minusButton, plusButton);
+      allObjects.push(rowButton, label, minusButton, minusLabel, plusButton, plusLabel);
     });
 
     const signatureY = abilityRowsTop + ABILITY_SCORE_IDS.length * abilityRowHeight + 15;
@@ -526,8 +713,22 @@ export class CharacterCreationScene extends Phaser.Scene {
     gearButton.on("pointerout", () => gearButton.setFillStyle(0x22282a));
     gearButton.on("pointerdown", () => {
       const s = this.slots[slot];
-      s.startingGearIndex = (s.startingGearIndex + 1) % (STARTING_GEAR_IDS.length + 1);
-      this.refreshAll();
+      this.openChoicePicker("Choose Starting Gear", [
+        {
+          label: "None",
+          highlighted: s.startingGearIndex === 0,
+          onPick: () => {
+            s.startingGearIndex = 0;
+          },
+        },
+        ...STARTING_GEAR_IDS.map((id, i) => ({
+          label: getEquipmentDefinition(id).name,
+          highlighted: s.startingGearIndex === i + 1,
+          onPick: () => {
+            s.startingGearIndex = i + 1;
+          },
+        })),
+      ]);
     });
 
     // Phase 14.2 (D-099): a subclass-picker row. Only actually cycles
@@ -552,8 +753,16 @@ export class CharacterCreationScene extends Phaser.Scene {
       const classId = CREATABLE_CLASS_IDS[s.classIndex];
       const options = subclassesForClass(classId);
       if (getClassDefinition(classId).subclassChoiceLevel !== 1 || options.length < 2) return;
-      s.subclassIndex = (s.subclassIndex + 1) % options.length;
-      this.refreshAll();
+      this.openChoicePicker(
+        "Choose a Subclass",
+        options.map((opt, i) => ({
+          label: opt.name,
+          highlighted: i === s.subclassIndex,
+          onPick: () => {
+            s.subclassIndex = i;
+          },
+        })),
+      );
     });
 
     const statsLabel = this.add
@@ -621,8 +830,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     spellsButton.on("pointerdown", () => this.openSpellPicker(slot));
 
     allObjects.push(
-      nameButton,
-      nameLabel,
+      nameInput,
       classButton,
       classLabel,
       raceButton,
@@ -643,7 +851,6 @@ export class CharacterCreationScene extends Phaser.Scene {
       ...Object.values(abilityScoreLabels),
     );
     interactiveButtons.push(
-      nameButton,
       classButton,
       raceButton,
       signatureButton,
@@ -656,10 +863,13 @@ export class CharacterCreationScene extends Phaser.Scene {
 
     return {
       controlLabel,
-      nameLabel,
+      nameInput,
+      nameInputNode: nameNode,
       classLabel,
       raceLabel,
       abilityScoreLabels,
+      standardArrayRowButtons,
+      pointBuyButtons,
       signatureLabel,
       gearLabel,
       subclassLabel,
@@ -680,11 +890,11 @@ export class CharacterCreationScene extends Phaser.Scene {
   // down another +40px (820->860, see below) for the new Spells row, same
   // discipline as the race-row +40 shift and the 720->900->1000 canvas
   // bumps; GAME_HEIGHT (1080) has ample room to spare either way.
-  private buildBottomControls(): void {
-    this.buildTeamLevelControl(810);
+  private buildBottomControls(width: number): void {
+    this.buildPartyWideAbilityControls(width, 810);
     const y = 860;
-    const leftX = GAME_WIDTH / 2 - 150;
-    const rightX = GAME_WIDTH / 2 + 150;
+    const leftX = width / 2 - 150;
+    const rightX = width / 2 + 150;
 
     this.partySizeButton = this.add
       .rectangle(leftX, y, 280, 40, 0x2a2a3a)
@@ -717,20 +927,43 @@ export class CharacterCreationScene extends Phaser.Scene {
   }
 
   /**
-   * D-129: sets every slot's Starting Level at once (Kevin's "as a team"
-   * option, alongside each column's own individual "Level: N" control) — a
-   * single centered button, cycling 1-20 like every other cycle control,
-   * that stamps its current value onto all `MAX_PARTY_SIZE` slots the
-   * instant it's clicked. A slot can still be fine-tuned individually
-   * afterward; this is a quick group-set, not a locked/linked value.
+   * D-147 (piece 3): two party-wide controls sharing one row, left/right
+   * split like the party-size/difficulty row just below — this scene's
+   * column already sits close to `GAME_HEIGHT`'s headroom (see KI-083), so
+   * a NEW control reuses an existing row's vertical space rather than
+   * adding one. Left: the Ability Score Method toggle (Standard Array /
+   * Point Buy), which resets every slot's allocator to a FRESH instance of
+   * the newly chosen kind. Right: D-129's pre-existing "set every slot's
+   * Starting Level at once" control, unchanged in behavior, just relocated
+   * from its own single centered button into this row's right half.
    */
-  private buildTeamLevelControl(y: number): void {
+  private buildPartyWideAbilityControls(width: number, y: number): void {
+    const leftX = width / 2 - 150;
+    const rightX = width / 2 + 150;
+
+    this.abilityScoreMethodButton = this.add
+      .rectangle(leftX, y, 280, 40, 0x28241c)
+      .setStrokeStyle(1, 0x4a4030)
+      .setInteractive({ useHandCursor: true });
+    this.abilityScoreMethodLabel = this.add
+      .text(leftX, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "15px", color: "#e0c890" })
+      .setOrigin(0.5);
+    this.abilityScoreMethodButton.on("pointerover", () => this.abilityScoreMethodButton.setFillStyle(0x342e22));
+    this.abilityScoreMethodButton.on("pointerout", () => this.abilityScoreMethodButton.setFillStyle(0x28241c));
+    this.abilityScoreMethodButton.on("pointerdown", () => {
+      this.abilityScoreMethod = this.abilityScoreMethod === "standardArray" ? "pointBuy" : "standardArray";
+      this.slots.forEach((s) => {
+        s.allocator = this.abilityScoreMethod === "pointBuy" ? new PointBuyAllocator() : new StandardArrayAllocator();
+      });
+      this.refreshAll();
+    });
+
     this.teamLevelButton = this.add
-      .rectangle(GAME_WIDTH / 2, y, 320, 40, 0x28241c)
+      .rectangle(rightX, y, 280, 40, 0x28241c)
       .setStrokeStyle(1, 0x4a4030)
       .setInteractive({ useHandCursor: true });
     this.teamLevelLabel = this.add
-      .text(GAME_WIDTH / 2, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e0c890" })
+      .text(rightX, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e0c890" })
       .setOrigin(0.5);
     this.teamLevelButton.on("pointerover", () => this.teamLevelButton.setFillStyle(0x342e22));
     this.teamLevelButton.on("pointerout", () => this.teamLevelButton.setFillStyle(0x28241c));
@@ -748,9 +981,9 @@ export class CharacterCreationScene extends Phaser.Scene {
   // (700->740); D-129: another +90px (740->830); D-133: another +40px
   // (830->870); D-135: another +40px (870->910), same reason as
   // buildBottomControls' own shift.
-  private buildStartButton(): void {
-    const leftX = GAME_WIDTH / 2 - 150;
-    const rightX = GAME_WIDTH / 2 + 150;
+  private buildStartButton(width: number): void {
+    const leftX = width / 2 - 150;
+    const rightX = width / 2 + 150;
 
     this.startButton = this.add
       .rectangle(leftX, 910, 260, 50, 0x4caf72)
@@ -765,9 +998,10 @@ export class CharacterCreationScene extends Phaser.Scene {
       .setOrigin(0.5);
     this.startButton.on("pointerdown", () => {
       if (!this.partyValid) return;
+      const builds = this.buildsFromSlots();
       if (this.loadedSlotId) {
         this.saveFile = updateSaveSlot(this.saveFile, this.loadedSlotId, {
-          party: this.buildsFromSlots(),
+          party: builds,
           partySize: this.partySize,
           difficultyId: this.difficultyId,
           updatedAt: Date.now(),
@@ -777,6 +1011,11 @@ export class CharacterCreationScene extends Phaser.Scene {
       }
       // Party size isn't sent separately: BattleScene derives it from
       // heroDefinitions.length, which is always the true count.
+      // D-152: `originalParty`/`loadedSlotId` are forwarded ONLY so the new
+      // in-battle pause menu's "Save Party" has a real `CharacterBuild[]` to
+      // save — `HeroDefinition` (what `buildRoster()` sends) has already
+      // discarded race id by this point, so there is no way back to a
+      // `CharacterBuild` from it. Not used for anything else.
       this.scene.start("BattleScene", {
         heroDefinitions: this.buildRoster(),
         difficultyId: this.difficultyId,
@@ -785,6 +1024,8 @@ export class CharacterCreationScene extends Phaser.Scene {
         freePlayWaves: this.freePlayWaves,
         customMapData: this.customMapData,
         testMode: this.testMode,
+        originalParty: builds,
+        loadedSlotId: this.loadedSlotId,
       });
     });
 
@@ -810,7 +1051,7 @@ export class CharacterCreationScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.statusText = this.add
-      .text(GAME_WIDTH / 2, 990, "", {
+      .text(width / 2, 990, "", {
         fontFamily: "monospace",
         fontSize: "13px",
         color: "#d0a0a0",
@@ -826,27 +1067,19 @@ export class CharacterCreationScene extends Phaser.Scene {
    */
   private onSaveParty(): void {
     if (!this.partyValid) return;
-    const builds = this.buildsFromSlots();
-    if (this.loadedSlotId) {
-      this.saveFile = updateSaveSlot(this.saveFile, this.loadedSlotId, {
-        party: builds,
-        partySize: this.partySize,
-        difficultyId: this.difficultyId,
-        updatedAt: Date.now(),
-      });
-    } else {
-      if (this.saveFile.slots.length >= MAX_SAVE_SLOTS) return;
-      const id = `save-${Date.now()}`;
-      this.saveFile = createSaveSlot(this.saveFile, {
-        id,
-        name: `${builds[0].name}'s Party`,
-        createdAt: Date.now(),
-        party: builds,
-        partySize: this.partySize,
-        difficultyId: this.difficultyId,
-      });
-      this.loadedSlotId = id;
-    }
+    // D-152: shared with the in-battle pause menu's "Save Party" — same
+    // create-or-update decision, one tested place (`SaveSystem.
+    // saveOrUpdatePartySlot`) instead of two copies of the same branching.
+    const result = saveOrUpdatePartySlot(this.saveFile, {
+      loadedSlotId: this.loadedSlotId,
+      builds: this.buildsFromSlots(),
+      partySize: this.partySize,
+      difficultyId: this.difficultyId,
+      now: Date.now(),
+    });
+    if (!result) return; // at MAX_SAVE_SLOTS with no loadedSlotId — same silent no-op as before
+    this.saveFile = result.file;
+    this.loadedSlotId = result.slotId;
     saveSaveFile(window.localStorage, SAVE_STORAGE_KEY, this.saveFile);
     this.pushLoadedSlotToCloud();
     this.refreshAll();
@@ -866,13 +1099,13 @@ export class CharacterCreationScene extends Phaser.Scene {
     if (slot) pushSlot(this.authState.uid, slot).catch((err) => console.error("Cloud push failed:", err));
   }
 
-  private buildBackButton(): void {
+  private buildBackButton(width: number): void {
     const back = this.add
-      .rectangle(GAME_WIDTH / 2, 1040, 200, 40, 0x2a2a3a)
+      .rectangle(width / 2, 1040, 200, 40, 0x2a2a3a)
       .setStrokeStyle(1, 0x4a4a5a)
       .setInteractive({ useHandCursor: true });
     const label = this.add
-      .text(GAME_WIDTH / 2, 1040, "Back to Menu", {
+      .text(width / 2, 1040, "Back to Menu", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#c8c8d8",
@@ -893,10 +1126,13 @@ export class CharacterCreationScene extends Phaser.Scene {
    */
   private slotStateFromBuild(build: CharacterBuild): SlotState {
     return {
-      nameIndex: Math.max(0, CHARACTER_NAME_POOL.indexOf(build.name)),
+      name: build.name,
       classIndex: Math.max(0, CREATABLE_CLASS_IDS.indexOf(build.classId)),
       raceIndex: Math.max(0, RACE_IDS.indexOf(build.raceId)),
-      allocator: allocatorFromScores(build.abilityScores),
+      allocator:
+        build.abilityScoreMethod === "pointBuy"
+          ? pointBuyAllocatorFromScores(build.abilityScores)
+          : allocatorFromScores(build.abilityScores),
       abilityIndex: Math.max(0, signatureActionIdsForClass(build.classId).indexOf(build.abilityId)),
       controlledBy: build.controlledBy,
       // Phase 13.11 (D-096): -1 (no starting item, or one the catalogue no
@@ -930,11 +1166,12 @@ export class CharacterCreationScene extends Phaser.Scene {
       const actionIds = signatureActionIdsForClass(classId);
       return {
         id: `party-${i + 1}`,
-        name: CHARACTER_NAME_POOL[s.nameIndex],
+        name: s.name,
         raceId: RACE_IDS[s.raceIndex],
         classId,
         level: 1,
         abilityScores: s.allocator.scores(),
+        abilityScoreMethod: this.abilityScoreMethod === "pointBuy" ? "pointBuy" : undefined,
         abilityId: actionIds[s.abilityIndex % actionIds.length],
         controlledBy: s.controlledBy,
         // Phase 13.11 (D-096): a level-1-choice class (Cleric/Sorcerer/
@@ -966,6 +1203,34 @@ export class CharacterCreationScene extends Phaser.Scene {
     const alpha = active ? 1 : 0.32;
     widgets.allObjects.forEach((o) => (o as Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text).setAlpha(alpha));
     widgets.interactiveButtons.forEach((b) => (active ? b.setInteractive({ useHandCursor: true }) : b.disableInteractive()));
+    // D-147 (piece 2): the name row is a real HTML `<input>`, not a Phaser
+    // `Rectangle` — `disableInteractive()` above doesn't reach it.
+    widgets.nameInputNode.disabled = !active;
+  }
+
+  /**
+   * D-147 (piece 3): shows/enables exactly one of the two ability-score
+   * control sets per slot — Standard Array's cycle-row buttons, or Point
+   * Buy's +/- steppers — matching the current party-wide method. Runs
+   * AFTER `setSlotActive` in `refreshAll` so it has the final say on both
+   * sets' interactivity (an inactive slot beyond `partySize` stays fully
+   * disabled either way).
+   */
+  private refreshAbilityScoreControls(): void {
+    const standardArray = this.abilityScoreMethod === "standardArray";
+    this.widgets.forEach((w, slot) => {
+      const active = slot < this.partySize;
+      w.standardArrayRowButtons.forEach((b) => {
+        b.setVisible(standardArray);
+        if (active && standardArray) b.setInteractive({ useHandCursor: true });
+        else b.disableInteractive();
+      });
+      w.pointBuyButtons.forEach((b) => {
+        b.setVisible(!standardArray);
+        if (active && !standardArray) b.setInteractive({ useHandCursor: true });
+        else b.disableInteractive();
+      });
+    });
   }
 
   /** Re-render every active slot's text, dim inactive ones, and re-validate the party. */
@@ -973,14 +1238,23 @@ export class CharacterCreationScene extends Phaser.Scene {
     const builds = this.buildsFromSlots();
     builds.forEach((build, slot) => this.refreshSlot(slot, build));
     this.widgets.forEach((w, slot) => this.setSlotActive(w, slot < this.partySize));
+    this.refreshAbilityScoreControls();
 
     this.partySizeLabel.setText(`Party Size: ${this.partySize}`);
     this.difficultyLabel.setText(`Difficulty: ${getDifficultyDefinition(this.difficultyId).name}`);
+    this.abilityScoreMethodLabel.setText(
+      `Ability Scores: ${this.abilityScoreMethod === "pointBuy" ? "Point Buy" : "Standard Array"}`,
+    );
     this.teamLevelLabel.setText(`Team Level: ${this.teamLevelValue} (all heroes)`);
 
     const duplicateNames = hasDuplicateNames(builds);
+    // D-147 (piece 2): a hero name is now free text, so an empty/whitespace
+    // field is newly possible — it isn't caught by `hasDuplicateNames`
+    // unless two heroes are BOTH blank.
+    const blankName = builds.some((b) => !b.name.trim());
     const duplicateAbilities = hasDuplicateAbilities(builds);
-    const valid = !duplicateNames && !duplicateAbilities;
+    const invalidNames = duplicateNames || blankName;
+    const valid = !invalidNames && !duplicateAbilities;
     this.partyValid = valid;
 
     if (valid) {
@@ -990,11 +1264,12 @@ export class CharacterCreationScene extends Phaser.Scene {
     } else {
       this.startButton.setFillStyle(0x4a4a4a);
       this.startButton.disableInteractive();
+      const nameMessage = blankName ? "Every hero needs a name." : "Every hero needs a unique name.";
       this.statusText.setText(
-        duplicateNames && duplicateAbilities
-          ? "Every hero needs a unique name AND a unique signature ability."
-          : duplicateNames
-            ? "Every hero needs a unique name."
+        invalidNames && duplicateAbilities
+          ? `${nameMessage} Every hero also needs a unique signature ability.`
+          : invalidNames
+            ? nameMessage
             : "Every hero needs a unique signature ability.",
       );
     }
@@ -1035,15 +1310,27 @@ export class CharacterCreationScene extends Phaser.Scene {
     w.controlLabel.setText(
       `Hero ${slot + 1} · ${build.controlledBy === "ai" ? "AI" : "Human"} (click to toggle)`,
     );
-    w.nameLabel.setText(build.name);
+    // D-147 (piece 2): the name field is a live-typed DOM `<input>`, not a
+    // Text label re-rendered from `build.name` — writing to it here would
+    // fight the player's own typing/cursor position. Nothing to set.
     w.classLabel.setText(`Class: ${getClassDefinition(build.classId).name}`);
     w.raceLabel.setText(`Race: ${getRaceDefinition(build.raceId).name}`);
 
-    ABILITY_SCORE_IDS.forEach((ability) => {
+    ABILITY_SCORE_IDS.forEach((ability, i) => {
       const score = build.abilityScores[ability];
       const mod = modifierFor(build.abilityScores, ability);
       const modText = mod >= 0 ? `+${mod}` : `${mod}`;
-      w.abilityScoreLabels[ability].setText(`${ABILITY_SCORE_NAMES[ability].slice(0, 3).toUpperCase()} ${score} (${modText})`);
+      let text = `${ABILITY_SCORE_NAMES[ability].slice(0, 3).toUpperCase()} ${score} (${modText})`;
+      // D-147 (piece 3): Point Buy's remaining-points readout rides on the
+      // first ability row's own label rather than a new row, so it can't
+      // disturb this scene's already-tight, hardcoded vertical layout (see
+      // KI-083's documented fragility around exactly that).
+      if (i === 0 && this.abilityScoreMethod === "pointBuy") {
+        const allocator = this.slots[slot].allocator as PointBuyAllocator;
+        text += `   Points Left: ${allocator.remainingPoints()}/${POINT_BUY_BUDGET}`;
+      }
+      w.abilityScoreLabels[ability].setText(text);
+      if (i === 0) this.fitLabelToColumnWidth(w.abilityScoreLabels[ability]);
     });
 
     const ability = getAbility(build.abilityId);
@@ -1053,8 +1340,8 @@ export class CharacterCreationScene extends Phaser.Scene {
       build.startingEquipmentId ? `Gear: ${getEquipmentDefinition(build.startingEquipmentId).name}` : "Gear: None",
     );
 
-    w.subclassLabel.setText(this.subclassSummary(build.classId, build.subclassId));
-    this.fitSubclassLabelToWidth(w.subclassLabel);
+    w.subclassLabel.setText(this.subclassSummary(build.classId, build.subclassId, this.slots[slot].levelUpPlan));
+    this.fitLabelToColumnWidth(w.subclassLabel);
 
     const def = heroDefinitionFromBuild(build);
     // D-129: the stats preview now reflects the chosen Starting Level, not
@@ -1106,14 +1393,23 @@ export class CharacterCreationScene extends Phaser.Scene {
    * change)" hint; every other class still names the level its own
    * confirmation will appear at in battle, plus how many options it has.
    */
-  private subclassSummary(classId: string, subclassId?: string): string {
+  /**
+   * D-147 (piece 5): a later-choice class's subclass isn't just "unavailable
+   * at creation" — it's already plannable ahead of time via the "Plan
+   * Levels" wizard (D-133), which this label now says explicitly instead of
+   * only naming the in-battle fallback level/option count.
+   */
+  private subclassSummary(classId: string, subclassId: string | undefined, plan: LevelUpPlan): string {
     const options = subclassesForClass(classId);
     if (subclassId) {
       const hint = options.length > 1 ? " (click to change)" : "";
       return `Subclass: ${getSubclassDefinition(subclassId).name}${hint}`;
     }
     const classDef = getClassDefinition(classId);
-    return `Subclass: chosen in battle at level ${classDef.subclassChoiceLevel} (${options.length} options)`;
+    if (plan.subclassId) {
+      return `Subclass: ${getSubclassDefinition(plan.subclassId).name} (planned via Plan Levels)`;
+    }
+    return `Subclass: pick via "Plan Levels" below, or in battle at level ${classDef.subclassChoiceLevel} (${options.length} options)`;
   }
 
   /**
@@ -1125,8 +1421,12 @@ export class CharacterCreationScene extends Phaser.Scene {
    * approach as `BattleScene.fitBannerToWidth`) to whatever the real text
    * width needs, rather than guessing a smaller fixed size that would still
    * break the moment the phrasing changes again.
+   *
+   * D-147 (piece 3): also reused for the first ability-score row's label,
+   * which grows a "Points Left: N/27" suffix in Point Buy mode — same
+   * "computed text, fixed-width button" overflow risk, same fix.
    */
-  private fitSubclassLabelToWidth(label: Phaser.GameObjects.Text): void {
+  private fitLabelToColumnWidth(label: Phaser.GameObjects.Text): void {
     const maxWidth = COLUMN_WIDTH - 20 - 8;
     const baseFontSizePx = 13;
     const minFontSizePx = 9;
@@ -1136,6 +1436,34 @@ export class CharacterCreationScene extends Phaser.Scene {
       size -= 1;
       label.setFontSize(size);
     }
+  }
+
+  /**
+   * D-147: a general-purpose "pick one from a list" overlay — replaces the
+   * old click-to-cycle interaction for Class/Race/Gear/Subclass. Reuses
+   * `renderPlanPrompt` directly (the same dim-backdrop/title/button-grid
+   * primitive the Level Planner and Spell Picker wizards already share via
+   * `levelPlanOverlay`/`clearLevelPlanOverlay`), but unlike those multi-step
+   * wizards this is always exactly one screen: picking an option applies it
+   * and closes the overlay immediately, or Cancel discards the click.
+   */
+  private openChoicePicker(
+    title: string,
+    options: Array<{ label: string; desc?: string; highlighted?: boolean; onPick: () => void }>,
+  ): void {
+    this.renderPlanPrompt(title, [
+      ...options.map((opt) => ({
+        label: opt.label,
+        desc: opt.desc,
+        highlighted: opt.highlighted,
+        onClick: () => {
+          opt.onPick();
+          this.clearLevelPlanOverlay();
+          this.refreshAll();
+        },
+      })),
+      { label: "Cancel", onClick: () => this.clearLevelPlanOverlay() },
+    ]);
   }
 
   // ---------------------------------------------------------------------
@@ -1682,25 +2010,26 @@ export class CharacterCreationScene extends Phaser.Scene {
     choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }>,
   ): void {
     this.clearLevelPlanOverlay();
+    const { width: viewportWidth, height: viewportHeight } = getViewport(this);
     const dim = this.add
-      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.85)
+      .rectangle(viewportWidth / 2, viewportHeight / 2, viewportWidth, viewportHeight, 0x000000, 0.85)
       .setDepth(60)
       .setInteractive();
     const titleText = this.add
-      .text(GAME_WIDTH / 2, 90, title, {
+      .text(viewportWidth / 2, 90, title, {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "24px",
         color: "#f0e070",
         fontStyle: "bold",
         align: "center",
-        wordWrap: { width: GAME_WIDTH - 160 },
+        wordWrap: { width: viewportWidth - 160 },
       })
       .setOrigin(0.5)
       .setDepth(61);
     this.levelPlanOverlay.push(dim, titleText);
 
     const hasDesc = choices.some((c) => c.desc);
-    const usableWidth = GAME_WIDTH - 80;
+    const usableWidth = viewportWidth - 80;
     const width = Math.min(220, Math.max(120, Math.floor(usableWidth / Math.min(choices.length, 6)) - 14));
     const height = hasDesc ? 82 : 44;
     const spacing = width + 14;
@@ -1712,7 +2041,7 @@ export class CharacterCreationScene extends Phaser.Scene {
       const row = Math.floor(i / maxPerRow);
       const col = i % maxPerRow;
       const itemsInRow = Math.min(maxPerRow, choices.length - row * maxPerRow);
-      const rowStartX = GAME_WIDTH / 2 - ((itemsInRow - 1) * spacing) / 2;
+      const rowStartX = viewportWidth / 2 - ((itemsInRow - 1) * spacing) / 2;
       const x = rowStartX + col * spacing;
       const y = rowStartY + row * rowSpacing;
       const btn = this.add

@@ -2,13 +2,368 @@
 
 ## Open bugs (confirmed by Kevin, not yet fixed)
 
-(none currently)
+None currently — the two bugs Kevin confirmed 2026-08-21 (waypoint pinning,
+Main Menu title/corner-control overlap) were fixed by D-149; see KI-101
+below for their own re-confirmation checklist.
 
 ## Still need Kevin's playtest confirmation
 
 Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
+
+### KI-110 — D-158: KI-034's redesign — hero roster strip, decluttered status line, hover tooltips
+- The bottom-of-grid area should now show real boxed hero widgets (name/
+  level, a colored HP bar with exact numbers, a green border on whichever
+  hero is currently selected) instead of one packed line of text. A downed
+  hero's box should read "(down)" with no HP bar. The HP bar's color should
+  shift green → yellow → red as a hero takes damage.
+- Selecting a hero should show its AC/move-readiness/act-readiness/gear
+  count on a small line inside ONLY that hero's own box — box height should
+  stay constant whether or not it's currently showing that line (no layout
+  jump on selection change).
+- **Keyboard-only play — re-confirm KI-034's own checklist under this
+  rewrite specifically, not just assume it still holds:** arrow-key cursor,
+  Enter/Space parity with a mouse click, Tab switching between grid-focus
+  and board-cursor-focus in Build/Gear/Test-Mode-debug grids, no page-scroll
+  on arrows/space, and a full battle completable with no mouse at all.
+- In Build or Gear mode, hovering an item (mouse) OR moving keyboard focus
+  onto it should show a tooltip near that item with its name/cost/
+  description — try BOTH input methods specifically, since the item
+  description used to live in the always-visible hint text and now only
+  ever appears in this tooltip.
+- Pressing Tab to enter the item grid (not just arrowing within it) should
+  immediately preview whatever item is already focused — this used to be a
+  gap (fixed as part of this same change, never actually shipped broken,
+  but worth confirming it truly shows immediately, not just on the next
+  arrow key).
+- A rejected click (e.g. walking into an out-of-range tile, trying to build
+  without enough gold) should still show its message, in a small line under
+  the roster strip — and that message should clear on your next real action
+  the same way it always has.
+- `Enemies: N` now lives in the top-left HUD area, next to Stronghold
+  Integrity/Gold, instead of the old bottom line.
+- No overlap anywhere on Frostbound Hollow specifically (9 rows, the
+  tallest built-in map, and the recurring HUD-tightness stress case
+  throughout this file's own history) — the roster strip changed the pixel
+  budget below the grid.
+- Known, deliberate tradeoff (not a bug): the old hint's "blue = move · red
+  = attack", "Ability (Q) · Potion (P) · Character (C)", "Confirm or Cancel
+  the move", and the universal "1-4 select hero / arrows+Enter/Space /
+  H / S / L" reminders are all GONE, not shortened — every one of them
+  either restates a button label already visible on screen or a board
+  highlight already visible the instant a hero is selected. The "How to
+  Play" overlay (H, any time) is the intended fallback for a first-timer or
+  anyone who forgets, not a live reminder anymore.
+
+### KI-109 — D-157: responsive-canvas roadmap step 3 — the actual `Scale.RESIZE` cutover
+- **This is the first entry in the whole responsive-canvas roadmap where a
+  real in-browser pass is load-bearing, not just a nice-to-have.** Every
+  prior step (D-154/155/156) was correct-by-construction but never actually
+  exercised, since `Scale.FIT` never let the real window size differ from
+  the fixed 1280x1080. This is the first time it can.
+- **Try resizing the actual browser window** (not just at load) while on
+  Main Menu, Compendium, Bestiary, Character Sheet, Settings, Pause Menu,
+  Character Creation, Map Builder, Free Play, Campaigns, Load Game, Test
+  Mode, Browse Shared Maps, and Co-op Lobby — each should visibly re-lay-out
+  to fill the real window (backdrop, buttons, tabs, rows) rather than
+  staying pinned at a fixed size or overflowing/clipping.
+- **At a normal window size with no resize at all**, every one of those
+  scenes should look correct immediately on load — this is the first step
+  where "normal window size" isn't guaranteed to equal 1280x1080, so this
+  is a genuine correctness check, not the usual pure-regression one.
+- **Start a battle, then resize the browser window mid-battle** — the battle
+  board, HUD, and every overlay (Character Sheet, Pause Menu, Settings-from-
+  Pause-Menu) should look and scale EXACTLY as they did before this session
+  (letterboxed to fit, centered, nothing stretched) — `BattleScene` is
+  deliberately locked back to the old fixed-resolution behavior for this
+  reason. If a battle instead looks stretched, shows only part of the
+  board, or fails to re-center on resize, that's the one thing in this
+  checklist most worth reporting precisely (see D-157's own writeup for why
+  this needed an extra manual `displaySize.setAspectMode()` call).
+- **Leave a battle back to the Main Menu (any exit path — defeat, victory,
+  Save & Exit, Exit to Main Menu, Load Game)**, then resize the browser
+  window again — menu scenes should resume resizing correctly, not stay
+  stuck in battle's fixed-size behavior.
+- A hover tooltip (Character Sheet, Compendium) and the Compendium's sample
+  dialogue preview should still stay fully on-canvas after a resize.
+- Known, accepted limitation (not a bug): resizing the browser at the exact
+  moment `CharacterCreationScene`'s Plan Levels/Spells wizard overlay, OR
+  the Compendium's sample dialogue box, is already open won't resize that
+  overlay's dim backdrop until the next redraw (closing/reopening, or
+  advancing the dialogue) — narrow, self-healing, deliberately not chased
+  down this session.
+
+### KI-108 — D-156: responsive-canvas roadmap step 2 — Map Builder + Character Creation own resize-reactivity
+- Both scenes should look and behave IDENTICALLY to before at a normal
+  browser window size — still `Scale.FIT`, still a pure regression check,
+  not a "does resizing work" check.
+- **Map Builder**: build a map from scratch — size cycling, the name field
+  (typing/paste/backspace), palette tab switching, and the click-and-drag
+  paint tool should all still work exactly as before. Nothing about this
+  session's change should be visible.
+- **Character Creation**: build a full 4-hero party — all 4 name fields
+  (typing/paste/backspace, independently per hero), class/race/gear/subclass
+  pickers, ability score controls (both Standard Array and Point Buy),
+  Starting Level, the Plan Levels wizard, and the Spells wizard should all
+  still work exactly as before. This is the biggest single-scene change of
+  the whole roadmap so far — worth a genuinely thorough pass, not just a
+  glance.
+- Known, deliberate limits (not bugs, see D-156): resizing the browser
+  window still doesn't visibly change any scene's layout anywhere in the
+  game yet (`Scale.RESIZE` cutover still not done); if a resize happens to
+  fire while Character Creation's Plan Levels/Spells wizard overlay is open,
+  its full-screen dim backdrop could theoretically show at the wrong size
+  until the next click — cannot actually occur under today's `Scale.FIT`,
+  since the viewport width never changes regardless of window size.
+  **Update (D-157): the `Scale.RESIZE` cutover has since shipped — resizing
+  now DOES visibly re-lay-out every scene (see KI-109); the wizard-overlay
+  edge case described here is now reachable in principle, but stays an
+  accepted, self-healing limitation rather than a fix, per D-157's own
+  writeup.**
+
+### KI-107 — D-155: responsive-canvas roadmap step 1 — 5 more scenes converted (Compendium, Character Sheet, Browse Shared Maps, Free Play, Co-op Lobby)
+- Every one of these 5 scenes should look and behave IDENTICALLY to before
+  at a normal browser window size — this session deliberately stayed on
+  `Scale.FIT` (see D-154/D-155), so nothing about appearance should have
+  changed. Pure regression check, not a "does resizing work" check (resizing
+  the real window still won't visibly do anything yet — that's the
+  still-pending `Scale.RESIZE` cutover).
+- **Compendium**: browse every tab, including Classes (per-class selector)
+  and Spells (per-level selector) with Prev/Next paging — should read and
+  page exactly as before. Switch categories/pages, nothing should look
+  different.
+- **Character Sheet**: select a hero mid-battle, open Character (C) — should
+  still pause the battle underneath, open on Stats, and switch cleanly
+  between Stats/Spellbook/Hotkeys. Editing a hotkey slot should still work
+  identically.
+- **Browse Shared Maps** (needs Firebase + at least one published map):
+  should load and paginate exactly as before, with no flash of "No maps
+  have been published yet" before the real list appears.
+- **Free Play**: pick a map/boss/wave-count/minion-source/difficulty and
+  Start — should look and behave exactly as before (this scene was never
+  restyled with the parchment theme, so it should still look plain, not
+  suddenly ornate).
+- **Co-op Lobby** (needs Firebase, two tabs): Create Session in one tab,
+  Join by code in the other — the join-code field specifically is worth a
+  close look, since it now sits in a new repositioning system rather than
+  the destroy-and-recreate one every other scene uses. Typing a code,
+  pasting one, and pressing Enter to submit should all still work exactly as
+  before.
+- Known, deliberate limits (not bugs, see D-154/D-155): resizing the browser
+  window still doesn't visibly change any scene's layout anywhere in the
+  game yet; `MAX_MAP_COLS`/`MAX_MAP_ROWS` are still unchanged (~20x9) —
+  actual "bigger maps in battle" still needs `BattleScene`'s own future
+  `TILE_SIZE` conversion, not yet started.
+  **Update (D-157): resizing now DOES visibly re-lay-out every one of these
+  5 scenes (see KI-109) — `MAX_MAP_COLS`/`MAX_MAP_ROWS` are still unchanged,
+  that part of this note still stands.**
+
+### KI-106 — D-154: responsive-canvas foundation (7 scenes), Map Builder click-and-drag paint tool + real map-name field
+- **The 7 converted scenes should look and behave IDENTICALLY to before** at
+  a normal browser window size: Pause Menu, Settings, Campaigns, Main Menu,
+  Load Game, Test Mode, Bestiary. This session deliberately stayed on
+  `Scale.FIT` (see D-154), so nothing about their appearance should have
+  changed at all — this is a pure regression check, not a "does resizing
+  work" check (resizing the actual window won't do anything different yet;
+  that's the still-pending `Scale.RESIZE` cutover).
+- Bestiary specifically: switch to a non-Minions tab, page to page 2+, then
+  resize the browser window (even though nothing should visually change
+  yet) — confirm you're NOT silently bounced back to page 1/Minions.
+- Main Menu: the title should still correctly avoid overlapping the
+  Settings/Account corner controls (D-149's fix, now computed via
+  `computeCornerControlsRegion` instead of a hardcoded box) at the normal
+  window size; the Account control should still show "Connecting…" briefly
+  before resolving to "Sign in with Google" or "Signed in: {name}", not
+  jump straight to "Sign in with Google" as a false default.
+- **Map Builder paint tool**: click-and-hold on the board and drag across
+  several tiles — every tile the pointer crosses while held down should
+  paint with the currently-selected palette item, not just the one under
+  the initial click. Releasing the mouse button, then clicking a single
+  tile elsewhere, should still work exactly as a single click always did.
+  Dragging off the grid area (over the palette/buttons) and back onto the
+  grid without releasing should resume painting correctly.
+- **Map Builder name field**: should now be a real text box (not a
+  click-to-cycle button) — typing should work normally, including
+  backspace/select/paste; Publish should refuse with "Give this map a name
+  before publishing" if the field is blank; Playtest should NOT be blocked
+  by a blank name.
+- Known, deliberate limits (not bugs, see D-154): resizing the browser
+  window doesn't visibly change any scene's layout yet anywhere in the
+  game — the `Scale.RESIZE` cutover that would make that happen is
+  intentionally not part of this session. `MAX_MAP_COLS`/`MAX_MAP_ROWS`
+  are unchanged (still ~20x9) — "bigger maps" in an actual battle needs
+  `BattleScene`'s own future `TILE_SIZE` conversion first.
+  **Update (D-157): resizing now DOES visibly re-lay-out every one of these
+  7 scenes (see KI-109) — `MAX_MAP_COLS`/`MAX_MAP_ROWS` are still unchanged,
+  that part of this note still stands.**
+
+### KI-105 — D-153: real Settings screen (Game Speed + Master/Music/SFX volume + Mute), no audio content yet
+- A new "Settings" button (Main Menu's top-right corner, replacing the old
+  inline "Game Speed" cycle button) should open a full `SettingsScene` with
+  six rows: Game Speed, Master Volume, Music Volume, SFX Volume, Mute All,
+  Back. Each volume row should cycle 0%/25%/50%/75%/100% on click; Mute All
+  should toggle On/Off.
+- From the Pause Menu (Esc mid-battle), the row that used to say "Game
+  Speed: {label}" now says "Settings" and should open the SAME screen as an
+  overlay (battle stays paused underneath) — Game Speed changed there should
+  take effect live, mid-battle, exactly as it did before (D-130).
+- **Nothing should be audible** — there is still no music or sound-effect
+  asset in this project (KI-029). The controls are real (they set Phaser's
+  actual sound-manager volume/mute), just with nothing loaded to hear yet.
+  Confirm there's no console error clicking through every row anyway.
+- Back (button or Esc) from Main Menu's Settings should return to Main Menu;
+  from the Pause Menu's Settings overlay it should return to the (still
+  paused) Pause Menu, not skip past it to the battle or Main Menu.
+- Settings should persist across a page reload (localStorage, same as Game
+  Speed already did).
+
+### KI-104 — D-152: real in-battle pause menu (Resume/Save Party/Save & Exit/Load Game/Exit to Main Menu/Controls/Game Speed)
+- **Highest priority: does the pause menu actually pause the battle?** Press
+  Esc (with no other overlay/forced-choice open) or click the new "Menu
+  (Esc)" button (bottom-left corner) — the battle should visibly PAUSE
+  underneath (no enemy turn advancing, no timers ticking), same as
+  Character Sheet's own D-148 pause mechanism. "Resume Battle" should return
+  to the exact same state, including any hotkey/gear/hero-selection state
+  from before.
+- "Save Party" should save the current party's build (name/race/class/
+  ability scores as they were at Character Creation) to a new or existing
+  save slot and show a confirmation line — reload from the Main Menu's Load
+  Game to confirm it's actually there. Confirm it does NOT restore this
+  battle's own wave/gold/gear picked up mid-battle if reloaded (expected —
+  see D-152's own writeup for why).
+- "Save Party"/"Save & Exit" should read "(unavailable in Co-op)" and be
+  disabled/unclickable during a Co-op battle specifically.
+- "Save & Exit" should save then land on the Main Menu with no extra
+  warning (since it just saved); "Exit to Main Menu" (no save) should show
+  a "progress will be lost" confirm/cancel prompt first; "Load Game" should
+  show a similar "this exits the current battle" confirm before actually
+  navigating to Load Game.
+- "Controls" should show the real current keybindings and a Back button
+  that returns to the main menu list (not a full close).
+- "Game Speed: {label}" should cycle Normal → Fast → Instant → Normal,
+  matching the existing "S" hotkey's own behavior exactly (same setting,
+  same persistence).
+- Esc from the Controls view or from a confirm prompt should back out one
+  level (matching the main battle's own Esc-backs-out-one-step convention),
+  not fully close the pause menu in one press.
+- A fresh (never-loaded) party's first Save Party this session should
+  create a new slot; a SECOND Save Party click in the same pause-menu visit
+  should update that same slot rather than creating a duplicate.
+- Known, deliberate limits (not bugs): no audio settings (no audio system
+  exists — KI-029); no graphics/resolution settings beyond Game Speed; Save
+  never captures this battle's own wave/gold/structure progress, only the
+  party's build; no cloud-sync push from a pause-menu Save (syncs normally
+  next time you save from Character Creation or Load Game).
+
+### KI-103 — D-151: Cape of Billowing recolor + Exit Game control
+- A hero wearing the Cape of Billowing should show a deep RED flowing cape
+  graphic trailing its token, not the same light green as the
+  selected-hero highlight ring.
+- Main Menu's bottom-left corner should show an "Exit Game" button.
+  Clicking it in a normal browser tab is expected to NOT actually close the
+  tab (browsers block this) — confirm the button instead relabels itself to
+  "You may now close this tab" and becomes disabled, rather than appearing
+  to do nothing.
+
+### KI-102 — D-150: Compendium alphabetization + new Buildings/Traps tabs + Bestiary role tabs
+- Compendium's Classes/Subclasses/Races/Feats/Skills/Potions/Status Effects
+  tabs should each list their entries alphabetically by name now (Classes'
+  own per-class selector row too).
+- A new "Buildings" tab should list every wall/gate (alphabetical), then
+  every platform (alphabetical), including the two spell-only entries
+  (Spectral Wall, Web Patch) marked as not shop-buyable.
+- A new "Traps" tab should list every ground-targeted trap (alphabetical),
+  then every flying-targeted trap (alphabetical).
+- Bestiary should now show four role tabs (Minions/Miniboss/Bosses/
+  Legendary); switching tabs should reset to page 1 of just that role, and
+  a still-undiscovered ("???") enemy should behave identically to before
+  within its own tab.
+- Nothing about which classes/races/spells/items a hero can actually pick
+  or use in Character Creation/battle should have changed — this was a
+  read-only reference-screen reorganization only.
+
+### KI-101 — D-149: waypoint-pinning fix + Main Menu title/corner-control overlap fix
+- Right-click-and-hold drag a hero, right-click to pin a first waypoint,
+  then right-click again elsewhere — a SECOND pin marker should appear (not
+  just the first), and the move-range highlight should visibly shrink/
+  reroot from that latest pin rather than staying anchored to the hero's
+  own tile with full budget.
+- A third+ pin should keep chaining the same way; releasing the left button
+  should commit a move that actually routes through every pin in order.
+- Main Menu: at the game's normal window size, the "Game Speed" and
+  Sign-In/Account controls (top-right) should have visible clearance from
+  "FANTASY TOWER DEFENSE" with no glyph overlap — worth a glance at a couple
+  different window sizes since the fix is a runtime measurement, not a
+  fixed pixel tweak.
+
+### KI-100 — D-148: Battle HUD/actions overhaul (selection-gated panel, level-up deltas, Character Sheet scene with Stats/Spellbook/Hotkeys tabs, generalized tooltips, equip preview)
+- **Highest priority: does the Character Sheet scene work at all?** Select a
+  hero mid-battle, click "Character (C)" (or press C) — the battle should
+  visibly PAUSE underneath (no enemy turn advancing, no timers ticking) and
+  the sheet should open. Close it (Esc or the Close button) — battle should
+  resume exactly where it left off, with any hotkey edits already reflected.
+  This exact pause/resume mechanism has never been used anywhere else in
+  this codebase before this session — if it misbehaves (input leaking
+  through to the board underneath, the battle not actually pausing, stacking
+  weirdly with another overlay), that's the one thing in this list most
+  worth reporting precisely.
+- The always-on hero roster strip (bottom of the battle screen) should now
+  show only name/level/HP for an UNSELECTED hero; AC, move/act readiness,
+  and gear count should appear only for whichever hero is currently
+  selected.
+- A level-up popup for a hero with no ASI/subclass/spell choice this level
+  ("X reaches level N!") should now also show what changed underneath the
+  Continue button — e.g. "+6 max HP, new feature: Action Surge" — instead of
+  just the bare level-up line from before.
+- Character Sheet Stats tab: ability scores + modifiers, AC/HP/movement/
+  proficiency bonus, class/subclass/level, and an "Available Right Now"
+  list should all match what the hero can actually do in battle.
+- Character Sheet Spellbook tab: a caster's known spells/cantrips should be
+  grouped by level with a level-selector row; hovering a spell should show
+  its real rules text in a tooltip (not permanently-visible text).
+- Character Sheet Hotkeys tab: clicking a slot then clicking an action/spell
+  should pin it there; Clear Slot should empty the armed slot; pinned
+  entries should persist if you close and reopen the sheet (and, if you
+  save/reload the party, across that too).
+- Known, deliberate limits (not bugs): the hotkey bar is editable from the
+  sheet but NOT yet wired into battle itself — Q/R/F/T and their existing
+  buttons are completely unchanged; the equip flow's before/after preview
+  (hover a hero while an item is selected in equip mode) only affects the
+  hover tooltip, not the equip flow itself, which is untouched.
+
+### KI-099 — D-147: Character Creation overhaul (choice picker, real naming, Point Buy, class/race previews, subclass-row clarity)
+- Class, Race, Gear, and Subclass rows should each open a full-screen
+  picker listing every option at once (with each option's preview text for
+  Class/Race) instead of cycling — picking one should apply it and close
+  immediately; Cancel should discard the click and change nothing.
+- The Name field should be a real text box: typing should work normally
+  (including selection/backspace/paste), Enter/Tab shouldn't do anything
+  unexpected, and typing should NOT trigger any of the scene's own
+  keyboard shortcuts.
+- Clearing a hero's name to blank (or leaving two heroes with the same
+  name) should block Start Battle with a clear message; fixing it should
+  re-enable Start Battle immediately.
+- The "Ability Scores: Standard Array / Point Buy" toggle (next to Team
+  Level) should switch every hero's ability-row controls at once — cycle
+  buttons for Standard Array, +/- steppers for Point Buy — and reset every
+  hero's scores to that method's own default (all 15/14/13/12/10/8 assigned
+  vs. all 8s) rather than trying to carry over the old numbers.
+- In Point Buy: a "Points Left: N/27" readout should appear on the STR row
+  and count down correctly as scores rise (13→14 and 14→15 should each cost
+  2 points, not 1); a "+" should refuse to fire once the remaining budget
+  can't afford the next step; a "-" should refuse below 8.
+- Saving a party under Point Buy, then reloading it, should restore the
+  same scores AND correctly show the Point Buy controls (not silently
+  revert to Standard Array).
+- The Class picker's preview text and the Race picker's title/preview text
+  should read clearly and not get cut off.
+- A later-choice class's Subclass row should say to use "Plan Levels"
+  instead of implying the subclass is simply unavailable at creation; once
+  planned there, the row should show the planned subclass's name.
+- Known limits: the Ability Score Method is party-wide, not per-hero (real
+  5e practice); no new races were added this pass (see KI-098); Signature
+  Action still cycles rather than using the new picker.
 
 ### KI-097 — D-146: smart AoE/breath positioning + self-defense (provoked retaliation)
 - Smart positioning: get a legendary AoE enemy (Ashen Sovereign, The Hollow
@@ -511,7 +866,7 @@ real browser battle yet. Ordered newest first.
   specifically:
 - Main Menu's Account control should show "Sign in with Google" when
   anonymous, switch to "Signed in: {name}" after a successful popup
-  sign-in, and silently re-establish a new anonymous session on sign-out.
+  sign-in, and silently re-establish a new anonymous session on sign-out. -confirmed
 - Load Game's "Sync with Cloud" button should stay disabled until signed
   in with Google, then pull/merge/push saves.
 - Saving/updating/deleting a party while signed in with Google should
@@ -520,18 +875,194 @@ real browser battle yet. Ordered newest first.
   JDK 21+, and Kevin's IT policy blocks installing one on this machine.
   Standing limitation — don't re-offer a `winget` install.
 
-### KI-034 — full keyboard-only play (D-066)
+### KI-034 — full keyboard-only play (D-066) — the status/hint line's redesign shipped as D-158
 - Arrow keys should move a tile cursor (clamped at map edges); Enter/Space
   should act on whatever it's over, matching a mouse click exactly
-  (select, move, attack, ability-target, build/refund, equip).
+  (select, move, attack, ability-target, build/refund, equip). -confirmed
 - In Build/Gear mode, arrow keys should default to navigating the item
-  grid; Tab should switch between grid-focus and board-cursor-focus.
-- The status hint line should reflect current focus ("Tab: aim on board"
-  / "Tab: pick item" / "arrows+Enter/Space: keyboard play").
+  grid; Tab should switch between grid-focus and board-cursor-focus. -confirmed
+- ~~The status hint line should reflect current focus ("Tab: aim on board"
+  / "Tab: pick item" / "arrows+Enter/Space: keyboard play").~~ -confirmed but
+  I hate the whole system this is involved in so we need to change it. —
+  **Addressed by D-158**: the whole packed status/hint line is gone,
+  replaced by a real hero roster strip + a much smaller contextual message
+  line + hover tooltips (see the new **KI-110** for its own checklist). The
+  `Tab: aim on board` / `Tab: pick item` focus indicator specifically still
+  shows (now in the small message line, only while a Build/Gear/debug grid
+  is open) since it has no other display surface — worth re-confirming
+  under the new implementation, not assuming it still works unchanged.
 - Arrow keys/Space should not also scroll the browser page while the
-  canvas has focus.
+  canvas has focus. -confirmed
 - A full battle should be completable start-to-finish with no mouse at
-  all.
+  all. -confirmed (worth a fresh confirmation after D-158's rewrite — see
+  KI-110)
+
+### KI-098 — Kevin's 2026-08-21 feedback/wishlist session (large; awaiting prioritization, not yet scoped into any D-NNN)
+
+A single large playtest/wishlist message covering many independent items,
+ranging from small fixes to multi-session epics. Logged here in full so
+nothing is lost; deliberately NOT self-scoped into work yet — needs Kevin
+to pick an order (see `PHASE_HANDOFF.md`). Kevin himself flagged the
+overworld campaign redesign as lower priority than "more important critical
+gameplay fixes" — grouped last below for that reason.
+
+**Battle HUD / actions / character sheet** (Kevin's stated top pain point —
+current bottom-of-screen panel shows too much at all times regardless of
+the selected hero; abilities hardcoded pre-character-creation are stale) —
+**most of this list was addressed by D-148 (see KI-100 for its own
+in-browser checklist)**:
+- ~~Redesign the selected-hero panel to meaningfully show stats/movement/
+  available actions & bonus actions only for whoever's selected, not a
+  fixed always-on block for every hero.~~ DONE (D-148 piece 1).
+- Replace the outdated hardcoded ability list with the hero's REAL spells/
+  actions from full character creation — a spellbook with hotlistable
+  spells, plus a hotkey bar for actions, both editable from the character
+  sheet. **Partially done**: D-148 built the real spellbook display (piece
+  5) and a real, editable hotkey bar (piece 3/6a/Character Sheet Hotkeys
+  tab) — but the hotkey bar is NOT yet wired into battle itself; Q/R/F/T and
+  their existing fixed buttons are unchanged (piece 6b, deliberately
+  deferred — see D-148's own writeup for why).
+- ~~Add an in-game character sheet: view stats... from it.~~ DONE (D-148
+  piece 4, Stats tab) for VIEWING. "Take actions/cast spells/use special
+  actions FROM the sheet" is still open — today the sheet is stats/
+  spellbook/hotkey viewing-and-editing only; casting/acting still happens
+  on the battle board as before.
+- ~~Tooltips on items and abilities/spells showing their real rules text
+  (spells specifically need level-grouped layout).~~ DONE for spells (D-148
+  pieces 5/7: the Spellbook tab's level-grouped grid + a generalized hover-
+  tooltip primitive). Item tooltips (Gear/Compendium) are still the old
+  always-visible-text treatment, not a hover tooltip — not addressed.
+- ~~Level-up screen should show what actually changed (stat/HP/feature
+  deltas), even when no choice was required.~~ DONE (D-148 piece 8) for the
+  plain "reaches level N!" ack popup specifically — the subclass/ASI/spell-
+  pick overlays (which already state their own choice) were left as they
+  were, not extended with deltas too.
+- **Partially done**: Equipping items UX needs a rethink (current flow is confirmed bad —
+  distinct from the D-130 gear-purchase wording fix, which only clarified
+  wording, not the underlying flow). D-148 piece 9a added a before/after
+  AC/attack-bonus hover preview, directly answering the "no stat
+  comparison" complaint — but the click-item-then-click-hero-token flow
+  itself, the actual "rethink," is still untouched (piece 9b, deliberately
+  not scoped — Kevin gave no target UX for it).
+
+**Character Creation overhaul** (Kevin: "current system is garbage," wants
+DnDBeyond.com-level legitimacy) — **most of this list was addressed by
+D-147 (piece 1-5 above, see KI-099 for its own in-browser checklist)**:
+- ~~Replace click-to-cycle option selection with dropdowns/button
+  layouts.~~ DONE (D-147 piece 1) for Class/Race/Gear/Subclass; Signature
+  Action still cycles (a short, ~4-option list — never the actual
+  complaint) and ability scores now have TWO real methods (see below)
+  rather than a picker.
+- ~~Let the player actually type a hero's name.~~ DONE (D-147 piece 2).
+- Subclass picker in Character/Party Creation (currently level-up only?
+  verify) — **turned out to already exist** for the three level-1-choice
+  classes (Cleric/Sorcerer/Warlock); D-147 piece 5 reworded the row for
+  every other class to point at the existing "Plan Levels" wizard (D-133)
+  instead of implying creation-time planning wasn't possible.
+- ~~Ability score allotment methods: Standard Array and Point Buy at
+  minimum.~~ DONE (D-147 piece 3) — a party-wide toggle; Kevin's further
+  "fun" methods beyond these two are still a future ask.
+- Race picker should show real bonuses/drawbacks before picking — **D-147
+  piece 5 built the preview around what's actually real (speed, flavor
+  traits) and deliberately did NOT add an invented ability-score bonus**:
+  this project's ruleset (SRD 5.2.1, D-134) moved ability increases from
+  Race to Background, so none exist to show. Still open: **add more races**
+  beyond the current SRD starter six — piece 1's picker removes the old
+  cycle-button real-estate limit, but writing new race data is its own
+  content task, not done this pass.
+- ~~Class picker should show a rough outline of what each class plays like
+  before picking.~~ DONE (D-147 piece 4) — a one-sentence preview per class.
+- ~~Verify whether all spells are currently offered to all spellcasting
+  classes regardless of real class spell-list gating.~~ VERIFIED, not a
+  bug — gating was already real (per-class allow-lists in
+  `data/characterCreation.ts`); no code change needed.
+- Still open, NOT addressed by D-147: move speed (hero tile-movement
+  budget) should scale with map size and with race/class (e.g. Monk). Keep
+  the existing "tiles moved" abstraction, but make sure spell/ability RANGE
+  uses the identical distance system so
+  the two never drift apart.
+- No Character Creation entry point on the Main Menu at all — needs adding.
+
+**Compendium / Bestiary organization** — DONE this session (D-150), see KI-102:
+- ~~Alphabetize classes, subclasses, races, feats, skills, potions, status
+  effects.~~ DONE. Classes/Skills are alphabetized in their own source
+  arrays (the only order-sensitive consumer of either was this Compendium
+  display); Subclasses/Races/Feats/Potions/Status Effects are alphabetized
+  via a display-only sorted copy inside `CompendiumScene.ts`, since their
+  real declared order backs other order-sensitive behavior elsewhere
+  (default new-build race/subclass selection, picker order, shop order,
+  status-badge render order) that must NOT change.
+- ~~Add Compendium sections for buildings and traps (grouped by type, then
+  alphabetical).~~ DONE — two new tabs reading `STRUCTURE_DEFINITIONS`
+  (previously had no Compendium category at all): Buildings (walls+gates,
+  then platforms, each alphabetical) and Traps (ground-targeted, then
+  flying-targeted, each alphabetical).
+- ~~Bestiary should use tabs by enemy role/type (minion, boss, etc.) instead
+  of one long scroll.~~ DONE — real role tabs (Minions/Miniboss/Bosses/
+  Legendary) replace the old single continuously-paginated scroll; Prev/
+  Next now pages within whichever role tab is selected.
+- Artificer absence — CONFIRMED working as intended, not a gap: Artificer
+  is sourced from Tasha's Cauldron of Everything, not core SRD 5.2.1, so
+  this project's SRD-only content rule (`SOURCE_OF_TRUTH.md` §3) correctly
+  excludes it. No code change; stating this explicitly per Kevin's own ask
+  rather than leaving it unconfirmed.
+
+**Maps & Map Builder**:
+- Maps need to be larger overall.
+- Map Builder needs a real paint tool: pick a tile type, click-and-drag to
+  fill continuously (today's tool is click-one-tile-at-a-time, if that).
+- Map Builder should support arbitrary/custom map dimensions, not fixed
+  sizes.
+- Custom maps need an actual player-settable name field.
+- (Way down the road, explicitly not urgent) triggered map actions keyed to
+  wave count / hero position / stronghold HP, etc.
+
+**Movement**:
+- Heroes cannot currently move, act, then move again in the same turn —
+  this is exactly the still-open "hero-side split-movement UI" piece
+  (§4's last piece) already tracked at the top of `PHASE_HANDOFF.md`'s
+  queue; no new tracking needed, just confirms it's still wanted.
+- The waypoint bug is logged above in Open Bugs, not here.
+
+**Progression / turn order / rewards** (each is its own design decision):
+- Initiative system: roll once before each wave, per hero AND per
+  enemy/enemy-group (needs a decision on granularity — individual enemies,
+  per-group, or all-non-boss-enemies-together), then cycle that order until
+  the wave ends; reroll each wave.
+- XP distribution toggle: split evenly across the party, OR give the
+  majority to whichever hero landed the killing blow (environmental kills
+  with no hero involvement split evenly regardless).
+- Kevin wants the DEFAULT campaign to span level 1-20, with each wave
+  awarding enough XP to hit that pace, scaled by party size.
+
+**Small polish items** — DONE this session (D-151), see KI-103:
+- ~~Cape of Billowing: recolor red as a placeholder until real art
+  exists.~~ DONE — turned out to be an actual bug, not a pending
+  placeholder choice: the cape graphic was wrongly reusing the
+  selected-hero highlight color; it now has its own dedicated deep-red
+  `capeBillowingPlaceholder` color.
+- ~~Add an "Exit Game" control somewhere in the app (still missing).~~
+  DONE — added to the Main Menu's bottom-left corner. Note: a browser page
+  cannot force-close a tab it didn't script-open (`window.close()`
+  silently no-ops in that case, a deliberate browser restriction) — the
+  button attempts it anyway, then always falls back to an honest "you may
+  now close this tab" message so it never reads as broken.
+
+**Overworld campaign redesign (Kevin's own explicit lower priority — do
+NOT self-scope into work ahead of the critical-gameplay-fix items above)**:
+- Replace the current campaign flow with an overworld map that unlocks
+  missions as the story progresses, with an overarching narrative.
+- Start the player at a 2-hero party (a locked Fighter PC + one early-
+  strong NPC like a Ranger), unlocking more recruitable NPCs and growing
+  max party size to 3 then 4 as the story advances.
+- Two separate leveling tracks: an in-mission level (can run 1-10 within a
+  single mission) versus the persistent "actual" overworld level/items,
+  which advance separately once a mission ends.
+- Not every mission needs to be a boss fight, but each should serve the
+  story.
+- Note: `CAMPAIGN_STORY_DESIGN.md` and D-118's engine scaffolding
+  (chapters, world-flags, companion roster) already exist as a foundation —
+  worth reviewing before designing this from scratch.
 
 ## Known, deliberate design limits (not bugs)
 
@@ -541,6 +1072,8 @@ real browser battle yet. Ordered newest first.
   trap awareness, so a trap can actually land a hit on a passing enemy.
 - **KI-011 — Attacks/abilities ignore line of sight.** Range is pure
   distance; walls never block a shot.
-- **KI-029 — No volume control (or audio system) exists.** Nothing to
-  control yet — a volume slider will come with real sound effects/music,
-  not before.
+- **KI-029 — No audio ASSETS exist.** D-153 built the real volume/mute
+  controls and the `AudioManager` plumbing that applies them (see KI-105) —
+  it's genuinely working, just silent, since no music or sound-effect file
+  has shipped yet. That content gap is the only thing this item still
+  tracks.

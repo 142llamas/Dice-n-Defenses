@@ -1,6 +1,6 @@
 import Phaser from "phaser";
-import { GAME_WIDTH, COLORS } from "../config";
-import { centeredRowX } from "./uiTheme";
+import { COLORS } from "../config";
+import { centeredRowX, getViewport, onViewportResize } from "./uiTheme";
 import { GridSystem, type GridPosition } from "../systems/GridSystem";
 import { GameMap, type TileRole } from "../systems/GameMap";
 import type { ParsedMap, TileType } from "../data/testMap";
@@ -10,6 +10,7 @@ import {
   MIN_MAP_ROWS,
   MAX_MAP_ROWS,
   createBlankDraft,
+  isValidMapName,
   paintTile,
   validateDraft,
   type MarkerRole,
@@ -46,16 +47,8 @@ import { listMapsByAuthor, pushMap } from "../cloud/MapSharingSync";
 const STANDARD_MINIONS: string[] = ["grunt", "runner", "wisp", "brute", "swarmling", "warden", "razorwing"];
 const PLAYTEST_BOSS_ID = "basalt-colossus";
 
-const MAP_NAME_POOL: string[] = [
-  "Winding Pass",
-  "Ember Hollow",
-  "Frostgate Reach",
-  "Sunken Vale",
-  "Ashen Crossing",
-  "Moonlit Bastion",
-  "Stonewatch Ridge",
-  "Thornwood Bend",
-];
+/** D-154: only the STARTING default now — the name field itself is a real typed `<input>`, not a cycle-through-a-pool button. */
+const DEFAULT_MAP_NAME = "Winding Pass";
 
 const DEFAULT_COLS = 12;
 const DEFAULT_ROWS = 8;
@@ -114,19 +107,19 @@ type PaletteTab = "terrain" | "markers";
 
 // Reserved screen region for the editing grid — everything above is header/
 // controls/palette, everything below is validation status + action buttons.
+// D-156: the right edge is computed live from the viewport width inside
+// `rebuildGridSystem()` instead of a `GAME_WIDTH`-derived constant, so a
+// future `Scale.RESIZE` cutover actually grows the buildable area.
 const GRID_AREA_TOP = 300;
 const GRID_AREA_BOTTOM = 780;
 const GRID_AREA_LEFT = 40;
-const GRID_AREA_RIGHT = GAME_WIDTH - 40;
 
 export class MapBuilderScene extends Phaser.Scene {
   private draft!: ParsedMap;
-  private nameIndex = 0;
   private paletteTab: PaletteTab = "terrain";
   private selectedPalette: PaletteSelection = { kind: "terrain", tileType: "floor" };
   private builderGrid!: GridSystem;
 
-  private nameLabel!: Phaser.GameObjects.Text;
   private widthLabel!: Phaser.GameObjects.Text;
   private heightLabel!: Phaser.GameObjects.Text;
 
@@ -148,13 +141,29 @@ export class MapBuilderScene extends Phaser.Scene {
   private publishedMapCreatedAt = 0;
   private publishedCountForAuthor = 0;
 
+  // D-154: real click-and-drag continuous painting — `isPainting` tracks a
+  // held-down stroke, `lastPaintedTile` avoids repainting the same tile on
+  // every `pointermove` tick while the pointer sits still within it.
+  private isPainting = false;
+  private lastPaintedTile: GridPosition | null = null;
+
+  private nameInput?: Phaser.GameObjects.DOMElement;
+  private nameInputEl?: HTMLInputElement;
+
+  // D-156: this scene's chrome (title, description, size/name controls,
+  // palette tabs, footer) is built ONCE in `create()` and never destroyed —
+  // same shape as `CoopLobbyScene` (D-155), and for the same reason: the
+  // name field's DOM `<input>` would drop typed text and keyboard focus if
+  // rebuilt from scratch on a resize. Each entry repositions to
+  // `viewportWidth / 2 + dx` at a fixed `y` instead.
+  private centeredObjects: { obj: { setPosition(x: number, y: number): unknown }; dx: number; y: number }[] = [];
+
   constructor() {
     super("MapBuilderScene");
   }
 
   create(): void {
-    this.draft = createBlankDraft("map-builder-draft", MAP_NAME_POOL[0], DEFAULT_COLS, DEFAULT_ROWS);
-    this.nameIndex = 0;
+    this.draft = createBlankDraft("map-builder-draft", DEFAULT_MAP_NAME, DEFAULT_COLS, DEFAULT_ROWS);
     this.paletteTab = "terrain";
     this.selectedPalette = { kind: "terrain", tileType: "floor" };
     this.tabButtons = [];
@@ -164,23 +173,26 @@ export class MapBuilderScene extends Phaser.Scene {
     this.publishedMapId = null;
     this.publishedMapCreatedAt = 0;
     this.publishedCountForAuthor = 0;
+    this.centeredObjects = [];
 
     this.cameras.main.setBackgroundColor("#0e0e14");
+    const cx = getViewport(this).width / 2;
 
-    this.add
-      .text(GAME_WIDTH / 2, 40, "Map Builder", {
+    const title = this.add
+      .text(cx, 40, "Map Builder", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "36px",
         color: "#e8e8f0",
         fontStyle: "bold",
       })
       .setOrigin(0.5);
+    this.centeredObjects.push({ obj: title, dx: 0, y: 40 });
 
     this.buildSmallButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
 
-    this.add
+    const description = this.add
       .text(
-        GAME_WIDTH / 2,
+        cx,
         86,
         "Pick a size and name, choose a tile from the palette, then click the board to paint. Every map needs at\n" +
           "least one Spawn, one Exit, 1-4 Hero Starts, and a clear path from every Spawn to an Exit.",
@@ -192,18 +204,22 @@ export class MapBuilderScene extends Phaser.Scene {
         },
       )
       .setOrigin(0.5, 0);
+    this.centeredObjects.push({ obj: description, dx: 0, y: 86 });
 
-    this.buildSizeAndNameControls(150);
-    this.buildPaletteTabs(210);
+    this.buildSizeAndNameControls(cx, 150);
+    this.buildPaletteTabs(cx, 210);
     this.gridGraphics = this.add.graphics().setDepth(1);
-    this.buildFooter();
+    this.buildFooter(cx);
 
-    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => this.handleBoardClick(pointer));
+    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => this.handlePointerDown(pointer));
+    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => this.handlePointerMove(pointer));
+    this.input.on("pointerup", () => this.handlePointerUp());
     this.input.keyboard?.on("keydown-ESC", () => this.leave());
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.removeAllListeners();
       this.input.keyboard?.removeAllListeners();
     });
+    onViewportResize(this, () => this.repositionLayout());
 
     initAuth((state) => {
       this.authState = state;
@@ -214,6 +230,22 @@ export class MapBuilderScene extends Phaser.Scene {
     this.renderPaletteSwatches();
     this.renderGrid();
     this.refreshAll();
+  }
+
+  // D-156: moves every registered chrome object back to `viewportWidth / 2 +
+  // dx` at its own fixed `y` (including the name `<input>`, which keeps its
+  // typed value and focus since it's never rebuilt), then re-derives the
+  // grid's geometry and repaints the palette swatches and grid tiles — both
+  // already fully destroy-and-recreate on every call, so re-running them
+  // against the live viewport width is enough to keep them correctly sized/
+  // positioned too.
+  private repositionLayout(): void {
+    const cx = getViewport(this).width / 2;
+    for (const { obj, dx, y } of this.centeredObjects) obj.setPosition(cx + dx, y);
+    this.validationText.setWordWrapWidth(getViewport(this).width - 160);
+    this.rebuildGridSystem();
+    this.renderPaletteSwatches();
+    this.renderGrid();
   }
 
   private leave(): void {
@@ -243,41 +275,74 @@ export class MapBuilderScene extends Phaser.Scene {
 
   // ----- Size + name controls ---------------------------------------------
 
-  private buildSizeAndNameControls(y: number): void {
+  private buildSizeAndNameControls(cx: number, y: number): void {
     const w = 260;
     const gap = 20;
     const totalWidth = 3 * w + 2 * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const dx0 = -totalWidth / 2 + w / 2;
+    const startX = cx + dx0;
 
-    this.nameLabel = this.buildSmallButton(startX, y, w, 40, "", 0x2a2a3a, () => {
-      this.nameIndex = (this.nameIndex + 1) % MAP_NAME_POOL.length;
-      this.draft = { ...this.draft, name: MAP_NAME_POOL[this.nameIndex] };
-      this.refreshAll();
-    }).label;
+    this.buildNameField(startX, y, w);
+    if (this.nameInput) this.centeredObjects.push({ obj: this.nameInput, dx: dx0, y });
 
     // Resizing rebuilds a blank draft at the new size — resizing an
     // in-progress draft while preserving existing paint is out of scope for
     // this pass (pick a size, THEN paint).
-    this.widthLabel = this.buildSmallButton(startX + w + gap, y, w, 40, "", 0x2a2a3a, () => {
+    const widthBtn = this.buildSmallButton(startX + w + gap, y, w, 40, "", 0x2a2a3a, () => {
       const next = this.draft.cols >= MAX_MAP_COLS ? MIN_MAP_COLS : this.draft.cols + 1;
       this.draft = createBlankDraft(this.draft.id, this.draft.name, next, this.draft.rows);
       this.rebuildGridSystem();
       this.renderGrid();
       this.refreshAll();
-    }).label;
+    });
+    this.widthLabel = widthBtn.label;
+    this.centeredObjects.push({ obj: widthBtn.rect, dx: dx0 + w + gap, y }, { obj: widthBtn.label, dx: dx0 + w + gap, y });
 
-    this.heightLabel = this.buildSmallButton(startX + 2 * (w + gap), y, w, 40, "", 0x2a2a3a, () => {
+    const heightBtn = this.buildSmallButton(startX + 2 * (w + gap), y, w, 40, "", 0x2a2a3a, () => {
       const next = this.draft.rows >= MAX_MAP_ROWS ? MIN_MAP_ROWS : this.draft.rows + 1;
       this.draft = createBlankDraft(this.draft.id, this.draft.name, this.draft.cols, next);
       this.rebuildGridSystem();
       this.renderGrid();
       this.refreshAll();
-    }).label;
+    });
+    this.heightLabel = heightBtn.label;
+    this.centeredObjects.push(
+      { obj: heightBtn.rect, dx: dx0 + 2 * (w + gap), y },
+      { obj: heightBtn.label, dx: dx0 + 2 * (w + gap), y },
+    );
+  }
+
+  /**
+   * D-154: a real, player-typed map name — this project's third DOM
+   * `<input>`, following the exact pattern `CharacterCreationScene`'s hero
+   * name field (D-147) and `CoopLobbyScene`'s join-code field (D-102)
+   * already established. Replaces the old fixed 8-name cycle pool.
+   */
+  private buildNameField(x: number, y: number, width: number): void {
+    this.nameInput = this.add
+      .dom(x, y)
+      .createFromHTML(
+        `<input type="text" maxlength="40" placeholder="Map Name" style="
+          width: ${width - 20}px; height: 34px; font-size: 15px;
+          font-family: system-ui, Arial, sans-serif; font-weight: bold;
+          text-align: center; background: #2a2a3a; color: #e8e8f0;
+          border: 1px solid #4a4a5a; border-radius: 4px; outline: none;
+          box-sizing: border-box;
+        " />`,
+      )
+      .setOrigin(0.5);
+    this.nameInputEl = this.nameInput.node.querySelector("input") as HTMLInputElement;
+    this.nameInputEl.value = this.draft.name;
+    this.nameInputEl.addEventListener("input", () => {
+      this.draft = { ...this.draft, name: this.nameInputEl!.value };
+      this.refreshValidation();
+    });
+    this.nameInputEl.addEventListener("keydown", (e: KeyboardEvent) => e.stopPropagation());
   }
 
   // ----- Palette -----------------------------------------------------------
 
-  private buildPaletteTabs(y: number): void {
+  private buildPaletteTabs(cx: number, y: number): void {
     const tabs: { tab: PaletteTab; label: string }[] = [
       { tab: "terrain", label: "Terrain" },
       { tab: "markers", label: "Markers" },
@@ -285,14 +350,17 @@ export class MapBuilderScene extends Phaser.Scene {
     const w = 180;
     const gap = 10;
     const totalWidth = tabs.length * w + (tabs.length - 1) * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const dx0 = -totalWidth / 2 + w / 2;
+    const startX = cx + dx0;
 
     this.tabButtons = tabs.map((t, i) => {
+      const dx = dx0 + i * (w + gap);
       const x = startX + i * (w + gap);
       const { rect, label } = this.buildSmallButton(x, y, w, 34, t.label, 0x2a2a3a, () => {
         this.paletteTab = t.tab;
         this.renderPaletteSwatches();
       });
+      this.centeredObjects.push({ obj: rect, dx, y }, { obj: label, dx, y });
       return { rect, label, tab: t.tab };
     });
   }
@@ -315,7 +383,7 @@ export class MapBuilderScene extends Phaser.Scene {
     // Playtest fix: at the fixed 180px width this row (8 terrain swatches)
     // ran off both edges of the 1280px canvas — centeredRowX shrinks item
     // width to fit instead once the palette outgrows the available space.
-    const { xs, itemWidth } = centeredRowX(items.length, w, gap, GAME_WIDTH / 2);
+    const { xs, itemWidth } = centeredRowX(items.length, w, gap, getViewport(this).width / 2, getViewport(this).width - 80);
 
     items.forEach((item, i) => {
       const { rect, label } = this.buildSmallButton(xs[i], y, itemWidth, 32, item.label, 0x2a2a3a, () => {
@@ -345,7 +413,8 @@ export class MapBuilderScene extends Phaser.Scene {
   // ----- Grid ---------------------------------------------------------------
 
   private rebuildGridSystem(): void {
-    const availableWidth = GRID_AREA_RIGHT - GRID_AREA_LEFT;
+    const gridAreaRight = getViewport(this).width - 40;
+    const availableWidth = gridAreaRight - GRID_AREA_LEFT;
     const availableHeight = GRID_AREA_BOTTOM - GRID_AREA_TOP;
     const tileSize = Math.floor(Math.min(64, availableWidth / this.draft.cols, availableHeight / this.draft.rows));
     const originX = Math.round(GRID_AREA_LEFT + (availableWidth - this.draft.cols * tileSize) / 2);
@@ -353,12 +422,39 @@ export class MapBuilderScene extends Phaser.Scene {
     this.builderGrid = new GridSystem(this.draft.cols, this.draft.rows, tileSize, originX, originY);
   }
 
-  private handleBoardClick(pointer: Phaser.Input.Pointer): void {
+  /** Paints whatever tile `pointer` is over, if any. Shared by the initial press and every drag-move tick. */
+  private paintAt(pointer: Phaser.Input.Pointer): GridPosition | null {
     const tile = this.builderGrid.worldToTile({ x: pointer.worldX, y: pointer.worldY });
-    if (!tile) return;
+    if (!tile) return null;
     this.draft = paintTile(this.draft, tile, this.selectedPalette);
     this.renderGrid();
     this.refreshValidation();
+    return tile;
+  }
+
+  private handlePointerDown(pointer: Phaser.Input.Pointer): void {
+    const tile = this.paintAt(pointer);
+    this.isPainting = tile !== null;
+    this.lastPaintedTile = tile;
+  }
+
+  /** Real click-and-drag continuous paint: while the button is held, every NEW tile the pointer crosses over gets painted too, not just the one under the initial click. */
+  private handlePointerMove(pointer: Phaser.Input.Pointer): void {
+    if (!this.isPainting) return;
+    const tile = this.builderGrid.worldToTile({ x: pointer.worldX, y: pointer.worldY });
+    if (!tile) return;
+    if (this.lastPaintedTile && tile.x === this.lastPaintedTile.x && tile.y === this.lastPaintedTile.y) return;
+    this.lastPaintedTile = tile;
+    this.draft = paintTile(this.draft, tile, this.selectedPalette);
+    this.renderGrid();
+    this.refreshValidation();
+  }
+
+  // Registered scene-wide (not just over the grid) since a drag can end
+  // after the pointer has moved off the grid area entirely.
+  private handlePointerUp(): void {
+    this.isPainting = false;
+    this.lastPaintedTile = null;
   }
 
   private renderGrid(): void {
@@ -414,25 +510,26 @@ export class MapBuilderScene extends Phaser.Scene {
 
   // ----- Footer: validation + Playtest/Publish ------------------------------
 
-  private buildFooter(): void {
+  private buildFooter(cx: number): void {
     this.validationText = this.add
-      .text(GAME_WIDTH / 2, GRID_AREA_BOTTOM + 15, "", {
+      .text(cx, GRID_AREA_BOTTOM + 15, "", {
         fontFamily: "monospace",
         fontSize: "13px",
         color: "#e0a860",
         align: "center",
-        wordWrap: { width: GAME_WIDTH - 160 },
+        wordWrap: { width: cx * 2 - 160 },
       })
       .setOrigin(0.5, 0);
+    this.centeredObjects.push({ obj: this.validationText, dx: 0, y: GRID_AREA_BOTTOM + 15 });
 
     const y = GRID_AREA_BOTTOM + 95;
-    const leftX = GAME_WIDTH / 2 - 150;
-    const rightX = GAME_WIDTH / 2 + 150;
+    const leftX = cx - 150;
+    const rightX = cx + 150;
 
     this.playtestButton = this.add
       .rectangle(leftX, y, 260, 50, 0x4caf72)
       .setInteractive({ useHandCursor: true });
-    this.add
+    const playtestLabel = this.add
       .text(leftX, y, "Playtest", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "20px",
@@ -441,6 +538,7 @@ export class MapBuilderScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
     this.playtestButton.on("pointerdown", () => this.onPlaytest());
+    this.centeredObjects.push({ obj: this.playtestButton, dx: -150, y }, { obj: playtestLabel, dx: -150, y });
 
     this.publishButton = this.add
       .rectangle(rightX, y, 260, 50, 0x2a2a3a)
@@ -450,10 +548,12 @@ export class MapBuilderScene extends Phaser.Scene {
       .text(rightX, y, "Publish", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "18px", color: "#e8e8f0" })
       .setOrigin(0.5);
     this.publishButton.on("pointerdown", () => this.onPublish());
+    this.centeredObjects.push({ obj: this.publishButton, dx: 150, y }, { obj: this.publishLabel, dx: 150, y });
 
     this.publishStatusText = this.add
       .text(rightX, y + 40, "", { fontFamily: "monospace", fontSize: "12px", color: "#8a8aa0" })
       .setOrigin(0.5);
+    this.centeredObjects.push({ obj: this.publishStatusText, dx: 150, y: y + 40 });
 
     if (!firebaseReady) {
       this.publishButton.setVisible(false);
@@ -478,6 +578,7 @@ export class MapBuilderScene extends Phaser.Scene {
 
   private isPublishAllowed(): boolean {
     if (!firebaseReady || !this.authState.uid) return false;
+    if (!isValidMapName(this.draft.name)) return false;
     if (!validateDraft(this.draft).ok) return false;
     if (this.publishedMapId) return true; // updating your own already-published map is never blocked by the cap
     return !hasReachedPublishLimit(this.publishedCountForAuthor);
@@ -540,6 +641,8 @@ export class MapBuilderScene extends Phaser.Scene {
 
       if (!this.authState.uid) {
         this.publishStatusText.setText("Connecting…");
+      } else if (!isValidMapName(this.draft.name)) {
+        this.publishStatusText.setText("Give this map a name before publishing.");
       } else if (!result.ok) {
         this.publishStatusText.setText("Fix the issues above to publish.");
       } else if (!this.publishedMapId && hasReachedPublishLimit(this.publishedCountForAuthor)) {
@@ -553,7 +656,13 @@ export class MapBuilderScene extends Phaser.Scene {
   }
 
   private refreshAll(): void {
-    this.nameLabel.setText(`Name: ${this.draft.name} (click to cycle)`);
+    // Keeps the input in sync with `this.draft.name` for paths that change
+    // it programmatically (e.g. a resize preserving the current name) —
+    // never overwrites it while the player is actively typing, since typing
+    // itself already keeps `this.draft.name` and the input's own value equal.
+    if (this.nameInputEl && this.nameInputEl.value !== this.draft.name) {
+      this.nameInputEl.value = this.draft.name;
+    }
     this.widthLabel.setText(`Width: ${this.draft.cols} tiles`);
     this.heightLabel.setText(`Height: ${this.draft.rows} tiles`);
     this.refreshValidation();

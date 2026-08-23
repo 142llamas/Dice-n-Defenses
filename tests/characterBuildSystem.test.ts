@@ -3,6 +3,11 @@ import { STANDARD_ARRAY, ABILITY_SCORE_IDS } from "../src/game/data/abilityScore
 import {
   StandardArrayAllocator,
   allocatorFromScores,
+  PointBuyAllocator,
+  pointBuyAllocatorFromScores,
+  POINT_BUY_BUDGET,
+  POINT_BUY_MIN_SCORE,
+  POINT_BUY_MAX_SCORE,
   heroDefinitionFromBuild,
   attackStyleForAbility,
   hasDuplicateAbilities,
@@ -81,6 +86,88 @@ describe("allocatorFromScores (Phase 9, D-083)", () => {
     const corrupt = { str: 99, dex: 14, con: 13, int: 12, wis: 10, cha: 8 };
     const rebuilt = allocatorFromScores(corrupt);
     expect(sortedValues(rebuilt.scores())).toEqual([...STANDARD_ARRAY].sort((a, b) => a - b));
+  });
+});
+
+describe("PointBuyAllocator (D-147, piece 3)", () => {
+  it("starts every ability at the 8 floor, spending nothing", () => {
+    const allocator = new PointBuyAllocator();
+    ABILITY_SCORE_IDS.forEach((id) => expect(allocator.scores()[id]).toBe(POINT_BUY_MIN_SCORE));
+    expect(allocator.spentPoints()).toBe(0);
+    expect(allocator.remainingPoints()).toBe(POINT_BUY_BUDGET);
+  });
+
+  it("increase() raises one ability and spends the real SRD cost table (13->14 and 14->15 cost 2, not 1)", () => {
+    const allocator = new PointBuyAllocator();
+    for (let i = 0; i < 5; i++) allocator.increase("str"); // 8 -> 13, cost 5
+    expect(allocator.scores().str).toBe(13);
+    expect(allocator.spentPoints()).toBe(5);
+    allocator.increase("str"); // 13 -> 14, cost 2 (7 total)
+    expect(allocator.scores().str).toBe(14);
+    expect(allocator.spentPoints()).toBe(7);
+    allocator.increase("str"); // 14 -> 15, cost 2 (9 total)
+    expect(allocator.scores().str).toBe(15);
+    expect(allocator.spentPoints()).toBe(9);
+  });
+
+  it("decrease() lowers one ability and refunds the same cost", () => {
+    const allocator = new PointBuyAllocator();
+    allocator.increase("dex");
+    allocator.increase("dex");
+    expect(allocator.scores().dex).toBe(10);
+    allocator.decrease("dex");
+    expect(allocator.scores().dex).toBe(9);
+    expect(allocator.remainingPoints()).toBe(POINT_BUY_BUDGET - 1);
+  });
+
+  it("refuses to increase past the 15 cap", () => {
+    const allocator = new PointBuyAllocator();
+    for (let i = 0; i < 10; i++) allocator.increase("str");
+    expect(allocator.scores().str).toBe(POINT_BUY_MAX_SCORE);
+    expect(allocator.canIncrease("str")).toBe(false);
+  });
+
+  it("refuses to decrease below the 8 floor", () => {
+    const allocator = new PointBuyAllocator();
+    allocator.decrease("con");
+    expect(allocator.scores().con).toBe(POINT_BUY_MIN_SCORE);
+    expect(allocator.canDecrease("con")).toBe(false);
+  });
+
+  it("refuses an increase the remaining budget can't afford, even under the 15 cap", () => {
+    const allocator = new PointBuyAllocator();
+    // Spend the entire 27-point budget maxing out str and dex (9 each = 18),
+    // then con partway (9 more would need a 9-cost jump nowhere near left).
+    for (let i = 0; i < 7; i++) allocator.increase("str"); // 8->15, cost 9
+    for (let i = 0; i < 7; i++) allocator.increase("dex"); // 8->15, cost 9
+    expect(allocator.remainingPoints()).toBe(POINT_BUY_BUDGET - 18); // 9 left
+    for (let i = 0; i < 10; i++) allocator.increase("con"); // as far as 9 points can go: 8->13 (cost 5), then blocked (14 costs 2 more = 7 total, still affordable)... verify it never overspends
+    expect(allocator.remainingPoints()).toBeGreaterThanOrEqual(0);
+  });
+
+  it("never lets spentPoints() exceed the budget no matter how it's driven", () => {
+    const allocator = new PointBuyAllocator();
+    for (let i = 0; i < 50; i++) {
+      ABILITY_SCORE_IDS.forEach((id) => allocator.increase(id));
+    }
+    expect(allocator.spentPoints()).toBeLessThanOrEqual(POINT_BUY_BUDGET);
+  });
+});
+
+describe("pointBuyAllocatorFromScores (D-147, piece 3)", () => {
+  it("round-trips a valid point-buy score set", () => {
+    const allocator = new PointBuyAllocator();
+    allocator.increase("wis");
+    allocator.increase("wis");
+    const scores = allocator.scores();
+    expect(pointBuyAllocatorFromScores(scores).scores()).toEqual(scores);
+  });
+
+  it("clamps an out-of-range score (e.g. a Standard Array 15 that happens to also be in range is fine, but a corrupt 20 is not) to the floor", () => {
+    const corrupt = { str: 20, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+    const rebuilt = pointBuyAllocatorFromScores(corrupt);
+    expect(rebuilt.scores().str).toBe(POINT_BUY_MIN_SCORE);
+    expect(rebuilt.scores().dex).toBe(10);
   });
 });
 

@@ -200,6 +200,47 @@ export function simulateHeroForPlanning(build: CharacterBuild, planSoFar: LevelU
   return hero;
 }
 
+/** A hero's stat snapshot immediately before/after one `levelUpClass()` call — see `levelUpDeltaSummary`. */
+export interface LevelUpStatSnapshot {
+  maxHealth: number;
+  armorClass: number;
+  attackBonus: number;
+}
+
+/**
+ * D-148: real, human-readable text for what a level-up actually changed —
+ * KI-085/D-130's plain "reaches level N!" ack popup previously said nothing
+ * else, even though every value here was already computable. Feature text
+ * comes straight from `CharacterClassDefinition.features` (the same field
+ * `CompendiumScene`'s `classFeatureBlocks` reads), filtered to `newLevel` so
+ * only what THIS level-up granted is listed. Returns a fallback string
+ * rather than an empty one so the popup is never blank for a level with no
+ * stat movement (e.g. a level that grants only a spell slot).
+ */
+export function levelUpDeltaSummary(
+  before: LevelUpStatSnapshot,
+  after: LevelUpStatSnapshot,
+  classId: string | undefined,
+  newLevel: number,
+): string {
+  const parts: string[] = [];
+  if (after.maxHealth !== before.maxHealth) {
+    const delta = after.maxHealth - before.maxHealth;
+    parts.push(`${delta > 0 ? "+" : ""}${delta} max HP`);
+  }
+  if (after.armorClass !== before.armorClass) parts.push(`AC ${before.armorClass}→${after.armorClass}`);
+  if (after.attackBonus !== before.attackBonus) {
+    const fmt = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+    parts.push(`attack ${fmt(before.attackBonus)}→${fmt(after.attackBonus)}`);
+  }
+  if (classId) {
+    for (const feature of getClassDefinition(classId).features.filter((f) => f.level === newLevel)) {
+      parts.push(`new feature: ${feature.name}`);
+    }
+  }
+  return parts.length > 0 ? parts.join(", ") : "No stat changes this level.";
+}
+
 export type LevelUpChoiceStepKind = "subclass" | "asi" | "spellPick";
 
 export interface LevelUpChoiceStep {

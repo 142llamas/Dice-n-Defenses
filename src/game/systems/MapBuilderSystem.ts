@@ -124,6 +124,17 @@ export function paintTile(draft: ParsedMap, pos: GridPosition, selection: Palett
   return next;
 }
 
+/**
+ * D-154: a real, player-typed map name (replacing the old fixed 8-name
+ * cycle pool) needs its own validation independent of the DOM `<input>`'s
+ * `maxlength` attribute, which a caller bypassing the UI (a future import,
+ * a test) wouldn't be bound by.
+ */
+export function isValidMapName(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length > 0 && trimmed.length <= 40;
+}
+
 export interface MapValidationResult {
   ok: boolean;
   /** Every failing reason at once (not just the first), for a full checklist in the UI. */

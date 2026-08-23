@@ -1,11 +1,12 @@
 import Phaser from "phaser";
-import { GAME_WIDTH, SAVE_STORAGE_KEY } from "../config";
+import { SAVE_STORAGE_KEY } from "../config";
 import { getClassDefinition } from "../data/classes";
 import { getDifficultyDefinition } from "../data/difficulty";
 import { deleteSaveSlot, loadSaveFile, saveSaveFile, type SaveSlot } from "../systems/SaveSystem";
 import { firebaseReady } from "../cloud/firebaseApp";
 import { initAuth, type AuthState } from "../cloud/AuthClient";
 import { deleteSlotFromCloud, syncNow } from "../cloud/CloudSaveSync";
+import { getViewport, onViewportResize } from "./uiTheme";
 
 /**
  * LoadGameScene — Phase 9 (D-083): lists every locally-saved party build,
@@ -43,6 +44,7 @@ export class LoadGameScene extends Phaser.Scene {
   private syncButton?: Phaser.GameObjects.Rectangle;
   private syncLabel?: Phaser.GameObjects.Text;
   private syncStatusLabel?: Phaser.GameObjects.Text;
+  private layoutRoot?: Phaser.GameObjects.Container;
 
   constructor() {
     super("LoadGameScene");
@@ -51,8 +53,39 @@ export class LoadGameScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor("#0e0e14");
 
+    // D-154: subscribe once per scene lifetime — `rebuildLayout()` (below)
+    // recreates the sync button/labels on every resize, so its refresh
+    // reads the live `this.authState` field instead of resubscribing.
+    if (firebaseReady) {
+      initAuth((state) => {
+        this.authState = state;
+        this.refreshSyncControl();
+      });
+    }
+
+    this.rebuildLayout();
+
+    this.input.keyboard?.on("keydown-ESC", () => this.leave());
+
+    // Same explicit teardown discipline as every other scene (D-043): avoid
+    // accumulating listeners across repeated menu <-> Load Game visits.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.input.removeAllListeners();
+      this.input.keyboard?.removeAllListeners();
+    });
+    onViewportResize(this, () => this.rebuildLayout());
+  }
+
+  // D-154: rebuilds this scene's whole layout against the current viewport,
+  // reusing the existing build methods verbatim (snapshot-diff into a fresh
+  // container, same convention `MainMenuScene` established).
+  private rebuildLayout(): void {
+    this.layoutRoot?.destroy();
+    const before = new Set<Phaser.GameObjects.GameObject>(this.children.list);
+    const { width } = getViewport(this);
+
     this.add
-      .text(GAME_WIDTH / 2, 40, "Load Game", {
+      .text(width / 2, 40, "Load Game", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "36px",
         color: "#e8e8f0",
@@ -63,24 +96,19 @@ export class LoadGameScene extends Phaser.Scene {
     this.buildButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
 
     this.add
-      .text(GAME_WIDTH / 2, 90, "Load a previously saved party, or delete one you no longer need.", {
+      .text(width / 2, 90, "Load a previously saved party, or delete one you no longer need.", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "14px",
         color: "#8a8aa0",
       })
       .setOrigin(0.5);
 
-    this.buildSyncControl();
-    this.buildSlotCards();
+    this.buildSyncControl(width);
+    this.buildSlotCards(width);
 
-    this.input.keyboard?.on("keydown-ESC", () => this.leave());
-
-    // Same explicit teardown discipline as every other scene (D-043): avoid
-    // accumulating listeners across repeated menu <-> Load Game visits.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.input.removeAllListeners();
-      this.input.keyboard?.removeAllListeners();
-    });
+    const created = this.children.list.filter((c) => !before.has(c));
+    this.layoutRoot = this.add.container(0, 0);
+    this.layoutRoot.add(created);
   }
 
   private leave(): void {
@@ -95,10 +123,10 @@ export class LoadGameScene extends Phaser.Scene {
    * list) is reserved either way, so the layout doesn't shift depending on
    * whether Firebase happens to be configured.
    */
-  private buildSyncControl(): void {
+  private buildSyncControl(width: number): void {
     if (!firebaseReady) return;
 
-    const x = GAME_WIDTH / 2;
+    const x = width / 2;
     const y = 130;
 
     this.syncButton = this.add
@@ -118,10 +146,6 @@ export class LoadGameScene extends Phaser.Scene {
     this.syncButton.on("pointerout", () => this.syncButton?.setFillStyle(0x2a2a3a));
     this.syncButton.on("pointerdown", () => this.onSyncWithCloud());
 
-    initAuth((state) => {
-      this.authState = state;
-      this.refreshSyncControl();
-    });
     this.refreshSyncControl();
   }
 
@@ -180,12 +204,12 @@ export class LoadGameScene extends Phaser.Scene {
   }
 
   /** One clickable card per save slot, stacked vertically below the intro text, or an empty-state line. */
-  private buildSlotCards(): void {
+  private buildSlotCards(width: number): void {
     const file = loadSaveFile(window.localStorage, SAVE_STORAGE_KEY);
 
     if (file.slots.length === 0) {
       this.add
-        .text(GAME_WIDTH / 2, 260, 'No saved parties yet — build one in Create Party and click "Save Party."', {
+        .text(width / 2, 260, 'No saved parties yet — build one in Create Party and click "Save Party."', {
           fontFamily: "system-ui, Arial, sans-serif",
           fontSize: "16px",
           color: "#6a6a80",
@@ -194,7 +218,7 @@ export class LoadGameScene extends Phaser.Scene {
       return;
     }
 
-    const cardWidth = GAME_WIDTH - 160;
+    const cardWidth = width - 160;
     const cardHeight = 120;
     const gap = 20;
     const startY = 220;
@@ -205,7 +229,7 @@ export class LoadGameScene extends Phaser.Scene {
     slots.forEach((slot, i) => {
       const y = startY + i * (cardHeight + gap);
 
-      this.add.rectangle(GAME_WIDTH / 2, y, cardWidth, cardHeight, 0x1a1a26).setStrokeStyle(1, 0x2a2a3a);
+      this.add.rectangle(width / 2, y, cardWidth, cardHeight, 0x1a1a26).setStrokeStyle(1, 0x2a2a3a);
 
       this.add
         .text(90, y - cardHeight / 2 + 16, slot.name, {
@@ -233,8 +257,8 @@ export class LoadGameScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5);
 
-      this.buildButton(GAME_WIDTH - 220, y - 20, 160, 40, "Load", 0x2a3a2e, () => this.loadSlot(slot));
-      this.buildButton(GAME_WIDTH - 220, y + 26, 160, 40, "Delete", 0x3a2a2a, () => this.deleteSlot(slot.id));
+      this.buildButton(width - 220, y - 20, 160, 40, "Load", 0x2a3a2e, () => this.loadSlot(slot));
+      this.buildButton(width - 220, y + 26, 160, 40, "Delete", 0x3a2a2a, () => this.deleteSlot(slot.id));
     });
   }
 

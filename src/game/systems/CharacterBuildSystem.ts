@@ -65,7 +65,17 @@ export { attackStyleForAbility };
 const MELEE_RANGE_TILES = 1;
 const RANGED_RANGE_TILES = 3;
 
-export class StandardArrayAllocator {
+/**
+ * D-147 (Character Creation overhaul, piece 3): the shared contract both
+ * ability-score allocation methods implement, so `CharacterCreationScene`
+ * can hold either kind in one `SlotState.allocator` field and read a build's
+ * final scores the same way regardless of which method the player picked.
+ */
+export interface AbilityScoreAllocator {
+  scores(): AbilityScores;
+}
+
+export class StandardArrayAllocator implements AbilityScoreAllocator {
   private order: AbilityScoreId[];
 
   constructor(initialOrder: AbilityScoreId[] = ABILITY_SCORE_IDS) {
@@ -116,6 +126,87 @@ export function allocatorFromScores(scores: AbilityScores): StandardArrayAllocat
   return new StandardArrayAllocator(isValidPermutation ? order : ABILITY_SCORE_IDS);
 }
 
+/**
+ * D-147 (piece 3): the real SRD 5.2.1 point-buy cost table — every score
+ * from 8 (free) to 15 (the pre-racial cap), each costing progressively more
+ * of a fixed 27-point budget. 13->14 and 14->15 cost 2 points instead of the
+ * even 1-per-point pattern below that, matching the real published table
+ * exactly (not an approximation).
+ */
+export const POINT_BUY_BUDGET = 27;
+export const POINT_BUY_MIN_SCORE = 8;
+export const POINT_BUY_MAX_SCORE = 15;
+const POINT_BUY_COST: Record<number, number> = { 8: 0, 9: 1, 10: 2, 11: 3, 12: 4, 13: 5, 14: 7, 15: 9 };
+
+/**
+ * D-147 (piece 3): SRD 5.2.1 Point Buy, alongside `StandardArrayAllocator`
+ * as a second, selectable ability-score method (`CharacterCreationScene`'s
+ * new party-wide toggle). Every ability starts at the floor (8, cost 0);
+ * `increase`/`decrease` step one score at a time and silently refuse a move
+ * the remaining budget can't afford or that would leave the 8-15 range —
+ * the same "can't produce an invalid state" guarantee `StandardArrayAllocator`
+ * gives by construction, just enforced per-call instead of by the type
+ * itself.
+ */
+export class PointBuyAllocator implements AbilityScoreAllocator {
+  private values: Record<AbilityScoreId, number>;
+
+  constructor(initialValues?: Partial<Record<AbilityScoreId, number>>) {
+    this.values = {} as Record<AbilityScoreId, number>;
+    ABILITY_SCORE_IDS.forEach((id) => {
+      this.values[id] = initialValues?.[id] ?? POINT_BUY_MIN_SCORE;
+    });
+  }
+
+  scores(): AbilityScores {
+    return { ...this.values } as AbilityScores;
+  }
+
+  spentPoints(): number {
+    return ABILITY_SCORE_IDS.reduce((total, id) => total + POINT_BUY_COST[this.values[id]], 0);
+  }
+
+  remainingPoints(): number {
+    return POINT_BUY_BUDGET - this.spentPoints();
+  }
+
+  canIncrease(ability: AbilityScoreId): boolean {
+    const current = this.values[ability];
+    if (current >= POINT_BUY_MAX_SCORE) return false;
+    const stepCost = POINT_BUY_COST[current + 1] - POINT_BUY_COST[current];
+    return this.remainingPoints() >= stepCost;
+  }
+
+  canDecrease(ability: AbilityScoreId): boolean {
+    return this.values[ability] > POINT_BUY_MIN_SCORE;
+  }
+
+  increase(ability: AbilityScoreId): void {
+    if (this.canIncrease(ability)) this.values[ability] += 1;
+  }
+
+  decrease(ability: AbilityScoreId): void {
+    if (this.canDecrease(ability)) this.values[ability] -= 1;
+  }
+}
+
+/**
+ * Reconstruct a `PointBuyAllocator` from a saved build's scores (Phase 9,
+ * D-083's load path) — same defensive spirit as `allocatorFromScores`. Any
+ * score outside the valid 8-15 point-buy range (e.g. a save made under
+ * Standard Array, which can produce 8-15 too, so no ambiguity there, but
+ * hand-edited/corrupt data could still be out of range) falls back to the
+ * floor for that ability rather than throwing.
+ */
+export function pointBuyAllocatorFromScores(scores: AbilityScores): PointBuyAllocator {
+  const clamped: Partial<Record<AbilityScoreId, number>> = {};
+  ABILITY_SCORE_IDS.forEach((id) => {
+    const v = scores[id];
+    clamped[id] = v >= POINT_BUY_MIN_SCORE && v <= POINT_BUY_MAX_SCORE ? v : POINT_BUY_MIN_SCORE;
+  });
+  return new PointBuyAllocator(clamped);
+}
+
 export interface CharacterBuild {
   id: string;
   name: string;
@@ -123,6 +214,14 @@ export interface CharacterBuild {
   classId: string;
   level: number;
   abilityScores: AbilityScores;
+  /**
+   * D-147 (piece 3): which allocation method produced `abilityScores` —
+   * undefined means "standardArray," identical to every pre-D-147 build
+   * (this project's real ruleset choice is party-wide, not per-hero, but
+   * it's recorded per-build so `CharacterCreationScene` can reconstruct the
+   * right allocator kind on load without guessing from the numbers alone).
+   */
+  abilityScoreMethod?: "standardArray" | "pointBuy";
   abilityId: string;
   /** Phase 11.4 (D-077): who plays this slot in battle. Defaults to "human". */
   controlledBy: HeroControlMode;
@@ -169,6 +268,14 @@ export interface CharacterBuild {
   preparedSpellIds?: string[];
   knownCantripIds?: string[];
   spellbookIds?: string[];
+  /**
+   * D-148: this hero's curated action hotkey bar, set by the Character
+   * Sheet's Hotkeys tab. Undefined (every build before this feature, and
+   * every build the player never opened that tab for) means every slot
+   * starts empty. Passed straight through to `HeroDefinition.actionHotkeys`
+   * by `heroDefinitionFromBuild`.
+   */
+  actionHotkeys?: (string | undefined | null)[];
 }
 
 /**
@@ -241,6 +348,9 @@ export function heroDefinitionFromBuild(build: CharacterBuild): HeroDefinition {
     preparedSpellIds: build.preparedSpellIds,
     knownCantripIds: build.knownCantripIds,
     spellbookIds: build.spellbookIds,
+    // D-148: passed straight through — `BattleScene.buildHeroes` applies it
+    // right after construction, same treatment as the spell-selection fields above.
+    actionHotkeys: build.actionHotkeys,
   };
 }
 

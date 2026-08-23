@@ -68,6 +68,14 @@ export interface SpellcastingProgression {
 export interface CharacterClassDefinition {
   id: string;
   name: string;
+  /**
+   * D-147 (Character Creation overhaul, piece 4): a one-sentence "what does
+   * this class play like" summary, shown as the Class picker's per-option
+   * preview text (see `CharacterCreationScene.openChoicePicker`). Original
+   * wording describing this project's OWN modeled mechanics for the class
+   * (Rage, Sneak Attack, Divine Smite, etc.) — not copied SRD flavor text.
+   */
+  previewSummary: string;
   hitDie: number;
   primaryAbility: AbilityScoreId;
   savingThrowProficiencies: AbilityScoreId[];
@@ -156,6 +164,8 @@ const FULL_CASTER_SPELL_SLOTS_BY_LEVEL: Record<number, number[]> = {
 export const FIGHTER: CharacterClassDefinition = {
   id: "fighter",
   name: "Fighter",
+  previewSummary:
+    "A weapon-first frontliner who trades subtlety for raw action economy — Second Wind and Action Surge let it outlast and out-attack almost anyone, and Extra Attack scales further than any other class.",
   hitDie: 10,
   primaryAbility: "str",
   savingThrowProficiencies: ["str", "con"],
@@ -328,6 +338,8 @@ export const FIGHTER: CharacterClassDefinition = {
 export const WIZARD: CharacterClassDefinition = {
   id: "wizard",
   name: "Wizard",
+  previewSummary:
+    "A prepared spellcaster with the widest toolkit in the game — a real spellbook, Fireball/Magic Missile-tier damage, and a spell for almost any situation, at the cost of being physically fragile.",
   hitDie: 6,
   primaryAbility: "int",
   savingThrowProficiencies: ["int", "wis"],
@@ -446,6 +458,8 @@ export const WIZARD: CharacterClassDefinition = {
 export const ROGUE: CharacterClassDefinition = {
   id: "rogue",
   name: "Rogue",
+  previewSummary:
+    "A skirmisher built around Sneak Attack's flat bonus damage and Cunning Action's extra mobility/hiding — hits hard from stealth or Advantage, but a plain attack alone is unremarkable.",
   hitDie: 8,
   primaryAbility: "dex",
   savingThrowProficiencies: ["dex", "int"],
@@ -635,6 +649,8 @@ export const ROGUE: CharacterClassDefinition = {
 export const CLERIC: CharacterClassDefinition = {
   id: "cleric",
   name: "Cleric",
+  previewSummary:
+    "A Wisdom-based caster who keeps the party standing — Channel Divinity and a healing/buff-heavy spell list make it the closest thing to dedicated support, while still able to sling Sacred Flame in a pinch.",
   hitDie: 8,
   primaryAbility: "wis",
   savingThrowProficiencies: ["wis", "cha"],
@@ -797,6 +813,8 @@ const HALF_CASTER_SPELL_SLOTS_BY_LEVEL: Record<number, number[]> = {
 export const BARBARIAN: CharacterClassDefinition = {
   id: "barbarian",
   name: "Barbarian",
+  previewSummary:
+    "A tanky melee brawler who gets more dangerous as the fight gets worse — Rage adds damage resistance and bonus damage, and Reckless Attack trades defense for near-guaranteed hits.",
   hitDie: 12,
   primaryAbility: "str",
   savingThrowProficiencies: ["str", "con"],
@@ -954,6 +972,8 @@ export const BARBARIAN: CharacterClassDefinition = {
 export const BARD: CharacterClassDefinition = {
   id: "bard",
   name: "Bard",
+  previewSummary:
+    "A Charisma-based caster whose real strength is versatility — a broad, unusual spell list plus Bardic Inspiration make it useful in almost any situation without being the single best at any one thing.",
   hitDie: 8,
   primaryAbility: "cha",
   savingThrowProficiencies: ["dex", "cha"],
@@ -1119,6 +1139,8 @@ export const BARD: CharacterClassDefinition = {
 export const DRUID: CharacterClassDefinition = {
   id: "druid",
   name: "Druid",
+  previewSummary:
+    "A Wisdom-based caster themed around nature and control — Wild Shape and a spell list full of battlefield-altering terrain and summons make it flexible rather than a straightforward damage-dealer.",
   hitDie: 8,
   primaryAbility: "wis",
   savingThrowProficiencies: ["int", "wis"],
@@ -1242,6 +1264,8 @@ export const DRUID: CharacterClassDefinition = {
 export const MONK: CharacterClassDefinition = {
   id: "monk",
   name: "Monk",
+  previewSummary:
+    "A Dexterity-based martial artist who spends Ki points on extra unarmed strikes and mobility tricks (Flurry of Blows, Step of the Wind) instead of relying on weapons or armor.",
   hitDie: 8,
   primaryAbility: "dex",
   savingThrowProficiencies: ["str", "dex"],
@@ -1423,6 +1447,8 @@ export const MONK: CharacterClassDefinition = {
 export const PALADIN: CharacterClassDefinition = {
   id: "paladin",
   name: "Paladin",
+  previewSummary:
+    "A melee hybrid that blends Fighter-like durability with a small but powerful spell list and Divine Smite, turning any landed hit into a burst of extra radiant damage.",
   hitDie: 10,
   primaryAbility: "str",
   savingThrowProficiencies: ["wis", "cha"],
@@ -1559,6 +1585,8 @@ export const PALADIN: CharacterClassDefinition = {
 export const RANGER: CharacterClassDefinition = {
   id: "ranger",
   name: "Ranger",
+  previewSummary:
+    "A Dexterity-based hybrid archer/skirmisher — Hunter's Mark and a handful of nature spells make its damage steadily reliable rather than explosive, closer to a Fighter with a few spell tricks than a real caster.",
   hitDie: 10,
   primaryAbility: "dex",
   savingThrowProficiencies: ["str", "dex"],
@@ -1727,6 +1755,8 @@ export const RANGER: CharacterClassDefinition = {
 export const SORCERER: CharacterClassDefinition = {
   id: "sorcerer",
   name: "Sorcerer",
+  previewSummary:
+    "A Charisma-based caster with fewer known spells than a Wizard but Metamagic to bend how those spells are cast — trades breadth for the ability to twist a small toolkit further.",
   hitDie: 6,
   primaryAbility: "cha",
   savingThrowProficiencies: ["con", "cha"],
@@ -1839,6 +1869,8 @@ export const SORCERER: CharacterClassDefinition = {
 export const WARLOCK: CharacterClassDefinition = {
   id: "warlock",
   name: "Warlock",
+  previewSummary:
+    "A Charisma-based caster built around a small number of powerful spell slots that recharge on a Short Rest instead of a Long one, plus Eldritch Invocations that customize its signature Eldritch Blast.",
   hitDie: 8,
   primaryAbility: "cha",
   savingThrowProficiencies: ["wis", "cha"],
@@ -1964,19 +1996,25 @@ export const WARLOCK: CharacterClassDefinition = {
   ],
 };
 
+// D-150: alphabetical by name (Kevin's Compendium-organization request) — the
+// only consumers of this array's ORDER are this file's own `getClassDefinition`
+// (an order-independent `.find`) and `CompendiumScene`'s own class selector/
+// default tab, so reordering here is safe; nothing else in the codebase reads
+// positionally from `CLASS_DEFINITIONS` (`CharacterCreationScene`'s picker uses
+// its own independently-declared `CREATABLE_CLASS_IDS`).
 export const CLASS_DEFINITIONS: CharacterClassDefinition[] = [
-  FIGHTER,
-  WIZARD,
-  ROGUE,
-  CLERIC,
   BARBARIAN,
   BARD,
+  CLERIC,
   DRUID,
+  FIGHTER,
   MONK,
   PALADIN,
   RANGER,
+  ROGUE,
   SORCERER,
   WARLOCK,
+  WIZARD,
 ];
 
 /** Look up a class definition, throwing on an unknown id so typos fail loudly. */

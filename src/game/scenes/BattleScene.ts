@@ -11,6 +11,7 @@ import {
   TUTORIAL_STORAGE_KEY,
   BESTIARY_STORAGE_KEY,
   CAMPAIGN_PROGRESS_STORAGE_KEY,
+  SAVE_STORAGE_KEY,
 } from "../config";
 import { SPRITE_MANIFEST } from "../data/spriteManifest";
 import { GridSystem, type GridPosition } from "../systems/GridSystem";
@@ -43,6 +44,9 @@ import { rollLootDrop, isPotionId, type LootDropResult } from "../systems/LootSy
 import { averagePartyLevel, isRarityUnlockedAtLevel } from "../systems/ShopSystem";
 import { ProgressionSystem } from "../systems/ProgressionSystem";
 import { RestSystem } from "../systems/RestSystem";
+import { firstAvailableHeroAction } from "../systems/HeroActionRegistry";
+import { createTooltipController, type TooltipController } from "./tooltip";
+import { centeredRowX } from "./uiTheme";
 import { asiFeatureGrantedAtLevel, subclassGrantedAtLevel } from "../systems/CharacterSystem";
 import { subclassesForClass, getSubclassDefinition } from "../data/subclasses";
 import { getClassDefinition } from "../data/classes";
@@ -54,7 +58,9 @@ import {
   resolveAsiForLevel,
   resolveSubclassForClass,
   resolveSpellPickForRequest,
+  levelUpDeltaSummary,
   type LevelUpPlan,
+  type LevelUpStatSnapshot,
 } from "../systems/LevelUpPlanSystem";
 import {
   spellSwapStepsForClass,
@@ -149,6 +155,8 @@ import {
   DEFAULT_CAMPAIGN_PROGRESS,
   type CampaignProgress,
 } from "../systems/CampaignProgressSystem";
+import type { CharacterBuild } from "../systems/CharacterBuildSystem";
+import { saveOrUpdatePartySlot, loadSaveFile, saveSaveFile, type SavePartyResult } from "../systems/SaveSystem";
 
 /**
  * Phase 23 (D-114): the actual battle board's per-tile color. Every non-
@@ -274,6 +282,9 @@ const ALL_GEAR_CATALOG_IDS: string[] = [...EQUIPMENT_ORDER, ...POTION_ORDER];
  * the canvas again.
  */
 const ITEM_GRID_PAGE_SIZE = 16;
+
+/** D-158: matches `CharacterCreationScene`'s own `MAX_PARTY_SIZE` — the hero roster strip builds this many slot widgets, then hides whichever aren't in play. */
+const MAX_ROSTER_SLOTS = 4;
 
 interface GearCatalogEntry {
   id: string;
@@ -407,8 +418,8 @@ export class BattleScene extends Phaser.Scene {
   private dragPinMarks: Phaser.GameObjects.Arc[] = [];
   private activeRing!: Phaser.GameObjects.Arc;
   private hoverRect!: Phaser.GameObjects.Rectangle;
-  /** D-132: the HP/AC (and, while a hero is selected and aiming at an enemy, hit%) hover tooltip. */
-  private unitTooltip!: Phaser.GameObjects.Text;
+  /** D-132: the HP/AC (and, while a hero is selected and aiming at an enemy, hit%) hover tooltip. D-148: generalized to the shared `tooltip.ts` controller. */
+  private tooltip!: TooltipController;
   private pendingRect!: Phaser.GameObjects.Rectangle;
 
   private bannerText!: Phaser.GameObjects.Text;
@@ -417,8 +428,32 @@ export class BattleScene extends Phaser.Scene {
   // buttons' own real coordinates, consumed by fitBannerToWidth().
   private bannerMaxWidth = 0;
   private integrityText!: Phaser.GameObjects.Text;
+  /** D-158: the live enemy count, moved off the old packed status line into the top HUD, next to Integrity/Gold. */
+  private enemyCountText!: Phaser.GameObjects.Text;
   private logText!: Phaser.GameObjects.Text;
-  private statusText!: Phaser.GameObjects.Text;
+  /**
+   * D-158 (KI-034 redesign): the hero roster strip — real per-hero widgets
+   * (box/name/HP bar/detail line), one set of parallel arrays per slot,
+   * replacing the old single packed `statusText` string. Built once for
+   * `MAX_ROSTER_SLOTS` in `buildHud()`; `layoutHeroSlots()` positions
+   * exactly `this.heroes.length` of them (party size never changes
+   * mid-battle) and hides the rest; `refreshStatus()` only updates content.
+   */
+  private heroSlotBoxes: Phaser.GameObjects.Rectangle[] = [];
+  private heroSlotNameText: Phaser.GameObjects.Text[] = [];
+  private heroSlotHpBarBg: Phaser.GameObjects.Rectangle[] = [];
+  private heroSlotHpBarFg: Phaser.GameObjects.Rectangle[] = [];
+  private heroSlotHpText: Phaser.GameObjects.Text[] = [];
+  private heroSlotDetailText: Phaser.GameObjects.Text[] = [];
+  /**
+   * D-158: the small amount of `statusText`'s old content that wasn't
+   * redundant with an already-visible button/highlight — mode-specific
+   * aiming/focus hints and `rejectAt()`'s transient rejection messages.
+   * Usually empty; overwritten by the next `refreshStatus()`/`rejectAt()`
+   * call, same "persists until the next real state change" behavior the
+   * old shared text had.
+   */
+  private messageText!: Phaser.GameObjects.Text;
   private combatLogText!: Phaser.GameObjects.Text;
   private endTurnButton!: Phaser.GameObjects.Rectangle;
   private endTurnLabel!: Phaser.GameObjects.Text;
@@ -445,6 +480,9 @@ export class BattleScene extends Phaser.Scene {
   // same shape as `showBonusActionButtonFor`.
   private classActionButton!: Phaser.GameObjects.Rectangle;
   private classActionLabel!: Phaser.GameObjects.Text;
+  /** D-148: opens the Character Sheet for the currently selected hero — visible whenever a hero is selected, regardless of `canAct()` (viewing stats needs no action). */
+  private characterSheetButton!: Phaser.GameObjects.Rectangle;
+  private characterSheetLabel!: Phaser.GameObjects.Text;
   /** Phase 13.2 (D-087): attacks Uncanny-Dodged this enemy phase, so the combat log can say so (reference identity, not a data field on EnemyAttackEvent). */
   private uncannyDodgedThisPhase = new Set<EnemyAttackEvent>();
   /** Phase 13.8 (D-093): attacks halved by Rage/Wild Shape this enemy phase, so the combat log can say so. */
@@ -475,9 +513,6 @@ export class BattleScene extends Phaser.Scene {
   /** Phase 11.7 (D-071): shown instead of the Gear grid when no living hero
    * is near a "shop" tile — proximity-gated shopping's fallback message. */
   private equipLockLabel!: Phaser.GameObjects.Text;
-  /** Phase 8 tooltip: the shop/gear item currently hovered (not necessarily
-   * selected), so its description previews without spending a click. */
-  private hoveredItemId: string | null = null;
   private buildGhost!: Phaser.GameObjects.Rectangle;
   /** Phase 8: a check/cross glyph on the build ghost, so "can I build here"
    * doesn't rely solely on green-vs-red. */
@@ -533,6 +568,8 @@ export class BattleScene extends Phaser.Scene {
   private pendingAfterLevelUpAck: (() => void) | null = null;
   /** True while the level-up acknowledgment overlay is up, so the board ignores input under it. */
   private choosingLevelUpAck = false;
+  /** D-148: this level-up's real stat/feature delta text, keyed by hero id — populated in `applyClassLevelUps`, read (and left in place) by `advanceLevelUpAckQueue`. */
+  private levelUpDeltaByHeroId = new Map<string, string>();
   /**
    * D-136 (Phase 3 of the spell-preparation economy): the in-battle spell-
    * swap overlay, shown once per hero (queue-and-pop, same shape as
@@ -728,6 +765,23 @@ export class BattleScene extends Phaser.Scene {
    * other path into a battle is completely unaffected.
    */
   private testMode = false;
+  /**
+   * D-152: the exact `CharacterBuild[]` `CharacterCreationScene` built this
+   * party from, forwarded ONLY so the in-battle pause menu's "Save Party"
+   * has real data to save — `heroDefinitions` above has already discarded
+   * race id by the time it reaches here (see `CharacterBuildSystem.
+   * heroDefinitionFromBuild`), so there is no way back to a `CharacterBuild`
+   * from it. `undefined` for a coop battle (`CoopLobbyScene` has no
+   * `CharacterBuild[]` to hand over) — Save is simply unavailable there.
+   */
+  private originalParty: CharacterBuild[] | undefined = undefined;
+  /**
+   * D-152: the save slot this party was already loaded from, if any — kept
+   * in sync with a fresh id after the pause menu's first Save this battle,
+   * so a second Save updates rather than duplicating (same convention
+   * `CharacterCreationScene.loadedSlotId` already follows).
+   */
+  private loadedSlotId: string | undefined = undefined;
 
   constructor() {
     super("BattleScene");
@@ -742,6 +796,8 @@ export class BattleScene extends Phaser.Scene {
     customMapData?: ParsedMap;
     coopSession?: { code: string; localUid: string; heroOwners: Record<string, string>; partnerName: string };
     testMode?: boolean;
+    originalParty?: CharacterBuild[];
+    loadedSlotId?: string;
   }): void {
     if (!data?.heroDefinitions?.length) {
       throw new Error(
@@ -756,6 +812,8 @@ export class BattleScene extends Phaser.Scene {
     this.customMapData = data?.customMapData ?? null;
     this.coopSession = data?.coopSession ?? null;
     this.testMode = data?.testMode ?? false;
+    this.originalParty = data?.originalParty;
+    this.loadedSlotId = data?.loadedSlotId;
   }
 
   /**
@@ -772,6 +830,26 @@ export class BattleScene extends Phaser.Scene {
   }
 
   create(): void {
+    // D-157: the game defaults to `Scale.RESIZE` everywhere outside battle
+    // (see `main.ts`) so every other scene's live-viewport layout actually
+    // reflects the real window. `BattleScene` itself has 88 GAME_WIDTH/
+    // GAME_HEIGHT references and no `getViewport`/`rebuildLayout()`
+    // conversion of its own yet (that's the roadmap's still-separate,
+    // dedicated step 4) — so a battle locks the canvas back to the old
+    // fixed-resolution `Scale.FIT` behavior for its whole lifetime, and the
+    // SHUTDOWN handler below hands it back to `Scale.RESIZE` the instant the
+    // player leaves. Menu scenes reached WHILE a battle is merely paused
+    // underneath (Character Sheet, the Pause Menu, Settings launched from
+    // it) share this same locked-FIT canvas rather than fighting over mode —
+    // `scene.scale` is one Game-wide manager, not one per scene.
+    // `scaleMode` alone isn't enough: Phaser only ever calls the internal
+    // `displaySize.setAspectMode()` from its own boot-time config parsing,
+    // never on a later manual `scaleMode` change, so it has to be set here
+    // too or FIT would silently stretch-fill instead of letterbox-fitting.
+    this.scale.scaleMode = Phaser.Scale.FIT;
+    this.scale.displaySize.setAspectMode(Phaser.Scale.FIT);
+    this.scale.setGameSize(GAME_WIDTH, GAME_HEIGHT);
+
     // Reset all mutable state so returning from the menu starts a clean game
     // (Phaser reuses the scene instance, so fields must be cleared here).
     this.heroes = [];
@@ -812,6 +890,7 @@ export class BattleScene extends Phaser.Scene {
     this.levelUpAckQueue = [];
     this.pendingAfterLevelUpAck = null;
     this.choosingLevelUpAck = false;
+    this.levelUpDeltaByHeroId.clear();
     this.spellPrepQueue = [];
     this.spellPrepTrigger = "longRest";
     this.spellPrepSteps = [];
@@ -829,7 +908,6 @@ export class BattleScene extends Phaser.Scene {
     this.wavesCleared = 0;
     this.tutorialOverlay = [];
     this.pendingAfterTutorial = null;
-    this.hoveredItemId = null;
     this.keyboardFocus = "board";
     this.gridFocusIndex = 0;
     this.animationSpeed = loadSettings(window.localStorage, SETTINGS_STORAGE_KEY).animationSpeed;
@@ -901,6 +979,7 @@ export class BattleScene extends Phaser.Scene {
     this.buildHeroes();
     this.buildHighlightObjects();
     this.buildHud();
+    this.buildPauseMenuButton();
     if (this.testMode) this.buildDebugToolbar();
 
     this.turns = new TurnSystem();
@@ -1070,7 +1149,7 @@ export class BattleScene extends Phaser.Scene {
       const flutter = Math.sin(time / 180 + cx) * 5;
       const r = TILE_SIZE * 0.34;
       graphic.clear();
-      graphic.fillStyle(COLORS.heroActive, 0.85);
+      graphic.fillStyle(COLORS.capeBillowingPlaceholder, 0.85);
       graphic.beginPath();
       graphic.moveTo(cx - r * 0.6, cy - r * 0.2);
       graphic.lineTo(cx + r * 0.6, cy - r * 0.2);
@@ -1113,6 +1192,7 @@ export class BattleScene extends Phaser.Scene {
       if (def.spellbookIds) hero.chooseSpellbook(def.spellbookIds);
       if (def.knownCantripIds) hero.chooseCantrips(def.knownCantripIds);
       if (def.preparedSpellIds) hero.choosePreparedSpells(def.preparedSpellIds);
+      if (def.actionHotkeys) hero.setActionHotkeys(def.actionHotkeys);
       this.heroes.push(hero);
       const c = this.grid.tileToWorldCenter(start);
       const color = COLORS.hero;
@@ -1197,20 +1277,10 @@ export class BattleScene extends Phaser.Scene {
       .setStrokeStyle(3, COLORS.moveConfirm)
       .setDepth(6)
       .setVisible(false);
-    // D-132: depth 50 — above every token/badge/highlight, so it's never
-    // obscured by whatever it's floating over.
-    this.unitTooltip = this.add
-      .text(0, 0, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "13px",
-        color: "#0e0e14",
-        backgroundColor: "#e8e0c0",
-        padding: { left: 6, right: 6, top: 3, bottom: 3 },
-        align: "center",
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(50)
-      .setVisible(false);
+    // D-132/D-148: the shared tooltip controller — depth 200 (see tooltip.ts),
+    // above every token/badge/highlight, so it's never obscured by whatever
+    // it's floating over.
+    this.tooltip = createTooltipController(this);
   }
 
   // ----- HUD -------------------------------------------------------------
@@ -1257,6 +1327,17 @@ export class BattleScene extends Phaser.Scene {
       })
       .setDepth(30);
 
+    // D-158 (KI-034 redesign): the live enemy count, previously baked into
+    // the old packed status line — moved up here next to Integrity/Gold
+    // rather than given a whole new HUD row.
+    this.enemyCountText = this.add
+      .text(this.grid.originX, 74, "", {
+        fontFamily: "monospace",
+        fontSize: "13px",
+        color: "#9a9ab0",
+      })
+      .setDepth(30);
+
     // Phase 7 ("improved wave preview"): a small centered line naming the NEXT
     // wave's composition, so the player can plan a build before it starts.
     // Sits directly under the banner, comfortably clear of the grid below (see
@@ -1294,42 +1375,107 @@ export class BattleScene extends Phaser.Scene {
     this.endTurnButton.on("pointerout", () => this.endTurnButton.setFillStyle(0x3a5a8a));
     this.endTurnButton.on("pointerdown", () => this.endPlayerTurn());
 
-    // ----- Below the grid: status line, then combat log, then the action
-    // buttons — STACKED vertically, each with reserved room, rather than
-    // status-left / log-right on the same row.
+    // ----- Below the grid: hero roster strip, then a small message line,
+    // then the combat log, then the action buttons — STACKED vertically,
+    // each with reserved room, rather than status-left / log-right on the
+    // same row.
     //
-    // Playtest fix: `wrapWidth` used to be `this.map.cols * TILE_SIZE` — the
-    // GRID's own pixel width, not the canvas's. On a narrow map (Frostbound
-    // Hollow's 14 cols, or any Map Builder map down to 6) that squeezed a
-    // full 4-hero party's status plus a "heroSelected"/"equipping" hint
-    // (which can include a full gear/structure description) into far fewer
-    // characters per line than the 60px reserved height assumed, wrapping to
-    // 4+ lines and bleeding into combatLogText directly below it — despite
-    // this exact spot's own prior comment claiming word-wrap already made
-    // that "impossible regardless of content length" (wrapping bounds WIDTH,
-    // not the fixed height it was meant to protect). Nothing else shares this
-    // row horizontally, so there's no reason to tie the wrap width to the
-    // grid at all — using the canvas's own width instead (minus a margin)
-    // gives every map the same generous line length regardless of how narrow
-    // its grid is.
+    // Playtest fix (pre-D-158 history): `wrapWidth` used to be
+    // `this.map.cols * TILE_SIZE` — the GRID's own pixel width, not the
+    // canvas's. On a narrow map (Frostbound Hollow's 14 cols, or any Map
+    // Builder map down to 6) that squeezed a full 4-hero party's status into
+    // far fewer characters per line than the reserved height assumed,
+    // wrapping into `combatLogText` directly below it. Nothing else shares
+    // this row horizontally, so there's no reason to tie the wrap width to
+    // the grid at all — using the canvas's own width instead (minus a
+    // margin) gives every map the same generous line length regardless of
+    // how narrow its grid is.
     const belowGridY = this.grid.originY + this.map.rows * TILE_SIZE + 16;
     const wrapWidth = GAME_WIDTH - 80;
 
-    this.statusText = this.add
-      .text(GAME_WIDTH / 2, belowGridY, "", {
+    // D-158 (KI-034 redesign): `MAX_ROSTER_SLOTS` per-hero boxes, real
+    // widgets instead of one packed text line — see the roster-slot fields'
+    // own doc comment. Built at a placeholder position/size here;
+    // `layoutHeroSlots()` (called once at the end of this method, after
+    // `this.heroes` already exists — `buildHeroes()` runs before
+    // `buildHud()`) positions exactly `this.heroes.length` of them via
+    // `centeredRowX` and hides the rest, since party size (1-4) never
+    // changes mid-battle.
+    const rosterBoxWidth = 272;
+    const rosterBoxHeight = 56;
+    const rosterY = belowGridY + rosterBoxHeight / 2;
+    for (let slot = 0; slot < MAX_ROSTER_SLOTS; slot++) {
+      const box = this.add
+        .rectangle(0, rosterY, rosterBoxWidth, rosterBoxHeight, 0x1a1a26, 0.9)
+        .setStrokeStyle(2, 0x3a3a4a)
+        .setDepth(30)
+        .setVisible(false);
+      const nameText = this.add
+        .text(0, rosterY - 18, "", {
+          fontFamily: "system-ui, Arial, sans-serif",
+          fontSize: "13px",
+          color: "#e8e8f0",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(31)
+        .setVisible(false);
+      const hpBarBg = this.add
+        .rectangle(0, rosterY + 2, 230, 10, 0x2a2a3a)
+        .setOrigin(0, 0.5)
+        .setDepth(31)
+        .setVisible(false);
+      const hpBarFg = this.add
+        .rectangle(0, rosterY + 2, 230, 10, COLORS.hero)
+        .setOrigin(0, 0.5)
+        .setDepth(32)
+        .setVisible(false);
+      const hpText = this.add
+        .text(0, rosterY + 2, "", {
+          fontFamily: "monospace",
+          fontSize: "10px",
+          color: "#0e0e14",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(33)
+        .setVisible(false);
+      const detailText = this.add
+        .text(0, rosterY + 20, "", {
+          fontFamily: "monospace",
+          fontSize: "10px",
+          color: "#9a9ab0",
+        })
+        .setOrigin(0.5)
+        .setDepth(31)
+        .setVisible(false);
+      this.heroSlotBoxes.push(box);
+      this.heroSlotNameText.push(nameText);
+      this.heroSlotHpBarBg.push(hpBarBg);
+      this.heroSlotHpBarFg.push(hpBarFg);
+      this.heroSlotHpText.push(hpText);
+      this.heroSlotDetailText.push(detailText);
+    }
+
+    // D-158: the small remainder of the old packed status line that wasn't
+    // redundant with an already-visible button/highlight — see this field's
+    // own doc comment.
+    const messageY = rosterY + rosterBoxHeight / 2 + 6;
+    this.messageText = this.add
+      .text(GAME_WIDTH / 2, messageY, "", {
         fontFamily: "monospace",
-        fontSize: "14px",
+        fontSize: "13px",
         color: "#9a9ab0",
         align: "center",
         wordWrap: { width: wrapWidth },
       })
       .setOrigin(0.5, 0)
       .setDepth(30);
-    // Bumped 60 -> 78 (~3 -> ~4.5 wrapped lines) as extra headroom on top of
-    // the wrapWidth fix above — still leaves the item grid/Done button below
-    // clear of GAME_HEIGHT on Frostbound Hollow's 9 rows (the tallest
-    // built-in map) — see the bounding-box math in buildShopHud's own comment.
-    const statusBlockHeight = 78;
+    // Roster boxes + the message line's own reserved room — same
+    // bounding-box discipline as every other HUD change in this file (see
+    // the Frostbound-Hollow-9-rows comments elsewhere in this method):
+    // rosterBoxHeight (56) + a 6px gap + ~16px for one short message line.
+    const statusBlockHeight = rosterBoxHeight + 6 + 16;
 
     this.combatLogText = this.add
       .text(GAME_WIDTH / 2, belowGridY + statusBlockHeight, "", {
@@ -1482,7 +1628,68 @@ export class BattleScene extends Phaser.Scene {
       .setVisible(false);
     this.classActionButton.on("pointerdown", () => this.onClassActionButton());
 
+    // D-148: same row as Class Action, to its right — plenty of horizontal
+    // room left before the 1280px canvas edge (classActionButton's own
+    // right edge sits at x=920).
+    this.characterSheetButton = this.add
+      .rectangle(GAME_WIDTH / 2 + 460, cy3, 170, 32, 0x6a5a3a)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(31)
+      .setVisible(false);
+    this.characterSheetLabel = this.add
+      .text(GAME_WIDTH / 2 + 460, cy3, "Character (C)", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "14px",
+        color: "#f0e8d0",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(31)
+      .setVisible(false);
+    this.characterSheetButton.on("pointerdown", () => this.openCharacterSheet());
+
     this.buildShopHud(cy);
+    // `buildHeroes()` runs before `buildHud()` (see `create()`), so
+    // `this.heroes` is already final — safe to position the roster strip
+    // for the real party size right here, once.
+    this.layoutHeroSlots();
+  }
+
+  /**
+   * D-158: positions exactly `this.heroes.length` roster-strip slots (see
+   * the roster-slot fields' own doc comment), centered via `centeredRowX`
+   * the same way every other variable-count centered row in this codebase
+   * does, and hides any slot beyond the real party size (1-4). Called once,
+   * from the end of `buildHud()` — party size never changes mid-battle, so
+   * `refreshStatus()` only ever updates content, never repositions.
+   */
+  private layoutHeroSlots(): void {
+    const rosterBoxWidth = 272;
+    const gap = 16;
+    const count = this.heroes.length;
+    const { xs } = centeredRowX(count, rosterBoxWidth, gap, GAME_WIDTH / 2, GAME_WIDTH - 80);
+    for (let slot = 0; slot < MAX_ROSTER_SLOTS; slot++) {
+      const inPlay = slot < count;
+      this.heroSlotBoxes[slot].setVisible(inPlay);
+      this.heroSlotNameText[slot].setVisible(inPlay);
+      this.heroSlotHpBarBg[slot].setVisible(inPlay);
+      this.heroSlotHpBarFg[slot].setVisible(inPlay);
+      this.heroSlotHpText[slot].setVisible(inPlay);
+      this.heroSlotDetailText[slot].setVisible(inPlay);
+      if (!inPlay) continue;
+      const cx = xs[slot];
+      this.heroSlotBoxes[slot].setPosition(cx, this.heroSlotBoxes[slot].y);
+      this.heroSlotNameText[slot].setPosition(cx, this.heroSlotNameText[slot].y);
+      // HP bar rectangles use setOrigin(0, 0.5) (left-anchored, so the
+      // filled portion shrinks from the right as health drops) — their `x`
+      // is the bar's LEFT edge, not its center, unlike every other roster
+      // widget here.
+      const barLeftX = cx - this.heroSlotHpBarBg[slot].width / 2;
+      this.heroSlotHpBarBg[slot].setPosition(barLeftX, this.heroSlotHpBarBg[slot].y);
+      this.heroSlotHpBarFg[slot].setPosition(barLeftX, this.heroSlotHpBarFg[slot].y);
+      this.heroSlotHpText[slot].setPosition(cx, this.heroSlotHpText[slot].y);
+      this.heroSlotDetailText[slot].setPosition(cx, this.heroSlotDetailText[slot].y);
+    }
   }
 
   // ----- Shop / build HUD (Phase 5, relaid out in Phase 7) ---------------
@@ -2300,11 +2507,25 @@ export class BattleScene extends Phaser.Scene {
     for (const hero of this.livingHeroes()) {
       const beforeLevel = hero.level;
       const beforeAttacks = hero.attacksPerAction;
+      const beforeStats: LevelUpStatSnapshot = {
+        maxHealth: hero.effectiveMaxHealth,
+        armorClass: hero.armorClass,
+        attackBonus: hero.effectiveAttackBonus,
+      };
       hero.levelUpClass();
       if (hero.level > beforeLevel) {
         let msg = `${hero.name} reaches level ${hero.level}!`;
         if (hero.attacksPerAction > beforeAttacks) msg += ` (now attacks ${hero.attacksPerAction}x per turn)`;
         this.logCombat(msg);
+        this.levelUpDeltaByHeroId.set(
+          hero.id,
+          levelUpDeltaSummary(
+            beforeStats,
+            { maxHealth: hero.effectiveMaxHealth, armorClass: hero.armorClass, attackBonus: hero.effectiveAttackBonus },
+            hero.classId,
+            hero.level,
+          ),
+        );
         // D-133: an "auto" plan resolves every trigger silently, right here,
         // instead of queuing an overlay — the whole point of that mode. A
         // "prompt"/"fresh"/unset plan queues exactly as it always has.
@@ -2601,12 +2822,60 @@ export class BattleScene extends Phaser.Scene {
    * persisting immediately so the Main Menu's own control (and the next
    * battle) picks up the same value. Every tween/pause this scene plays
    * reads `this.animationSpeed` live via `scaledDuration`, so this takes
-   * effect on the very next one — no need to restart the battle.
+   * effect on the very next one — no need to restart the battle. D-152:
+   * public (was private) and now RETURNS the new speed, so the pause
+   * menu's own "Game Speed" button can reuse this exact logic (rather than
+   * a second copy of it) and relabel itself from the result.
    */
-  private cycleGameSpeed(): void {
+  cycleGameSpeed(): AnimationSpeed {
     this.animationSpeed = nextAnimationSpeed(this.animationSpeed);
-    saveSettings(window.localStorage, SETTINGS_STORAGE_KEY, { animationSpeed: this.animationSpeed });
+    // Preserve every other stored setting (D-153's volume/mute fields) rather
+    // than overwriting the whole record with just this one field.
+    saveSettings(window.localStorage, SETTINGS_STORAGE_KEY, {
+      ...loadSettings(window.localStorage, SETTINGS_STORAGE_KEY),
+      animationSpeed: this.animationSpeed,
+    });
     this.logCombat(`Game speed: ${ANIMATION_SPEED_LABELS[this.animationSpeed]}`);
+    return this.animationSpeed;
+  }
+
+  /** D-152: the pause menu's initial "Game Speed: {label}" text, without cycling it. */
+  animationSpeedLabel(): string {
+    return ANIMATION_SPEED_LABELS[this.animationSpeed];
+  }
+
+  /**
+   * D-152: false only for a coop battle (`CoopLobbyScene` has no
+   * `CharacterBuild[]` to save — see `originalParty`'s own doc comment).
+   */
+  canSaveParty(): boolean {
+    return this.originalParty !== undefined;
+  }
+
+  /**
+   * D-152: the in-battle pause menu's "Save Party"/"Save & Exit" action —
+   * saves the party's ORIGINAL (pre-battle) build, same as
+   * `CharacterCreationScene.onSaveParty` does, via the same shared
+   * `SaveSystem.saveOrUpdatePartySlot` decision. Does NOT capture this
+   * battle's own progress (wave/gold/structures) — no mechanism for that
+   * exists anywhere in this project yet (see D-152's own writeup). Returns
+   * `null` if `canSaveParty()` is false, or if the save slot cap was
+   * reached while creating a new slot.
+   */
+  saveParty(): SavePartyResult | null {
+    if (!this.originalParty) return null;
+    const file = loadSaveFile(window.localStorage, SAVE_STORAGE_KEY);
+    const result = saveOrUpdatePartySlot(file, {
+      loadedSlotId: this.loadedSlotId,
+      builds: this.originalParty,
+      partySize: this.heroDefinitions.length,
+      difficultyId: this.difficultyId,
+      now: Date.now(),
+    });
+    if (!result) return null;
+    saveSaveFile(window.localStorage, SAVE_STORAGE_KEY, result.file);
+    this.loadedSlotId = result.slotId;
+    return result;
   }
 
   private breachEnemyToken(enemy: Enemy): void {
@@ -2861,7 +3130,9 @@ export class BattleScene extends Phaser.Scene {
   private setInteraction(next: Interaction): void {
     const prevKind = this.ui.kind;
     this.ui = next;
-    this.hoveredItemId = null;
+    // D-158: also hides any lingering item-preview tooltip from whatever
+    // mode this is leaving.
+    this.setHoveredItem(null);
 
     // KI-030: entering build/equip mode from anywhere else defaults keyboard
     // focus to the item grid (there's nothing useful to place/equip until an
@@ -2901,6 +3172,7 @@ export class BattleScene extends Phaser.Scene {
     this.showBonusActionButton(false);
     this.showActionSurgeButton(false);
     this.showClassActionButton(false);
+    this.showCharacterSheetButton(false);
     this.activeRing.setVisible(false);
     this.buildGhost.setVisible(false);
     this.buildGhostGlyph.setVisible(false);
@@ -2935,6 +3207,7 @@ export class BattleScene extends Phaser.Scene {
           this.showBonusActionButtonFor(hero);
           this.showActionSurgeButtonFor(hero);
           this.showClassActionButtonFor(hero);
+          this.showCharacterSheetButton(true);
         }
         if (next.kind === "aimingAbility") {
           this.showAbilityTargets(hero);
@@ -3181,7 +3454,48 @@ export class BattleScene extends Phaser.Scene {
     const last = this.heroDrag.pins[this.heroDrag.pins.length - 1] ?? hero.position;
     if (GridSystem.equals(last, tile)) return;
     this.heroDrag.pins.push({ ...tile });
+    this.updateDragRangeHighlight();
     this.updateDragPreview(tile, worldX, worldY);
+  }
+
+  /**
+   * Redraws the move-range highlight (normally `showRange`'s job) rooted at
+   * the LATEST pinned waypoint with whatever budget is left after the
+   * already-pinned legs, instead of leaving `showRange`'s original
+   * from-the-hero's-own-tile highlight sitting there stale throughout a
+   * multi-pin drag. Called whenever the pin chain changes.
+   */
+  private updateDragRangeHighlight(): void {
+    if (!this.heroDrag) return;
+    const hero = this.heroById(this.heroDrag.heroId);
+    if (!hero) return;
+    this.clearRange();
+    let start = hero.position;
+    let usedTiles = 0;
+    if (this.heroDrag.pins.length > 0) {
+      const pinRoute = this.movement.routeThroughWaypoints(this.heroDrag.pins, {
+        start: hero.position,
+        budget: hero.movementBudget(),
+        isOccupied: (p) => this.isHeroMovementBlocked(p),
+      });
+      if (!pinRoute) return; // the pinned chain itself is unreachable — nothing to preview
+      start = this.heroDrag.pins[this.heroDrag.pins.length - 1];
+      usedTiles = pinRoute.usedTiles;
+    }
+    const remaining = hero.movementBudget() - usedTiles;
+    if (remaining <= 0) return;
+    const tiles = this.movement.reachableTiles({
+      start,
+      budget: remaining,
+      isOccupied: (p) => this.isHeroMovementBlocked(p),
+      blocksStopping: (p) => this.isHeroStoppingBlocked(p, hero.id),
+    });
+    for (const tile of tiles) {
+      const c = this.grid.tileToWorldCenter(tile);
+      this.rangeTiles.push(
+        this.add.rectangle(c.x, c.y, TILE_SIZE - 4, TILE_SIZE - 4, COLORS.moveRange, 0.35).setDepth(2),
+      );
+    }
   }
 
   /**
@@ -3222,7 +3536,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     if (!tile) {
-      this.unitTooltip.setVisible(false);
+      this.tooltip.hide();
       return;
     }
     const route = this.movement.routeThroughWaypoints([...this.heroDrag.pins, tile], {
@@ -3258,7 +3572,7 @@ export class BattleScene extends Phaser.Scene {
     this.heroDrag = null;
     this.clearDragPinMarks();
     this.clearPath();
-    this.unitTooltip.setVisible(false);
+    this.tooltip.hide();
     if (!drag) return;
 
     const hero = this.heroById(drag.heroId);
@@ -3301,7 +3615,7 @@ export class BattleScene extends Phaser.Scene {
     this.dragArmedHeroId = null;
     this.clearDragPinMarks();
     this.clearPath();
-    this.unitTooltip.setVisible(false);
+    this.tooltip.hide();
     if (!drag) return;
     const hero = this.heroById(drag.heroId);
     const token = hero ? this.heroTokens.get(hero.id) : undefined;
@@ -3389,38 +3703,15 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * Phase 13.2 (D-087), extended Phase 13.8 (D-093): Second Wind (Fighter),
-   * Cunning Action's Dash (Rogue), Rage (Barbarian), Wild Shape (Druid),
-   * Flurry of Blows (Monk), Bardic Inspiration (Bard), Hunter's Mark
-   * (Ranger), or Metamagic: Quickened Spell (Sorcerer) — a hero is
-   * single-class, so at most one of these ever applies.
+   * Phase 13.2 (D-087), extended Phase 13.8 (D-093), extracted to
+   * `HeroActionRegistry` at D-148: a hero is single-class, so at most one
+   * bonus-action feature ever applies at once.
    */
   private showBonusActionButtonFor(hero: Hero): void {
-    if (hero.canUseSecondWind()) {
-      this.bonusActionLabel.setText("Bonus: Second Wind (R)");
-      this.showBonusActionButton(true);
-    } else if (hero.canUseCunningAction()) {
-      this.bonusActionLabel.setText("Bonus: Cunning Action, Dash (R)");
-      this.showBonusActionButton(true);
-    } else if (hero.canUseRage()) {
-      this.bonusActionLabel.setText("Bonus: Rage (R)");
-      this.showBonusActionButton(true);
-    } else if (hero.canUseWildShape()) {
-      this.bonusActionLabel.setText("Bonus: Wild Shape (R)");
-      this.showBonusActionButton(true);
-    } else if (hero.canUseFlurryOfBlows()) {
-      this.bonusActionLabel.setText("Bonus: Flurry of Blows (R)");
-      this.showBonusActionButton(true);
-    } else if (hero.canUseBardicInspiration()) {
-      this.bonusActionLabel.setText("Bonus: Bardic Inspiration (R)");
-      this.showBonusActionButton(true);
-    } else if (hero.canUseHuntersMark()) {
-      this.bonusActionLabel.setText("Bonus: Hunter's Mark (R)");
-      this.showBonusActionButton(true);
-    } else if (hero.canUseQuickenSpell()) {
-      this.bonusActionLabel.setText("Bonus: Quickened Spell (R)");
-      this.showBonusActionButton(true);
-    }
+    const action = firstAvailableHeroAction(hero, "bonusAction");
+    if (!action) return;
+    this.bonusActionLabel.setText(action.label);
+    this.showBonusActionButton(true);
   }
 
   private showActionSurgeButton(show: boolean): void {
@@ -3441,33 +3732,43 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * D-125: a hero is single-class, so at most one of these ever applies —
-   * Barbarian's Reckless Attack, Cleric's Channel Divinity: Preserve Life,
-   * Ranger's Vanish, Monk's Empty Body. Reckless Attack/Preserve Life spend
-   * neither the action nor bonus action's shared slot in
-   * `showBonusActionButtonFor`, so this button can be visible AT THE SAME
-   * TIME as Rage (Barbarian) — a real Barbarian very often wants both in
-   * one turn. Vanish DOES spend the same bonus-action slot Hunter's Mark
-   * uses (both set `bonusActed`), so a Ranger may see both buttons but can
-   * only actually use one.
+   * D-125, extracted to `HeroActionRegistry` at D-148: a hero is
+   * single-class, so at most one of these ever applies — Barbarian's
+   * Reckless Attack, Cleric's Channel Divinity: Preserve Life, Ranger's
+   * Vanish, Monk's Empty Body. Reckless Attack/Preserve Life spend neither
+   * the action nor bonus action's shared slot in `showBonusActionButtonFor`,
+   * so this button can be visible AT THE SAME TIME as Rage (Barbarian) — a
+   * real Barbarian very often wants both in one turn. Vanish DOES spend the
+   * same bonus-action slot Hunter's Mark uses (both set `bonusActed`), so a
+   * Ranger may see both buttons but can only actually use one.
    */
   private showClassActionButtonFor(hero: Hero): void {
-    if (hero.canUseRecklessAttack()) {
-      this.classActionLabel.setText("Reckless Attack (T)");
-      this.showClassActionButton(true);
-    } else if (hero.canUsePreserveLife()) {
-      this.classActionLabel.setText("Channel Divinity: Preserve Life (T)");
-      this.showClassActionButton(true);
-    } else if (hero.canUseVanish()) {
-      this.classActionLabel.setText("Vanish (T)");
-      this.showClassActionButton(true);
-    } else if (hero.canUseCunningActionHide()) {
-      this.classActionLabel.setText("Cunning Action: Hide (T)");
-      this.showClassActionButton(true);
-    } else if (hero.canUseEmptyBody()) {
-      this.classActionLabel.setText("Empty Body (T)");
-      this.showClassActionButton(true);
-    }
+    const action = firstAvailableHeroAction(hero, "classAction");
+    if (!action) return;
+    this.classActionLabel.setText(action.label);
+    this.showClassActionButton(true);
+  }
+
+  private showCharacterSheetButton(show: boolean): void {
+    this.characterSheetButton.setVisible(show);
+    this.characterSheetLabel.setVisible(show);
+  }
+
+  /**
+   * D-148: pauses this scene and launches `CharacterSheetScene` for the
+   * currently selected hero — a real second Phaser scene (not an in-battle
+   * overlay Container), so the sheet can carry its own tabs/`uiTheme`
+   * styling without growing this already-large file further. Passes the
+   * LIVE `Hero` instance, not an id — scene data isn't serialized for an
+   * in-process `scene.launch`, so hotkey edits made there apply directly to
+   * this same object, live, with no sync step needed on resume.
+   */
+  private openCharacterSheet(): void {
+    if (this.ui.kind !== "heroSelected") return;
+    const hero = this.heroById(this.ui.heroId);
+    if (!hero) return;
+    this.scene.launch("CharacterSheetScene", { hero });
+    this.scene.pause();
   }
 
   /**
@@ -3546,6 +3847,10 @@ export class BattleScene extends Phaser.Scene {
     });
 
     this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      // A right-click's own release must NOT resolve/end the drag — it's the
+      // other half of the pin gesture `pointerdown`'s `rightButtonDown()`
+      // branch already handled. Only a LEFT-button release ends a drag.
+      if (pointer.rightButtonReleased()) return;
       this.dragArmedHeroId = null;
       if (!this.heroDrag) return;
       const tile = this.grid.worldToTile({ x: pointer.worldX, y: pointer.worldY });
@@ -3573,6 +3878,10 @@ export class BattleScene extends Phaser.Scene {
     // Preserve Life/etc. — see `showClassActionButtonFor`).
     this.input.keyboard?.on("keydown-T", () => {
       if (this.ui.kind === "heroSelected") this.onClassActionButton();
+    });
+    // D-148: opens the Character Sheet for the selected hero.
+    this.input.keyboard?.on("keydown-C", () => {
+      if (this.ui.kind === "heroSelected") this.openCharacterSheet();
     });
     this.input.keyboard?.on("keydown-ENTER", () => this.handlePrimaryActivate());
     this.input.keyboard?.on("keydown-SPACE", (event: KeyboardEvent) => {
@@ -3639,6 +3948,13 @@ export class BattleScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.removeAllListeners();
       this.input.keyboard?.removeAllListeners();
+      // D-157: hand the canvas back to the game-wide Scale.RESIZE default
+      // the instant a battle actually ends (every exit path — defeat/
+      // victory, Save & Exit, Exit to Main Menu, Load Game — stops
+      // BattleScene before starting the next scene, which fires this).
+      this.scale.scaleMode = Phaser.Scale.RESIZE;
+      this.scale.displaySize.setAspectMode(Phaser.Scale.NONE);
+      this.scale.refresh();
     });
   }
 
@@ -3785,19 +4101,26 @@ export class BattleScene extends Phaser.Scene {
    */
   private updateUnitTooltip(tile: GridPosition | null): void {
     if (!tile) {
-      this.unitTooltip.setVisible(false);
+      this.tooltip.hide();
       return;
     }
     const hero = this.heroAt(tile);
     if (hero) {
-      this.showUnitTooltipAt(tile, `${hero.name}\nHP ${hero.health}/${hero.effectiveMaxHealth}  ·  AC ${hero.armorClass}`);
+      let text = `${hero.name}\nHP ${hero.health}/${hero.effectiveMaxHealth}  ·  AC ${hero.armorClass}`;
+      // D-148 (KI-098, a small slice of "equip UX needs a rethink"): while an
+      // item is selected in equip mode, hovering a hero previews what it
+      // would change before any gold is spent.
+      if (this.ui.kind === "equipping" && this.ui.itemId && !gearCatalogEntry(this.ui.itemId).isPotion) {
+        text += `\n${this.previewEquipDelta(hero, this.ui.itemId)}`;
+      }
+      this.showUnitTooltipAt(tile, text);
       return;
     }
     const enemy = this.enemyAt(tile);
     if (enemy) {
       const stillHidden = (enemy.def.stealth === true || enemy.def.mimicDisguise === true) && !enemy.isRevealed;
       if (stillHidden) {
-        this.unitTooltip.setVisible(false);
+        this.tooltip.hide();
         return;
       }
       let text = `${enemy.def.name}\nHP ${enemy.health}/${enemy.def.maxHealth}  ·  AC ${enemy.armorClass}`;
@@ -3809,13 +4132,12 @@ export class BattleScene extends Phaser.Scene {
       this.showUnitTooltipAt(tile, text);
       return;
     }
-    this.unitTooltip.setVisible(false);
+    this.tooltip.hide();
   }
 
   private showUnitTooltipAt(tile: GridPosition, text: string): void {
     const c = this.grid.tileToWorldCenter(tile);
-    const x = Math.min(Math.max(c.x, 90), GAME_WIDTH - 90);
-    this.unitTooltip.setText(text).setPosition(x, c.y - TILE_SIZE * 0.6).setVisible(true);
+    this.tooltip.showAt(c.x, c.y - TILE_SIZE * 0.6, text);
   }
 
   /**
@@ -3876,7 +4198,10 @@ export class BattleScene extends Phaser.Scene {
   private toggleKeyboardFocus(): void {
     if (this.ui.kind !== "building" && this.ui.kind !== "equipping" && !this.isDebugGridKind(this.ui.kind)) return;
     this.keyboardFocus = this.keyboardFocus === "grid" ? "board" : "grid";
-    this.hoveredItemId = this.keyboardFocus === "grid" ? this.currentGridItems()[this.gridFocusIndex] : null;
+    // D-158: routes through `setHoveredItem` (not a raw field set) so
+    // switching focus INTO the grid previews the newly-focused item's
+    // tooltip immediately, not just on the next arrow-key move.
+    this.setHoveredItem(this.keyboardFocus === "grid" ? this.currentGridItems()[this.gridFocusIndex] ?? null : null);
     this.refreshGridFocusVisual();
     this.refreshStatus();
   }
@@ -3973,8 +4298,41 @@ export class BattleScene extends Phaser.Scene {
     } else if (this.ui.kind === "heroSelected") {
       this.setInteraction({ kind: "idle" });
     } else {
-      this.scene.start("MainMenuScene");
+      // D-152: previously an immediate, unwarned `scene.start("MainMenuScene")`
+      // — the pause menu now owns "leave the battle," with a real Save/
+      // Exit-with-warning choice instead of a silent unconfirmed exit.
+      this.openPauseMenu();
     }
+  }
+
+  /**
+   * D-152: opens the pause menu (`PauseMenuScene`) over a paused
+   * `BattleScene` — same `scene.launch` + `scene.pause()` mechanism D-148's
+   * `CharacterSheetScene` already established. Self-guarding so it's safe
+   * to call both from `handleEscape`'s own fallback (where these are
+   * already known false) AND from the always-visible "Menu" HUD button
+   * (which bypasses that priority chain entirely) — never opens on top of
+   * an active drag, a forced choice that must be resolved, or another
+   * full-screen overlay.
+   */
+  private openPauseMenu(): void {
+    if (
+      this.heroDrag ||
+      this.choosingAsi ||
+      this.choosingSubclass ||
+      this.choosingSpellPick ||
+      this.choosingLevelUpAck ||
+      this.choosingRest ||
+      this.choosingSpellPrep ||
+      this.tutorialOverlay.length > 0 ||
+      this.technicalLogOverlay.length > 0 ||
+      this.debugMenuOverlay.length > 0 ||
+      this.endOverlay.length > 0
+    ) {
+      return;
+    }
+    this.scene.launch("PauseMenuScene", { battleScene: this });
+    this.scene.pause();
   }
 
   private confirmMove(): void {
@@ -6056,9 +6414,32 @@ export class BattleScene extends Phaser.Scene {
     this.structureTokens.delete(instanceId);
   }
 
-  /** Phase 8 tooltip: track the hovered shop/gear item; refresh its preview. */
+  /**
+   * Phase 8 tooltip, D-158: preview the hovered (or keyboard-focused)
+   * shop/gear item's name/cost/description via the shared board tooltip
+   * (`this.tooltip`, D-132) rather than the old packed status line. Called
+   * from mouse `pointerover` (`buildItemGrid`'s `onHover`), keyboard
+   * grid-focus navigation (`moveGridFocus`/`toggleKeyboardFocus`), and mode
+   * changes (`setInteraction`, to hide a stale tooltip) — all of which
+   * already funnelled through this one method before this redesign, so the
+   * tooltip stays exactly as keyboard-accessible as the text it replaced
+   * (KI-034's own checklist). Every button in `shopButtons`/
+   * `equipItemButtons` sits at a fixed, known `(x, y)` per grid slot
+   * (`buildItemGrid`), found here by matching `id`'s position in the same
+   * ordered list `currentGridItems()` already uses.
+   */
   private setHoveredItem(id: string | null): void {
-    this.hoveredItemId = id;
+    if (id === null) {
+      this.tooltip.hide();
+    } else if (this.ui.kind === "building") {
+      const btn = this.shopButtons[SHOP_ORDER.indexOf(id)];
+      const def = getStructureDefinition(id);
+      if (btn) this.tooltip.showAt(btn.x, btn.y - 22, `${def.name} (${def.cost}g): ${def.description}`);
+    } else if (this.ui.kind === "equipping") {
+      const btn = this.equipItemButtons[this.visibleGearCatalog().indexOf(id)];
+      const entry = gearCatalogEntry(id);
+      if (btn) this.tooltip.showAt(btn.x, btn.y - 22, `${entry.name} (${entry.cost}g): ${entry.description}`);
+    }
     this.refreshStatus();
   }
 
@@ -6160,6 +6541,30 @@ export class BattleScene extends Phaser.Scene {
       return hero.equippedItems.weapon ? "shield" : "weapon";
     }
     return def.slot;
+  }
+
+  /**
+   * D-148 (KI-098, a small slice of "equip UX needs a rethink"): a before/
+   * after AC/attack-bonus preview for hovering a hero while an item is
+   * selected in equip mode — the flow itself (click item, then click a hero
+   * token) is untouched; this only answers "what would change" before
+   * committing gold. Simulates on a throwaway `Hero.fromSnapshot` clone
+   * (bypassing cost/attunement/grip validation, which only matters for the
+   * REAL equip in `equipGearOnHero`) so hovering never touches the live
+   * hero or the player's gold.
+   */
+  private previewEquipDelta(hero: Hero, itemId: string): string {
+    const slot = this.targetGearSlot(hero, itemId);
+    const clone = Hero.fromSnapshot(hero.toSnapshot());
+    clone.equippedItems[slot] = itemId;
+    clone.onGearChanged();
+    const parts: string[] = [];
+    if (clone.armorClass !== hero.armorClass) parts.push(`AC ${hero.armorClass}→${clone.armorClass}`);
+    const fmt = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+    if (clone.effectiveAttackBonus !== hero.effectiveAttackBonus) {
+      parts.push(`attack ${fmt(hero.effectiveAttackBonus)}→${fmt(clone.effectiveAttackBonus)}`);
+    }
+    return parts.length > 0 ? parts.join(", ") : "No AC/attack change";
   }
 
   /**
@@ -6879,7 +7284,7 @@ export class BattleScene extends Phaser.Scene {
   private rejectAt(pos: GridPosition, message: string): void {
     const c = this.grid.tileToWorldCenter(pos);
     this.flashTile(c.x, c.y, COLORS.tileRejected, 0.6, 300);
-    this.statusText.setText(message);
+    this.messageText.setText(message);
   }
 
   private logCombat(line: string): void {
@@ -6917,75 +7322,95 @@ export class BattleScene extends Phaser.Scene {
     return `${attackerName} -> ${targetName}: d20 ${d20} ${bonusText} = ${total} vs ${targetArmorClass}${advText} -> ${outcome}${dmgText}`;
   }
 
+  /**
+   * D-158 (KI-034 redesign): updates the roster-strip widgets' content
+   * (never their position — `layoutHeroSlots()` did that once) plus the
+   * live enemy count and `messageText`'s short, mode-dependent remainder.
+   * See this method's own history in `DECISIONS.md` D-158 for what moved
+   * where and why — most of the old packed hint text turned out to be
+   * redundant with an already-visible button label or board highlight.
+   */
   private refreshStatus(): void {
-    const heroPart = this.heroes
-      .map((h) => {
-        if (!h.isAlive()) return `${h.name} (down)`;
-        const move = h.canMove() ? "move:ready" : "move:used";
-        const act = h.canAct() ? "act:ready" : "act:used";
-        const isSelected =
-          (this.ui.kind === "heroSelected" ||
-            this.ui.kind === "confirmingMove" ||
-            this.ui.kind === "aimingAbility" ||
-            this.ui.kind === "choosingSpell" ||
-            this.ui.kind === "aimingSpell" ||
-            this.ui.kind === "aimingTileSpell") &&
-          this.ui.heroId === h.id;
-        const sel = isSelected ? " <" : "";
-        const gearCount = GEAR_SLOT_IDS.filter((s) => h.equippedItems[s]).length;
-        const potionCount = GENERAL_SLOT_IDS.filter((s) => h.equippedPotions[s]).length;
-        const gear = gearCount || potionCount ? ` [gear ${gearCount}/${GEAR_SLOT_IDS.length} pot ${potionCount}/${GENERAL_SLOT_IDS.length}]` : "";
-        // Phase 13.3 (D-089): only a D&D-built hero has a meaningful class level to show.
-        const level = h.classId !== undefined ? ` Lv${h.level}` : "";
-        // D-132: AC only for the currently selected hero — printing it for
-        // all 4 at once would lengthen the always-on line for every hero,
-        // risking the exact wrap-width regression D-126/KI-083 just fixed.
-        const ac = isSelected ? ` AC${h.armorClass}` : "";
-        return `${h.name}${level} ${h.health}/${h.effectiveMaxHealth}hp${ac} ${move} ${act}${gear}${sel}`;
-      })
-      .join("    ");
-    const enemyCount = this.waveSystem.enemies.length;
-    let hint = "";
-    if (this.turns.current !== "player") hint = "  |  resolving…";
-    else if (this.ui.kind === "idle")
-      hint = "  |  click a hero, or End Turn to send in the enemies";
-    else if (this.ui.kind === "heroSelected")
-      hint = "  |  blue = move · red = attack · Ability (Q) · Potion (P) · Esc to deselect";
-    else if (this.ui.kind === "confirmingMove") hint = "  |  Confirm or Cancel the move";
-    else if (this.ui.kind === "aimingAbility")
-      hint = "  |  click an outlined enemy to use the ability, Esc to cancel";
-    else if (this.ui.kind === "choosingSpell") hint = "  |  pick a spell to cast, Esc to cancel";
-    else if (this.ui.kind === "aimingSpell")
-      hint = "  |  click an outlined ally or enemy to cast the spell, Esc to cancel";
-    else if (this.ui.kind === "aimingTileSpell")
-      hint = "  |  click an outlined tile to cast the spell, Esc to cancel";
+    this.heroes.forEach((h, i) => {
+      if (i >= MAX_ROSTER_SLOTS) return; // can't happen (party size is capped at MAX_ROSTER_SLOTS), guards the parallel arrays anyway
+      const box = this.heroSlotBoxes[i];
+      const isSelected =
+        (this.ui.kind === "heroSelected" ||
+          this.ui.kind === "confirmingMove" ||
+          this.ui.kind === "aimingAbility" ||
+          this.ui.kind === "choosingSpell" ||
+          this.ui.kind === "aimingSpell" ||
+          this.ui.kind === "aimingTileSpell") &&
+        this.ui.heroId === h.id;
+      box.setStrokeStyle(2, isSelected ? COLORS.heroActive : 0x3a3a4a);
+      if (!h.isAlive()) {
+        box.setFillStyle(0x1a1a26, 0.5);
+        this.heroSlotNameText[i].setText(`${h.name} (down)`).setColor("#6a6a80");
+        this.heroSlotHpBarBg[i].setVisible(false);
+        this.heroSlotHpBarFg[i].setVisible(false);
+        this.heroSlotHpText[i].setVisible(false);
+        this.heroSlotDetailText[i].setText("");
+        return;
+      }
+      box.setFillStyle(0x1a1a26, 0.9);
+      // Phase 13.3 (D-089): only a D&D-built hero has a meaningful class level to show.
+      const level = h.classId !== undefined ? ` Lv${h.level}` : "";
+      this.heroSlotNameText[i].setText(`${h.name}${level}`).setColor("#e8e8f0");
+      const fraction = h.effectiveMaxHealth > 0 ? Phaser.Math.Clamp(h.health / h.effectiveMaxHealth, 0, 1) : 0;
+      const barMaxWidth = this.heroSlotHpBarBg[i].width;
+      const barColor = fraction > 0.5 ? COLORS.hero : fraction > 0.25 ? 0xe8c06a : COLORS.enemy;
+      this.heroSlotHpBarFg[i].setSize(Math.max(1, barMaxWidth * fraction), this.heroSlotHpBarFg[i].height).setFillStyle(barColor);
+      this.heroSlotHpBarBg[i].setVisible(true);
+      this.heroSlotHpBarFg[i].setVisible(true);
+      this.heroSlotHpText[i].setVisible(true).setText(`${h.health}/${h.effectiveMaxHealth}`);
+      // D-148/D-158: this detail line is the one place per-hero AC/move/act/
+      // gear readiness still shows — only for the selected, living hero, same
+      // as before this redesign, just in its own reserved slot rather than
+      // string-appended into a shared paragraph.
+      if (!isSelected) {
+        this.heroSlotDetailText[i].setText("");
+        return;
+      }
+      const move = h.canMove() ? "move:ready" : "move:used";
+      const act = h.canAct() ? "act:ready" : "act:used";
+      const gearCount = GEAR_SLOT_IDS.filter((s) => h.equippedItems[s]).length;
+      const potionCount = GENERAL_SLOT_IDS.filter((s) => h.equippedPotions[s]).length;
+      const gear = gearCount || potionCount ? ` gear ${gearCount}/${GEAR_SLOT_IDS.length} pot ${potionCount}/${GENERAL_SLOT_IDS.length}` : "";
+      this.heroSlotDetailText[i].setText(`AC${h.armorClass} ${move} ${act}${gear}`);
+    });
+
+    this.enemyCountText.setText(`Enemies: ${this.waveSystem.enemies.length}`);
+
+    // D-158: the small remainder of the old hint that wasn't redundant with
+    // an already-visible button/highlight (see this method's own doc
+    // comment) — aiming-mode instructions (no Cancel button exists for
+    // these) and the Tab focus indicator (genuinely non-obvious keyboard
+    // state with no other display surface). Every other `ui.kind` — idle,
+    // heroSelected, confirmingMove, and the enemy-turn "resolving" case
+    // (already shown by the banner's own `PHASE_LABELS[phase]`) — leaves
+    // this blank.
+    let message = "";
+    if (this.ui.kind === "aimingAbility") message = "Click an outlined enemy to use the ability · Esc to cancel";
+    else if (this.ui.kind === "choosingSpell") message = "Pick a spell to cast · Esc to cancel";
+    else if (this.ui.kind === "aimingSpell") message = "Click an outlined ally or enemy to cast the spell · Esc to cancel";
+    else if (this.ui.kind === "aimingTileSpell") message = "Click an outlined tile to cast the spell · Esc to cancel";
     else if (this.ui.kind === "building") {
-      const def = getStructureDefinition(this.hoveredItemId ?? this.ui.defId);
       const focusHint = this.keyboardFocus === "grid" ? "Tab: aim on board" : "Tab: pick item";
-      hint = `  |  ${def.name} (${def.cost}g): ${def.description} · click floor to build · click a structure to refund · ${focusHint} · Esc when done`;
+      message = `${focusHint} · Esc when done`;
     } else if (this.ui.kind === "equipping") {
-      const previewId = this.hoveredItemId ?? this.ui.itemId;
       const focusHint = this.keyboardFocus === "grid" ? "Tab: aim on board" : "Tab: pick item";
-      hint = previewId
-        ? (() => {
-            const entry = gearCatalogEntry(previewId);
-            const verb = entry.isPotion ? "buy & carry it (use later with P)" : "buy & equip it";
-            return `  |  ${entry.name} (${entry.cost}g): ${entry.description} · click a hero to ${verb} for ${entry.cost}g · click a hero already carrying it to unequip & refund · ${focusHint} · Esc when done`;
-          })()
-        : `  |  click an item below to select it, then click a hero to BUY it — gear equips immediately, potions are carried for later use (P) · click a hero already carrying an item to unequip & refund · ${focusHint} · Esc when done`;
+      message = `${focusHint} · Esc when done`;
     } else if (this.ui.kind === "debugSpawnEnemy") {
       const focusHint = this.keyboardFocus === "grid" ? "Tab: aim on board" : "Tab: pick item";
-      hint = `  |  Test Mode: click a tile to spawn ${getEnemyDefinition(this.ui.enemyId).name} there · ${focusHint} · Esc when done`;
+      message = `Test Mode: click a tile to spawn ${getEnemyDefinition(this.ui.enemyId).name} there · ${focusHint} · Esc when done`;
     } else if (this.ui.kind === "debugPaintTerrain") {
       const focusHint = this.keyboardFocus === "grid" ? "Tab: aim on board" : "Tab: pick item";
-      hint = `  |  Test Mode: click a tile to paint it "${this.ui.tileType}" · no placement checks · ${focusHint} · Esc when done`;
+      message = `Test Mode: click a tile to paint it "${this.ui.tileType}" · no placement checks · ${focusHint} · Esc when done`;
     } else if (this.ui.kind === "debugStatus") {
       const focusHint = this.keyboardFocus === "grid" ? "Tab: aim on board" : "Tab: pick item";
-      hint = `  |  Test Mode: click a hero/enemy to toggle "${getStatusEffectDefinition(this.ui.statusId).name}" on it · ${focusHint} · Esc when done`;
+      message = `Test Mode: click a hero/enemy to toggle "${getStatusEffectDefinition(this.ui.statusId).name}" on it · ${focusHint} · Esc when done`;
     }
-    if (this.ui.kind !== "building" && this.ui.kind !== "equipping" && !this.isDebugGridKind(this.ui.kind)) hint += "  ·  1-4: select hero";
-    hint += "  ·  arrows+Enter/Space: keyboard play  ·  H: help  ·  S: game speed  ·  L: technical log";
-    this.statusText.setText(`${heroPart}    enemies: ${enemyCount}${hint}`);
+    this.messageText.setText(message);
   }
 
   /**
@@ -7125,8 +7550,9 @@ export class BattleScene extends Phaser.Scene {
       proceed?.();
       return;
     }
+    const desc = this.levelUpDeltaByHeroId.get(hero.id);
     this.renderAsiPrompt(`${hero.name} reaches level ${hero.level}!`, [
-      { label: "Continue", onClick: () => this.advanceLevelUpAckQueue() },
+      { label: "Continue", desc, onClick: () => this.advanceLevelUpAckQueue() },
     ]);
   }
 
@@ -7838,10 +8264,11 @@ export class BattleScene extends Phaser.Scene {
       .text(
         GAME_WIDTH / 2,
         GAME_HEIGHT / 2,
-        "Click a hero to select it. Blue tiles are where it can move — click\n" +
-          "one, then Confirm. Red outlines are enemies it can attack — click one\n" +
-          "to strike. Each hero gets one move and one action (attack OR ability)\n" +
-          "per turn; ability targets get a ◆ marker too.\n\n" +
+        "Click a hero to select it, or press 1-4. Blue tiles are where it\n" +
+          "can move — click one, then Confirm. Red outlines are enemies it\n" +
+          "can attack — click one to strike. Each hero gets one move and one\n" +
+          "action (attack OR ability) per turn; ability targets get a ◆\n" +
+          "marker too.\n\n" +
           "Q or the Ability button uses a hero's special move; P (or the Potion\n" +
           "button) drinks a carried potion. E or End Turn finishes your turn and\n" +
           "lets the enemies act. B opens Build (walls, traps, platforms); G opens\n" +
@@ -7963,6 +8390,35 @@ export class BattleScene extends Phaser.Scene {
   private closeTechnicalLogOverlay(): void {
     for (const obj of this.technicalLogOverlay) obj.destroy();
     this.technicalLogOverlay = [];
+  }
+
+  /**
+   * D-152: a single small always-visible button, bottom-LEFT corner —
+   * mirrors Test Mode's own Debug Menu button (bottom-right, only ever
+   * visible in Test Mode), confirmed clear of every other HUD element and
+   * of the centered shop/gear/debug-picker grid stack below the board.
+   * Opens the pause menu; guarded the same way the Esc key already is (see
+   * `openPauseMenu`'s own doc comment).
+   */
+  private buildPauseMenuButton(): void {
+    const x = 110;
+    const y = GAME_HEIGHT - 24;
+    const btn = this.add
+      .rectangle(x, y, 180, 36, 0x3a3a4a)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(30);
+    this.add
+      .text(x, y, "Menu (Esc)", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "13px",
+        color: "#e8e8f0",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(30);
+    btn.on("pointerover", () => btn.setFillStyle(0x4a4a5e));
+    btn.on("pointerout", () => btn.setFillStyle(0x3a3a4a));
+    btn.on("pointerdown", () => this.openPauseMenu());
   }
 
   // ----- Test Mode debug tools (D-138) ------------------------------------

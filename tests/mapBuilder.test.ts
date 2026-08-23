@@ -6,6 +6,7 @@ import {
   MIN_MAP_COLS,
   MIN_MAP_ROWS,
   createBlankDraft,
+  isValidMapName,
   paintTile,
   validateDraft,
 } from "../src/game/systems/MapBuilderSystem";
@@ -124,6 +125,23 @@ describe("MapBuilderSystem", () => {
       const result = validateDraft(draft);
       expect(result.ok).toBe(true);
       expect(result.reasons).toEqual([]);
+    });
+  });
+
+  describe("isValidMapName (D-154)", () => {
+    it("rejects an empty or whitespace-only name", () => {
+      expect(isValidMapName("")).toBe(false);
+      expect(isValidMapName("   ")).toBe(false);
+    });
+
+    it("accepts a normal typed name, trimming surrounding whitespace", () => {
+      expect(isValidMapName("Winding Pass")).toBe(true);
+      expect(isValidMapName("  Winding Pass  ")).toBe(true);
+    });
+
+    it("rejects a name longer than 40 characters (trimmed)", () => {
+      expect(isValidMapName("a".repeat(40))).toBe(true);
+      expect(isValidMapName("a".repeat(41))).toBe(false);
     });
   });
 

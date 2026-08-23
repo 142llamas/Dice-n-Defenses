@@ -1,5 +1,4 @@
 import Phaser from "phaser";
-import { GAME_WIDTH, GAME_HEIGHT } from "../config";
 import { CLASS_DEFINITIONS, getClassDefinition, type CharacterClassDefinition } from "../data/classes";
 import { SUBCLASS_DEFINITIONS } from "../data/subclasses";
 import { RACE_DEFINITIONS } from "../data/races";
@@ -9,6 +8,7 @@ import { EQUIPMENT_DEFINITIONS, EQUIPMENT_ORDER, GEAR_SLOT_TYPE_LABELS, RARITY_L
 import { WEAPON_MASTERIES, WEAPON_PROPERTY_LABELS } from "../data/weapons";
 import { POTION_DEFINITIONS, POTION_ORDER } from "../data/potions";
 import { STATUS_EFFECTS, STATUS_EFFECT_ORDER } from "../data/statusEffects";
+import { STRUCTURE_DEFINITIONS, type StructureDefinition } from "../data/structures";
 import { ABILITY_SCORE_NAMES } from "../data/abilityScores";
 import { SKILLS, SKILL_ORDER } from "../data/skills";
 import { PORTRAIT_MANIFEST } from "../data/portraitManifest";
@@ -18,6 +18,8 @@ import {
   centeredRowX,
   drawScreenBackdrop,
   drawParchmentPanel,
+  getViewport,
+  onViewportResize,
   FONT_DISPLAY,
   FONT_BODY,
   type OrnateButtonHandle,
@@ -59,6 +61,18 @@ import {
  * chapter/story content exists yet to trigger it naturally. Lets Kevin see
  * and tune the styling in-browser before any images or story content are
  * ready.
+ *
+ * D-150 added "Buildings" and "Traps" tabs — `STRUCTURE_DEFINITIONS`
+ * (`data/structures.ts`) had never had a Compendium category of its own;
+ * a player could only see wall/platform/trap detail by opening the Build
+ * shop mid-battle. Split by `StructureDefinition.kind` (walls+platforms are
+ * "Buildings", traps get their own tab) since the two play very
+ * differently, then grouped by sub-type (wall vs. platform; ground- vs.
+ * flying-targeted trap) and alphabetized within each group, per Kevin's
+ * "grouped by type, then alphabetical" request. Includes the two
+ * spell-conjured, non-shop-buyable entries (Spectral Wall, Web Patch) same
+ * as every other category here shows ALL data, not just what happens to be
+ * purchasable right now.
  */
 
 type CategoryId =
@@ -70,6 +84,8 @@ type CategoryId =
   | "spells"
   | "equipment"
   | "potions"
+  | "buildings"
+  | "traps"
   | "statusEffects"
   | "dialoguePreview";
 
@@ -82,6 +98,8 @@ const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: "spells", label: "Spells" },
   { id: "equipment", label: "Equipment" },
   { id: "potions", label: "Potions" },
+  { id: "buildings", label: "Buildings" },
+  { id: "traps", label: "Traps" },
   { id: "statusEffects", label: "Status Effects" },
   { id: "dialoguePreview", label: "Dialogue" },
 ];
@@ -135,10 +153,13 @@ const SPELL_LEVEL_LABELS = ["Cantrip", "1st", "2nd", "3rd", "4th", "5th", "6th",
  */
 const EQUIPMENT_PER_PAGE = 10;
 
-/** Detail panel bounds — a bound-tome reading pane every category renders into. */
+/**
+ * Detail panel bounds — a bound-tome reading pane every category renders
+ * into. Width is D-154 viewport-derived (`getViewport(this).width -
+ * PANEL_LEFT * 2`, computed fresh in `rebuildLayout`), not a fixed constant.
+ */
 const PANEL_LEFT = 60;
 const PANEL_TOP = 190;
-const PANEL_WIDTH = GAME_WIDTH - PANEL_LEFT * 2;
 const PANEL_HEIGHT = 760;
 const TEXT_PAD_X = 42;
 const TEXT_PAD_Y = 30;
@@ -156,6 +177,7 @@ export class CompendiumScene extends Phaser.Scene {
   private prevButton!: OrnateButtonHandle;
   private nextButton!: OrnateButtonHandle;
   private activeDialogue: DialogueBoxController | undefined;
+  private layoutRoot?: Phaser.GameObjects.Container;
 
   constructor() {
     super("CompendiumScene");
@@ -176,14 +198,40 @@ export class CompendiumScene extends Phaser.Scene {
     this.classId = CLASS_DEFINITIONS[0].id;
     this.spellLevel = 0;
     this.page = 0;
+    this.activeDialogue = undefined;
+
+    this.rebuildLayout();
+
+    this.input.keyboard?.on("keydown-ESC", () => this.leave());
+
+    // Same explicit teardown discipline as every other scene (D-043): avoid
+    // accumulating listeners across repeated menu <-> Compendium visits.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.input.removeAllListeners();
+      this.input.keyboard?.removeAllListeners();
+      this.activeDialogue?.destroy();
+      this.activeDialogue = undefined;
+    });
+    onViewportResize(this, () => this.rebuildLayout());
+  }
+
+  // D-154: rebuilds the whole screen against the current viewport, then
+  // re-renders whatever category/sub-selection is already active — mirrors
+  // `BestiaryScene.rebuildLayout`'s "preserve state, only `create()` resets
+  // it" convention, since a resize shouldn't bounce the player back to
+  // Classes/page 1.
+  private rebuildLayout(): void {
+    this.layoutRoot?.destroy();
+    const before = new Set<Phaser.GameObjects.GameObject>(this.children.list);
     this.tabButtons = [];
     this.subButtons = [];
-    this.activeDialogue = undefined;
+    const { width, height } = getViewport(this);
+    const panelWidth = width - PANEL_LEFT * 2;
 
     drawScreenBackdrop(this);
 
     this.add
-      .text(GAME_WIDTH / 2, 42, "Compendium", {
+      .text(width / 2, 42, "Compendium", {
         fontFamily: FONT_DISPLAY,
         fontSize: "34px",
         color: "#f0dfa8",
@@ -196,30 +244,23 @@ export class CompendiumScene extends Phaser.Scene {
 
     createOrnateButton(this, 120, 42, 160, 44, "Back (Esc)", () => this.leave(), { variant: "tool", depth: 5 });
 
-    this.buildTabs();
+    this.buildTabs(width);
 
-    drawParchmentPanel(this, GAME_WIDTH / 2, PANEL_TOP + PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT, 2);
+    drawParchmentPanel(this, width / 2, PANEL_TOP + PANEL_HEIGHT / 2, panelWidth, PANEL_HEIGHT, 2);
 
     this.detailText = this.add.text(PANEL_LEFT + TEXT_PAD_X, PANEL_TOP + TEXT_PAD_Y, "", {
       fontFamily: FONT_BODY,
       fontSize: "15px",
       color: "#2a1a10",
       lineSpacing: 7,
-      wordWrap: { width: PANEL_WIDTH - TEXT_PAD_X * 2 },
+      wordWrap: { width: panelWidth - TEXT_PAD_X * 2 },
     }).setDepth(3);
 
-    this.buildPaginationControls();
+    this.buildPaginationControls(width, height);
 
-    this.input.keyboard?.on("keydown-ESC", () => this.leave());
-
-    // Same explicit teardown discipline as every other scene (D-043): avoid
-    // accumulating listeners across repeated menu <-> Compendium visits.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.input.removeAllListeners();
-      this.input.keyboard?.removeAllListeners();
-      this.activeDialogue?.destroy();
-      this.activeDialogue = undefined;
-    });
+    const created = this.children.list.filter((c) => !before.has(c));
+    this.layoutRoot = this.add.container(0, 0);
+    this.layoutRoot.add(created);
 
     this.renderCategory();
   }
@@ -228,11 +269,11 @@ export class CompendiumScene extends Phaser.Scene {
     this.scene.start("MainMenuScene");
   }
 
-  private buildTabs(): void {
+  private buildTabs(width: number): void {
     const y = 108;
     const w = 138;
     const gap = 6;
-    const { xs, itemWidth } = centeredRowX(CATEGORIES.length, w, gap, GAME_WIDTH / 2);
+    const { xs, itemWidth } = centeredRowX(CATEGORIES.length, w, gap, width / 2, width - 80);
     CATEGORIES.forEach((cat, i) => {
       const handle = createOrnateButton(
         this,
@@ -252,11 +293,11 @@ export class CompendiumScene extends Phaser.Scene {
     });
   }
 
-  private buildPaginationControls(): void {
-    const y = GAME_HEIGHT - 55;
+  private buildPaginationControls(width: number, height: number): void {
+    const y = height - 55;
     this.prevButton = createOrnateButton(
       this,
-      GAME_WIDTH / 2 - 110,
+      width / 2 - 110,
       y,
       130,
       36,
@@ -271,7 +312,7 @@ export class CompendiumScene extends Phaser.Scene {
     );
 
     this.pageLabel = this.add
-      .text(GAME_WIDTH / 2, y, "", {
+      .text(width / 2, y, "", {
         fontFamily: FONT_BODY,
         fontSize: "15px",
         color: "#c8b888",
@@ -281,7 +322,7 @@ export class CompendiumScene extends Phaser.Scene {
 
     this.nextButton = createOrnateButton(
       this,
-      GAME_WIDTH / 2 + 110,
+      width / 2 + 110,
       y,
       130,
       36,
@@ -367,7 +408,7 @@ export class CompendiumScene extends Phaser.Scene {
         this.activeDialogue = undefined;
       });
     };
-    const { xs } = centeredRowX(2, 280, 20, GAME_WIDTH / 2);
+    const { xs } = centeredRowX(2, 280, 20, getViewport(this).width / 2, getViewport(this).width - 80);
     this.subButtons.push(
       createOrnateButton(this, xs[0], 480, 280, 46, "Show Sample (skippable)", () => showSample(DIALOGUE_PREVIEW_LINES), {
         variant: "secondary",
@@ -401,7 +442,7 @@ export class CompendiumScene extends Phaser.Scene {
     const y = 150;
     const w = 138;
     const gap = 8;
-    const { xs, itemWidth } = centeredRowX(CLASS_DEFINITIONS.length, w, gap, GAME_WIDTH / 2);
+    const { xs, itemWidth } = centeredRowX(CLASS_DEFINITIONS.length, w, gap, getViewport(this).width / 2, getViewport(this).width - 80);
     CLASS_DEFINITIONS.forEach((cls, i) => {
       const handle = createOrnateButton(
         this,
@@ -450,7 +491,7 @@ export class CompendiumScene extends Phaser.Scene {
     const y = 150;
     const w = 70;
     const gap = 6;
-    const { xs, itemWidth } = centeredRowX(SPELL_LEVEL_LABELS.length, w, gap, GAME_WIDTH / 2);
+    const { xs, itemWidth } = centeredRowX(SPELL_LEVEL_LABELS.length, w, gap, getViewport(this).width / 2, getViewport(this).width - 80);
     SPELL_LEVEL_LABELS.forEach((label, level) => {
       const handle = createOrnateButton(
         this,
@@ -536,51 +577,160 @@ export class CompendiumScene extends Phaser.Scene {
   private flatCategoryText(): string {
     switch (this.category) {
       case "subclasses":
-        return SUBCLASS_DEFINITIONS.map((s) => {
-          const header = `${s.name} (${getClassDefinition(s.classId).name})`;
-          const features = s.features
-            .map((f) => `  Lv${f.level} ${f.name}${f.mechanicallyActive ? "" : " [inert]"}: ${f.description}`)
-            .join("\n");
-          return `${header}\n${features}`;
-        }).join("\n\n");
+        // D-150: alphabetized for DISPLAY ONLY via a local sorted copy —
+        // `SUBCLASS_DEFINITIONS`'s own declared order must stay untouched,
+        // since `CharacterBuildSystem.subclassIdForNewBuild` relies on each
+        // class's two subclasses staying in "SRD one first, original one
+        // second" registration order within that array.
+        return [...SUBCLASS_DEFINITIONS]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((s) => {
+            const header = `${s.name} (${getClassDefinition(s.classId).name})`;
+            const features = s.features
+              .map((f) => `  Lv${f.level} ${f.name}${f.mechanicallyActive ? "" : " [inert]"}: ${f.description}`)
+              .join("\n");
+            return `${header}\n${features}`;
+          })
+          .join("\n\n");
 
       case "races":
-        return RACE_DEFINITIONS.map((r) => {
-          const header = `${r.name} — speed ${r.speedTiles} tiles`;
-          const traits = r.traits
-            .map((t) => `  ${t.name}${t.mechanicallyActive ? "" : " [flavor]"}: ${t.description}`)
-            .join("\n");
-          return `${header}\n${traits}`;
-        }).join("\n\n");
+        // D-150: local sorted copy — `RACE_DEFINITIONS`' own order backs
+        // `RACE_IDS[0]`'s default new-build race (Human) and the Character
+        // Creation race picker's order; only this Compendium display sorts.
+        return [...RACE_DEFINITIONS]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((r) => {
+            const header = `${r.name} — speed ${r.speedTiles} tiles`;
+            const traits = r.traits
+              .map((t) => `  ${t.name}${t.mechanicallyActive ? "" : " [flavor]"}: ${t.description}`)
+              .join("\n");
+            return `${header}\n${traits}`;
+          })
+          .join("\n\n");
 
       case "feats":
-        return FEAT_IDS.map((id) => {
-          const f = FEATS[id];
-          return `${f.name}${f.mechanicallyActive ? "" : " [inert]"}: ${f.description}`;
-        }).join("\n\n");
+        // D-150: local sorted copy — `FEAT_IDS`' own order backs the ASI/
+        // feat-picker overlay's display order elsewhere; only this
+        // Compendium display sorts.
+        return [...FEAT_IDS]
+          .sort((a, b) => FEATS[a].name.localeCompare(FEATS[b].name))
+          .map((id) => {
+            const f = FEATS[id];
+            return `${f.name}${f.mechanicallyActive ? "" : " [inert]"}: ${f.description}`;
+          })
+          .join("\n\n");
 
       case "skills":
         // Phase 13.5 (D-090): reference-only, like every inert category above —
-        // nothing in this game calls a skill check yet.
+        // nothing in this game calls a skill check yet. D-150: `SKILL_ORDER`
+        // itself is now alphabetical (its only consumer is this tab).
         return SKILL_ORDER.map((id) => {
           const s = SKILLS[id];
           return `${s.name} (${ABILITY_SCORE_NAMES[s.ability]}): ${s.description}`;
         }).join("\n\n");
 
       case "potions":
-        return POTION_ORDER.map((id) => {
-          const p = POTION_DEFINITIONS[id];
-          return `${p.name} (${p.cost}g): ${p.description}`;
-        }).join("\n\n");
+        // D-150: local sorted copy — `POTION_ORDER`'s own order backs the
+        // Shop grid's item order; only this Compendium display sorts.
+        return [...POTION_ORDER]
+          .sort((a, b) => POTION_DEFINITIONS[a].name.localeCompare(POTION_DEFINITIONS[b].name))
+          .map((id) => {
+            const p = POTION_DEFINITIONS[id];
+            return `${p.name} (${p.cost}g): ${p.description}`;
+          })
+          .join("\n\n");
+
+      case "buildings":
+        return this.buildingsText();
+
+      case "traps":
+        return this.trapsText();
 
       case "statusEffects":
-        return STATUS_EFFECT_ORDER.map((id) => {
-          const s = STATUS_EFFECTS[id];
-          return `${s.name}: ${s.description}`;
-        }).join("\n\n");
+        // D-150: local sorted copy — `STATUS_EFFECT_ORDER`'s own order backs
+        // on-token status-badge render order and the debug status picker;
+        // only this Compendium display sorts.
+        return [...STATUS_EFFECT_ORDER]
+          .sort((a, b) => STATUS_EFFECTS[a].name.localeCompare(STATUS_EFFECTS[b].name))
+          .map((id) => {
+            const s = STATUS_EFFECTS[id];
+            return `${s.name}: ${s.description}`;
+          })
+          .join("\n\n");
 
       default:
         return "";
     }
+  }
+
+  /** Shared by `buildingsText`/`trapsText`: gold cost, or a note for the two spell-conjured structures that aren't shop-buyable (`cost: 0`, never listed in `SHOP_ORDER`). */
+  private structureCostLabel(s: StructureDefinition): string {
+    return s.cost === 0 ? "spell-conjured, not shop-buyable" : `${s.cost}g`;
+  }
+
+  /**
+   * D-150: walls + gates + platforms, grouped by `kind` (a Gate/Wicket
+   * Gate/Portcullis is still `kind: "wall"` with `blocksHeroes: false`, so
+   * it lands in the same group as every other wall) then alphabetized by
+   * name within each group.
+   */
+  private buildingsText(): string {
+    const all = Object.values(STRUCTURE_DEFINITIONS).filter((s) => s.kind !== "trap");
+    const byName = (a: StructureDefinition, b: StructureDefinition) => a.name.localeCompare(b.name);
+    const walls = all.filter((s) => s.kind === "wall").sort(byName);
+    const platforms = all.filter((s) => s.kind === "platform").sort(byName);
+
+    const wallLine = (s: StructureDefinition): string => {
+      const hp = s.maxHp !== undefined ? ` · ${s.maxHp} HP` : "";
+      const passable = s.blocksHeroes === false ? " · heroes pass through" : "";
+      return `${s.name} (${this.structureCostLabel(s)})${hp}${passable}: ${s.description}`;
+    };
+    const platformLine = (s: StructureDefinition): string => {
+      const bonus = s.heroBonus
+        ? [
+            s.heroBonus.attackDamage ? `+${s.heroBonus.attackDamage} basic-attack damage` : null,
+            s.heroBonus.attackRangeTiles ? `+${s.heroBonus.attackRangeTiles} basic-attack range` : null,
+          ]
+            .filter((p): p is string => p !== null)
+            .join(", ")
+        : "none";
+      const audience = s.heroBonus?.appliesTo === "any" ? "any hero" : `${s.heroBonus?.appliesTo ?? "any"} heroes only`;
+      return `${s.name} (${this.structureCostLabel(s)}) — ${audience}, ${bonus}: ${s.description}`;
+    };
+
+    const section = (label: string, defs: StructureDefinition[], line: (s: StructureDefinition) => string): string =>
+      defs.length === 0 ? "" : `— ${label} —\n${defs.map(line).join("\n\n")}`;
+
+    return [section("Walls & Gates", walls, wallLine), section("Platforms", platforms, platformLine)]
+      .filter((s) => s.length > 0)
+      .join("\n\n\n");
+  }
+
+  /**
+   * D-150: traps grouped by `targets` (ground vs. flying — no roster entry
+   * currently targets "any") then alphabetized by name within each group.
+   */
+  private trapsText(): string {
+    const all = Object.values(STRUCTURE_DEFINITIONS).filter((s) => s.kind === "trap");
+    const byName = (a: StructureDefinition, b: StructureDefinition) => a.name.localeCompare(b.name);
+    const ground = all.filter((s) => (s.targets ?? "any") === "ground").sort(byName);
+    const flying = all.filter((s) => s.targets === "flying").sort(byName);
+    const other = all.filter((s) => (s.targets ?? "any") === "any").sort(byName);
+
+    const trapLine = (s: StructureDefinition): string => {
+      const dmg = s.damage !== undefined ? ` · ${s.damage} damage` : "";
+      const status = s.appliesStatus
+        ? ` · applies ${STATUS_EFFECTS[s.appliesStatus.statusId].name} (${s.appliesStatus.durationTurns} turns)`
+        : "";
+      const singleUse = s.singleUse ? " · single-use, then removed" : "";
+      return `${s.name} (${this.structureCostLabel(s)})${dmg}${status}${singleUse}: ${s.description}`;
+    };
+
+    const section = (label: string, defs: StructureDefinition[]): string =>
+      defs.length === 0 ? "" : `— ${label} —\n${defs.map(trapLine).join("\n\n")}`;
+
+    return [section("Ground", ground), section("Flying", flying), section("Any", other)]
+      .filter((s) => s.length > 0)
+      .join("\n\n\n");
   }
 }

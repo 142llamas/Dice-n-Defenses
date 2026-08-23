@@ -1,8 +1,8 @@
 import Phaser from "phaser";
-import { GAME_WIDTH } from "../config";
 import { TEST_MAP } from "../data/testMap";
 import { generateFreePlayWaves } from "../systems/FreePlayWaveGenerator";
 import { MAP_OPTIONS, EXPANDED_MINIONS } from "./FreePlayScene";
+import { getViewport, onViewportResize } from "./uiTheme";
 
 /**
  * TestModeScene — D-138: the entry point for Test Mode, KI-085's last
@@ -33,6 +33,7 @@ export class TestModeScene extends Phaser.Scene {
 
   private selectedMapId = TEST_MAP.id;
   private selectedWaveCount = 7;
+  private layoutRoot?: Phaser.GameObjects.Container;
 
   constructor() {
     super("TestModeScene");
@@ -40,9 +41,27 @@ export class TestModeScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor("#0e0e14");
+    this.rebuildLayout();
+
+    this.input.keyboard?.on("keydown-ESC", () => this.leave());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.input.removeAllListeners();
+      this.input.keyboard?.removeAllListeners();
+    });
+    onViewportResize(this, () => this.rebuildLayout());
+  }
+
+  // D-154: rebuilds this scene's whole layout against the current viewport
+  // (snapshot-diff into a fresh container, same convention `MainMenuScene`
+  // established); also re-runs `refreshAll()` since the map/wave-count
+  // button arrays get recreated fresh each time.
+  private rebuildLayout(): void {
+    this.layoutRoot?.destroy();
+    const before = new Set<Phaser.GameObjects.GameObject>(this.children.list);
+    const { width } = getViewport(this);
 
     this.add
-      .text(GAME_WIDTH / 2, 40, "Test Mode", {
+      .text(width / 2, 40, "Test Mode", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "36px",
         color: "#e8e8f0",
@@ -54,7 +73,7 @@ export class TestModeScene extends Phaser.Scene {
 
     this.add
       .text(
-        GAME_WIDTH / 2,
+        width / 2,
         90,
         "A battle unlocked for balance testing: pick a map and wave count, then set party\n" +
           "Starting Level in Character Creation. In battle, use the Debug toolbar to skip\n" +
@@ -69,15 +88,13 @@ export class TestModeScene extends Phaser.Scene {
       )
       .setOrigin(0.5);
 
-    this.buildMapSection(180);
-    this.buildWaveCountSection(340);
-    this.buildStartButton(440);
+    this.buildMapSection(width, 180);
+    this.buildWaveCountSection(width, 340);
+    this.buildStartButton(width, 440);
 
-    this.input.keyboard?.on("keydown-ESC", () => this.leave());
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.input.removeAllListeners();
-      this.input.keyboard?.removeAllListeners();
-    });
+    const created = this.children.list.filter((c) => !before.has(c));
+    this.layoutRoot = this.add.container(0, 0);
+    this.layoutRoot.add(created);
 
     this.refreshAll();
   }
@@ -108,9 +125,9 @@ export class TestModeScene extends Phaser.Scene {
   }
 
   /** Every map, unconditionally selectable — Test Mode has no unlock gating. */
-  private buildMapSection(labelY: number): void {
+  private buildMapSection(width: number, labelY: number): void {
     this.add
-      .text(GAME_WIDTH / 2, labelY, "Map", {
+      .text(width / 2, labelY, "Map", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#c8c8d8",
@@ -120,10 +137,10 @@ export class TestModeScene extends Phaser.Scene {
 
     const y = labelY + 40;
     const gap = 16;
-    const w = Math.min(280, (1180 - (MAP_OPTIONS.length - 1) * gap) / MAP_OPTIONS.length);
+    const w = Math.min(280, (width - 100 - (MAP_OPTIONS.length - 1) * gap) / MAP_OPTIONS.length);
     const h = 48;
     const totalWidth = MAP_OPTIONS.length * w + (MAP_OPTIONS.length - 1) * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const startX = width / 2 - totalWidth / 2 + w / 2;
     const fontSize = w >= 200 ? 14 : 11;
 
     this.mapButtons = MAP_OPTIONS.map((option, i) => {
@@ -149,9 +166,9 @@ export class TestModeScene extends Phaser.Scene {
     });
   }
 
-  private buildWaveCountSection(labelY: number): void {
+  private buildWaveCountSection(width: number, labelY: number): void {
     this.add
-      .text(GAME_WIDTH / 2, labelY, "Wave Count", {
+      .text(width / 2, labelY, "Wave Count", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "16px",
         color: "#c8c8d8",
@@ -163,7 +180,7 @@ export class TestModeScene extends Phaser.Scene {
     const h = 44;
     const gap = 20;
     const totalWidth = WAVE_COUNT_PRESETS.length * w + (WAVE_COUNT_PRESETS.length - 1) * gap;
-    const startX = GAME_WIDTH / 2 - totalWidth / 2 + w / 2;
+    const startX = width / 2 - totalWidth / 2 + w / 2;
     const y = labelY + 40;
 
     this.waveCountButtons = WAVE_COUNT_PRESETS.map((preset, i) => {
@@ -183,12 +200,12 @@ export class TestModeScene extends Phaser.Scene {
     });
   }
 
-  private buildStartButton(y: number): void {
+  private buildStartButton(width: number, y: number): void {
     this.startButton = this.add
-      .rectangle(GAME_WIDTH / 2, y, 260, 54, 0x4caf72)
+      .rectangle(width / 2, y, 260, 54, 0x4caf72)
       .setInteractive({ useHandCursor: true });
     this.add
-      .text(GAME_WIDTH / 2, y, "Start Test Battle", {
+      .text(width / 2, y, "Start Test Battle", {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "18px",
         color: "#0e0e14",

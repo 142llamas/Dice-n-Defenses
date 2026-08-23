@@ -2,6 +2,394 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — KI-034 redesign: hero roster strip + decluttered status line (D-158)
+
+Kevin confirmed 4 sessions running that `BattleScene`'s packed bottom
+status/hint line worked correctly in every individual behavior but that he
+hated the system it was part of. Asked directly again this session (via
+`EnterPlanMode`, given the size of the change), he picked the "contextual
+action bar" direction. See **D-158** in `DECISIONS.md`.
+
+Added/changed:
+- **A real hero roster strip**: per-hero boxed widgets (name/level, a color-
+  coded HP bar with exact numbers, a green border on the selected hero,
+  AC/move/act/gear detail shown only for the selected hero in a
+  consistently-reserved slot) replaces the old packed text line.
+- **`Enemies: N`** moved to the top HUD, next to Integrity/Gold.
+- **A new, much smaller message line** carries only what had no other home:
+  aiming-mode instructions, the `Tab:` keyboard-focus indicator, Test Mode's
+  debug-picker hints, and `rejectAt()`'s rejection messages. Everything else
+  the old hint said turned out to be redundant with an already-visible
+  button label or board highlight, and was removed rather than shortened.
+- **Building/equipping item descriptions** moved to a hover tooltip (reuses
+  the existing D-132 tooltip controller), positioned at the item's own
+  button — still triggered by both mouse hover AND keyboard grid-focus, so
+  keyboard-only play stays fully covered. Fixed a related gap: tabbing INTO
+  the item grid now previews the focused item immediately, not just on the
+  next arrow-key move.
+- "How to Play" gained a one-clause mention of the 1-4 hero-select hotkey.
+- Removed the now-fully-unused `hoveredItemId` field.
+
+No new tests (presentation-only, `BattleScene.ts` has zero test coverage by
+this project's architecture rule). Tests remain at 1349. Typecheck, all 1349
+tests, and the production build (126 modules, unchanged) all pass. `npm run
+dev` serves HTTP 200. No browser available in this environment — see the new
+**KI-110** for the in-browser checklist, including re-confirming KI-034's
+own keyboard-only-play behaviors under this rewrite.
+
+## [Unreleased] — 0.2.0-dev — Responsive-canvas roadmap step 3: the `Scale.RESIZE` cutover (D-157)
+
+The roadmap's step 3: `main.ts` now runs `Scale.RESIZE` by default, so the
+real browser window size finally matters — every non-`BattleScene` scene's
+D-154/D-155/D-156 conversion now reflects a real, live viewport instead of
+always reading the fixed 1280x1080. `BattleScene` locks the canvas back to
+the old fixed-resolution `Scale.FIT` behavior for the duration of a battle
+(and every overlay reachable while one is merely paused underneath), so
+battles still look and scale exactly as before. See **D-157** in
+`DECISIONS.md`.
+
+Added/fixed:
+- **`main.ts`**: `scale.mode` is now `Phaser.Scale.RESIZE`.
+- **`BattleScene`**: `create()` now locks the canvas to a fixed-resolution
+  `Scale.FIT` (with an explicit `displaySize.setAspectMode()` call, since
+  Phaser doesn't reapply that on a later manual mode change); its existing
+  `SHUTDOWN` handler now hands the canvas back to `Scale.RESIZE` on every
+  battle-exit path.
+- **Latent `GAME_WIDTH`/`GAME_HEIGHT`-instead-of-live-viewport bugs**, found
+  by reasoning through the cutover rather than browser testing, fixed before
+  they ever shipped: `uiTheme.ts`'s shared parchment backdrop + ember motes
+  (used by most menu/reference scenes) now read the scene's live canvas size;
+  `uiTheme.ts`'s `centeredRowX` helper's ~11 call sites (Bestiary, Character
+  Sheet, Compendium, Main Menu, Map Builder) now pass an explicit live-width
+  `maxWidth` instead of relying on its stale fixed-1280 default; `tooltip.ts`
+  and `dialogueBox.ts` now clamp/size against the scene's live canvas too.
+- Known, accepted limitation: `CharacterCreationScene`'s wizard overlay and
+  the Compendium's sample-dialogue box won't resize their dim backdrop if a
+  browser resize fires while either is already open — self-heals on next
+  redraw, not fixed this pass (see D-157's own writeup for why).
+
+No new tests (presentation/scale-manager plumbing only, no new pure-system
+rule). Tests remain at 1349. Typecheck, all 1349 tests, and the production
+build (126 modules, unchanged) all pass. `npm run dev` serves HTTP 200. No
+browser available in this environment — see the new **KI-109** for the full
+in-browser checklist. This is the first step in the roadmap where an actual
+in-browser resize test is load-bearing, not just recommended.
+
+## [Unreleased] — 0.2.0-dev — Responsive-canvas roadmap step 2: Map Builder + Character Creation own resize-reactivity (D-156)
+
+Continuing D-154/D-155's roadmap: step 2, the last two scenes needing their
+own resize-reactivity (`MapBuilderScene`, `CharacterCreationScene`). See
+**D-156** in `DECISIONS.md`.
+
+Added:
+- **`MapBuilderScene`**: wired its already-dynamic grid sizing into a live
+  resize; adopted `CoopLobbyScene`'s `centeredObjects`/`repositionLayout()`
+  mechanism for its chrome (protects the persistent map-name `<input>`). The
+  old `GRID_AREA_RIGHT` constant is now derived live from the viewport.
+- **`CharacterCreationScene`**: converted via a single generic
+  `repositionLayout()` that shifts every current child object's `.x` by a
+  constant amount on resize — every coordinate in this scene reduces to
+  `viewportWidth / 2 + a fixed offset`, so this covers all 4 hero columns,
+  the bottom controls, Start/Back, and the wizard overlay without
+  registering individual widgets. Its 4 hero-name `<input>` fields keep
+  their typed text and focus.
+
+With this, every scene in the app except `BattleScene` now follows the
+responsive-layout convention.
+
+No new tests (presentation-only, no new pure-system rule). Tests remain at
+1349. Typecheck, all 1349 tests, and the production build (126 modules,
+unchanged) all pass. `npm run dev` serves HTTP 200. No browser available in
+this environment — see the new **KI-108** for the in-browser checklist.
+
+## [Unreleased] — 0.2.0-dev — Responsive-canvas roadmap step 1: 5 more scenes converted (D-155)
+
+Continuing D-154's roadmap: `CompendiumScene`, `CharacterSheetScene`,
+`BrowseSharedMapsScene`, `FreePlayScene`, `CoopLobbyScene` — the 5 scenes
+flagged as needing more than the mechanical `rebuildLayout()` treatment. See
+**D-155** in `DECISIONS.md`.
+
+Added:
+- **5 more scenes converted** to `getViewport`/`onViewportResize`: Compendium
+  (chrome rebuilds like Bestiary, sub-selectors read the viewport directly),
+  Character Sheet (converted without disturbing the paused `BattleScene`
+  underneath it), Browse Shared Maps (fetches from Firestore exactly once
+  per visit, never on resize — a `hasLoadedOnce` guard prevents a false
+  "no maps published" flash before the first fetch resolves), Free Play
+  (its six section-builders now take `width` as a parameter), and Co-op
+  Lobby.
+- **`CoopLobbyScene`'s own `repositionLayout()` mechanism** — this scene
+  builds every object once and only toggles visibility (never
+  destroy-and-recreate, to protect its join-code `<input>`'s typed text and
+  focus). A new `centeredObjects` list of `{ obj, dx, y }` entries lets a
+  resize reposition existing objects instead of replacing them — the
+  pattern any future scene with persistent DOM/can't-destroy state should
+  follow instead of `rebuildLayout()`.
+
+No new tests (presentation-only, no new pure-system rule). Tests remain at
+1349. Typecheck, all 1349 tests, and the production build (126 modules,
+unchanged) all pass. `npm run dev` serves HTTP 200. No browser available in
+this environment — see the new **KI-107** for the in-browser checklist.
+
+## [Unreleased] — 0.2.0-dev — Responsive-canvas foundation (7 scenes) + Map Builder click-and-drag paint tool + real map-name field (D-154)
+
+Kevin picked KI-098's "Maps & Map Builder" thread. Solving "larger maps"
+for real needs a responsive, full-screen canvas (Kevin confirmed: the whole
+app, not just battles) — a genuine multi-session architecture change given
+`BattleScene.ts` alone is 8049 lines with 88 `GAME_WIDTH`/`GAME_HEIGHT` and
+68 `TILE_SIZE` references. Kevin chose "foundation + simple menus first"
+this session. See **D-154** in `DECISIONS.md`.
+
+Added:
+- **A shared responsive-layout convention** (`uiTheme.ts`'s new
+  `getViewport`/`onViewportResize`) — deliberately staying on `Scale.FIT`
+  this pass (a zero-behavior-change refactor today; the `Scale.RESIZE`
+  cutover is held for a later session once more scenes are converted).
+- **7 scenes converted**: Pause Menu, Settings, Campaigns, Main Menu, Load
+  Game, Test Mode, Bestiary.
+- **`computeCornerControlsRegion`** (new, `systems/mainMenuLayout.ts`) — the
+  first layout computation extracted to a pure, unit-tested function,
+  establishing the pattern future scene conversions should follow.
+- **Map Builder: a real click-and-drag continuous paint tool** — click and
+  hold now paints every tile the pointer crosses, not just the one under
+  the initial click.
+- **Map Builder: a real map-name text field** — replaces the old fixed
+  8-name cycle pool with a genuine typed `<input>` (this project's third,
+  after Character Creation's hero name and Co-op's join code). Publish now
+  requires a non-blank name.
+
+Fixed: `MainMenuScene.buildAccountControl` used to re-subscribe a real
+Firebase `initAuth` listener every time it ran — harmless before this
+session since it only ran once per scene visit, but would have re-subscribed
+on every resize once made resize-reactive. Now subscribes once in `create()`.
+
+Tests: 1344 → 1349 (+5). Typecheck, all 1349 tests, and the production
+build (126 modules, +1) all pass. `npm run dev` serves HTTP 200. No browser
+available in this environment — see the new **KI-106** for the in-browser
+checklist.
+
+## [Unreleased] — 0.2.0-dev — Real Settings screen: Master/Music/SFX volume + Mute, no audio content yet (D-153)
+
+Kevin asked directly to start building audio settings even though no music
+or sound effects exist yet — a deliberate reversal of the earlier "no audio
+system exists, so no control for one" call (D-060/D-152). See **D-153** in
+`DECISIONS.md`.
+
+Added:
+- **A new `SettingsScene`**: Game Speed (moved off Main Menu's old single
+  corner button), Master Volume, Music Volume, SFX Volume (each a 0/25/50/
+  75/100% cycle), and a Mute All toggle. Reachable from Main Menu's new
+  "Settings" button, and from the Pause Menu's row (renamed from "Game
+  Speed" to "Settings") as a live overlay mid-battle.
+- **A new `AudioManager`**: applies master volume/mute directly to Phaser's
+  shared sound manager (real and global the instant they're set), and
+  tracks music/SFX category volume for any sound it plays via new
+  `playMusic`/`playSfx` helpers — safe no-ops today since no audio asset is
+  loaded (KI-029), genuinely functional the moment one is.
+- `SettingsSystem` gains `masterVolume`/`musicVolume`/`sfxVolume`/`muted`,
+  persisted to the same `localStorage` key as Game Speed.
+
+Fixed: `BattleScene.cycleGameSpeed()` and Main Menu's old settings button
+both used to persist a bare `{ animationSpeed }` object, which would have
+silently wiped the new volume/mute fields on every Game Speed change.
+
+Tests: 1341 → 1344 (+3). Typecheck, all 1344 tests, and the production
+build (125 modules, +2 new files) all pass. `npm run dev` serves HTTP 200.
+No browser available in this environment — see the new **KI-105** for the
+in-browser checklist (should be silent, but every control should still
+respond with no console error).
+
+## [Unreleased] — 0.2.0-dev — Real in-battle pause menu (D-152)
+
+Kevin asked directly for an in-game menu reachable mid-battle. See **D-152**
+in `DECISIONS.md`.
+
+Added:
+- **A new pause menu** (Esc, or a new always-visible "Menu (Esc)" button,
+  bottom-left corner), opened as a real paused second scene (same mechanism
+  D-148's Character Sheet already uses): **Resume Battle**, **Save Party**,
+  **Save & Exit**, **Load Game** (with a "this exits the battle" confirm),
+  **Exit to Main Menu** (with a "progress will be lost" confirm),
+  **Controls** (a real keybinding reference), and **Game Speed** (reuses
+  the existing setting/hotkey, not a new one).
+- `CharacterCreationScene` now forwards the party's real `CharacterBuild[]`
+  into `BattleScene`, so Save/Save & Exit have real data to work with.
+
+Fixed: `BattleScene`'s Esc key used to silently exit straight to the Main
+Menu with zero confirmation or save when nothing else was going on — that
+fallback now opens this menu instead.
+
+Not built, deliberately: Audio settings (no audio system exists anywhere —
+would be dead scaffolding) and any graphics/resolution setting beyond Game
+Speed (nothing else real to expose). Save saves the party's BUILD for a
+future battle, not this battle's own wave/gold/structure progress — no
+mechanism for that exists in this project yet.
+
+Tests: 1337 → 1341 (+4, a new shared `SaveSystem.saveOrUpdatePartySlot`
+pure function and its tests). Typecheck, all 1341 tests, and the production
+build (123 modules, +1 new file) all pass. `npm run dev` serves HTTP 200. No
+browser available in this environment — see the new **KI-104** for the
+in-browser checklist, led by whether the pause/resume mechanism itself
+works cleanly.
+
+## [Unreleased] — 0.2.0-dev — Small polish items: Cape of Billowing recolor + Exit Game control (D-151)
+
+The last two "Small polish items" from KI-098. See **D-151** in
+`DECISIONS.md`.
+
+Fixed:
+- **Cape of Billowing now renders a deep red**, its own dedicated color —
+  it had been wrongly reusing the selected-hero highlight color, not
+  intentionally colorless.
+
+Added:
+- **An "Exit Game" control** on the Main Menu (bottom-left corner).
+  Browsers won't let a page force-close a tab it didn't script-open, so the
+  button attempts `window.close()` and then always falls back to an honest
+  "you may now close this tab" message, so clicking it never reads as
+  broken.
+
+Tests: 1337 → 1337 (no new tests — a color constant and a menu button, no
+new rules). Typecheck, all 1337 tests, and the production build (122
+modules) all pass. No browser available in this environment — see the new
+**KI-103** for the in-browser re-confirmation checklist.
+
+## [Unreleased] — 0.2.0-dev — Compendium/Bestiary organization: alphabetization, Buildings/Traps tabs, Bestiary role tabs (D-150)
+
+Kevin's pick from KI-098's remaining threads (over Maps & Map Builder,
+Progression systems, and small polish items). See **D-150** in
+`DECISIONS.md`.
+
+Added:
+- **Two new Compendium tabs**: "Buildings" (walls/gates, then platforms,
+  each alphabetical) and "Traps" (ground-targeted, then flying-targeted,
+  each alphabetical) — `STRUCTURE_DEFINITIONS` had no Compendium category
+  before this.
+- **Bestiary role tabs**: Minions/Miniboss/Bosses/Legendary are now real
+  tabs instead of one continuously-paginated flat scroll; Prev/Next pages
+  within whichever role is selected.
+
+Changed:
+- **Compendium alphabetization**: Classes, Subclasses, Races, Feats,
+  Skills, Potions, and Status Effects each list alphabetically by name now.
+  Classes/Skills are sorted in their actual source arrays (their only
+  order-sensitive consumer was this display); the other five keep their
+  real declared order untouched (it backs default new-build race/subclass
+  selection, picker order, shop order, and status-badge render order
+  elsewhere) and get a display-only sorted copy instead.
+
+Resolved (no code change): confirmed Artificer's Compendium absence is
+intentional — it's Tasha's Cauldron-sourced, not core SRD 5.2.1, so this
+project's SRD-only content rule already excludes it correctly.
+
+Tests: 1337 → 1337 (no new tests — both `CompendiumScene`/`BestiaryScene`
+are presentation-only, per this project's architecture split). Typecheck,
+all 1337 tests, and the production build (122 modules) all pass. No browser
+available in this environment — see the new **KI-102** for the in-browser
+re-confirmation checklist.
+
+## [Unreleased] — 0.2.0-dev — Two confirmed bug fixes: waypoint pinning + Main Menu title overlap (D-149)
+
+Kevin's two confirmed 2026-08-21 playtest bugs, fixed before starting a new
+KI-098 feature thread. See **D-149** in `DECISIONS.md`.
+
+Fixed:
+- **Waypoint pinning only accepted one pin.** `BattleScene`'s global
+  `pointerup` handler was ending/committing the drag on the right-click's
+  own release (it didn't check which button was released), before a second
+  right-click could ever add another waypoint. Now only a left-button
+  release resolves a drag.
+- **The move-range highlight during a drag stayed anchored to the hero's
+  own tile** instead of updating to the latest pinned waypoint with
+  whatever budget the pinned legs hadn't already spent. New
+  `updateDragRangeHighlight()` recomputes it every time the pin chain
+  changes.
+- **Main Menu: the title could visually overlap the top-right Settings/
+  Account controls.** The title's flanking decorative line was positioned at
+  a guessed width that undershot the font's real rendered size. Now
+  measures the title's actual bounds against the controls' region and
+  shrinks the font until they clear, instead of a fixed guessed size.
+
+Tests: 1337 → 1337 (no new tests — both are behavioral fixes to existing,
+already-tested code paths; verified via typecheck/build/manual code
+inspection). Typecheck, all 1337 tests, and the production build (122
+modules) all pass. No browser available in this environment — see the new
+**KI-101** for the in-browser re-confirmation checklist.
+
+## [Unreleased] — 0.2.0-dev — Battle HUD / actions / character sheet overhaul (D-148)
+
+Kevin's stated #1 pain point: the always-on hero panel, frozen actions, no
+level-up/equip feedback, and no in-game character sheet. See **D-148** in
+`DECISIONS.md` for the complete 9-piece writeup, including what was
+deliberately deferred (pieces 6b and 9b).
+
+Added:
+- **Selection-gated hero panel**: the always-on roster strip now shows only
+  name/level/HP for an unselected hero; AC/move/act/gear detail shows only
+  for whoever's selected.
+- **`HeroActionRegistry`**: a single table of every bonus-action/class-
+  action class feature, replacing two hand-written `if/else` chains in
+  `BattleScene`.
+- **Level-up popups now show real deltas** ("+6 max HP, new feature: Action
+  Surge") instead of a bare "reaches level N!" line, for a level with no
+  ASI/subclass/spell choice.
+- **A new Character Sheet scene** (Character button/C key while a hero is
+  selected), opened as a real paused/resumed Phaser scene over the battle:
+  a Stats tab (ability scores, AC/HP/movement, available actions), a
+  Spellbook tab (known spells grouped by level, hover for full rules text),
+  and a Hotkeys tab (pin any available action/spell to one of 6 slots —
+  editing only; not yet wired into battle input).
+- **A generalized hover-tooltip primitive** (`scenes/tooltip.ts`), replacing
+  `BattleScene`'s tile-only tooltip mechanism, now also used by the
+  Spellbook tab.
+- **An equip hover preview**: hovering a hero while an item is selected in
+  equip mode now shows a before/after AC/attack-bonus line.
+
+Deliberately NOT built this pass (see D-148/KI-098 for the full list):
+wiring the new hotkey bar into `BattleScene`'s actual Q/R/F/T buttons (too
+large/risky to bolt onto an unverified new UI in the same pass); the equip
+flow's actual click-through redesign (no target UX given yet).
+
+Tests: 1308 → 1337 (+29). Typecheck, all 1337 tests, and the production
+build (122 modules, +3 new files) all pass. `npm run dev` serves HTTP 200.
+No browser available in this environment — see **KI-100** for the full
+in-browser checklist, led by the new scene-pause mechanism (never used
+anywhere else in this codebase before).
+
+## [Unreleased] — 0.2.0-dev — Character Creation overhaul, pieces 1-5 (D-147)
+
+Kevin asked for Character Creation to move much closer to a real character
+builder. See **D-147** in `DECISIONS.md`.
+
+Added:
+- **A reusable choice-picker overlay** (`openChoicePicker`) — Class, Race,
+  Gear, and Subclass now open a full-screen list of every option at once
+  instead of cycling one at a time.
+- **Real hero naming**: the Name row is now a genuine editable HTML
+  `<input>`, replacing the old fixed 12-name cycle pool. A blank or
+  duplicate name blocks Start Battle.
+- **Point Buy**: a second, selectable ability-score method (SRD 5.2.1,
+  27-point budget, real cost table) alongside Standard Array, via a
+  party-wide toggle. New `PointBuyAllocator`/`AbilityScoreAllocator` in
+  `CharacterBuildSystem.ts`.
+- **Class preview**: every class gained a one-sentence `previewSummary`,
+  shown on the Class picker.
+- **Race preview**: the Race picker shows real speed/traits — deliberately
+  no invented ability-score bonus (SRD 5.2.1 ties that to Background, not
+  Race). The Subclass row for a later-choice class now points at the
+  existing "Plan Levels" wizard instead of implying it's unavailable at
+  creation.
+
+Fixed: nothing new — two of Kevin's reported gaps turned out to already be
+non-issues on investigation: spell-class gating was already real (not a
+bug), and subclass picking already existed in Character Creation for
+Cleric/Sorcerer/Warlock.
+
+Tests: 1299 → 1308 (+9, `tests/characterBuildSystem.test.ts`). Typecheck,
+all 1308 tests, and the production build (119 modules, unchanged) all pass.
+`npm run dev` serves HTTP 200. No browser available in this environment —
+see KI-099 for the full in-browser checklist still outstanding.
+
 ## [Unreleased] — 0.2.0-dev — Smart AoE positioning + a new self-defense mechanic (D-146)
 
 Closes the Enemy AI/Movement Redesign's last pure-systems piece (§3's AoE

@@ -7,23 +7,46 @@
  * dependency" pattern every other system in this folder follows. A scene
  * wires it to the real `localStorage` via the tiny `SettingsStorage` shape.
  *
- * Deliberately small: one setting (animation speed, exposed to the player as
- * "Game Speed" — KI-085/D-130 — which also serves as the "reduced motion"
- * control, since "instant" skips animation entirely) plus a one-time
- * tutorial-seen flag. No volume/audio setting exists because there is no
- * audio system yet (see KNOWN_ISSUES) — adding a control for a system that
- * doesn't exist would be unused scaffolding.
+ * Settings: animation speed (exposed to the player as "Game Speed" —
+ * KI-085/D-130 — which also serves as the "reduced motion" control, since
+ * "instant" skips animation entirely); master/music/SFX volume and a mute
+ * toggle (D-153/KI-105) — real settings applied to Phaser's own sound
+ * manager by `scenes/AudioManager.ts` (Phaser-dependent, so it lives outside
+ * this folder), even though no music or sound-effect asset exists yet
+ * (KI-029) — there's genuinely nothing to hear, but master volume/mute do
+ * take live effect on the shared sound manager the instant they're set; a
+ * one-time tutorial-seen flag rounds out the file.
  */
 
 export type AnimationSpeed = "normal" | "fast" | "instant";
 
 export interface Settings {
   animationSpeed: AnimationSpeed;
+  masterVolume: number;
+  musicVolume: number;
+  sfxVolume: number;
+  muted: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   animationSpeed: "normal",
+  masterVolume: 75,
+  musicVolume: 75,
+  sfxVolume: 75,
+  muted: false,
 };
+
+/** Volume is a simple 5-step cycle (0/25/50/75/100), the same "one click cycles" interaction as `nextAnimationSpeed` — no slider widget exists anywhere in this project yet. */
+export const VOLUME_STEPS: readonly number[] = [0, 25, 50, 75, 100];
+
+export function nextVolume(current: number): number {
+  const i = VOLUME_STEPS.indexOf(current);
+  return VOLUME_STEPS[i === -1 ? 0 : (i + 1) % VOLUME_STEPS.length];
+}
+
+export function toggleMuted(current: boolean): boolean {
+  return !current;
+}
 
 /** The minimal storage shape SettingsSystem needs — matches window.localStorage. */
 export interface SettingsStorage {
@@ -66,6 +89,10 @@ function isAnimationSpeed(value: unknown): value is AnimationSpeed {
   return typeof value === "string" && (ANIMATION_SPEEDS as readonly string[]).includes(value);
 }
 
+function isVolumeStep(value: unknown): value is number {
+  return typeof value === "number" && (VOLUME_STEPS as readonly number[]).includes(value);
+}
+
 /** Read settings from storage, falling back to defaults on missing/corrupt data. */
 export function loadSettings(storage: SettingsStorage, key: string): Settings {
   const raw = storage.getItem(key);
@@ -76,6 +103,10 @@ export function loadSettings(storage: SettingsStorage, key: string): Settings {
       animationSpeed: isAnimationSpeed(parsed.animationSpeed)
         ? parsed.animationSpeed
         : DEFAULT_SETTINGS.animationSpeed,
+      masterVolume: isVolumeStep(parsed.masterVolume) ? parsed.masterVolume : DEFAULT_SETTINGS.masterVolume,
+      musicVolume: isVolumeStep(parsed.musicVolume) ? parsed.musicVolume : DEFAULT_SETTINGS.musicVolume,
+      sfxVolume: isVolumeStep(parsed.sfxVolume) ? parsed.sfxVolume : DEFAULT_SETTINGS.sfxVolume,
+      muted: typeof parsed.muted === "boolean" ? parsed.muted : DEFAULT_SETTINGS.muted,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

@@ -14,6 +14,7 @@ import {
   type LeveledCombatStats,
 } from "../systems/CharacterSystem";
 import { spellSlotsForClassAtLevel, cantripsKnownForClassAtLevel } from "../systems/SpellcastingSystem";
+import { listHeroActions } from "../systems/HeroActionRegistry";
 import {
   preparedSpellCountForClassAtLevel,
   eligibleCantripPool,
@@ -176,6 +177,8 @@ const PRESERVE_LIFE_MAX_TARGETS = 5;
 const RANGER_HIDE_IN_PLAIN_SIGHT_LEVEL = 10;
 const RANGER_VANISH_LEVEL = 14;
 const MONK_EMPTY_BODY_LEVEL = 18;
+/** D-148: number of slots in a hero's action hotkey bar — see `_actionHotkeys`. */
+export const ACTION_HOTKEY_SLOT_COUNT = 6;
 /**
  * The SRD's real cost is 4 Ki, but this game's Ki pool is a flat
  * `KI_POINTS_PER_REST` (3) rather than the SRD's level-scaled pool (equal
@@ -318,6 +321,8 @@ export interface HeroSnapshot {
   knownCantripIds: string[];
   /** D-134: a Wizard's spellbook (empty for every other class). */
   spellbookIds: string[];
+  /** D-148: this hero's action hotkey bar — see `Hero._actionHotkeys`. */
+  actionHotkeys: (string | undefined)[];
 }
 
 /**
@@ -588,6 +593,14 @@ export class Hero implements Combatant {
   private _knownCantripIds: string[] = [];
   /** D-134: a Wizard's ever-growing spellbook (6 at level 1, +2 per level, never shrinks/forgets) — the pool its Long-Rest full relist prepares FROM, instead of the full class list every other caster draws from directly. Empty for every non-Wizard class. */
   private _spellbookIds: string[] = [];
+  /**
+   * D-148: this hero's curated action hotkey bar — a fixed-size, slot-
+   * ordered subset of `knownSpellAbilityIds()`/`HeroActionRegistry` entries/
+   * the frozen `abilityId` the player has pinned one click away, distinct
+   * from "what this hero COULD use" (those two sources already answer
+   * that). `undefined` means an unfilled slot. See `setActionHotkey`.
+   */
+  private _actionHotkeys: (string | undefined)[] = new Array(ACTION_HOTKEY_SLOT_COUNT).fill(undefined);
 
   /** Current tile. Only changes when a move is COMMITTED via moveTo(). */
   position: GridPosition;
@@ -1661,6 +1674,57 @@ export class Hero implements Combatant {
   /** D-135: sets a Wizard's spellbook wholesale — distinct from `learnSpellbookSpells`'s additive "copy a spell in" semantics, for Character Creation's starting-spellbook picker, which replaces the auto-filled default rather than adding to it. */
   chooseSpellbook(ids: string[]): void {
     this._spellbookIds = [...ids];
+  }
+
+  /** D-148: this hero's action hotkey bar, one entry per slot — `undefined` for an unfilled slot. See `setActionHotkey`. */
+  actionHotkeys(): readonly (string | undefined)[] {
+    return this._actionHotkeys;
+  }
+
+  /**
+   * D-148: every id this hero could currently pin to a hotkey slot — its
+   * known spells/cantrips (`knownSpellAbilityIds`), its available
+   * `HeroActionRegistry` bonus/class actions, and (for a non-caster) its
+   * one frozen signature `abilityId`. `setActionHotkey` refuses anything
+   * outside this set.
+   */
+  private validHotkeyIds(): Set<string> {
+    const ids = [
+      ...this.knownSpellAbilityIds(),
+      ...listHeroActions(this)
+        .filter((a) => a.available)
+        .map((a) => a.id),
+    ];
+    if (this.abilityId) ids.push(this.abilityId);
+    return new Set(ids);
+  }
+
+  /**
+   * D-148: pins `abilityId` to hotkey `slot`, or clears the slot if
+   * `abilityId` is nullish. Accepts `null` as well as `undefined` for
+   * "clear" since a save round-trips this array through `JSON.stringify`
+   * (`SaveSystem`), which serializes an empty slot as `null`, not
+   * `undefined`. Silently refuses an id this hero can't currently do at all
+   * (matches `PointBuyAllocator`'s "can't produce an invalid state"
+   * convention) — a spell dropped from prepared, or a class feature the
+   * hero has lost, simply can't be pinned; it does NOT auto-clear a slot
+   * that already held an id that's since become unavailable (e.g. a spell
+   * temporarily out of slots), since "pinned but not usable right now" is a
+   * normal, expected state, not stale data.
+   */
+  setActionHotkey(slot: number, abilityId: string | undefined | null): void {
+    if (slot < 0 || slot >= ACTION_HOTKEY_SLOT_COUNT) return;
+    if (abilityId == null) {
+      this._actionHotkeys[slot] = undefined;
+      return;
+    }
+    if (!this.validHotkeyIds().has(abilityId)) return;
+    this._actionHotkeys[slot] = abilityId;
+  }
+
+  /** D-148: bulk-sets the whole hotkey bar (e.g. from a `HeroDefinition`/save restore) — each entry independently validated exactly as `setActionHotkey` would. */
+  setActionHotkeys(ids: (string | undefined | null)[]): void {
+    ids.slice(0, ACTION_HOTKEY_SLOT_COUNT).forEach((id, slot) => this.setActionHotkey(slot, id));
   }
 
   /**
@@ -2834,6 +2898,7 @@ export class Hero implements Combatant {
       preparedSpellIds: [...this._preparedSpellIds],
       knownCantripIds: [...this._knownCantripIds],
       spellbookIds: [...this._spellbookIds],
+      actionHotkeys: [...this._actionHotkeys],
     };
   }
 
@@ -2926,5 +2991,6 @@ export class Hero implements Combatant {
     this._preparedSpellIds = [...snapshot.preparedSpellIds];
     this._knownCantripIds = [...snapshot.knownCantripIds];
     this._spellbookIds = [...snapshot.spellbookIds];
+    this._actionHotkeys = [...snapshot.actionHotkeys];
   }
 }
