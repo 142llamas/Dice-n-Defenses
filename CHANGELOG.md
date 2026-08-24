@@ -2,6 +2,35 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Reverted the `Scale.RESIZE` cutover (D-159)
+
+Kevin's first real in-browser pass since the previous session found two
+confirmed bugs caused by D-157's `Scale.RESIZE` cutover: Main Menu's
+Settings/Sign-in corner controls overlapping the frame border, and
+Character Creation's Start/Back buttons rendering completely off-screen
+after "New Game." Root cause: `Scale.RESIZE` has no automatic shrink-to-fit
+the way `Scale.FIT` did — every scene's resize handling this roadmap built
+only ever recentered content horizontally, never accounted for a real
+browser window shorter than the fixed 1080px-tall design. See **D-159** in
+`DECISIONS.md` for the full root-cause writeup.
+
+Fixed:
+- `main.ts`: `scale.mode` reverted to `Phaser.Scale.FIT`.
+- `BattleScene`: removed the now-pointless (and, left in place, actively
+  harmful) runtime scale-mode swap in `create()`/its `SHUTDOWN` handler.
+
+Not reverted: the D-157 fixes to `uiTheme.ts`/`tooltip.ts`/`dialogueBox.ts`
+(reading a scene's live viewport instead of fixed `GAME_WIDTH`/
+`GAME_HEIGHT` constants) — harmless no-ops under `Scale.FIT`, kept as
+groundwork for if a responsive canvas is attempted again with a design that
+actually handles vertical space.
+
+No new tests. Tests remain at 1349. Typecheck, all 1349 tests, and the
+production build (126 modules, unchanged) all pass. This restores the exact
+`Scale.FIT` behavior that was working across many prior sessions, not a new
+untested fix — still worth Kevin's quick confirmation that both reported
+bugs are gone.
+
 ## [Unreleased] — 0.2.0-dev — KI-034 redesign: hero roster strip + decluttered status line (D-158)
 
 Kevin confirmed 4 sessions running that `BattleScene`'s packed bottom

@@ -830,26 +830,6 @@ export class BattleScene extends Phaser.Scene {
   }
 
   create(): void {
-    // D-157: the game defaults to `Scale.RESIZE` everywhere outside battle
-    // (see `main.ts`) so every other scene's live-viewport layout actually
-    // reflects the real window. `BattleScene` itself has 88 GAME_WIDTH/
-    // GAME_HEIGHT references and no `getViewport`/`rebuildLayout()`
-    // conversion of its own yet (that's the roadmap's still-separate,
-    // dedicated step 4) — so a battle locks the canvas back to the old
-    // fixed-resolution `Scale.FIT` behavior for its whole lifetime, and the
-    // SHUTDOWN handler below hands it back to `Scale.RESIZE` the instant the
-    // player leaves. Menu scenes reached WHILE a battle is merely paused
-    // underneath (Character Sheet, the Pause Menu, Settings launched from
-    // it) share this same locked-FIT canvas rather than fighting over mode —
-    // `scene.scale` is one Game-wide manager, not one per scene.
-    // `scaleMode` alone isn't enough: Phaser only ever calls the internal
-    // `displaySize.setAspectMode()` from its own boot-time config parsing,
-    // never on a later manual `scaleMode` change, so it has to be set here
-    // too or FIT would silently stretch-fill instead of letterbox-fitting.
-    this.scale.scaleMode = Phaser.Scale.FIT;
-    this.scale.displaySize.setAspectMode(Phaser.Scale.FIT);
-    this.scale.setGameSize(GAME_WIDTH, GAME_HEIGHT);
-
     // Reset all mutable state so returning from the menu starts a clean game
     // (Phaser reuses the scene instance, so fields must be cleared here).
     this.heroes = [];
@@ -3948,13 +3928,6 @@ export class BattleScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.removeAllListeners();
       this.input.keyboard?.removeAllListeners();
-      // D-157: hand the canvas back to the game-wide Scale.RESIZE default
-      // the instant a battle actually ends (every exit path — defeat/
-      // victory, Save & Exit, Exit to Main Menu, Load Game — stops
-      // BattleScene before starting the next scene, which fires this).
-      this.scale.scaleMode = Phaser.Scale.RESIZE;
-      this.scale.displaySize.setAspectMode(Phaser.Scale.NONE);
-      this.scale.refresh();
     });
   }
 

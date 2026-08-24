@@ -4,7 +4,11 @@
 
 None currently — the two bugs Kevin confirmed 2026-08-21 (waypoint pinning,
 Main Menu title/corner-control overlap) were fixed by D-149; see KI-101
-below for their own re-confirmation checklist.
+below for their own re-confirmation checklist. The two bugs Kevin confirmed
+2026-08-22 (Main Menu corner controls overlapping the frame border, and
+Character Creation's Start/Back buttons rendering off-screen entirely after
+"New Game") were fixed by D-159 — a revert of D-157's `Scale.RESIZE`
+cutover back to `Scale.FIT`; see KI-109 below for what broke and why.
 
 ## Still need Kevin's playtest confirmation
 
@@ -56,43 +60,37 @@ real browser battle yet. Ordered newest first.
   Play" overlay (H, any time) is the intended fallback for a first-timer or
   anyone who forgets, not a live reminder anymore.
 
-### KI-109 — D-157: responsive-canvas roadmap step 3 — the actual `Scale.RESIZE` cutover
-- **This is the first entry in the whole responsive-canvas roadmap where a
-  real in-browser pass is load-bearing, not just a nice-to-have.** Every
-  prior step (D-154/155/156) was correct-by-construction but never actually
-  exercised, since `Scale.FIT` never let the real window size differ from
-  the fixed 1280x1080. This is the first time it can.
-- **Try resizing the actual browser window** (not just at load) while on
-  Main Menu, Compendium, Bestiary, Character Sheet, Settings, Pause Menu,
-  Character Creation, Map Builder, Free Play, Campaigns, Load Game, Test
-  Mode, Browse Shared Maps, and Co-op Lobby — each should visibly re-lay-out
-  to fill the real window (backdrop, buttons, tabs, rows) rather than
-  staying pinned at a fixed size or overflowing/clipping.
-- **At a normal window size with no resize at all**, every one of those
-  scenes should look correct immediately on load — this is the first step
-  where "normal window size" isn't guaranteed to equal 1280x1080, so this
-  is a genuine correctness check, not the usual pure-regression one.
-- **Start a battle, then resize the browser window mid-battle** — the battle
-  board, HUD, and every overlay (Character Sheet, Pause Menu, Settings-from-
-  Pause-Menu) should look and scale EXACTLY as they did before this session
-  (letterboxed to fit, centered, nothing stretched) — `BattleScene` is
-  deliberately locked back to the old fixed-resolution behavior for this
-  reason. If a battle instead looks stretched, shows only part of the
-  board, or fails to re-center on resize, that's the one thing in this
-  checklist most worth reporting precisely (see D-157's own writeup for why
-  this needed an extra manual `displaySize.setAspectMode()` call).
-- **Leave a battle back to the Main Menu (any exit path — defeat, victory,
-  Save & Exit, Exit to Main Menu, Load Game)**, then resize the browser
-  window again — menu scenes should resume resizing correctly, not stay
-  stuck in battle's fixed-size behavior.
-- A hover tooltip (Character Sheet, Compendium) and the Compendium's sample
-  dialogue preview should still stay fully on-canvas after a resize.
-- Known, accepted limitation (not a bug): resizing the browser at the exact
-  moment `CharacterCreationScene`'s Plan Levels/Spells wizard overlay, OR
-  the Compendium's sample dialogue box, is already open won't resize that
-  overlay's dim backdrop until the next redraw (closing/reopening, or
-  advancing the dialogue) — narrow, self-healing, deliberately not chased
-  down this session.
+### KI-109 — D-157: responsive-canvas roadmap step 3 — the actual `Scale.RESIZE` cutover — REVERTED by D-159, see KI-034-style note below
+- **RESOLVED 2026-08-22: reverted, not fixed-in-place.** Kevin's first real
+  in-browser pass found this broken in two concrete ways: Main Menu's
+  Settings/Sign-in corner controls overlapped the frame border, and
+  Character Creation's Start/Back buttons were completely invisible
+  (rendered below the visible canvas) after clicking "New Game." Root
+  cause: `Scale.RESIZE` removes the automatic shrink-to-fit `Scale.FIT` was
+  quietly providing — every scene's D-154/155/156 resize handling only ever
+  recentered content HORIZONTALLY; nothing handled a real browser window
+  SHORTER than `GAME_HEIGHT` (1080px, common on laptops), so content built
+  assuming that much vertical room ended up below the fold with no scroll.
+  D-159 reverted `main.ts` back to `Scale.FIT` and removed `BattleScene`'s
+  now-pointless scale-mode-swap code. See D-159 in `DECISIONS.md` for the
+  full root-cause writeup and what a real fix would need next time
+  (vertical reflow, or a larger fixed `Scale.FIT` canvas instead of
+  switching modes at all).
+- **Confirm the fix**: Main Menu's corner controls should no longer overlap
+  the frame border; Character Creation's Start/Back buttons (and everything
+  else) should be visible again exactly as before this whole roadmap
+  started. Everything else in this checklist below is now MOOT (the
+  feature it was testing no longer exists) — kept here only for the
+  historical record of what step 3 was attempting.
+- ~~Try resizing the actual browser window...~~ N/A — back to `Scale.FIT`,
+  resizing the window no longer changes any scene's layout (same as every
+  session before this one).
+- ~~Start a battle, then resize the browser window mid-battle...~~ N/A —
+  `BattleScene` no longer does any runtime scale-mode swapping.
+- The `uiTheme.ts`/`tooltip.ts`/`dialogueBox.ts` live-viewport fixes D-157
+  also made (reading `scene.scale.width/height` instead of the fixed
+  `GAME_WIDTH`/`GAME_HEIGHT` constants) were NOT reverted — harmless
+  no-ops under `Scale.FIT`, kept as groundwork for if this is retried.
 
 ### KI-108 — D-156: responsive-canvas roadmap step 2 — Map Builder + Character Creation own resize-reactivity
 - Both scenes should look and behave IDENTICALLY to before at a normal
@@ -116,11 +114,11 @@ real browser battle yet. Ordered newest first.
   its full-screen dim backdrop could theoretically show at the wrong size
   until the next click — cannot actually occur under today's `Scale.FIT`,
   since the viewport width never changes regardless of window size.
-  **Update (D-157): the `Scale.RESIZE` cutover has since shipped — resizing
-  now DOES visibly re-lay-out every scene (see KI-109); the wizard-overlay
-  edge case described here is now reachable in principle, but stays an
-  accepted, self-healing limitation rather than a fix, per D-157's own
-  writeup.**
+  **Update (D-157, then reverted by D-159): the `Scale.RESIZE` cutover
+  shipped briefly, then got reverted after it broke Main Menu/Character
+  Creation in real-browser testing (see KI-109) — back to `Scale.FIT`,
+  resizing the window is once again a no-op for every scene's layout,
+  matching this note's original text again.**
 
 ### KI-107 — D-155: responsive-canvas roadmap step 1 — 5 more scenes converted (Compendium, Character Sheet, Browse Shared Maps, Free Play, Co-op Lobby)
 - Every one of these 5 scenes should look and behave IDENTICALLY to before
@@ -155,9 +153,9 @@ real browser battle yet. Ordered newest first.
   game yet; `MAX_MAP_COLS`/`MAX_MAP_ROWS` are still unchanged (~20x9) —
   actual "bigger maps in battle" still needs `BattleScene`'s own future
   `TILE_SIZE` conversion, not yet started.
-  **Update (D-157): resizing now DOES visibly re-lay-out every one of these
-  5 scenes (see KI-109) — `MAX_MAP_COLS`/`MAX_MAP_ROWS` are still unchanged,
-  that part of this note still stands.**
+  **Update (D-157, then reverted by D-159): briefly shipped, then reverted
+  after real-browser testing broke Main Menu/Character Creation (see
+  KI-109) — back to `Scale.FIT`, this note's original text stands again.**
 
 ### KI-106 — D-154: responsive-canvas foundation (7 scenes), Map Builder click-and-drag paint tool + real map-name field
 - **The 7 converted scenes should look and behave IDENTICALLY to before** at
@@ -194,9 +192,9 @@ real browser battle yet. Ordered newest first.
   intentionally not part of this session. `MAX_MAP_COLS`/`MAX_MAP_ROWS`
   are unchanged (still ~20x9) — "bigger maps" in an actual battle needs
   `BattleScene`'s own future `TILE_SIZE` conversion first.
-  **Update (D-157): resizing now DOES visibly re-lay-out every one of these
-  7 scenes (see KI-109) — `MAX_MAP_COLS`/`MAX_MAP_ROWS` are still unchanged,
-  that part of this note still stands.**
+  **Update (D-157, then reverted by D-159): briefly shipped, then reverted
+  after real-browser testing broke Main Menu/Character Creation (see
+  KI-109) — back to `Scale.FIT`, this note's original text stands again.**
 
 ### KI-105 — D-153: real Settings screen (Game Speed + Master/Music/SFX volume + Mute), no audio content yet
 - A new "Settings" button (Main Menu's top-right corner, replacing the old

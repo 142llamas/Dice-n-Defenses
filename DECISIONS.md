@@ -8004,6 +8004,79 @@ still hold (arrow-key cursor, Enter/Space parity, Tab grid/board focus
 switching, no page-scroll on arrows/space, a full mouse-free battle) since
 this rewrite touches the exact code paths those depend on.
 
+### D-159 — Reverted D-157's `Scale.RESIZE` cutover back to `Scale.FIT` after Kevin's first real in-browser pass found it broken
+
+Kevin's first actual browser test of D-157 found two concrete, confirmed
+bugs: Main Menu's Settings/Sign-in corner controls overlapping the frame
+border, and Character Creation's Start/Back buttons rendering completely
+off-screen (invisible, not just misplaced) after clicking "New Game." His
+own diagnosis — "pretty sure that's the new full-screen sizing" — was
+correct.
+
+**Root cause**: `Scale.RESIZE` makes the canvas's actual pixel dimensions
+track the real browser window exactly, with NO automatic shrink-to-fit.
+`Scale.FIT` (the mode this reverts to) was quietly doing something the
+whole D-154/155/156 roadmap had assumed away: every scene's
+`getViewport`/`onViewportResize`/`repositionLayout`/`rebuildLayout`
+conversion only ever handled re-CENTERING content horizontally on a resize
+— none of it handled a real window SHORTER than `GAME_HEIGHT` (1080px).
+Under `Scale.FIT`, that gap was invisible: the whole fixed 1280x1080 design
+simply shrank (via CSS, preserving aspect ratio) to fit inside whatever
+window the player had, so nothing was ever actually clipped — a hero could
+resize the browser to a tiny window and every button would just get
+smaller, never disappear. Under `Scale.RESIZE`, the canvas instead becomes
+the real window's actual pixel size, and every scene's absolute-pixel
+Y-coordinates (built assuming up to 1080px of vertical room, e.g.
+`CharacterCreationScene`'s Start/Back buttons near the bottom of that
+range) are unchanged — a browser window shorter than 1080px tall (common;
+many laptops' usable viewport height is well under that once browser chrome
+is subtracted) puts that content below the visible canvas, with nothing to
+scroll it into view. Main Menu's corner-control overlap has the same root
+shape from the width side: `computeCornerControlsRegion` (D-149) and this
+whole roadmap's centering math were tuned and eyeballed against a
+1280-wide canvas; a real window's width/aspect ratio combination the
+`FIT`-shrink previously absorbed is now exposed directly.
+
+**What this reverts**: `main.ts`'s `scale.mode` back to `Phaser.Scale.FIT`;
+removed `BattleScene`'s now-pointless (and, left in place, actively
+harmful) runtime scale-mode swap — its `create()` no longer force-sets
+`Scale.FIT`+`setAspectMode`+`setGameSize` (redundant once the game-wide
+default is `FIT` again), and its `SHUTDOWN` handler no longer flips the
+whole game to `Scale.RESIZE` on battle-exit (which would have re-broken
+every menu scene the instant any player finished or left one battle).
+
+**What this does NOT revert**: the D-157 fixes to `uiTheme.ts`'s
+`drawScreenBackdrop`/`spawnAmbientMotes`/`centeredRowX`, `tooltip.ts`, and
+`dialogueBox.ts` (reading a scene's live `scale.width`/`height` instead of
+the fixed `GAME_WIDTH`/`GAME_HEIGHT` constants) — these are strict
+correctness improvements that are harmless no-ops under `Scale.FIT` (live
+viewport size and the fixed constants are numerically identical again now),
+and would still be necessary groundwork if a real responsive-canvas attempt
+is made again later.
+
+**What a real fix would need, if this is retried**: a strategy for
+VERTICAL space, not just horizontal centering — either (a) every scene
+reflows its vertical layout too (not just shifts/rebuilds horizontally), or
+(b) the game keeps `Scale.FIT`'s shrink-to-fit behavior but with a LARGER
+logical canvas size (raising `GAME_WIDTH`/`GAME_HEIGHT` themselves) rather
+than switching scale modes at all — worth raising with Kevin as an explicit
+option before attempting this roadmap step a second time, rather than
+re-guessing blind again with no browser available here to catch the next
+edge case.
+
+**Roadmap status**: step 3 (`Scale.RESIZE` cutover) is back to NOT DONE.
+Step 4 (`BattleScene`'s `TILE_SIZE` scaling) was already correctly gated on
+step 3 shipping and being confirmed — it still is, now doubly so.
+
+No new tests — this is a revert of presentation-layer scene-scaffolding
+code with no pure-system rule involved, same as D-157 itself. Tests remain
+at **1349**. Typecheck clean, all 1349 tests pass, production build
+succeeds (126 modules, unchanged — no new files). `npm run dev` serves HTTP
+200. This revert restores the EXACT `Scale.FIT` behavior that was working
+correctly across many prior sessions (not a new, equally-unverified fix),
+so this should be considered a high-confidence correction — but still worth
+Kevin's own quick look to confirm both reported bugs are actually gone.
+
 - **LOCKED:** "Stronghold Integrity" is the shared loss resource; "Breach Damage"
   is what escaping enemies remove from it; "Tile" is the logical distance unit.
 - **LOCKED:** Local single-player core loop before any Firebase or multiplayer.

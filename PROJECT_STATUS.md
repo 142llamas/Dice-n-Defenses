@@ -1,6 +1,32 @@
 # Project Status
 
-## KI-034 redesign: hero roster strip + decluttered status line — DONE this session (D-158)
+## Reverted the `Scale.RESIZE` cutover — DONE this session (D-159)
+
+Kevin's first real in-browser pass caught two confirmed bugs from D-157:
+Main Menu's corner controls overlapping the frame border, and Character
+Creation's Start/Back buttons rendering completely off-screen. See **D-159**
+in `DECISIONS.md` and **KI-109** in `KNOWN_ISSUES.md` (updated in place).
+
+- Root cause: `Scale.RESIZE` has no automatic shrink-to-fit — the whole
+  D-154/155/156 roadmap only ever handled horizontal recentering on
+  resize, never vertical space, and `Scale.FIT`'s shrink was quietly
+  masking that gap the entire time.
+- `main.ts` is back to `Scale.FIT`; `BattleScene`'s runtime scale-mode-swap
+  code (added to lock battles to `FIT` under the old `RESIZE` default) is
+  removed as pointless now.
+- The D-157 fixes to shared UI helpers reading live viewport size instead
+  of fixed constants were NOT reverted — harmless under `FIT`, useful
+  groundwork if this is attempted again with a design that handles
+  vertical space too.
+- Responsive-canvas roadmap status: step 3 is back to NOT DONE. Step 4
+  (`BattleScene`'s `TILE_SIZE` scaling) remains gated on step 3 — now with
+  an explicit note that a retry needs a real plan for vertical space, not
+  just a mode switch.
+- Typecheck, all 1349 tests, and the production build (126 modules,
+  unchanged) all pass. This restores previously-working behavior rather
+  than introducing a new unverified fix.
+
+## KI-034 redesign: hero roster strip + decluttered status line — DONE prior session (D-158)
 
 Kevin picked this over continuing the responsive-canvas roadmap, after
 confirming for a fourth session that he hated the packed bottom status/hint
