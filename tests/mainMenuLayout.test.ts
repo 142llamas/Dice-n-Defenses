@@ -2,11 +2,10 @@ import { describe, it, expect } from "vitest";
 import { computeCornerControlsRegion } from "../src/game/systems/mainMenuLayout";
 
 describe("computeCornerControlsRegion (D-154)", () => {
-  it("matches the original hardcoded region at the current fixed canvas width (1280)", () => {
-    // MainMenuScene.buildTitle used to hardcode `new Rectangle(980, 10, 260, 100)`
-    // before this was parameterized by viewport width — pins the extraction
-    // to that exact known-good baseline.
-    expect(computeCornerControlsRegion(1280)).toEqual({ x: 980, y: 10, width: 260, height: 100 });
+  it("matches the current corner-control layout at the fixed canvas width (1280)", () => {
+    // D-16x: Settings/Account both shifted down 16px (32->48, 88->104) so
+    // Settings clears drawScreenBackdrop's frame border with real margin.
+    expect(computeCornerControlsRegion(1280)).toEqual({ x: 980, y: 26, width: 260, height: 100 });
   });
 
   it("stays fully on-canvas and tracks the right edge at other viewport widths", () => {

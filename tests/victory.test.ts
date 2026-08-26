@@ -19,7 +19,6 @@ const TEST_HERO_DEF: HeroDefinition = {
   attackRangeTiles: 1,
   attackBonus: 4,
   baseArmorClass: 10,
-  abilityId: "cleave",
 };
 
 /**

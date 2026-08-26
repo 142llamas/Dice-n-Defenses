@@ -33,7 +33,6 @@ const WREN_TEST_HERO_DEF: HeroDefinition = {
   attackRangeTiles: 3,
   attackBonus: 4,
   baseArmorClass: 10,
-  abilityId: "piercing-shot",
 };
 
 function wren(): Hero {
@@ -73,6 +72,17 @@ describe("Hero equipment", () => {
     hero.grantMight(1);
     hero.equippedItems.ring1 = "whetstone-band"; // +2
     expect(hero.effectiveAttackDamage).toBe(3 + 1 + 2);
+  });
+
+  it("grantBonusHealth (D-181) raises both max and current HP immediately, and stacks", () => {
+    const hero = wren();
+    const maxBefore = hero.effectiveMaxHealth;
+    const healthBefore = hero.health;
+    hero.grantBonusHealth(5);
+    expect(hero.effectiveMaxHealth).toBe(maxBefore + 5);
+    expect(hero.health).toBe(healthBefore + 5);
+    hero.grantBonusHealth(3);
+    expect(hero.effectiveMaxHealth).toBe(maxBefore + 8);
   });
 
   it("sums bonuses across every filled slot at once", () => {
@@ -231,7 +241,6 @@ describe("Hero weapon/armor (D-108)", () => {
       classId: "rogue",
       level: 1,
       abilityScores: { str: 8, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-      abilityId: "piercing-shot",
       controlledBy: "human",
     };
     const def = heroDefinitionFromBuild(build);
@@ -405,7 +414,7 @@ describe("Magic-item expansion (Phase 22)", () => {
     const hero = wren();
     const base = hero.effectiveMovementTiles;
     hero.equippedItems.footwear = "boots-of-speed";
-    expect(hero.effectiveMovementTiles).toBe(base + 2);
+    expect(hero.effectiveMovementTiles).toBe(base + 4); // D-172: Boots of Speed rescaled to +4 tiles
   });
 
   it("grantsStatusImmunity silently blocks the listed status from ever being applied", () => {
@@ -542,7 +551,6 @@ describe("Ability-score-setting items (D-127)", () => {
       classId: "fighter",
       level: 1,
       abilityScores: { str: 10, dex: 14, con: 10, int: 10, wis: 10, cha: 8 },
-      abilityId: "cleave",
       controlledBy: "human",
       ...overrides,
     };
@@ -588,7 +596,7 @@ describe("Ability-score-setting items (D-127)", () => {
   });
 
   it("Headband of Intellect raises an Int-caster's spell save DC", () => {
-    const hero = heroFromBuild({ classId: "wizard", abilityId: "fire-bolt", abilityScores: { str: 10, dex: 14, con: 10, int: 10, wis: 10, cha: 8 } });
+    const hero = heroFromBuild({ classId: "wizard", abilityScores: { str: 10, dex: 14, con: 10, int: 10, wis: 10, cha: 8 } });
     const baseDC = hero.spellSaveDC;
     hero.equippedItems.head = "headband-of-intellect"; // sets INT to 19 -> +4 mod
     hero.onGearChanged();

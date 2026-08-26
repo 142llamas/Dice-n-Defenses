@@ -21,6 +21,22 @@ export interface PixelPosition {
   y: number;
 }
 
+/**
+ * D-176 (KI-098 item 9): shrink-to-fit tile size for a map of the given
+ * dimensions inside a fixed pixel area — never upscales past `maxTileSize`.
+ * Same math `MapBuilderScene.rebuildGridSystem()` already uses inline;
+ * extracted here so `BattleScene` can share it instead of hand-duplicating.
+ */
+export function computeFittedTileSize(
+  cols: number,
+  rows: number,
+  availableWidth: number,
+  availableHeight: number,
+  maxTileSize: number,
+): number {
+  return Math.floor(Math.min(maxTileSize, availableWidth / cols, availableHeight / rows));
+}
+
 export class GridSystem {
   readonly cols: number;
   readonly rows: number;

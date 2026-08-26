@@ -139,10 +139,11 @@ export const POTION_DEFINITIONS: Record<string, PotionDefinition> = {
   "potion-of-speed": {
     id: "potion-of-speed",
     name: "Potion of Speed",
-    description: "+2 movement tiles for the rest of the battle.",
+    description: "+4 movement tiles for the rest of the battle.",
     cost: 72,
     effect: "movementBuff",
-    amount: 2,
+    // D-172: 4 tiles = the real 20ft bonus, rescaled from 5ft/tile (was 2 tiles).
+    amount: 4,
     rarity: "veryRare",
     assetKey: "potion-of-speed",
   },

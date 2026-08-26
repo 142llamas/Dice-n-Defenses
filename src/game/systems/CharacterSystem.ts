@@ -1,6 +1,4 @@
 import { getClassDefinition, type CharacterClassDefinition, type ClassFeature } from "../data/classes";
-import { getAbility } from "../data/abilities";
-import { isSpellId } from "../data/spells";
 import { modifierFor, type AbilityScoreId, type AbilityScores } from "../data/abilityScores";
 
 /**
@@ -134,12 +132,15 @@ export function bonusDamageForClassAtLevel(classDef: CharacterClassDefinition, l
 }
 
 const BASE_WEAPON_DAMAGE = 2;
-/** An ability with reach at or below this is treated as a melee kit. */
-const MELEE_ABILITY_RANGE_THRESHOLD = 1;
 
-/** Melee if the signature ability's reach is short, ranged otherwise. */
-export function attackStyleForAbility(abilityId: string): "melee" | "ranged" {
-  return getAbility(abilityId).rangeTiles <= MELEE_ABILITY_RANGE_THRESHOLD ? "melee" : "ranged";
+/**
+ * D-178: a class's fixed baseline basic-Attack style (melee/ranged) — see
+ * `CharacterClassDefinition.basicAttackStyle`. Replaces the removed
+ * "signature action" player pick; every class's style is now a fixed part
+ * of its own identity, not a choice.
+ */
+export function attackStyleForClass(classId: string): "melee" | "ranged" {
+  return getClassDefinition(classId).basicAttackStyle;
 }
 
 /** The class-level-dependent combat numbers `heroDefinitionFromBuild`/`Hero.levelUpClass` need. */
@@ -162,31 +163,27 @@ export interface LeveledCombatStats {
 
 /**
  * Every combat number that changes when a D&D-built hero's class level
- * changes, computed fresh from the character's fixed ability scores/class/
- * signature ability — the SAME formula `CharacterBuildSystem
- * .heroDefinitionFromBuild` used to compute inline for level 1 only, now
- * reusable at any level so a hero can be re-leveled in place (Phase 13.3,
- * D-089) instead of only ever being built once.
+ * changes, computed fresh from the character's fixed ability scores/class —
+ * the SAME formula `CharacterBuildSystem.heroDefinitionFromBuild` used to
+ * compute inline for level 1 only, now reusable at any level so a hero can
+ * be re-leveled in place (Phase 13.3, D-089) instead of only ever being
+ * built once.
+ *
+ * D-178: the basic-Attack ability modifier now always comes from the class's
+ * own fixed `primaryAbility` (real SRD-grounded per class: STR for
+ * Fighter/Barbarian/Paladin, DEX for Rogue/Monk/Ranger, and each caster's own
+ * real spellcasting ability for Wizard/Cleric/Druid/Bard/Sorcerer/Warlock) —
+ * replacing the removed "signature action" player pick and its Monk-only
+ * hardcoded exception, both now redundant with `primaryAbility` itself.
  */
 export function combatStatsForClassLevel(
   classId: string,
   level: number,
   abilityScores: AbilityScores,
-  abilityId: string,
 ): LeveledCombatStats {
   const classDef = getClassDefinition(classId);
-  const style = attackStyleForAbility(abilityId);
   const conMod = modifierFor(abilityScores, "con");
-  // A cast spell scales off the caster's spellcasting ability (Wizard: INT),
-  // not the melee/ranged STR-or-DEX split a mundane weapon attack uses — see
-  // data/spells.ts for which signature-action ids are spells.
-  // Phase 13.8 (D-093): Martial Arts lets a Monk's melee (unarmed) attacks
-  // scale off Dexterity instead of Strength — every other class's melee
-  // attack still uses Strength.
-  const meleeAbility = classId === "monk" ? "dex" : "str";
-  const attackMod = isSpellId(abilityId)
-    ? modifierFor(abilityScores, classDef.spellcasting?.spellcastingAbility ?? "int")
-    : modifierFor(abilityScores, style === "melee" ? meleeAbility : "dex");
+  const attackMod = modifierFor(abilityScores, classDef.primaryAbility);
   const riderDamage = bonusDamageForClassAtLevel(classDef, level);
   return {
     maxHealth: maxHitPointsForClass(classDef, level, conMod),

@@ -39,7 +39,6 @@ function makeBarbarianBuild(overrides: Partial<CharacterBuild> = {}): CharacterB
     classId: "barbarian",
     level: 1,
     abilityScores: { str: 16, dex: 12, con: 14, int: 8, wis: 10, cha: 8 },
-    abilityId: "cleave",
     controlledBy: "human",
     ...overrides,
   };
@@ -117,7 +116,7 @@ function makeLaneBattle(): {
   waves: WaveDefinition[];
   liveState: LiveBattleState;
 } {
-  const map = new GameMap(parseMapRows("lane", "Lane", ["S..X", "...."]));
+  const map = new GameMap(parseMapRows("lane", "Lane", ["S.......X", "........."]));
   const pathfinding = new PathfindingSystem(map);
   const waves: WaveDefinition[] = [
     {
@@ -185,7 +184,7 @@ describe("captureBattleState / restoreBattleState — full battle round trip", (
     // the ones the original battle used) — proves the snapshot is really
     // self-contained data, not something quietly relying on shared object
     // identity with the live battle it came from.
-    const map2 = new GameMap(parseMapRows("lane", "Lane", ["S..X", "...."]));
+    const map2 = new GameMap(parseMapRows("lane", "Lane", ["S.......X", "........."]));
     const pathfinding2 = new PathfindingSystem(map2);
     void pathfinding1;
     const restored = restoreBattleState(before, {
@@ -202,7 +201,7 @@ describe("captureBattleState / restoreBattleState — full battle round trip", (
   it("restored systems behave like the originals, not just match on paper", () => {
     const { waves, liveState } = makeLaneBattle();
     const snapshot = captureBattleState(liveState);
-    const map2 = new GameMap(parseMapRows("lane", "Lane", ["S..X", "...."]));
+    const map2 = new GameMap(parseMapRows("lane", "Lane", ["S.......X", "........."]));
     const pathfinding2 = new PathfindingSystem(map2);
     const restored = restoreBattleState(snapshot, {
       map: map2,

@@ -758,8 +758,10 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
   });
 
   it("enemies route around a blocking hero when no one is in reach", () => {
-    // Two rows so a detour exists when (2,0) is blocked.
-    const ws = laneSystem(["S..X", "...."], oneGrunt);
+    // Two rows so a detour exists when (2,0) is blocked. A longer lane than
+    // before (D-172 doubled Grunt's speed to 4 tiles/phase) so it can't
+    // detour AND reach the exit within this same one phase.
+    const ws = laneSystem(["S.......X", "........."], oneGrunt);
     const report = ws.tickEnemyPhase({ isBlocked: (p) => p.x === 2 && p.y === 0 });
     const grunt = ws.enemies[0];
     expect(grunt.position).not.toEqual({ x: 2, y: 0 }); // did not enter the blocked tile
@@ -770,7 +772,9 @@ describe("WaveSystem enemy combat (melee vs ranged behaviour)", () => {
 
 describe("WaveSystem removeDefeated (removal occurs exactly once)", () => {
   it("removes a slain enemy once and lets the wave complete", () => {
-    const ws = laneSystem(["S..X"], oneGrunt);
+    // D-172 doubled Grunt's speed to 4 tiles/phase — a longer lane than
+    // before so it doesn't breach (and vanish) on its very first move.
+    const ws = laneSystem(["S....X"], oneGrunt);
     ws.tickEnemyPhase(); // spawns the grunt (no heroes to fight)
     expect(ws.enemies.length).toBe(1);
     ws.enemies[0].health = 0; // simulate a hero killing it

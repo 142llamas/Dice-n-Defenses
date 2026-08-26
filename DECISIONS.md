@@ -8064,6 +8064,160 @@ option before attempting this roadmap step a second time, rather than
 re-guessing blind again with no browser available here to catch the next
 edge case.
 
+## Phase 26 — August 2026 playtest bug batch (this chat)
+
+Kevin's next in-browser playtest pass surfaced 8 items in one message,
+several of them recurrences of previously-"fixed" bugs. Investigated with 6
+parallel Explore/Plan agents reading the actual current code (not trusting
+the docs' own claims) before writing anything. See `PHASE_HANDOFF.md` for
+the full session narrative.
+
+### D-160 — Character Creation: hide hero-name DOM inputs behind overlays, move Back button to the standard top-left slot
+
+Two related bugs, both in `CharacterCreationScene.ts`. First: the 4 hero
+name fields are real HTML `<input>` DOM elements (Phaser's DOM plugin
+layers them above the canvas, outside normal depth sorting), and nothing
+hid them while a full-screen picker/wizard overlay (`renderPlanPrompt`) was
+open — they stayed visible on top of every Class/Race/Gear/Subclass picker,
+matching Kevin's "the names of the 4 heroes appear when picking options...
+it does nothing" report exactly. Fixed with a `setNameInputsVisible()`
+toggle, called from `renderPlanPrompt` (hide) and `clearLevelPlanOverlay`
+(restore).
+
+Second: an audit of all 12 back-navigating scenes found 9 of them agree on
+a top-left `(110–120, 40–42)` "Back (Esc)" button built with
+`uiTheme.ts`'s `createOrnateButton`. `CharacterCreationScene` was the one
+outlier — a hand-rolled rectangle at bottom-center `(width/2, 1040)`
+labeled "Back to Menu," sitting right at the packed bottom edge where
+Kevin also reported the Start/Save buttons as cut off. Moved to match the
+other 9 scenes exactly (position, size, label, `createOrnateButton`),
+which both fixes "no way to get back to the main menu" and frees up the
+crowded bottom edge. `repositionLayout()`'s blind "shift every child by the
+viewport-center delta" convention (D-156) would have mis-shifted this
+left-anchored button under a future `Scale.RESIZE` attempt, so its
+container is tagged `"back-button-anchor"` and excluded — currently a
+no-op under `Scale.FIT` but correct groundwork.
+
+### D-161 — Main Menu: Settings/Exit Game buttons no longer overlap the frame border
+
+Root cause: two independent hardcoded-margin systems were never
+reconciled. `uiTheme.ts`'s `drawScreenBackdrop` draws the ornate frame at a
+fixed `margin = 18`. Settings sat at `y = 32` (height 44) — top edge `10`,
+8px ABOVE the frame's `y = 18` line, a real overlap. Exit Game (D-151) sat
+at `height - 40` (height 36) — bottom edge `height - 22`, only 4px clear of
+the frame's `height - 18` line, eaten further by the button's own stroke
+and hover-lift tween. Moved Settings to `y = 48` and Exit Game to
+`height - 56`; shifted Account down to `y = 104` to keep its existing gap
+below Settings. `mainMenuLayout.ts`'s `computeCornerControlsRegion` (D-154)
+updated to match (`y: 26`, same `height: 100`), and its own pinned-baseline
+test updated to the new numbers.
+
+### D-162 — Mitigation for a persistent horizontal-squish bug after exiting a battle; stale `Scale.RESIZE` comments cleaned up
+
+Kevin reported the canvas squishes horizontally after "Exit to Main Menu"
+from a battle, and stays squished on every later screen — except DOM
+elements (the hero-name `<input>`s), which stay correct. Static reading of
+the current tree could NOT confirm a root cause: D-159's `Scale.RESIZE`
+revert is code-complete (no leftover scale-mode-swap/`setGameSize`/manual
+`canvas.style` code anywhere in `src/`), and `Scale.FIT` scales both axes
+uniformly by construction, so it can't itself produce a horizontal-only
+squish. The DOM-plugin's transform math reads the same `ScaleManager`
+state the canvas should — the "DOM stays correct" clue points at the raw
+`<canvas>` element's CSS box desyncing from Phaser's tracked
+`ScaleManager` state, not a `ScaleManager` mode/config bug.
+
+Given that, this is a **best-effort mitigation, not a confirmed fix**:
+`MainMenuScene.create()` now calls `this.scale.refresh()` on every entry
+(cheap, harmless if the state was already correct) to re-sync the two.
+Flagged explicitly for Kevin to confirm — if it recurs, the next step is a
+live repro (inspect the canvas element's style and
+`game.scale.displaySize`/`baseSize` right before/after "Exit to Main
+Menu"), not a second blind guess. Also corrected several comments in
+`uiTheme.ts`, `dialogueBox.ts`, and `tooltip.ts` that still described
+`Scale.RESIZE` as currently live (true only briefly, under D-157, before
+D-159's revert) — they now describe the current, reverted state.
+
+### D-163 — Removed every silent "invented" level-up default; Starting Level/Team Level fast-forward now queues real prompts at battle start
+
+Kevin's own words, asked to clarify an ambiguous report: *"I have not yet
+created any blue-prints and yet the game offers blue-prints for the
+character to follow on level up. I don't want that. I want all
+blue-prints to be player-made."* Two places were silently inventing a
+choice on the player's behalf: `LevelUpPlanSystem.ts`'s three resolvers
+(`resolveAsiForLevel`/`resolveSubclassForClass`/`resolveSpellPickForRequest`)
+fell back to a fixed default (raise the hero's current-highest ability;
+the class's first modeled subclass; the first eligible spell) for ANY
+level with no explicit plan entry — and `fastForwardHero` used those
+resolvers unconditionally during Character Creation's Starting Level/Team
+Level fast-forward, regardless of the hero's Plan Levels mode (even
+"Prompted" or no-plan-at-all heroes got every skipped level silently
+defaulted).
+
+**The fix**: the three resolvers now return `boolean` (true = an explicit
+plan entry was applied, or nothing needed choosing; false = unresolved, no
+mutation) instead of always mutating. `fastForwardHero` returns every
+unresolved level as a `LevelUpChoiceStep[]` instead of silently filling
+them in. `BattleScene.buildHeroes()` collects whatever the pre-battle
+fast-forward couldn't resolve into three new pending-choice fields, and a
+new `presentPendingFastForwardChoices()` chains them through the exact
+same `showSubclassChoiceQueue`/`showAsiChoiceQueue`/
+`showSpellPickChoiceQueue` methods `afterWaveCleared` already uses for a
+real in-battle level-up — fired once, right before wave 1. Starting
+Level/Team Level still work exactly as a convenient level-skip (no
+re-fighting to grind), but every choice along the way is now either
+something the player explicitly planned or something they're asked about,
+never invented. `applyClassLevelUps`'s "auto" branch got the matching fix:
+it only skips the prompt when the resolver actually returned true, so an
+"auto" hero with no explicit entry for a level is queued exactly like a
+"prompt"/"fresh" hero would be. The ASI prompt chain
+(`asiQueue`/`showAsiPathChoice`/`showAsiModeChoice`/`showFeatChoice`/
+`beginFeatGrant`/`continueFeatGrant`) now threads an explicit `level`
+parameter instead of reading `hero.level` (which is wrong once a choice is
+deferred past the hero's current level); spell-pick prompts key off the
+class's fixed trigger level (`spellPickTriggerLevel`, now exported) for
+the same reason. `tests/levelUpPlanSystem.test.ts` rewritten throughout —
+every "with no plan" case now asserts `false`/unresolved with no mutation,
+rather than the old fixed-default value.
+
+### D-164 — Replaced every remaining click-to-cycle button with a real list picker
+
+D-147 already replaced Class/Race/Gear/Subclass's old cycle buttons with a
+real "open a list, pick one" overlay (`openChoicePicker`), but it stayed
+private to `CharacterCreationScene`. An audit found the same disliked
+pattern still live in 6 other places: `MapBuilderScene` (map width/height,
+Kevin's own named example), `SettingsScene` (Game Speed, Master/Music/SFX
+Volume), `CharacterCreationScene` itself (Signature Action, Starting
+Level, Party Size, Difficulty, Team Level), `FreePlayScene` and
+`BrowseSharedMapsScene` (Difficulty, copy-pasted identically in both).
+True binary toggles (Mute On/Off, the Standard Array/Point Buy method
+switch) were left alone — a 2-state switch isn't the "cycle through a
+list" pattern Kevin flagged.
+
+The underlying renderer (`renderPlanPrompt`'s dim-backdrop/title/
+wrapping-button-grid drawing code) was lifted out of `CharacterCreationScene`
+into `uiTheme.ts` as `renderChoiceOverlay`/`clearChoiceOverlay` (a
+caller-owned `overlay: GameObject[]` array in, mutated in place — no
+scene-specific state needed) plus a one-shot `openChoiceList` convenience
+wrapper for the common "pick one, close" case. Every listed scene now owns
+its own small `choiceOverlay` field and calls into the shared primitive;
+`CharacterCreationScene`'s own `openChoicePicker`/`renderPlanPrompt` became
+thin wrappers delegating to it (preserving D-160's name-hiding hook).
+`BattleScene` gained a new `setAnimationSpeed(speed)` (alongside the
+existing `cycleGameSpeed()`, which now just calls it) so
+`SettingsScene`'s Game Speed button — reachable as a live overlay from the
+Pause Menu mid-battle — can set a specific speed instead of stepping
+through the cycle. A new pure `difficultyChoiceDescription` in
+`data/difficulty.ts` de-duplicates the Difficulty picker's description
+text across its three call sites instead of writing it three times.
+`SettingsSystem.ts`'s `nextVolume` (and its dedicated test) were deleted —
+no longer called anywhere once the volume buttons stopped cycling.
+
+**Deliberately NOT converted**: `BattleScene`'s mid-battle Game Speed "S"
+keyboard hotkey — a single keypress cycling a 3-state setting is a normal
+keyboard-shortcut convention, not the mouse-driven "click to cycle through
+a list" pattern Kevin's complaint was about; forcing a modal open on every
+keypress would be a regression, not a fix.
+
 **Roadmap status**: step 3 (`Scale.RESIZE` cutover) is back to NOT DONE.
 Step 4 (`BattleScene`'s `TILE_SIZE` scaling) was already correctly gated on
 step 3 shipping and being confirmed — it still is, now doubly so.
@@ -8076,6 +8230,1708 @@ succeeds (126 modules, unchanged — no new files). `npm run dev` serves HTTP
 correctly across many prior sessions (not a new, equally-unverified fix),
 so this should be considered a high-confidence correction — but still worth
 Kevin's own quick look to confirm both reported bugs are actually gone.
+
+## Phase 27 — KI-098 backlog (this chat, and however many follow)
+
+Kevin's standing instruction (see `KNOWN_ISSUES.md`'s KI-098): work straight
+down its 13-item ordered backlog, session after session, with no playtest
+checkpoints in between — he's deferring all in-browser confirmation to one
+combined pass once the whole list is done.
+
+### D-165 — Compendium: replaced the permanent description block with paginated hover-tooltip rows (KI-098 item 1)
+
+D-158 generalized every other item preview (Gear/Shop) to the shared
+`tooltip.ts` hover controller; `CompendiumScene.ts` was the one screen left
+showing every entry's full description permanently on-screen via one big
+`detailText` blob per category/page.
+
+**The fix**: a new shared `renderRowList(headerLine, panelWidth, rows)`
+renders each category as compact one-line rows (name + minimal identifying
+stat — cost, level, slot/rarity, etc.), paginated from the panel's real
+available height instead of a per-category "how many fit" constant. A row's
+full description now appears via `tooltip.ts`'s `attachHoverTooltip` on
+mouse hover, exactly like a Gear/Shop item button. Every itemized category
+converted: Classes, Subclasses, Races, Feats, Skills, Spells, Equipment,
+Potions, Buildings, Traps, Status Effects. Nested categories (a
+subclass's features, a race's traits, a Buildings/Traps sub-group) render
+their group label as a non-interactive `isGroupHeader` divider row with no
+tooltip, then one hoverable row per feature/trait/item underneath. Classes'
+stat line and Spells' count line keep their non-interactive `headerLine`
+above the row list; every other category has none (`null`).
+
+The Dialogue tab (`renderDialoguePreviewTab`) was deliberately left
+unchanged — it's a demo/preview blurb for `dialogueBox.ts`'s styling, not
+itemized reference data, so there's nothing here to hide behind a hover.
+
+Mouse-hover only, no keyboard-focus tooltip variant — unlike Build/Gear's
+grids (KI-034), Compendium's row list was never part of the full-keyboard-
+play requirement (a read-only reference screen, not something a battle
+requires completing), and `tooltip.ts`'s `attachHoverTooltip` only wires
+`pointerover`/`pointerout` today regardless.
+
+No new tests — this is a presentation-layer-only change to a read-only
+reference scene with no pure-system rule involved (same rationale as
+D-164/D-157). Typecheck clean, all 1348 tests pass unchanged (no dedicated
+`CompendiumScene` test file exists), production build succeeds (126
+modules, unchanged). Needs Kevin's own browser look, per KI-098's standing
+instruction, folded into the eventual combined playtest pass rather than
+checked separately now.
+
+### D-166 — Wired the Character Sheet's hotkey bar into actual battle input (KI-098 item 2)
+
+D-148 built a real, editable hotkey bar (Character Sheet's Hotkeys tab,
+`Hero.actionHotkeys`) but nothing in `BattleScene.ts` ever read it — Q/R/F/T
+stayed hard-wired to their fixed handlers, so pinning a spell to a slot did
+nothing in battle.
+
+**The fix**: a new 4th HUD button row (below Class Action/Character, same
+"add a row, no horizontal room left" precedent as every row above it) shows
+up to `ACTION_HOTKEY_SLOT_COUNT` (6) small buttons whenever a hero is
+selected — one per FILLED slot (`showHotkeyButtonsFor`), dimmed (not
+hidden) when its id isn't currently usable, since a pinned-but-not-castable
+spell is a normal, expected state (`Hero.setActionHotkey`'s own doc
+comment). Clicking one calls `triggerHotkey(slot)`, which dispatches to the
+exact same resolver its un-hotkeyed path already uses — `chooseSpell` for a
+known spell/cantrip (the spellbook overlay's own per-button handler),
+`onBonusActionButton`/`onClassActionButton` for a `HeroActionRegistry`
+entry (kind alone identifies which one fires — a hero has at most one
+available action of either kind at once), or `onAbilityButton` for a
+non-caster's frozen signature ability. No new interaction/UI state, no
+change to Q/R/F/T's own behavior — this only adds a second way to fire
+something already reachable through them.
+
+A new shared `hotkeyDisplayLabel(hero, id)` in `HeroActionRegistry.ts`
+replaces the near-identical private label logic `CharacterSheetScene.ts`'s
+Hotkeys tab already had (registry action → known spell/cantrip → frozen
+signature ability, in that priority) — both scenes now call the one
+function, so they can't drift apart. `tests/heroActionRegistry.test.ts`
+gained 4 new cases covering all three id sources plus the empty-slot case.
+
+Deliberately mouse-only, no new keyboard shortcut: the 6 slots are already
+labeled "1:"–"6:" in the Character Sheet, but the number-row keys 1-4 are
+already bound to "select hero by party slot" (Phase 8) — reusing them for
+hotkeys would silently break that existing, KI-034-confirmed shortcut.
+Picking a new, unrelated key for a feature Kevin never specified an exact
+binding for felt like inventing a keybinding scheme instead of shipping the
+one thing actually asked for (wiring the bar itself); mouse-click is enough
+to prove the wiring works, and a keyboard shortcut can be layered on later
+without changing anything built here.
+
+Typecheck clean, all 1352 tests pass (1348 + 4 new), production build
+succeeds (126 modules, unchanged). No browser available in this
+environment — needs Kevin's own look, folded into the eventual KI-098
+combined playtest pass per his standing instruction.
+
+### D-167 — Equip-flow UX rethink: the roster strip is now a real click target (KI-098 item 3)
+
+KI-098 item 3 explicitly left the target UX unspecified ("make a reasonable
+call... log the design reasoning") — Kevin's original complaint was that
+the click-item-then-click-a-hero-token flow itself felt clunky, not any one
+specific missing feature.
+
+**The judgment call**: rather than build a brand-new overlay/panel from
+scratch, the already-existing hero roster strip (D-158's bottom-of-grid
+boxes — name/level/HP, always visible, one per living-or-downed hero) was
+purely decorative until now — nothing made it clickable. Wiring it up gives
+almost everything a dedicated "equip panel" would, for a fraction of the
+surface area: each box is now a real click target
+(`onRosterBoxClick`) and hover target (`showRosterHoverTooltip`, the same
+HP/AC/equip-delta text `updateUnitTooltip` already shows for a board-token
+hover). In equip mode, clicking a box targets that hero directly — the
+same equip/unequip resolution `handleEquipClick` already ran
+(`resolveEquipOnHero`, pulled out as shared code both entry points call),
+just aimed at a big, always-visible, never-obscured-by-terrain-or-other-
+units box instead of a small board token. Outside equip mode, clicking a
+box is a second way to select a hero (identical gates to the existing
+number-key `selectHeroByIndex` shortcut) — free, since the box was already
+sitting there.
+
+**Deliberately NOT changed**: the original board-token click flow — it
+still works exactly as before, unconditionally; this only adds a second,
+easier-to-hit target, so a Kevin who's used to clicking the token loses
+nothing. No new UI overlay, no change to the item-selection grid itself,
+no change to what gets equipped/unequipped or its gold cost.
+
+Typecheck clean, all 1352 tests pass unchanged (this is a `BattleScene.ts`
+input-wiring change, not a pure-system rule — same rationale as D-166 for
+no new test file). Production build succeeds (126 modules, unchanged). No
+browser available in this environment — needs Kevin's own look, folded
+into the eventual KI-098 combined playtest pass.
+
+### D-168 — The Character Sheet can now actually cast spells/use actions from it (KI-098 item 4)
+
+Before this, the Character Sheet's Stats tab ("Available Right Now") and
+Spellbook tab (per-spell cards) were read-only — casting/acting always
+required closing the sheet and doing it on the battle board yourself.
+
+**The fix**: both are now real click targets. A Spellbook card's click
+handler, and each Stats-tab action line's new `addActionRow` click handler,
+call `castAbilityAndClose(abilityId)` (or `usePotionAndClose()` for the one
+potion line) — which closes the sheet, resumes `BattleScene`, and calls
+into it through two new PUBLIC methods:
+`castAbilityFromCharacterSheet(heroId, abilityId)` and
+`usePotionFromCharacterSheet(heroId)`. Both re-validate `heroId` against
+whichever hero is still actually selected (should always be the sheet's
+own hero — opening the sheet requires a hero already selected, and pausing/
+resuming `BattleScene` never touches `ui.kind`) rather than trusting the
+caller blindly. `castAbilityFromCharacterSheet` dispatches through a new
+`dispatchAbilityId(hero, abilityId)`, extracted from `triggerHotkey`
+(D-166) so casting-from-the-sheet and casting-from-a-hotkey share the
+exact same resolution rule (known spell → `chooseSpell`; registry action →
+`onBonusActionButton`/`onClassActionButton`; frozen signature ability →
+`onAbilityButton`) rather than a second copy that could drift.
+
+A single-target spell/ability lands the player right back on the board
+mid-aim (the normal aiming-mode UI takes over from there); an AoE/instant
+one just resolves immediately, log line and all — identical to pressing
+Q/R/F/T or a hotkey directly. A caster's own spell-cast summary line on the
+Stats tab stays plain, non-clickable text (its real spells already have
+their own click-to-cast cards one tab over on Spellbook — no reason to
+duplicate that entry point).
+
+No new tests — this is a `BattleScene.ts`/`CharacterSheetScene.ts` input-
+wiring change (the extracted `dispatchAbilityId` is a straight behavior-
+preserving refactor of what `triggerHotkey` already did, not new logic).
+Typecheck clean, all 1352 tests pass unchanged, production build succeeds
+(126 modules, unchanged). No browser available in this environment — needs
+Kevin's own look, folded into the eventual KI-098 combined playtest pass.
+
+### D-169 — Main Menu: added a "Build Party" entry point (KI-098 item 5)
+
+Verified first: "New Game" was the ONLY path into `CharacterCreationScene`,
+and `CharacterCreationScene` already fully supports building and saving a
+party without ever pressing Start Battle (its own "Save Party" button,
+D-133/D-152) — the gap was purely discoverability/framing, not a missing
+mechanic. A button named "New Game" doesn't read as "you can just build a
+party here and leave," even though that's already fully possible.
+
+**The fix**: added "Build Party" to the "Continue Your Journey" row
+(alongside Load Game/Campaigns/Free Play/Co-op) — `centeredRowX` already
+shrinks every item to fit a growing row, so this needed no layout rework.
+Its click handler is `() => this.scene.start("CharacterCreationScene")` —
+IDENTICAL to "New Game"'s own handler, on purpose: the two entry points
+lead to the exact same scene with the exact same full capability
+(including Start Battle, still available and unrestricted either way).
+Deliberately no new flag/mode threaded into `CharacterCreationScene` to
+distinguish how it was reached — there's nothing to distinguish; a player
+who came in via "Build Party" and changes their mind mid-build should be
+able to just start fighting, same as anyone else.
+
+No pure-system rule changed — a `MainMenuScene.ts`-only menu addition.
+Typecheck clean, all 1352 tests pass unchanged (`tests/mainMenuLayout.test.ts`
+doesn't depend on the Journey row's entry count), production build
+succeeds (126 modules, unchanged). No browser available in this
+environment — needs Kevin's own look, folded into the eventual KI-098
+combined playtest pass.
+
+### D-170 — Five more playable races: Dragonborn, Gnome, Goliath, Orc, Tiefling (KI-098 item 6)
+
+Per this project's own "verify SRD content, don't assume" standing lesson
+(this isn't the first sourcing correction — see D-109's Tough/Lucky/Athlete
+and 13-feats fixes), a research pass against the real SRD 5.2.1 species
+chapter was run before adding anything, rather than trusting `races.ts`'s
+own "SRD 5.2.1's starter six" header comment at face value. It found two
+real mismatches in the ALREADY-SHIPPED six races:
+
+1. **Half-Elf and Half-Orc are SRD 5.1 (2014) species — SRD 5.2.1 dropped
+   both as standalone species entirely** (folded into Human/Custom Lineage,
+   with Orc promoted to a full species instead).
+2. **SRD 5.2.1 actually gives every species the same 30ft base speed** —
+   the 25ft-for-Dwarf/Halfling split is SRD 5.1's rule, not 5.2.1's.
+
+**Kevin's-call-style resolution (mirroring D-109's own precedent)**:
+correct the ATTRIBUTION, leave the DATA alone. Half-Elf/Half-Orc stay in
+the roster exactly as before (SRD 5.1 content is equally allowed under
+this project's own sourcing policy, just mislabeled before this fix); the
+25ft/30ft speed split stays exactly as before too — retuning an existing,
+already-balanced movement number is a mechanical/balance decision outside
+KI-098 item 6's explicit "pure content, no system work" scope, not a
+sourcing question, so it's flagged in `races.ts`'s own module comment
+rather than silently changed. `CONTENT_SOURCES.md`'s races row was split in
+three (the corrected original four, Half-Elf/Half-Orc re-attributed to SRD
+5.1, and the new five under SRD 5.2.1) to make this precise.
+
+**The five new races** (Dragonborn, Gnome, Goliath, Orc, Tiefling — SRD
+5.2.1's remaining species not already in this roster): real names/speeds/
+trait titles verified against the actual SRD 5.2.1 species chapter; trait
+DESCRIPTIONS are original wording, not copied SRD text, same treatment
+every existing race/class already gets. All traits `mechanicallyActive:
+false`, same "inert until a system exists to hook into" precedent as
+everything else in this file — no new system work, per the item's own
+explicit scope. Goliath's real 35ft speed has no matching "faster than
+standard" tile tier in this game, so it's flattened to the standard 3
+tiles rather than inventing a new speed constant for one race (documented
+inline). `RACE_DEFINITIONS`/`RACE_IDS`/`getRaceDefinition` needed no
+changes — both `CompendiumScene`'s Races tab and `CharacterCreationScene`'s
+race picker (D-147/D-164's `openChoicePicker`) already render an arbitrary,
+growing option list, so the 6→11 growth needed zero UI work either.
+
+`tests/races.test.ts` updated: the roster-count/id-list assertion now
+expects all 11; the speed assertion now checks every 30ft race in one
+loop; the "throws on unknown id" test swapped its example from "gnome"
+(now a real id) to "aasimar" (still unknown). Typecheck clean, all 1352
+tests pass, production build succeeds (126 modules, unchanged).
+
+### D-171 — Class-based movement bonus: Monk's Unarmored Movement, Barbarian's Fast Movement (KI-098 item 7)
+
+Verified first: race already affects speed (`getRaceDefinition(...).speedTiles`),
+but no CLASS granted a bonus — `Hero.bonusMovementTiles` existed only as an
+unused hook, and two classes already had a real, named, `mechanicallyActive:
+false` SRD feature sitting right there waiting for it: Monk's Unarmored
+Movement (level 2, "+10ft while unarmored") and Barbarian's Fast Movement
+(level 5, same shape). Wiring both real needed no new content, only a
+Hero-side calculation.
+
+**The fix**: a new `Hero.classMovementBonus()` — `+1` for a Monk at level 2+
+or a Barbarian at level 5+, `0` otherwise — folded additively into
+`effectiveMovementTiles` alongside the existing race/gear/potion terms.
+Deliberately a DERIVED value, not a mutation of `bonusMovementTiles`: that
+field is the right shape for a one-shot potion grant applied at a single
+point in time, but a level-gated class trait needs to recompute correctly
+on every level-up with no separate hook into the level-up path at all — a
+derived getter gets this for free, a mutated field would need one more
+"don't forget to reapply on level-up" call site to keep in sync. Both
+features' `mechanicallyActive` flipped to `true` and their descriptions
+updated in `data/classes.ts`; `CONTENT_SOURCES.md` needed no change (no new
+SRD content, only wiring already-logged features).
+
+**Deliberately unconditional**, not gated on "while unarmored": this game
+has no armor-equipped detection anywhere (both classes' own "Unarmored
+Defense" AC feature stays inert for the exact same missing-system reason),
+so honoring that qualifier would mean building a new system, not just
+flipping a data flag — out of scope for what this item asked for. Same
+"drop an SRD qualifier the underlying system can't check yet" simplification
+already applied elsewhere in this file (Rage's flat bonus, Sneak Attack's
+flat die-to-number conversion).
+
+New `tests/d171Features.test.ts` (6 cases): pre/post the level threshold for
+both classes, a non-Monk/non-Barbarian class never getting the bonus even
+at a high level, and stacking correctly with a race's own (possibly slower)
+speed plus a gear/potion movement bonus. Typecheck clean, 1352 → 1358 tests
+(+6), production build succeeds (126 modules, unchanged).
+
+**Update**: Kevin's answer to that question (see D-172) revealed the ask was
+really about real-feet movement math, not a map-size-scaling mechanic —
+resolved by D-172 below, in the same session.
+
+### D-172 — Real D&D movement-speed rescale: 1 tile = 5ft, exactly (KI-098 item 7's map-size follow-up)
+
+D-171's own deferred question ("move speed should also scale with map
+size — ask Kevin, don't guess") got a direct answer: Kevin wants movement
+speeds to match real D&D math exactly — 5ft per tile (D&D's real square
+size), so a standard human (30ft) moves **6 tiles**, not the abstracted
+**3** this game had used since Phase 11.3. He confirmed doing the full
+rescale immediately, ahead of items 8/10-13, once the true scope became
+clear (see below).
+
+**Why this is bigger than "change one constant"**: the old system used "1
+tile ≈ 10ft" loosely — Dwarf/Halfling's 25ft became "2" (a rounded
+approximation, not exact 25÷10), and every other movement-tied number in
+the game (all 63 enemies' `movementTiles`, gear/potion movement bonuses,
+the `slowed` status's reduction, D-171's brand-new Monk/Barbarian class
+bonus) was tuned relative to that same abstraction. Rescaling only the
+hero/race side while leaving enemies alone would have broken hero-vs-enemy
+pacing outright (heroes suddenly covering twice the ground per turn against
+unchanged enemy speeds). Full accounting:
+
+| | Old | New | Why |
+|---|---|---|---|
+| `STANDARD_SPEED_TILES` (`races.ts`) | 3 | **6** | 30ft ÷ 5ft, exact |
+| `SLOW_SPEED_TILES` (Dwarf/Halfling) | 2 | **5** | 25ft ÷ 5ft, exact — NOT a blind ×2 of the old rounded "2" |
+| `FAST_SPEED_TILES` (Goliath, new) | — (flattened by D-170) | **7** | 35ft ÷ 5ft — D-170 flattened this for lack of a "faster than standard" tier; this rescale finally added one |
+| `Hero.classMovementBonus()` (D-171: Monk 2+/Barbarian 5+) | +1 | **+2** | a fixed 10ft bonus; 10ft÷5ft=2 |
+| Boots of Striding and Springing | +1 tile | **+2** | 10ft SRD bonus ÷ 5 |
+| Boots of Speed / Potion of Speed | +2 tiles | **+4** | 20ft bonus ÷ 5 |
+| `slowed` status `movementReduction` | 2 | **4** | 20ft reduction ÷ 5 — still exactly cancels a Grunt's new 4-tile speed (4-4=0) |
+| Every enemy's `movementTiles` (63 entries, `enemies.ts`) | 1/2/3/4/5 | **2/4/6/8/10** | uniform ×2 — original (non-SRD) balance values, so doubling preserves every existing relative pacing ratio exactly while matching the new tile-to-feet ratio |
+| Bannerbearer's `auraBuff.movementBonus` | 1 | **2** | same ×2 |
+
+**Deliberately NOT touched**: `MELEE_RANGE_TILES`/`RANGED_RANGE_TILES`
+(attack range, not movement — 1 tile of melee range is now MORE accurate
+to real D&D's 5ft reach than before, a bonus correctness win with zero
+code change); `DiagonalMovement.ts`'s `TILE_FEET = 5`/`DIAGONAL_COST_FEET`
+(an unrelated internal cardinal:diagonal pathfinding cost ratio that
+happens to share the number 5 — touching it would have double-scaled
+diagonal movement); map dimensions, `TILE_SIZE`, `GAME_WIDTH`/`GAME_HEIGHT`,
+`MAX_MAP_COLS`/`MAX_MAP_ROWS` (all KI-098 item 9's own separate concern —
+see below).
+
+**A second, harder problem surfaced while planning "bigger maps" as part of
+this same push** (Kevin asked for both together): raising
+`MAX_MAP_COLS`/`MAX_MAP_ROWS` was assumed to be a data-cap change with the
+only known risk being D-157/D-159's already-reverted `Scale.RESIZE`
+cutover (documented fork: (a) reflow every scene's vertical layout, or
+(b) raise the global logical `GAME_WIDTH`/`GAME_HEIGHT`). Actually reasoning
+through option (b): `GAME_WIDTH`/`GAME_HEIGHT` are ONE global Phaser
+game-config value shared by every scene under `Scale.FIT` — raising them
+to fit a meaningfully bigger battle map (e.g. ~3072×2100 to comfortably
+fit a much larger grid) would uniformly SHRINK the rendered size of every
+OTHER screen's fixed-pixel content (Main Menu, Character Creation,
+Compendium, Settings, etc.) on a real browser window, since `Scale.FIT`'s
+one scale factor is bottlenecked by whichever axis grew the most —
+concretely, UI text/buttons would render at roughly HALF today's size on a
+typical 1920×1080 window. This is a real, previously-undocumented
+regression risk beyond what D-159/KI-098 item 9 recorded, discovered
+before any code was written (per that item's own standing instruction to
+raise its fork with Kevin before touching anything).
+
+**Resolution**: this session shipped the movement-speed rescale (Phase 1,
+above) — fully data-only, zero canvas/rendering risk, and exactly what
+Kevin asked for. The actual map-size increase (Phase 2) is deferred,
+flagged in `KNOWN_ISSUES.md` item 9 with this new finding and a recommended
+different technical direction: a BattleScene-LOCAL solution (dynamic
+per-map tile pixel size, mirroring `MapBuilderScene`'s own existing
+shrink-to-fit pattern, or a zoomed-out camera scoped to the grid only)
+that leaves the global `GAME_WIDTH`/`GAME_HEIGHT` completely untouched, so
+no other scene is ever affected. `BattleScene.ts` has `TILE_SIZE` baked
+into hundreds of world-object size/position calculations, so this needs
+its own dedicated planning pass, not a bundled add-on here.
+
+### D-173 — Hero-side split movement: move, act, then move again (KI-098 item 8)
+
+The last piece of the Enemy AI/Movement Redesign epic (D-139 through D-146
+built everything else on the enemy side). `Hero.movementBudget()` was
+hardcoded to "full allowance before any move, 0 after" (an explicit "MVP:
+one move per turn" comment) — a hero could never move partway, act, then
+use the rest of their movement, even though real 5e freely allows
+interleaving movement and an action.
+
+**The fix**: replaced the boolean-flag budget with real leftover-tracking.
+A new private `Hero.movementTilesUsedThisTurn` (reset in
+`resetForNewTurn()`, alongside the existing `moved` flag, which keeps its
+original "has moved at all this turn" meaning unchanged — still what
+Ranger's Hide in Plain Sight/Thief's Supreme Sneak/Cunning Action's own
+gate read). `movementBudget()` now returns
+`effectiveMovementTiles - movementTilesUsedThisTurn` (floored at 0, still 0
+outright for a dead/incapacitated hero); `canMove()` is now just
+`movementBudget() > 0`. `Hero.moveTo(dest, tilesUsed?)` gained an optional
+second parameter — the real cost of the move just committed — and adds it
+to the used-tiles counter instead of maxing it out. Omitting `tilesUsed`
+(every pre-D-173 call site: the AI-controlled-hero move in
+`runAIHeroTurn`, and every existing test) still consumes the ENTIRE
+remaining budget, exactly matching the old one-move-per-turn behavior with
+zero call-site changes required anywhere that doesn't care about split
+movement.
+
+**`BattleScene`'s two human-move commit points now pass the real route
+cost**: `resolveDrop` (the D-144 drag-and-drop flow) already computes
+`route.usedTiles` via `MovementSystem.routeThroughWaypoints` for its
+in-budget check — that same number now flows straight into `moveTo`.
+`confirmMove` (the original click-to-select-a-tile-then-confirm flow)
+didn't have this number on hand, so it now runs the same
+`routeThroughWaypoints` call (single-destination, no pins) right before
+committing, purely to recover the tile cost.
+
+**No new UI was needed for "move again after acting" itself** — every
+action handler already returns to the `heroSelected` interaction state on
+completion, and that state already calls `showRange(hero)` (gated on
+`hero.canMove()`) and every click-to-move path already gates through
+`isLegalMove` (gated on `hero.canMove()`/live `hero.movementBudget()`).
+Once `moveTo` stopped zeroing the budget outright, the existing
+selection/range-highlight/click-to-move machinery started correctly
+reflecting leftover budget with no further changes — this turned out to be
+a pure `Hero`-layer fix plus two call-site edits, not a UI feature build.
+
+**Cunning Action Dash (Rogue) got a real math fix as a side effect**:
+`useCunningActionDash()` used to reset `moved = false`, silently relying on
+the old model's "not moved yet ⇒ full budget" collapse to grant a second
+full move. Under the new leftover-tracking model that's expressed as
+`movementTilesUsedThisTurn -= effectiveMovementTiles` (allowed to go
+negative — `movementBudget()`'s own `Math.max(0, ...)` handles it) — real
+SRD Dash math: a Rogue who's only used part of their normal move gets the
+full Dash bonus stacked ON TOP of what's left (e.g. speed 6, 2 already
+spent, Dash ⇒ 6 - 2 + 6 = 10 remaining), while a Rogue who already spent
+their entire move gets exactly one fresh full move back — identical to the
+pre-D-173 behavior in that specific case, so nothing regresses for the
+common path.
+
+**`HeroSnapshot` gained the new field** (`movementTilesUsedThisTurn`),
+round-tripped by `toSnapshot`/`fromSnapshot`/`restoreMutableState` — a
+partial move mid-turn survives a Coop live-sync snapshot correctly instead
+of silently resetting to "haven't moved" on the other player's client.
+
+New `tests/d173Features.test.ts` (9 cases): a partial move leaving budget
+behind, the full move→act→move-again sequence, several small partial moves
+in a row, the default (no `tilesUsed`) legacy behavior, `resetForNewTurn`
+clearing the counter (not just the flag), a dead hero still reporting zero
+budget, a snapshot round trip mid-partial-move, and both Cunning Action
+Dash math cases above. Typecheck clean, 1358 → **1367** tests (+9),
+production build succeeds (126 modules, unchanged). No browser available
+in this environment — see `KNOWN_ISSUES.md`'s new KI-124 for the
+in-browser checklist.
+
+### D-174 — Level cadence LOCKED to 1 level per hero per wave; a real overworld/campaign XP track is a separate, future thing (KI-098 items 11/12)
+
+Items 11 ("XP distribution toggle: split evenly vs. majority-to-killing-
+blow") and 12 ("default 1-20 campaign pacing, scaled by party size") both
+turned out to presuppose a per-hero XP/kill-crediting economy that **does
+not exist anywhere in this codebase** — leveling has always been uniform:
+every LIVING hero levels up together, automatically, every
+`LEVEL_UP_WAVE_INTERVAL` waves cleared (`ProgressionSystem`,
+`BattleScene.applyClassLevelUps`), with zero per-hero kill tracking. This
+was caught by actually reading the code before building anything, not by
+trusting the backlog item's own framing — the same "verify before you
+build" lesson D-172's canvas-size finding and this session's own
+initiative-item correction (see D-175) both reinforced.
+
+Asked directly, Kevin drew a line this project's docs hadn't drawn before:
+**two genuinely separate leveling tracks**, not one XP system with a
+distribution toggle:
+1. **In-battle track (this decision)**: the real D&D 1-20 class-level
+   progression every hero already has. Kevin's call: **every hero levels up
+   together, every SINGLE wave** (not per-kill, not split/weighted at all)
+   — this directly resolves `SOURCE_OF_TRUTH.md` §9's "Level cadence" item
+   (OPEN → a DEFAULT of every-2-waves via D-056 → now LOCKED to every wave).
+   Applies uniformly across every mode (Free Play, Campaign, Co-op, Test
+   Mode) — it always has, this only changes the numeric interval.
+2. **Overworld/campaign track (separate, NOT built here)**: a
+   story-progression leveling path, campaign-only (never applies to a
+   single Free Play map), that would let a hero unlock special bonuses as
+   the campaign's narrative advances. Its exact shape is explicitly
+   undesigned yet ("yet to come up with," Kevin's own words) — this folds
+   into KI-098 item 13 (the overworld campaign redesign epic, already
+   Kevin's own explicit lowest priority, and already noted in this
+   project's memory as wanting "dual leveling tracks"). Building this now,
+   disconnected from item 13's actual campaign-structure design, would be
+   exactly the kind of dead scaffolding this project has already rejected
+   more than once (see D-153's audio-settings precedent going the OTHER
+   way, and Kevin's own repeated "no dead scaffolding" feedback) — nothing
+   would feed it real data until item 13 exists.
+
+**The fix**: `ProgressionSystem.LEVEL_UP_WAVE_INTERVAL` 2 → **1**. That's
+the entire code change — `hasPendingLevelUp`'s arithmetic
+(`Math.floor(wavesCleared / LEVEL_UP_WAVE_INTERVAL)`) already generalizes
+to any interval, and `tests/progression.test.ts` asserts everything
+relative to the constant rather than a hardcoded `2`, so both existing
+tests pass unchanged against the new value. No XP-split toggle was
+built — there is nothing yet for it to control.
+
+Typecheck clean, all existing tests pass unchanged (no new test file — a
+single-constant DEFAULT-to-LOCKED change to already-tested arithmetic
+needs no new coverage), production build succeeds. Item 12's campaign-
+pacing-curve question is deferred into item 13 in full, not answered here.
+
+### D-175 — Per-group initiative for the enemy phase (KI-098 item 10)
+
+Kevin's answer to the granularity question (individual enemies / per-group
+/ all-non-boss-together): **per-group**. Before building, the "current
+behavior" this question was framed against turned out to be wrong —
+`WaveSystem.tickEnemyPhase`'s main loop processes every enemy in `this.
+active`, boss included, in one flat spawn-order loop with no turn-order
+distinction whatsoever (no existing "boss gets its own turn" special case
+to preserve, contrary to how the decision was initially framed to Kevin).
+This actually made per-group cleaner to build: no existing behavior to
+carve an exception around.
+
+**The design**: "group" = enemy TYPE (`EnemyDefinition.id`) — every Grunt
+acts as one group, every Runner another, a Boss (a group of one) its own.
+A group's initiative (`InitiativeSystem.rollInitiative`, previously built
+"framework only" in Phase 13.5 and never actually consumed by anything
+until now) is rolled ONCE, the first time that type appears in a given
+WAVE (bonus 0 — enemies have no ability-score-derived initiative modifier
+in this data model, unlike a hero) — not re-rolled every phase, so a
+group's relative position in the turn order stays fixed for the whole
+wave, the same way a real 5e initiative order holds for a whole encounter.
+A brand-new type spawning mid-wave (e.g. wave 4's second spawn group
+starting turn 3) gets its own fresh roll and slots in wherever that roll
+lands, without touching any already-rolled group.
+
+**Implementation**: a new `WaveSystem.applyGroupInitiativeOrder()`, called
+once per phase right after `spawnDueEnemies()` (so this phase's own new
+spawns get a place in the order too), sorts `this.active` **in place**
+(not into a separately materialized array) by each enemy's group roll,
+descending, tie-broken by type id for full determinism. Sorting the array
+in place, rather than iterating a snapshot copy, was deliberate: the main
+loop right after it is a `for...of` over the live `this.active`, and a
+same-phase reinforcement/summon (`trySpawnReinforcements` et al.) pushes
+directly into that same array mid-loop — `for...of` over a live array
+already picks up items appended during iteration, so sorting in place
+preserves the existing "a reinforcement can act the very phase it spawns"
+behavior exactly, with zero changes to that mechanic. `Array.prototype.
+sort` is a guaranteed-stable sort (ES2019+), so members within one group
+keep their original relative (spawn) order automatically — no explicit
+tie-breaking needed for that part.
+
+**`groupInitiativeRolls` is cleared in `startWave`** (alongside the
+already-existing `spawnedCounts`/`pendingRetry`/`reinforcementCooldowns`
+resets) so every new wave gets a fresh roll per type — deliberately NOT
+added to `WaveStateSnapshot`, the same already-accepted gap
+`reinforcementCooldowns` has: a Coop live-resync just re-rolls it, which
+can only reshuffle enemy ACT ORDER, never anything that affects fairness
+or outcome.
+
+**Verified against `RandomService.fixed()`** (this project's near-
+universal test double, which makes every roll return the same value): a
+tie always breaks alphabetically by type id — deterministic, if not
+particularly meaningful, for the vast majority of existing tests that
+don't care about turn order at all. Confirmed the full suite (1367 tests
+going in) still passes unchanged with this reordering in place — no test
+anywhere asserted on raw multi-type spawn-order that this change would
+have disturbed.
+
+New `tests/waveInitiative.test.ts` (3 cases): same-type enemies always
+form one contiguous run in the processing order (never interleaved with
+another type); a tie under `RandomService.fixed()` breaks alphabetically
+by type id; and — using a real seeded `RandomService` plus a parallel,
+identically-seeded "predictor" instance that calls `rollD20()` in the same
+sequence the implementation does, to derive the expected order without
+hardcoding a PRNG's internal output — a group's initiative order holds
+across multiple phases in the same wave rather than being redrawn (and
+potentially flipped) every tick. Typecheck clean, 1367 → **1370** tests
+(+3), production build succeeds (**127 modules, +1** — `InitiativeSystem.
+ts` is now a real production dependency for the first time since it was
+built "framework only" in Phase 13.5).
+
+This resolves `SOURCE_OF_TRUTH.md` §9's "Initiative" item too ("keep party
+phases or later add individual initiative?") — the actual answer, per
+Kevin, is a middle ground neither option on that table names: party phases
+stay (Player Phase / Enemy Phase blocks are unchanged), but the Enemy
+Phase itself now has real per-group turn order instead of none at all.
+
+**Test changes**: `tests/races.test.ts`, `tests/characterBuildSystem.test.ts`,
+`tests/d171Features.test.ts`, `tests/potions.test.ts`,
+`tests/equipment.test.ts`, `tests/heroStatusEffects.test.ts`,
+`tests/statusEffects.test.ts` — direct literal-value updates for the
+rescaled numbers. `tests/waves.test.ts`, `tests/building.test.ts`,
+`tests/enemyCollision.test.ts`, `tests/combat.test.ts`, `tests/flying.test.ts`,
+`tests/enemyMechanics.test.ts`, `tests/enemyMechanicsPhase21.test.ts`,
+`tests/phase7Structures.test.ts`, `tests/battleStateSnapshot.test.ts`,
+`tests/enemyEngagementRedesign.test.ts` — hand-built lane/maze maps sized
+around the OLD (smaller) speeds needed widening so a faster enemy doesn't
+breach the exit (or otherwise run off the edge of the test's intended
+scenario) before the assertions run; a handful of exact expected positions
+were recomputed by hand from the new speeds, including one case
+(`enemyEngagementRedesign.test.ts`'s "AoE attacker with nothing to gain")
+where a larger movement budget revealed a genuine, pre-existing (not
+rescale-caused) pathfinding detour around a blocked hero tile that a
+smaller budget had never reached far enough to expose — the test's
+expectation was corrected to match that real, already-existing behavior,
+not "fixed" by changing the pathfinding itself.
+
+Typecheck clean, all 1358 tests pass (no net count change — every fix was
+either a literal-value update or a widened test map, no tests
+added/removed), production build succeeds (126 modules, unchanged). No
+browser available in this environment — needs Kevin's own look, folded
+into the eventual KI-098 combined playtest pass.
+
+### D-176 — Bigger maps: dynamic per-map tile size + raised MAX_MAP_COLS/ROWS (KI-098 item 9, closes the whole KI-098 "build" backlog)
+
+The last actual build item on KI-098 (item 13 is Kevin's own explicit
+lowest-priority epic, goes whenever). Flagged repeatedly as the single
+riskiest item on the list — D-157/D-159 already cost two real regressions
+attempting a `Scale.RESIZE` cutover for an unrelated push, and D-172 found
+a third risk in the same territory (raising the global `GAME_WIDTH`/
+`GAME_HEIGHT` would uniformly shrink every other screen's UI under
+`Scale.FIT`). This session confirmed, via two Explore agents mapping every
+`BattleScene.ts` `TILE_SIZE` usage and the `MapBuilderScene` shrink-to-fit
+pattern, that neither ruled-out direction is needed: the fix is entirely
+`BattleScene`-LOCAL and never touches the global canvas/scale mode.
+
+**Findings that made this safe**: every one of `BattleScene.ts`'s ~68
+`TILE_SIZE` usages turned out to be grid/world-space (tile rects, hero/
+enemy/summon tokens, highlight/targeting overlays, the whole cast-visual/
+death-visual VFX block) — zero are HUD/chrome, since HUD layout was
+already decoupled from grid size by an earlier fix (D-158's `wrapWidth`
+change). `GridSystem` (`src/game/systems/GridSystem.ts`) already stores its
+own per-instance `tileSize`/`cols`/`rows`/`originX`/`originY` —
+`BattleScene` just never read `this.grid.tileSize`, using the static
+`TILE_SIZE` import everywhere instead. And `MapBuilderScene.
+rebuildGridSystem()`/`renderGrid()` already implement the exact needed
+pattern (`tileSize = Math.floor(Math.min(64, availableWidth/cols,
+availableHeight/rows))`, every render call reading the instance's own
+stored values, never a hardcoded 64) with no gaps — a proven, reusable
+template.
+
+**The fix**: extracted that shrink-to-fit math into a new pure, unit-
+tested `computeFittedTileSize(cols, rows, availableWidth, availableHeight,
+maxTileSize)` in `GridSystem.ts` (no Phaser dependency). `BattleScene`'s
+grid-construction block now computes `availableWidth = GAME_WIDTH` (nothing
+else occupies the grid's horizontal band) and `availableHeight =
+GAME_HEIGHT - GRID_TOP_MARGIN - 403` (`403` = the fixed vertical space
+every HUD row below the grid needs, independent of tile size: roster/
+status block 78 + combat log 86 + gap 20 + gear/shop grid 4*38=152 +
+pagination nav row 30 worst-case + gap 6 + Done button half-height 15),
+then passes `computeFittedTileSize(this.map.cols, this.map.rows,
+availableWidth, availableHeight, TILE_SIZE)` into `GridSystem`'s
+constructor instead of the raw `TILE_SIZE` constant. Every one of the ~68
+remaining `TILE_SIZE` references in the file was then mechanically
+replaced with `this.grid.tileSize` (a careful three-exception bulk
+replace: the `config.ts` import itself, the one legitimate `TILE_SIZE`
+usage as the `maxTileSize` clamp argument, and a `TILE_SIZE`-referencing
+historical comment about pre-D-158 code, all protected before the bulk
+replace and restored after). `this.map.cols`/`this.map.rows` usages
+(board-iteration loops) were untouched — already correctly data-driven.
+`MapBuilderScene`'s own inline copy of the same math was deliberately left
+alone (already works, out of scope, zero regression risk to a working
+file).
+
+**Verified no regression for existing content**: every shipped map (18x9
+down to 14x9) still computes back to `tileSize = 64` under the new formula
+(`Math.min(64, ...)` never upscales, and their available room already
+exceeds 64px/tile) — explicit test coverage below.
+
+**`MAX_MAP_COLS`/`MAX_MAP_ROWS`** (`src/game/systems/MapBuilderSystem.ts`)
+raised from **20/9 to 32/14**, re-derived against the same fixed-HUD
+bounding-box math the old caps used, but against a chosen **40px minimum
+tile-size floor** (62% of the base 64px — a legibility choice, not a
+technical limit; tokens/HP text/VFX all scale off tile size) instead of
+the old fixed 64px: available grid height is a fixed 587px (`1080 - 90 -
+403`), giving `floor(587/40) = 14` rows; available width is the full
+1280px canvas width, giving `floor(1280/40) = 32` cols. **Flagged as a
+first-pass balance value, same status as `STARTING_GOLD`** — the
+mechanism (dynamic shrink-to-fit) is correct regardless of exactly where
+Kevin later wants the floor to land. `MIN_MAP_COLS`/`MIN_MAP_ROWS` (6)
+unchanged; `validateDraft()` needed no logic change (already checks
+generically against the exported constants); `MapBuilderScene`'s own
+Width/Height choice-list pickers needed no code change either (they
+already loop `MIN..MAX_MAP_*`).
+
+**`firestore.rules` needed real (not just constant-bump) changes**: rules
+have no loop construct, so `isValidTileRows`'s per-row-index bounds check
+was hand-unrolled up to `rows[8]` (9 rows) — extended with 5 more explicit
+checks through `rows[13]` (14 rows), same shape as the existing ones;
+`isValidSharedMap`'s `data.cols <= 20`/`data.rows <= 9` bumped to `<= 32`/
+`<= 14` to match. Deploys the same way every other change does, via
+Kevin's normal push-to-main → GitHub Actions → Firebase pipeline.
+
+New `tests/gridFitting.test.ts` (7 cases): clamps at `maxTileSize` with
+room to spare, never upscales past it, shrinks correctly when width is
+the binding dimension, shrinks correctly when height is the binding
+dimension, floors fractional results, a regression case asserting every
+shipped map's real dimensions still fit at 64px, and a case confirming a
+map at the new 32x14 cap shrinks to exactly the 40px floor. Typecheck
+clean, 1370 → **1377** tests (+7), production build succeeds (127
+modules, unchanged — `computeFittedTileSize` lives inside the existing
+`GridSystem.ts` module).
+
+**This closes the entire KI-098 "build" backlog** — only item 13 (the
+overworld campaign epic, Kevin's own explicit lowest priority) remains, and
+that's a future design conversation, not a quick follow-up. No browser
+available in this environment; this is a real rendering change (every
+token/VFX size is now computed, not constant) that explicitly needs
+Kevin's own look, same as everything else queued for his eventual combined
+KI-098 playtest pass — see `KNOWN_ISSUES.md`'s new KI-127.
+
+### D-177 — Item 13 (overworld campaign) begins: companion catalogue expanded to 12, one per playable class
+
+Kevin picked "start item 13" and, given the choice of which slice to build
+first (companion roster data, region migration, dialogue writing, or the
+bonus-choice pool), chose the companion roster — then, on seeing the design
+doc's original six, asked directly why the roster was capped at six when
+this game has 12 classes: he wants the campaign to double as a soft tour of
+every class over its course, BG3-style, even if the party (1 PC + 3 active,
+`MAX_ACTIVE_COMPANIONS`) never needs to hold all 12 at once and a shorter
+run might not meet every one of them.
+
+**The scope fork, resolved before writing any data**: keep
+`CAMPAIGN_STORY_DESIGN.md` §6's original six ("mirror" companions, each
+tied to a region's boss/theme) exactly as designed, and add six MORE — one
+for each class the original six didn't cover (Barbarian, Bard, Cleric,
+Monk, Rogue, Sorcerer) — as ordinary recruits with a one-line hook apiece,
+explicitly NOT carrying the same boss-mirror narrative weight (there are
+only six regions/bosses for the original six to pair with; inventing a
+seventh-through-twelfth mirror relationship would need new regions that
+don't exist). Confirmed with Kevin before writing: approved as drafted,
+including letting the new six's names/flavor be invented outright (one-line
+hooks only, no deep dialogue writing — that stays a separate, later pass
+per §9, same as the original six's still-unwritten arcs).
+
+**Class assignment**: the six existing named companions were fit to a
+class matching their already-written personality (no class had been
+assigned to any of them before this session) — Hollis Vane → Fighter,
+Fenna Duskwater → Druid, Isolde Varnhall → Wizard, Tamsin Rourke →
+Paladin, Dorian Wick → Warlock, Sorrel Thane → Ranger. The six new
+recruits — Brand Ashcairn (Barbarian), Wren Calloway (Bard), Perrin Holt
+(Cleric), Mira Quill (Monk), Cass Ferrow (Rogue), Ellery Vance (Sorcerer)
+— cover the remainder, one apiece, so all 12 classes are represented
+exactly once across the full 12-companion roster.
+
+**The build**: `data/companions.ts`'s `COMPANIONS` array (D-118's engine
+scaffolding, empty until now) is populated with 12 real, valid
+`CharacterBuild`s — race, ability-score priority order (`StandardArrayAllocator`
+with a per-class-appropriate order, e.g. STR-first for the Barbarian,
+INT-first for the Wizard), a flavor-matched signature action/cantrip, and
+one starting common/uncommon item apiece (all 12 `STARTING_GEAR_IDS`
+entries used exactly once, no repeats). `subclassId` is set only for the
+three level-1-choice classes (Cleric/Sorcerer/Warlock, via
+`subclassIdForNewBuild` — identical to how `CharacterCreationScene` sets
+one for a player-built hero); the other nine classes stay undefined and
+get their subclass assigned through the existing in-battle level-up queue
+once that companion actually reaches their class's real choice level,
+exactly like any player-built hero — no special-cased behavior invented
+for companions. `homeRegionId` is set only for the two mirror companions
+whose region already has a real `CampaignDefinition` id today (Tamsin →
+`"emberford-reach"`, Fenna → `"saltmere-shallows"`) — the other four
+mirror companions' regions (Cinderfall Rift, Frostbound Hollow, Shattered
+Causeway, The Drowning Vale) are maps only, not yet wrapped in a chaptered
+campaign, matching that field's own "undefined until regions have real ids
+of their own" contract from D-118.
+
+`CompanionRosterSystem.ts` needed ZERO changes — confirmed before writing
+any data that nothing in it hardcodes an assumption about roster size;
+recruit/bench/lose logic is already generic over however many companion
+ids exist.
+
+`CAMPAIGN_STORY_DESIGN.md` §6/§9 updated to describe the 12-companion
+roster and flag the new six as deliberately lighter-weight than the
+original six. `CONTENT_SOURCES.md` gained the entry §9 itself had flagged
+("shouldn't [get an entry] until it's actually implemented as data... so
+it isn't forgotten once building starts") — every companion name/hook/
+build choice here is original content, no SRD/D&D-derived lore; the
+class/subclass/race MECHANICS these builds reference were already logged
+in existing rows.
+
+Tests: 1377 → **1384** (+7, `tests/companions.test.ts` rewritten from its
+old "catalogue is empty" assertions to real shape checks — 12 companions,
+one per class, unique ids, every build resolves through
+`heroDefinitionFromBuild` without throwing, exactly 3 start in the party,
+`homeRegionId` only ever names a real campaign id). Typecheck clean, all
+1384 tests pass, production build succeeds (**127 modules, unchanged** —
+`companions.ts` was already reachable through `CompanionRosterSystem`'s
+existing import graph, just empty before). No browser available in this
+environment, and none is needed yet — this is pure data with no scene/UI
+consumer wired up (same "engine scaffolding first" boundary D-118 itself
+drew); nothing here is visually checkable until a future session builds
+an actual recruitment screen.
+
+**Deferred, and why**: full dialogue/arc writing for the original six
+(§9's own "still open" item, unchanged by this session); the region
+migration of the two existing flat campaigns into D-118's chapter
+structure; the bonus-choice pool numbers (§8); any `SaveSystem`/
+`BattleScene` wiring for the companion roster (still standalone, exactly
+as D-118 left it) — none of these were in scope for "build the companion
+roster data," and building them speculatively without a consuming UI
+would be exactly the kind of dead scaffolding this project avoids.
+
+### D-178 — Removed the "signature action" system entirely; every hero's basic attack now comes from its own class's fixed identity
+
+Kevin's own explicit ask, stated plainly: "I don't want them (or anyone in
+the game) to have a signature action. I want all available actions to be
+straight from the DnD 5.5e class that they have levels in." Investigated
+before writing any code (3 Explore passes + 1 Plan-agent review reading the
+real code) rather than assumed — the finding that shaped the whole fix:
+removing this was almost entirely SUBTRACTION, not addition. A non-caster's
+real weapon Attack (`Hero.tryBasicAttack`) was already fully weapon-driven
+(Extra Attack, weapon mastery, Divine Smite, Hunter's Mark, equipment procs)
+independent of `abilityId`; every real class bonus/class-action
+(`HeroActionRegistry.ts` — Second Wind, Rage, Reckless Attack, Action Surge,
+Cunning Action, Flurry of Blows, Wild Shape, Bardic Inspiration, Hunter's
+Mark, Preserve Life, Vanish, Empty Body, Quickened Spell) was already
+independent too; a caster's full known-spell list (`knownSpellIdsForClass`)
+in battle was ALSO already fully independent — the spellbook Q-button never
+needed the frozen ability pick either. The ONLY real gap: `CharacterSystem
+.combatStatsForClassLevel`/`attackStyleForAbility` used the player's chosen
+`abilityId` to seed a hero's PRE-WEAPON baseline (melee/ranged style +
+STR/DEX/INT/WIS/CHA scaling for `attackDamage`/`attackRangeTiles`/
+`attackBonus`).
+
+**The fix**: a new fixed per-class table on `data/classes.ts` —
+`basicAttackStyle: "melee" | "ranged"` (12 entries, one per class, grounded
+in real 5e convention: Fighter/Barbarian/Paladin/Rogue/Monk melee, Ranger
+and all 6 full casters ranged) — paired with the ALREADY-EXISTING
+`primaryAbility` field (previously only used for Compendium flavor text; it
+already held exactly the right ability per class — str for Fighter, int for
+Wizard, etc. — no new ability-score data needed at all). `combatStatsForClassLevel`
+(renamed the style helper `attackStyleForClass`) now reads these two fields
+directly, dropping the `abilityId` parameter, the `isSpellId` branch, and
+the Monk-only hardcoded DEX-melee exception (now handled generically, since
+Monk's own `basicAttackStyle`/`primaryAbility` already say melee/dex).
+
+**Removed entirely**: `CharacterBuild.abilityId`/`HeroDefinition.abilityId`/
+`Hero.abilityId` (every field, every read site — constructor, snapshot,
+save/load validation, Co-op sync); the "Choose Signature Action" picker in
+`CharacterCreationScene` (with the vertical layout below it collapsed
+upward, not left as a dead gap); the 4 invented, explicitly-non-SRD
+abilities (`cleave`/`piercing-shot`/`taunting-slam`/`frost-bolt`) from
+`data/abilities.ts`; `hasDuplicateAbilities` (its whole premise — "did two
+heroes pick the same ability" — stops existing); the entire `aimingAbility`
+interaction-kind in `BattleScene.ts` (a full member of the `ui.kind`
+discriminated union with a footprint well beyond the obvious call sites —
+`setInteraction`'s dispatch table, `showAbilityTargets` [now fully dead],
+Esc handling, the board-click resolver, `returnToAimingMode`'s re-entry
+branch, `refreshStatus`'s roster-highlight/hint-text checks — all removed,
+not left unreachable). A non-caster's Q-button now shows nothing at all
+(`showAbilityButtonFor` gates on `isCasterHero`); casters' "Cast a Spell
+(Q)" path is completely untouched. `firestore.rules`' `isValidBuild` also
+needed the same field dropped from its `hasOnly` list, or cloud "Save
+Party" pushes would start failing security-rule validation the moment the
+field left `CharacterBuild` — caught during planning, not left as a
+surprise (not exercised by `npm test`, only the separate emulator-based
+`test:rules`, so this would have been easy to miss).
+
+**Known, accepted limitation, not fixed this pass**: `Hero
+.effectiveAttackBonus`'s ability-modifier component doesn't re-derive from
+an equipped weapon of a different style/ability than the class baseline —
+it stays pinned to whatever the baseline table says. This bug already
+existed (previously pinned to the player's `abilityId` pick instead); this
+change doesn't make it worse, just changes what it's pinned to. See
+KI-128.
+
+Tests: ~26 files referenced `abilityId`/the 4 deleted ids — most were
+mechanical (a throwaway field dropped from a test-fixture object literal,
+handled by a background agent across 18 files with zero logic changes);
+`tests/characterSystem.test.ts`/`tests/classLeveling.test.ts`/
+`tests/characterBuildSystem.test.ts`/`tests/characterCreationData.test.ts`/
+`tests/heroActionRegistry.test.ts`/`tests/heroActionHotkeys.test.ts`/
+`tests/newCoreClasses.test.ts`/`tests/visualFxSystem.test.ts` needed real
+logic rewrites (new function signature, real substitute spells for the
+deleted abilities' test fixtures — e.g. `color-spray`/`magic-missile` for
+the aoeAdjacent/autoHit shape checks `cleave`/`piercing-shot` used to
+cover). Typecheck clean, all 1376 tests pass (net change from other test
+additions/removals this session too — see D-179), production build
+succeeds (127 modules, unchanged). No browser available in this
+environment — this is a real HUD change (a non-caster's Q-button
+disappears entirely) that needs Kevin's own look; see KI-128.
+
+### D-179 — Migrated Emberford Reach + Saltmere Shallows into real 4-chapter regions (KI-098 item 13, campaign structure)
+
+The other half of this session's request: "migrate the campaign stuff" —
+turning D-118's `ChapterDefinition` engine scaffolding (built ahead of any
+consumer, per that decision's own explicit framing) into the first real,
+playable use of it, per `CAMPAIGN_STORY_DESIGN.md` §2's 4-chapter region
+shape (Ch1 levels 1-5 ends in a miniboss, Ch2 6-10 a first, lighter
+encounter with the region's real boss, Ch3 11-15 a branch-payoff chapter
+reusing the established roster at higher counts, Ch4 16-20 the boss at
+full strength). Investigated before building (same Explore-then-Plan-agent
+method as D-178) — the review found nothing in `BattleScene`/
+`CampaignSelectScene` called `getChapter`/`isChapteredCampaign` anywhere;
+turning `chapters` on with no scene wiring would have been genuinely dead,
+invisible data. Confirmed with Kevin directly (not assumed): chapters ship
+as scaffolding-made-real this session, cross-chapter CONTINUITY (gold/gear/
+class level carrying over between chapters) is explicitly deferred — every
+battle stays fully self-contained exactly as today, matching how D-118
+itself shipped ahead of any consumer. Companion dialogue/story writing
+stays out of scope too, per Kevin's own explicit instruction — that's a
+dedicated future planning-and-writing session.
+
+**Content decisions**: Emberford Reach's Ch1 miniboss is `basalt-colossus`
+(confirmed unused in the existing flat wave list — free to introduce).
+Ch4 in BOTH regions is an EXACT reuse of the existing flat 6-wave
+`EMBERFORD_WAVES`/`SALTMERE_WAVES` (same array reference, same top-level
+`waves`/`bossEnemyId` fields per `ChapterDefinition`'s own "describe the
+finale" doc contract) — zero regression risk for the one chapter every
+pre-existing test already validated. Ch2 in both regions reuses the SAME
+boss id (`cinderlord`/`tidelord`) behind a much lighter escort than Ch4's
+finale — a real "first encounter" beat without inventing a second boss id
+per region (the roster only has one boss per region). Ch3 remixes each
+region's own established roster at higher counts, per the design doc's own
+"no new enemy required" framing. New wave content uses enemies NOT already
+in each region's flat list where possible for chapter variety (`marauder`,
+`blightcaller`, `cave-drake`, `frost-warden`), grounded in the same
+`turnLimit`/`completionGold`/`timeBonusGold` ramp shape the existing flat
+lists and the classic `WAVES` list both use — same KI-015 "first-pass
+guess, Kevin's in-browser call" caveat every wave number in this project
+carries.
+
+**Saltmere's Ch1** — the design doc's own "returning miniboss" mechanic
+(whichever miniboss the player spared in an EARLIER region) depends on
+world-flag/companion state from regions that aren't playable content yet
+(only 2 of the design's 6 regions exist at all) — not buildable now. Per
+the design doc's own documented fallback for exactly this case, added one
+new small enemy, **`tide-wretch`** (`data/enemies.ts`, miniboss tier,
+deliberately no `loreText`/name-callout — "a wall, not a character," per
+the design doc's own words), used as Saltmere's Ch1 miniboss. Original
+content, logged in `CONTENT_SOURCES.md`.
+
+**Scene wiring** (the part that makes this real, not just data):
+`CampaignSelectScene` now shows each chaptered campaign's next-unplayed
+chapter ("Chapter N of 4 · Boss: X · N waves" — the UPCOMING chapter's own
+info, not always the region's ultimate finale boss, so starting Chapter 1
+doesn't spoil the ending) and resolves/passes that chapter index through
+`CharacterCreationScene` (a new relay-only `chapterIndex` field, forwarded
+unchanged into `BattleScene`'s own init data — easy hop to miss since it's
+not in `BattleScene.ts` itself) into `BattleScene`. `BattleScene`'s
+existing campaign chokepoint now resolves `getChapter(campaign,
+chapterIndex)` for `waveList`/`lootPoolIds` instead of the top-level
+(finale-describing) fields, stored as a new `this.currentChapter`. The
+victory hook (`markCampaignCompletedIfAny`) now calls
+`CampaignProgressSystem.markChapterCompleted` for a chaptered campaign,
+advancing to the next chapter on a future visit, and only calls the
+whole-region `markCampaignCompleted` (the "[Completed]" tag) once the
+FINAL chapter clears — a flat campaign's single-battle-clears-it-all
+behavior is completely unaffected (`isChapteredCampaign` gates the branch).
+Chapter `introText`/`outroText` (still unwritten content — no chapter has
+either field set this session) render via the already-built `showDialogue`/
+`DialogueBoxController` (`scenes/dialogueBox.ts`, D-119) — intro before
+even the pre-battle ASI/subclass/spell-pick fast-forward prompts, outro
+right before the victory end screen — both real no-ops today via a simple
+`if (!introText) { onComplete(); return; }` guard, so this is genuine,
+already-wired plumbing waiting for the future writing pass, not unused
+code. Flat campaigns and Free Play are completely unaffected by
+construction (their synthesized chapter 0 has neither field).
+
+**Known, accepted limitation, not fixed this pass**: the end-screen still
+routes to Main Menu even after clearing a mid-region chapter, not back to
+Chapter Select — progress is still correctly persisted either way, this is
+a UX rough edge, not a data bug. See KI-129.
+
+`tests/campaigns.test.ts`'s "Chapters (D-118)" block's 3 "neither existing
+campaign is chaptered" assertions moved onto a synthetic fixture (both real
+campaigns are now genuinely chaptered) — the file's other pre-existing
+tests needed NO changes, since they only ever read the finale-describing
+top-level `waves`/`bossEnemyId` fields, which Ch4 preserves exactly. New
+"Chapters (D-177)" describe block added (naming the companion-catalogue
+session that originally surfaced this content, kept consistent with that
+file's own section naming) validating every chapter's own wave/enemy
+content, gold ramp, and boss-only-in-its-own-finale-wave — the pre-existing
+tests didn't look at `chapters` at all, so this closes a real coverage
+gap. `tests/enemyRoster.test.ts`'s miniboss-count assertion updated
+5→6 for the new `tide-wretch`. Tests: net to **1376** (some removed
+alongside D-178's own signature-action cleanup, ~10 new chapter-content
+assertions added here). Typecheck clean, production build succeeds (127
+modules, unchanged). No browser available in this environment — the new
+Chapter Select flow and chapter-by-chapter play both need Kevin's own
+look; see KI-129.
+
+### D-180 — Migrated the other four regions (Shattered Causeway, Cinderfall Rift, The Drowning Vale, Frostbound Hollow) into real 4-chapter regions (KI-098 item 13, continuing D-179)
+
+Kevin's ask this session: "continue item 13 with building the other 4
+regions." D-179 (the immediately preceding session) built the 4-chapter
+region shape and wired it end-to-end (`CampaignSelectScene`/
+`CharacterCreationScene`/`BattleScene`) for Emberford Reach/Saltmere
+Shallows — but those two were already flat `CampaignDefinition`s before
+D-179 touched them. The other four regions in
+`CAMPAIGN_STORY_DESIGN.md` §3's table (Shattered Causeway, Cinderfall
+Rift, The Drowning Vale, Frostbound Hollow) had NO `CampaignDefinition` at
+all — their maps (`data/causewayMap.ts` etc., Phase 23/D-114) were
+Free-Play-only content, never wrapped in a campaign. This session builds
+all four from scratch: a new flat 6-wave `waves`/`bossEnemyId`/
+`lootPoolIds` (matching the original Phase 11.8 shape every campaign's
+top-level fields still describe) PLUS the same D-118 `chapters` structure
+D-179 established, in one pass rather than two.
+
+**No scene-code changes were needed.** `CampaignSelectScene`/
+`CharacterCreationScene`/`BattleScene`'s chapter wiring is already fully
+generic over `CAMPAIGNS` (confirmed by reading the actual code, not
+assumed) — adding four more entries to the `CAMPAIGNS` array is
+sufficient for all of it (chapter progress display, chapter-index relay,
+wave/loot resolution, chapter-vs-region completion marking) to just work.
+This is a pure content/data session.
+
+**Region → boss assignments** (`CAMPAIGN_STORY_DESIGN.md` §3's own table,
+all eight enemies already existed in `data/enemies.ts` from Phase 20/21 —
+no new enemy needed, unlike D-179's Saltmere `tide-wretch`):
+- **Shattered Causeway** (`causewayMap.ts`, chasm/pit bridge): Ch1
+  miniboss **Juggernaut**, Ch4/finale boss **The Devourer**.
+- **Cinderfall Rift** (`cinderfallRiftMap.ts`, volcanic, collapsing
+  bridge): Ch1 miniboss **Gravemaw**, Ch4/finale boss **Warlord Korrath**.
+- **The Drowning Vale** (`drowningValeMap.ts`, tidal marsh): Ch1 miniboss
+  **The Husk**, Ch4/finale boss **Blightmother**.
+- **Frostbound Hollow** (`frostboundHollowMap.ts`, verticality/frozen
+  ridge): Ch1 miniboss **Bloodrage Warlord**, Ch4/finale boss **Sundered
+  King**.
+
+Same content shape D-179 used throughout: Ch1 (levels 1-5, 4 waves) ends
+in the region's miniboss; Ch2 (6-10, 4 waves) is a lighter first encounter
+with the SAME boss id Ch4 uses (no second boss per region exists, matching
+D-179's own reasoning); Ch3 (11-15, 4 waves) remixes the region's own
+established roster at higher counts, no new named enemy; Ch4 (16-20) is an
+EXACT reuse of the new flat 6-wave list (same array reference as the
+campaign's own top-level `waves`/`bossEnemyId`/`lootPoolIds` fields, zero
+regression risk). Each region's flat 6-wave list and 3 new chapter wave
+lists draw from the existing enemy roster, themed loosely to the region
+(e.g. Drowning Vale leans on `blightcaller`/`fungal-splitter`/
+`plague-warden`/`hexbinder`'s poison/blight mechanics; Cinderfall Rift
+leans on the `warcaptain`/`bannerbearer`/`battlepriest` aura-captain family
+as a smaller-scale preview of Warlord Korrath's own aura). Same
+`turnLimit`/`completionGold`/`timeBonusGold` ramp shape every existing
+wave list in this project already uses — same KI-015 "first-pass guess,
+Kevin's in-browser call" caveat.
+
+**Cinderfall Rift's bridge-collapse and Drowning Vale's tide rise/recede**
+(`DynamicTerrainEvent`s keyed to a wave NUMBER on the map itself, shared
+across every chapter that uses that map) were left completely unchanged —
+in the new 4-wave chapters (Ch1-3) the collapse/flood-rise now lands on
+that chapter's own last wave, which reads as a reasonable climax beat but
+wasn't specifically tuned for; Ch4 (6 waves) keeps the exact original
+pacing.
+
+**Four new curated loot pools** (Phase 22 pattern, one region-flavored
+subset apiece, no new equipment/potion added): Causeway leans
+mobility/control (`boots-of-striding-and-springing`, `wand-of-web`,
+`dagger-of-venom`); Cinderfall Rift leans aggressive/melee
+(`greaves-of-the-berserker`, `amulet-of-fury`, `gauntlets-of-ogre-power`);
+Drowning Vale leans poison/support (`amulet-of-withering`,
+`periapt-of-proof-against-poison`, `staff-of-healing`); Frostbound Hollow
+leans frost/ranged (`frost-brand`, `ring-of-frostbite`,
+`bracers-of-archery`).
+
+**`FreePlayScene` unlock gating extended**: the 4 maps and their 8
+associated bosses (Juggernaut/Warlord Korrath/The Devourer/Gravemaw/
+Blightmother/The Husk/Bloodrage Warlord/Sundered King) were always-
+unlocked before this session (no campaign existed to gate them on,
+explicitly flagged as temporary in that file's own comments) — they now
+gate on their own new campaign id, the same treatment Cinderlord/Tidelord
+already had. The two still-unassigned legendary capstone threats (Ashen
+Sovereign, The Hollow Empress — reserved for the still-unbuilt "Nameless
+Throne," `CAMPAIGN_STORY_DESIGN.md` §5) stay always-unlocked.
+
+**`data/companions.ts`'s `homeRegionId` closed out**: D-177 left this field
+set only for Tamsin (`emberford-reach`)/Fenna (`saltmere-shallows`), with
+an explicit comment that the other four mirror companions' regions
+"are maps only today, not yet wrapped in a chaptered `CampaignDefinition`."
+Now that they are, set `homeRegionId` for Dorian (`shattered-causeway`),
+Hollis (`cinderfall-rift`), Sorrel (`drowning-vale`), Isolde
+(`frostbound-hollow`) — purely metadata today (nothing reads the field
+yet, confirmed by search), but it closes a documented TODO rather than
+leaving it stale.
+
+**Known, deliberate scope, same as D-179**: no cross-chapter continuity;
+no chapter intro/outro text (writing pass still deferred); end screen
+still routes to Main Menu after a mid-region chapter clear. Saltmere's
+Ch1 still uses the `tide-wretch` fallback, unaffected by this session —
+the design doc's "returning miniboss" mechanic needs real per-region
+spared/destroyed tracking through `WorldFlagSystem` (D-118 scaffolding,
+still unconnected to any actual in-battle choice), which is a separate,
+larger undertaking this session did not attempt. The capstone ("The
+Nameless Throne") still has no map or chapters at all.
+
+`tests/campaigns.test.ts` updated: the two tests that hard-coded "exactly
+2 campaigns" (`CAMPAIGNS.length`/a `const [a, b] = CAMPAIGNS` destructure)
+generalized to work over any number of campaigns; every other pre-existing
+test already iterated `for (const campaign of CAMPAIGNS)` generically and
+needed no changes to also cover the four new regions. New assertion added
+verifying each new region's Ch1 miniboss/Ch4 boss against
+`CAMPAIGN_STORY_DESIGN.md` §3's table. `tests/companions.test.ts`'s
+`homeRegionId` assertion extended from 2 to all 6 mirror companions, now
+verified against `getCampaignDefinition` instead of a hard-coded id list.
+Tests: 1376 → **1377**. Typecheck clean, production build succeeds (127
+modules, unchanged — no new scene code, so no new imports beyond the four
+map modules `FreePlayScene`/`campaigns.ts` already imported). No browser
+available in this environment — see KI-130.
+
+### D-181 — Pre-region bonus-choice pools (KI-098 item 13, CAMPAIGN_STORY_DESIGN.md §8)
+
+Kevin's pick off the item-13 remaining-slice list this session (offered
+alongside the returning-miniboss mechanic, companion recruitment UI, and
+the capstone — he chose this one as the self-contained, no-dependency
+slice). Before investigating, spawned 3 parallel Explore agents (hero
+equipment/inventory model, structure/trap placement, `BattleScene`'s
+pre-battle sequence + the project's RNG) since implementing all four §8
+bonus categories (gold/XP/equipment/structure) meant touching mechanisms
+this session hadn't read yet — same "investigate before building"
+discipline as D-179/D-180.
+
+**Two real design gaps §8 itself left open, resolved this session:**
+
+1. **"XP" has no literal mechanism to grant.** Leveling in this game is a
+   fixed per-wave cadence (D-174), not an XP-pool currency — there's
+   nothing a flat number can buy into, and a real `Hero.levelUpClass()`
+   call would cascade into the same ASI/subclass/spell-pick choice queues
+   a genuine level-up triggers, which is a much bigger, riskier retrofit
+   for a "bonus card" to trigger mid-setup. Resolved by modeling "XP" as a
+   flat permanent max-HP grant instead (`Hero.grantBonusHealth`, using the
+   `bonusMaxHealth` field that's existed since Phase 13.6/13.11 with
+   nothing granting into it until now) — matches the design doc's own
+   framing ("guaranteed, permanent character power; can't be
+   misallocated") without needing the level-up system at all.
+2. **"Before starting (or replaying) any region" doesn't map cleanly onto
+   this engine's chapter model.** A region is 4 independent, fully
+   self-contained chapters (D-179's own explicit "no cross-chapter
+   continuity" architecture) — there's no existing "have I already chosen
+   this region's bonus this playthrough" state to check, and inventing one
+   would be new persisted state for a first-pass feature. Resolved by
+   showing the bonus choice at the start of EVERY chapter (all 4, every
+   time, including a replay) rather than once per region — a deliberate,
+   documented deviation from the doc's literal wording that fits the
+   existing architecture instead of fighting it.
+
+**Equipment bonus tuning, a related third call:** since the choice can now
+surface at ANY chapter (including a level 1-5 Chapter 1), every equipment
+option across all 6 regions is capped to common/uncommon, non-attunement
+mundane gear (cost 8-16) rather than scaling by region tier — an item
+strong enough to feel special at a region's own Chapter 4 (level 16-20)
+would trivialize its Chapter 1. Gold/XP amounts DO escalate by region
+(CAMPAIGN_STORY_DESIGN.md §3's own numbered region order, 1 Emberford
+Reach through 6 Frostbound Hollow), since a flat number scales safely
+either way. Every number is a first-pass guess, same KI-015 caveat every
+other balance value in this project carries.
+
+**New files**: `src/game/data/regionBonuses.ts` (`RegionBonusOption`,
+`REGION_BONUS_POOLS` — 6 options per region: 1 gold, 1 xp, 2 equipment, 2
+structure/trap, every pool covering all 4 categories so a random
+3-of-6 draw is never accidentally lopsided) and
+`src/game/systems/RegionBonusSystem.ts` (`drawRegionBonusChoices` — a
+small partial Fisher-Yates shuffle built from `RandomService.rollIndex`,
+the same primitive `LootSystem.rollLootDrop` already uses, since
+`RandomService` has no ready-made "pick N without replacement").
+
+**`BattleScene` wiring**: a new `showRegionBonusChoiceIfAny` step inserted
+between the existing chapter-intro dialogue and the fast-forward ASI/
+subclass/spell-pick prompts (`create()`'s pre-battle sequence). Reuses
+`renderAsiPrompt`/`asiOverlay` (BattleScene's existing "mandatory modal
+choice" renderer, already shared by ASI/subclass/spell-pick/feat prompts)
+directly rather than `uiTheme.ts`'s `openChoiceList` — that helper always
+appends a Cancel button, wrong for a choice that must resolve before the
+battle can continue. New `choosingRegionBonus` flag added to
+`inputLocked()`'s gate list, same pattern every other modal already uses.
+Applying each category reuses an existing mechanism exactly:
+`EconomySystem.award` (gold), the new `Hero.grantBonusHealth` (xp),
+`grantLootDrop`'s own equip-into-first-empty-matching-slot-or-sell-for-
+gold logic (equipment, mirrored rather than shared since it isn't a
+`LootDropResult`), and `BuildSystem.canPlace`/`place` on the first tile
+that validates (structure) — no new placement/equip logic invented, only
+new callers of what already existed.
+
+**Tests**: `tests/regionBonusSystem.test.ts` (new) — pool-data integrity
+(every real campaign has a pool, every option id globally unique, every
+pool covers all 4 categories, every referenced equipment/structure id is
+real, gold/XP amounts escalate by region) and `drawRegionBonusChoices`
+(exact count, no duplicates, respects an explicit count, deterministic
+under `RandomService.fixed()`). One new case added to
+`tests/equipment.test.ts` for `Hero.grantBonusHealth`. Tests: 1377 →
+**1391**. Typecheck clean, production build succeeds (129 modules, +2 for
+the two new files). No browser available in this environment — this is a
+brand-new player-facing screen shown before every chaptered-campaign
+battle, genuinely needs Kevin's own look; see **KI-131**.
+
+### D-182 — Returning-miniboss mechanic: spare-or-destroy choice + Saltmere Ch1 resolution (KI-098 item 13, CAMPAIGN_STORY_DESIGN.md §4)
+
+Kevin's pick off the item-13 remaining-slice list this session (offered
+alongside companion recruitment UI and the capstone — the third and fourth
+options from D-181's own list; he picked this one). Investigated with two
+rounds of Explore agents before designing, since implementing §4 meant
+touching mechanisms (enemy-defeat handling, world-state persistence,
+chapter-load wiring) this session hadn't read yet — same discipline
+D-179/180/181 used.
+
+**What §4 asks for**: Saltmere Shallows (region 5) has no unique Chapter-1
+miniboss of its own — its Ch1 encounter is whichever of the 5 "home"
+minibosses (Basalt Colossus/Emberford, Juggernaut/Causeway, Gravemaw/
+Cinderfall, The Husk/Drowning Vale, Bloodrage Warlord/Frostbound) the player
+SPARED rather than destroyed, in an earlier region's own Ch1 fight, now
+"washed up corrupted/allied with the tide." Falls back to the nameless
+`tide-wretch` (already shipped as a placeholder) if nothing was spared.
+
+**Real findings from investigation, not assumed:** no "spare vs. destroy"
+mechanic existed anywhere — enemies only ever died via HP→0, with no "how
+did this die" field or hook point at all. `WorldFlagSystem.ts` (D-118
+scaffolding) already existed, fully built and unit-tested, but wired to
+nothing — its own header comment names "which miniboss a player spared" as
+its designed purpose, unused until this session. `config.ts`'s
+`WORLD_FLAG_STORAGE_KEY` was declared but never read/written by any scene.
+
+**A design-review pass caught two real bugs in the first draft before any
+code was written** (via a Plan agent tasked with pressure-testing the
+approach, given the feature's genuine complexity):
+1. The sparable miniboss is always the FINALE spawn of its chapter — the
+   same wave whose clearing triggers the victory check
+   (`afterWaveCleared`'s `isLastWave()` → `transitionTo("victory")`, which
+   runs synchronously). A modal popped from inside `resolveDeaths()` (the
+   death-consequence funnel) would be raced by that transition before a
+   player could ever click it. Fixed by having `resolveDeaths()` only STASH
+   the pending choice (`pendingSparableKill`), and showing the actual modal
+   from `afterWaveCleared()` instead — the one choke point downstream of
+   every death-causing call site, checked BEFORE the existing level-up/
+   victory logic runs.
+2. `ChapterDefinition.waves` for a real chapter is the module-level data
+   constant itself (e.g. `SALTMERE_CH1_WAVES`), not a per-battle copy — a
+   shallow clone that mutated a nested spawn-group field in place would have
+   permanently corrupted that shared constant for the rest of the session.
+   Fixed with a narrow "spine" clone (`withReturningMinibossSwap`): only the
+   array/objects on the path to the one changed `enemyId` field are copied;
+   everything else stays shared by reference, and the whole thing is a
+   reference-equality no-op when nothing was spared (the common case).
+
+**Priority order, one tier deliberately deferred:** §4 also wants a
+Sorrel-Thane-Lost companion-fate outcome to take this slot ahead of a
+spared miniboss. That's NOT built — `CAMPAIGN_STORY_DESIGN.md` §6's
+Redeemed/Marked/Lost branch chain has no data model anywhere yet
+(`CompanionRosterSystem` is fully unwired scaffolding, `CompanionDefinition`
+has no `fate` field, only a flavor `hook` string). That belongs to the
+separate "companion recruitment UI" item-13 slice Kevin hasn't picked yet.
+Tie-break among multiple spared minibosses (no doc guidance given): earliest
+region wins — a documented first-pass call, reasoning that an earlier act
+of mercy has had more time to "fester" into something corrupted.
+
+**New files**: `src/game/systems/ReturningMinibossSystem.ts` — pure, no
+Phaser dependency (`SPARABLE_MINIBOSS_CHAPTERS`, `sparedFlagId`,
+`resolveSaltmereCh1Enemy`, `withReturningMinibossSwap`,
+`RETURNING_MINIBOSS_FLAVOR_TEXT` — one flavor line per miniboss, logged the
+first time it actually spawns in Saltmere Ch1; reuses each miniboss's
+existing enemy id/stat block verbatim rather than inventing 5 new
+"corrupted variant" enemies, a documented scope cut).
+
+**`BattleScene` wiring**: world flags loaded once in `create()` alongside
+the existing `campaignProgress` load. Chapter-load site gets one new branch
+(Saltmere Ch1 only) resolving and swapping in the wave list before
+`WaveSystem` is constructed. `resolveDeaths()` gets one cheap id-comparison
+line (no change to its existing reward funnel — kill gold/loot/bestiary
+credit are identical either way; sparing is a persisted narrative flag, not
+a reward penalty). `afterWaveCleared()` shows the "Finish or Spare?" choice
+first, reusing `renderAsiPrompt`/`asiOverlay` (the same mandatory-modal
+renderer D-181 already reused), before its existing level-up/rest/victory
+chain runs. New `choosingSparableKill` flag added to `inputLocked()`.
+
+**Tests**: `tests/returningMinibossSystem.test.ts` (new) — priority/
+tie-break order, fallback to `tide-wretch`, flag-key format, and
+`withReturningMinibossSwap`'s find-and-replace correctness including an
+explicit "never mutates the input" assertion (guarding the exact bug the
+design-review pass caught). No scene-level test coverage added for the
+`BattleScene` glue — confirmed no scene-level test files exist anywhere in
+this project's `tests/`, so this follows existing practice rather than
+starting a new one. Tests: 1391 → **1402**. Typecheck clean, production
+build succeeds (131 modules, +2 for the new system file). No browser
+available in this environment — this is a brand-new mid-battle mechanic
+spanning 6 chapters' worth of encounters; genuinely needs Kevin's own
+playtest; see **KI-132**.
+
+### D-183 — Companion roster & recruitment UI, Phase 1 (KI-098 item 13, materially extends CAMPAIGN_STORY_DESIGN.md §6)
+
+Kevin picked "companion recruitment UI" off the item-13 remaining-slice
+list (D-181/D-182 had both offered it, unpicked until now). Asked how he
+envisioned it working, he described a shape genuinely bigger than and
+different from what §6's own text specifies — planned via `EnterPlanMode`
+(3 Explore passes reading the real existing scaffolding, then a Plan-agent
+implementation-plan pass) given the scope, and scoped down to a buildable
+first slice via two follow-up `AskUserQuestion` rounds before writing any
+code.
+
+**Kevin's real design, materially extending §6**: the 12-companion
+catalogue splits into two pools. **Pool B** (the original six §6 "mirror"
+companions, one per region) no longer has a fixed starting trio — every one
+of them now unlocks onto the bench individually, the first time their own
+home region's Chapter 1 is completed. **Pool A** (the six class-coverage
+recruits D-177 added, no home region) seeds a brand-new campaign
+playthrough with 3 randomly-drawn active members; the other 3 stay locked,
+meant to unlock via one unique side-quest mission each — a real new
+mission-content type, **not built this session**. Also explicitly out of
+scope this session and needing their own future design pass: a forced
+"starting mission" gating the other 5 regions until the starting 4-party is
+played once, a rule that a companion's own unlock mission must include
+them, and Sorrel Thane's Redeemed/Marked/Lost fate arc (Kevin confirmed
+directly: roster UI only this session, fate stays deferred).
+
+**What this session actually built**:
+- `data/companions.ts`: removed the now-backwards `startsInParty` field
+  (it marked the OLD fixed-starting-trio's three members — actively wrong
+  under the new pool split, not just unused); added `POOL_A_COMPANION_IDS`/
+  `POOL_B_COMPANION_IDS`, derived once from `homeRegionId` presence.
+- New `systems/CompanionSeedSystem.ts` (pure, tested): `seedStartingCompanions`
+  draws 3 of Pool A via a small partial Fisher-Yates over
+  `RandomService.rollIndex` (the same shape `RegionBonusSystem.
+  drawRegionBonusChoices` already established), no-opping on any
+  already-touched roster so it's safe to call from more than one scene.
+- `BattleScene.markCampaignCompletedIfAny()`: new
+  `maybeUnlockHomeRegionCompanion`, called only on a genuinely new Chapter-1
+  completion (piggybacking on that function's own existing no-op dedupe —
+  no new "first time" tracking needed), benches (never force-activates) the
+  completed region's Pool B companion via the already-built but previously
+  fully unwired `CompanionRosterSystem` (D-118 scaffolding, its first real
+  use). Runs synchronously before the victory-transition chain even starts,
+  so there's no D-182-style modal race to guard against here.
+- New `scenes/CompanionRosterScene.ts`: reached from a new "Companions"
+  button on `CampaignSelectScene` (plain `scene.start`/back, not
+  `CharacterSheetScene`'s heavier launch-over-a-paused-battle pattern —
+  there's no live `Hero` here to reflect back). Shows all 12 by status
+  (Active/Benched/Locked, with a Pool B lock showing its home region and a
+  Pool A lock showing "???"); clicking an Active card benches it, clicking
+  a Benched card opens a picker of who to bench in its place. Every
+  mutation saves immediately.
+- `CharacterCreationScene.ts`, campaign mode only (Free Play untouched):
+  slot 1 stays the player-built hero; slots 2-4 auto-fill from the roster's
+  3 active companions via a new per-slot `identityLocked` flag (class/race
+  pickers no-op when set; equipment/spells/hotkeys/starting level stay
+  fully editable, unchanged from any other slot). Party size locks to 4 in
+  campaign mode — with companions filling fixed slots, a smaller campaign
+  party has no clean meaning; the party-size picker itself is disabled
+  rather than removed.
+- Seeding runs from both `CampaignSelectScene.create()` (the earliest real
+  "entering Campaign mode" choke point) and `CharacterCreationScene.create()`
+  (a defensive duplicate covering Load Game or any other path that skips
+  Campaign Select) — both idempotent, so calling from two places is safe.
+
+**Accepted edge case, not fixed**: the Pool B bench-only assumption relies
+on active always being full (3) by the time any chapter can complete —
+true given seeding always runs before Character Creation's slot-building,
+but a hand-edited or corrupted save with `activeIds.length < 3` would let
+`recruitCompanion` land the companion directly into an active slot instead
+of the bench. Documented, not guarded against.
+
+**Tests**: new `tests/companionSeedSystem.test.ts` (idempotency, always-3,
+always-Pool-A). `tests/companions.test.ts`'s old `startsInParty`-length-3
+assertion replaced with a pool-size/membership assertion. Tests: 1402 →
+**1409**. Typecheck clean, all 1409 tests pass, production build succeeds
+(135 modules, +4 for the new system and scene files), `npm run dev` serves
+HTTP 200. No browser available in this environment — this is a new screen
+plus a real Character Creation flow change, genuinely needs Kevin's own
+look; see **KI-133**.
+
+### D-184 — The Proving Ground: a new one-time prologue mission gates the six regions (KI-098 item 13, closes D-183's own deferred "forced starting mission" item)
+
+Kevin picked "the forced starting mission gate" off the item-13 remaining
+list next. Asked which region should serve as that gate, he said the
+project needs a brand-new mission instead: a single fixed, one-time battle,
+unrelated to any of the 6 regions' own themes, that every fresh campaign
+save must clear once before Emberford Reach/Saltmere Shallows/Shattered
+Causeway/Cinderfall Rift/The Drowning Vale/Frostbound Hollow unlock from
+`CampaignSelectScene`. Planned via `EnterPlanMode` (3 parallel Explore
+passes — map-authoring patterns, the existing gating/lock precedent in
+`FreePlayScene`, and a narrative-precedent check confirming this is
+genuinely new scope, not filling an existing `CAMPAIGN_STORY_DESIGN.md`
+gap — followed by a Plan-agent pass validating the concrete file-by-file
+approach and catching two test-file gaps before any code was written).
+
+**What was built**: a flat (non-chaptered) `CampaignDefinition` — `data/
+campaigns.ts`'s new `PROLOGUE_CAMPAIGN_ID` ("prologue") — is exactly as
+first-class as Emberford/Saltmere were before D-179 chaptered them, so
+`BattleScene`'s existing `markCampaignCompletedIfAny()` marks it completed
+on victory with zero new battle-scene code. Its own new small map (`data/
+prologueMap.ts`, "The Proving Ground", 12x7, floor/blocked tiles only — no
+cliff/water/fire/acid, deliberately theme-neutral, not `TEST_MAP`, which
+stays reserved as Free-Play-only per `CAMPAIGN_STORY_DESIGN.md` §2) hosts 3
+short low-difficulty waves (`grunt`/`runner`, same tier as every region's
+own Chapter-1 Wave-1) finishing on `brute` — an existing minion with no
+`loreText` — as a deliberately unglamorous placeholder "boss," so no new
+enemy needed authoring or balancing for a screen whose whole point is
+minimal footprint.
+
+`CampaignSelectScene.buildCampaignCards` now locks all 6 region cards
+(dimmed fill/stroke/alpha, no `pointerdown`, a "Complete The Proving Ground
+to unlock" caption in place of the boss/wave line — which has the added
+benefit of not spoiling a locked region's boss name) until
+`isCampaignCompleted` reports the prologue cleared — the exact same visual
+language `FreePlayScene`'s existing "Complete X to unlock" locked options
+already established (KI-130), reused rather than reinvented. The prologue
+itself renders as the first card, unlocked from a fresh save.
+`cardHeight`/`gap` shrank slightly (120/20 → 104/16) so 7 cards fit the
+fixed 1080px viewport with real margin instead of the 7th card's bottom
+landing on the edge.
+
+**Confirmed safe, no changes needed**: D-181's pre-chapter "Choose a Bonus"
+screen (`REGION_BONUS_POOLS[campaignId]`) already no-ops cleanly on a
+missing pool at runtime — the prologue has none, on purpose. Free Play's
+`MAP_OPTIONS`/`BOSS_OPTIONS` are hardcoded literals, not derived from
+`CAMPAIGNS`, so the prologue map/enemy don't leak into Free Play. Companion
+seeding (D-183) already runs unconditionally in `CampaignSelectScene
+.create()` before any campaign is picked, so the prologue playthrough gets
+the same player-hero + 3-random-Pool-A-companion party as any region would.
+A pre-existing save with no `"prologue"` key in its `CampaignProgress` blob
+reads as not-completed via the existing `?? false` fallback — no migration
+needed.
+
+**Tests**: `tests/campaigns.test.ts` — several assertions were genuinely
+region-only (exactly 6 waves, genuinely chaptered) and now filter a new
+`REGIONS` const rather than looping raw `CAMPAIGNS`; a new "Prologue
+(D-184)" describe block covers the prologue's own shape. `tests/
+regionBonusSystem.test.ts`'s "every real campaign has its own bonus pool"
+loop now explicitly skips the prologue id (the Plan-agent validation pass
+caught this gap before it became a real test failure). Tests: 1409 →
+**1412**. Typecheck clean, all 1412 tests pass, production build succeeds
+(136 modules, +1 for the new map file), `npm run dev` serves HTTP 200. No
+browser available in this environment — needs Kevin's own playtest pass;
+see **KI-134**.
+
+### D-185 — Sorrel Thane's fate arc: Redeemed / Marked / Lost (KI-098 item 13, closes the gap D-182/D-183 both flagged and deferred)
+
+Kevin's pick off item 13's remaining list: `CAMPAIGN_STORY_DESIGN.md` §6's
+Drowning Vale companion branch chain. Planned via `EnterPlanMode` (3
+parallel Explore passes — the existing choice-prompt UI, the D-182
+returning-miniboss/D-183 recruit-on-Ch1 integration points, and per-chapter
+choice tracking/battle-start sequencing) followed by one `AskUserQuestion`
+round scoping Redeemed/Marked to flavor-only for this pass before any code
+was written.
+
+Research found the codebase already anticipated almost all of this:
+`WorldFlagSystem`'s own doc comment names "Sorrel Thane's 3-outcome branch
+chain" as the reason its flag values are untyped. `CompanionRosterSystem`
+already had a fully-built, tested, unwired `loseCompanion` (permanent
+removal to `lostIds`) — exactly the "Lost" mechanism.
+`CompanionRosterScene` already rendered a 4th "LOST" status. `Returning
+MinibossSystem`'s own header comment named this exact gap and where it
+plugs in. Nothing needed inventing from scratch.
+
+**What was built**:
+- New `systems/SorrelFateSystem.ts` (pure, tested): a choice ("support" or
+  "press") is shown at the start of Drowning Vale Chapters 1-3, recorded as
+  one `WorldFlagSystem` flag per chapter. `resolveSorrelFate` reads them
+  back via majority vote — more support wins Redeemed, more press costs
+  her (Lost), a tie or NO recorded choices at all (e.g. a save that
+  cleared Drowning Vale before this shipped) defaults to Marked, a
+  deliberate safe default rather than defaulting an old save to the worst
+  outcome. Also carries the first-pass choice-prompt text and the 3
+  fate-flavor lines — content Kevin should read/adjust, same as any other
+  new narrative text this project ships.
+- `BattleScene.ts`: new `showSorrelChoiceIfAny` (chained into the existing
+  pre-battle prompt sequence, right after the chapter intro and before the
+  D-181 region-bonus pick — reuses `renderAsiPrompt` exactly like every
+  other choice screen), gated on `campaignId === "drowning-vale" &&
+  chapterIndex <= 2`, deliberately NOT on whether Sorrel is currently an
+  active party hero (she isn't recruited onto the roster until Chapter 1
+  clears via the existing, unchanged D-183 mechanism — gating on party
+  membership would let benching her mid-region silently cancel her own
+  fate choices). New `resolveSorrelFateIfAny`, called once at Drowning Vale
+  Chapter 4's own battle-start (after `buildHud()`, since its flavor line
+  needs `combatLogText` to already exist) — no player input, just a
+  majority-vote read, a persisted fate flag, and (if Lost) a `loseCompanion`
+  call, which is idempotent by design so calling it retroactively needs no
+  special-casing.
+- `systems/ReturningMinibossSystem.ts`: `resolveSaltmereCh1Enemy` now
+  checks `isSorrelLost(worldFlags)` FIRST, before its existing spared-
+  miniboss loop — needed no signature change, since fate already lives in
+  the same `WorldFlagState` the function already took. A new `corrupted-
+  sorrel` enemy (`data/enemies.ts`) stands in for her Lost encounter, stat
+  block cloned verbatim from `tide-wretch` (zero new balance work) but
+  with a real name and corruption-themed `loreText` — distinct from the
+  wall-only tide-wretch fallback specifically because she was a character.
+- **Explicitly out of scope this pass, confirmed with Kevin directly**:
+  Redeemed/Marked stay flavor-only (a fate flag, a combat-log line, a
+  status tag) — no new "persisted companion stat override" system. Lost
+  still gets its full real mechanical integration since that's
+  structurally required either way.
+
+**Tests**: new `tests/sorrelFateSystem.test.ts` (majority-vote resolution,
+the Marked default on no data, flag round-trip, chapter-index bounds).
+`tests/returningMinibossSystem.test.ts` extended (Sorrel-Lost outranks a
+spared miniboss regardless of region order; falls through normally when
+not Lost). `tests/enemyRoster.test.ts`'s hardcoded miniboss count updated
+6 → 7 for the new enemy. Tests: 1412 → **1427**. Typecheck clean, all 1427
+tests pass, production build succeeds (137 modules, +1 for the new
+system), `npm run dev` serves HTTP 200. No browser available in this
+environment — needs Kevin's own playtest pass; see **KI-135**.
+
+### D-186 — Pool A companion side-quest missions (KI-098 item 13, closes D-183's own deferred "side-quest missions" item)
+
+Kevin's pick off item 13's remaining list: the 3 locked Pool A companions'
+own unlock missions (`CAMPAIGN_STORY_DESIGN.md` §6, D-183's own "not built
+this session" deferral). Researched the existing `CampaignDefinition`/
+`CampaignSelectScene`/`CompanionRosterScene`/`BattleScene` wiring directly
+(the same shape D-184's Proving Ground already established for a fixed,
+flat, one-time mission) before writing any code — this turned out to be a
+close variant of that exact precedent, not a new content type to invent
+from scratch.
+
+**Shape**: one fixed, flat (non-chaptered), 3-wave `CampaignDefinition`
+per Pool A companion (Brand Ashcairn, Wren Calloway, Perrin Holt, Mira
+Quill, Cass Ferrow, Ellery Vance) — all 6 exist as data regardless of which
+3 a given save actually locked (`CompanionSeedSystem` draws 3 of the 6 at
+random per fresh playthrough), so any save can hit any subset. Clearing a
+mission recruits that companion onto the bench (never force-active, same
+`recruitCompanion` reasoning as the Pool B home-region unlock) via a new
+`BattleScene.maybeUnlockSideMissionCompanion`, called alongside the
+existing `maybeUnlockHomeRegionCompanion` from `markCampaignCompletedIfAny`.
+
+**Kept deliberately small, reusing existing content rather than authoring new**:
+- **No new maps.** Each mission reuses one of the six existing region maps
+  (loosely flavor-matched to the companion — e.g. Perrin the field medic's
+  mission lands in The Drowning Vale, Mira the monk's in Frostbound
+  Hollow) — these are personal side content, not a 7th-through-12th region,
+  so there's no map identity of their own to build.
+- **No new enemies.** Each mission's finale reuses an existing REGULAR-tier
+  enemy loosely themed to the companion (Brand/barbarian → `warcaptain`,
+  Wren/bard → `gilded-carrier`, Perrin/cleric → `blightcaller`, Mira/monk →
+  `frost-warden`, Cass/rogue → `ironhide`, Ellery/sorcerer → `razorwing`) —
+  deliberately never a miniboss/boss/legendary, so a side mission's finale
+  can never collide with `ReturningMinibossSystem`'s spare-or-destroy
+  mechanic. Same "brute stands in, nothing new authored" logic D-184 used
+  for the Prologue's own finale.
+- **No new array in `CAMPAIGNS`.** A new `SIDE_MISSIONS` array in `data/
+  campaigns.ts` holds all 6, kept OUT of `CAMPAIGNS` on purpose —
+  `CampaignSelectScene.buildCampaignCards` renders every entry in
+  `CAMPAIGNS` as a region card, and these aren't regions. `getCampaignDefinition`
+  now checks both arrays, so `BattleScene`/`CharacterCreationScene` need
+  zero changes to treat a side mission's `campaignId` like any other flat
+  campaign.
+- **No new scene.** `CompanionRosterScene`'s existing locked Pool A card
+  (previously just a "???" dead end) is now clickable — it launches
+  `CharacterCreationScene` with `{ campaignId: companion.sideMissionId }`,
+  the exact same handoff `CampaignSelectScene.selectCampaign` already uses,
+  so the player builds/brings their current 3 active companions on the
+  mission exactly like any other battle. The companion's own name/class
+  stay hidden ("???") until the mission is actually won, preserving
+  the existing "Pool A lock is a mystery" presentation D-183 established.
+
+**Not gated behind anything** (unlike the Prologue) — every side mission
+is reachable from Companion Roster at any point in a playthrough, since
+each is a self-contained personal detour, not a story dependency.
+
+**Explicitly out of scope, matching D-183's own original deferral list,
+still open**: a rule that a companion's own unlock mission must include
+them in the party, and any real dialogue/arc writing beyond the mission's
+own name/description (first-pass, same as every other new narrative text
+this project ships).
+
+**Tests**: extended `tests/companions.test.ts` (every Pool A companion has
+a unique `sideMissionId` resolving to a real campaign; Pool B has none).
+New "Side missions" describe block in `tests/campaigns.test.ts` (exactly 6,
+disjoint from `CAMPAIGNS`' own ids, flat/3-wave/finale-only-boss shape,
+finale enemy is never miniboss/boss/legendary, real map/enemy references,
+gold never regresses, original distinct name/description per mission).
+Tests: 1427 → **1434**. Typecheck clean, all 1434 tests pass, production
+build succeeds (137 modules — no new files, data-only + two scene edits),
+`npm run dev` serves HTTP 200. No browser available in this environment —
+needs Kevin's own playtest pass; see **KI-136**.
+
+### D-187 — "A companion's own unlock mission must include them" (KI-098 item 13, closes D-183's own last remaining deferred item)
+
+Kevin's pick off item 13's remaining list: the "required party member" rule
+D-183 flagged and left undesigned. Asked to clarify the actual mechanic
+(the literal reading is a paradox — a Pool B companion can't already be
+"in the party" for the very battle that recruits them), Kevin's real ask
+turned out to be different from either guess offered: **the companion
+being unlocked fights alongside the player IN the unlock mission itself**,
+not just afterward — effectively a 3-hero squad for that one battle (PC +
+the newcomer + 2 more), not the normal 4. Enforcement: no lock/disable —
+a dedicated party-selection screen where the PC's own slot and the new
+companion's slot are non-negotiable, and the other two slots are freely
+chosen (prefilled with a sensible default) from anyone already recruited.
+
+**What was built**:
+- New `systems/UnlockMissionSystem.ts` (pure, tested): `resolveUnlockMission
+  Companion(campaignId, chapterIndex, roster)` is the single source of
+  truth for "is this battle an unlock mission, and who does it unlock" —
+  a Pool A `sideMissionId` match (chapter-index-agnostic, every side
+  mission is flat) or a Pool B `homeRegionId` match at chapter index 0
+  only, in both cases only while that companion isn't yet recruited or
+  lost. `eligibleFlexCompanions`/`defaultFlexPicks` compute the pool (and
+  a sensible default pair, preferring the CURRENT active roster in slot
+  order) for the two free party slots.
+- New `scenes/UnlockMissionPartyScene.ts`: shown instead of jumping
+  straight to `CharacterCreationScene` whenever `resolveUnlockMission
+  Companion` resolves a target. Shows 4 cards — "Your Hero" (flavor-only,
+  still built on the next screen), the locked-in target companion, and two
+  swappable slots (click opens the same `openChoiceList` picker
+  `CompanionRosterScene` already established) defaulting to the current
+  active roster. Confirming hands off to `CharacterCreationScene` with a
+  new `requiredCompanionIds` data field.
+- `CharacterCreationScene.ts`: new optional `requiredCompanionIds` field —
+  when set, fills slots 2-4 from EXACTLY those 3 companion ids (in order)
+  instead of the normal "3 active roster" auto-fill, so the not-yet-
+  recruited target companion actually appears in the party being built.
+  Every other entry path (Free Play, Co-op, a loaded save, a normal
+  chapter, Load Game) is completely unaffected — `requiredCompanionIds`
+  stays `undefined` for all of them.
+- `CampaignSelectScene.selectCampaign`: now resolves the target via
+  `resolveUnlockMissionCompanion` before deciding where to route — a
+  region's own Chapter 1, before that region's companion is recruited,
+  goes to `UnlockMissionPartyScene`; everything else (a later chapter, a
+  Chapter 1 replay after recruiting, a permanently-Lost Sorrel Thane) goes
+  straight to `CharacterCreationScene` exactly as before.
+- `CompanionRosterScene.ts`: a locked Pool A card's click now routes
+  through `UnlockMissionPartyScene` instead of straight to Character
+  Creation (the scene resolves its own target defensively, so this is
+  really just a routing change).
+- `BattleScene.ts` needed ZERO changes — the recruit-on-victory hooks
+  (`maybeUnlockHomeRegionCompanion`/`maybeUnlockSideMissionCompanion`,
+  D-183/D-186) only ever check whether the CAMPAIGN completed, independent
+  of how its party was assembled.
+
+**Tests**: new `tests/unlockMissionSystem.test.ts` (resolution for both
+pools, chapter-index gating, already-recruited/lost exclusion,
+eligible/default flex-pick logic, the empty-roster edge case). Tests:
+1434 → **1444**. Typecheck clean, all 1444 tests pass, production build
+succeeds (139 modules, +2 for the new system and scene), `npm run dev`
+serves HTTP 200. No browser available in this environment — needs Kevin's
+own playtest pass; see **KI-137**.
+
+### D-188 — The Nameless Throne: the campaign capstone (KI-098 item 13's last remaining piece, CAMPAIGN_STORY_DESIGN.md §5)
+
+Kevin's own direct ask: "build the capstone now... epic, a true
+masterpiece." The one item every prior item-13 handoff (D-182 through
+D-187) had flagged as the sole remaining unbuilt piece of the whole
+6-region campaign epic. Researched via 3 parallel Explore agents (campaign/
+chapter/companion data model; map-authoring + enemy-reskin patterns;
+branch-choice/victory-flow mechanics) plus a Plan-agent implementation
+pass, all cross-checked against the real current code before any code was
+written — the same discipline D-182/D-184 established for a build this
+size. Two real scope forks confirmed directly with Kevin before designing
+further, both resolved to the lighter-scope option:
+
+- **Ending signal**: reuse the EXISTING Finish-or-Spare miniboss flags (5
+  regions) plus Sorrel Thane's resolved fate, rather than writing 18-24 new
+  chapter-boundary choice prompts across all 6 regions.
+- **Capstone shape**: one climactic finale battle — flat, no `chapters`,
+  same shape as the Proving Ground prologue — not a second full 4-chapter
+  1-20 arc.
+
+**Design calls locked this session** (not specified by the original design
+doc, all documented rather than silently decided): sparing a miniboss and
+Sorrel's Redeemed outcome both lean **Ashen Sovereign** ("held onto
+compassion/identity"); finishing a miniboss (or letting it breach
+unresolved — there's no `finished:<id>` flag anywhere, "finished" is
+simply the absence of `spared:<id>`) and Sorrel's Lost outcome both lean
+**Hollow Empress** ("traded mercy for expedience"); a genuine tie resolves
+to Ashen Sovereign, matching §5's own framing of it as the "true" ending
+against Hollow's "earned alternate." The capstone's pre-battle card always
+displays "Boss: Ashen Sovereign" regardless of which the player will
+actually face — an intentional non-spoiler (matches how Saltmere's card
+always says "Boss: Tidelord"), not a bug. No HOMM3 bonus-choice screen for
+the capstone this pass — §8 left this explicitly undecided; the existing
+`showRegionBonusChoiceIfAny` already no-ops safely for a campaign id with
+no curated pool, so this needed zero code to enforce.
+
+**What was built**:
+- New `data/namelessThroneMap.ts`: one fixed 17×11 `ParsedMap` — a
+  processional hall (an outer gallery strip walled off by a pillar line
+  with two crossing-gaps, opening onto a single wide nave carrying the
+  real spawn-to-exit lane), 4 hero-starts, a shop, a treasure, and 4
+  symmetric hazard tiles baked as `fire` (the Ashen Sovereign baseline).
+- New `systems/NamelessThroneSystem.ts` (pure, tested), mirroring
+  `ReturningMinibossSystem.ts`'s exact shape: `resolveThroneVariant`
+  (tallies the 5 spare-flags + Sorrel's fate per the valence mapping
+  above), `withThroneVariant` (swaps the map's 4 hazard tiles to `water`
+  for the Hollow branch — same reference for Ashen, since the base map is
+  already Ashen-dressed), `withThroneEnemyReskins` (the same "spine clone,
+  same reference when unchanged" swap `withReturningMinibossSwap`
+  established, generalized from 1 id pair to 4).
+- Six new enemy reskins in `data/enemies.ts` — verbatim stat clones (only
+  `id`/`name`/`assetKey`/`loreText`/color differ), the same precedent
+  `corrupted-sorrel` (from `tide-wretch`) established: Ember Thane/Cinder
+  Adept/Ashbound Honor Guard (fire-touched, cloned from Warden/Hexer/
+  Gravemaw) for the Ashen garrison; Drowned Thane/Hollow Caller/Drowned
+  Honor Captain (drowned/withered, cloned from Warden/Blightcaller/The
+  Husk) for the Hollow garrison.
+- `data/campaigns.ts`: new flat `CampaignDefinition` (`nameless-throne`),
+  6 waves scaled above every region's own Ch4 finale (turnLimit 10→18,
+  completionGold 22→95), a curated loot pool combining the fire- and
+  frost-themed pools, appended to the END of `CAMPAIGNS` (array order
+  drives `CampaignSelectScene`'s card order). New exported
+  `REGION_CAMPAIGN_IDS` (the 6 region ids) — single source of truth shared
+  by the gating check below and `tests/campaigns.test.ts`'s own filter.
+- `systems/CampaignProgressSystem.ts`: new `areCampaignsCompleted(progress,
+  campaignIds)` — the first "all of these ids" aggregate helper in the
+  codebase (every existing query checked one campaign id at a time).
+- `scenes/CampaignSelectScene.ts`: the capstone card stays locked (dimmed,
+  "Complete all 6 regions to unlock") until `areCampaignsCompleted` against
+  `REGION_CAMPAIGN_IDS` — the exact inverse of The Proving Ground's own
+  single-id gate (D-184), reusing its visual pattern.
+- `scenes/BattleScene.ts`: the variant resolves once at chapter/map-load
+  (same spot the Saltmere swap already runs, stored in a new
+  `resolvedThroneVariant` field, same idiom as `saltmereReturningEnemyId`)
+  — verified safe: nothing writes `this.worldFlags` during a flat,
+  chapter-less capstone battle, so resolving it again at victory time would
+  also be safe, storing it once just matches the existing convention. A
+  new intro beat (`showNamelessThroneIntroIfAny`, one link in the existing
+  `showChapterIntroIfAny` callback chain) shows a variant-flavored line
+  before wave 1. A new victory-time epilogue
+  (`showNamelessThroneEndingIfAny`, chained between `showChapterOutroIfAny`
+  and `showEndScreen`) delivers the branch-determined closing beat: Ending
+  A reads `[...companionRoster.activeIds, ...benchedIds]` (excludes
+  `lostIds` by construction) via `getCompanionDefinition(id).name` and has
+  the PC name every surviving companion out loud, with a graceful fallback
+  line if that list is ever empty (not reachable today — no other
+  companion-loss mechanic exists besides Sorrel's — but not hardcoded away
+  either); Ending B has the PC reach for a name that isn't there.
+
+**Tests**: new `tests/namelessThroneSystem.test.ts` (variant tally/tie-
+break coverage including the Sorrel-neutral and all-not-spared cases,
+never-mutates-input and same-reference-when-unchanged checks for both swap
+functions). `tests/campaigns.test.ts` required a real fix, not just an
+addition — it hardcoded `CAMPAIGNS.length === 7` and a region filter that
+only excluded the prologue, which would have broken the instant the
+capstone was appended; now uses `REGION_CAMPAIGN_IDS`, plus a new capstone-
+specific describe block. `tests/campaignProgress.test.ts` gained
+`areCampaignsCompleted` coverage. `tests/enemyRoster.test.ts`'s hardcoded
+miniboss/minion role counts and its saving-throw-attacker allowlist both
+needed updating for the 6 new reskins (2 miniboss, 4 minion; Hollow Caller
+carries a save-DC attack same as its Blightcaller donor).
+`tests/regionBonusSystem.test.ts`'s "every region has a bonus pool" check
+now also excludes the capstone, matching the documented scope cut. Tests:
+1444 → **1466**. Typecheck clean, all 1466 tests pass, production build
+succeeds (141 modules, +2 for the new map and system files), `npm run dev`
+serves HTTP 200. No browser available in this environment — this is a
+brand-new endgame screen/battle/branching epilogue that genuinely needs
+Kevin's own playtest; see **KI-138**.
 
 - **LOCKED:** "Stronghold Integrity" is the shared loss resource; "Breach Damage"
   is what escaping enemies remove from it; "Tile" is the logical distance unit.

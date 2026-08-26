@@ -123,7 +123,8 @@ export const STATUS_EFFECTS: Record<StatusEffectId, StatusEffectDefinition> = {
     id: "slowed",
     name: "Slowed",
     description: "Movement is reduced while this lingers.",
-    movementReduction: 2,
+    // D-172: 4 tiles = the real 20ft reduction, rescaled from 5ft/tile (was 2 tiles).
+    movementReduction: 4,
   },
   stunned: {
     id: "stunned",

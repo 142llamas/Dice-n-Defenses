@@ -36,13 +36,8 @@ export const DEFAULT_SETTINGS: Settings = {
   muted: false,
 };
 
-/** Volume is a simple 5-step cycle (0/25/50/75/100), the same "one click cycles" interaction as `nextAnimationSpeed` — no slider widget exists anywhere in this project yet. */
+/** Volume steps a Settings picker offers — no slider widget exists anywhere in this project yet. */
 export const VOLUME_STEPS: readonly number[] = [0, 25, 50, 75, 100];
-
-export function nextVolume(current: number): number {
-  const i = VOLUME_STEPS.indexOf(current);
-  return VOLUME_STEPS[i === -1 ? 0 : (i + 1) % VOLUME_STEPS.length];
-}
 
 export function toggleMuted(current: boolean): boolean {
   return !current;
@@ -54,7 +49,7 @@ export interface SettingsStorage {
   setItem(key: string, value: string): void;
 }
 
-const ANIMATION_SPEEDS: readonly AnimationSpeed[] = ["normal", "fast", "instant"];
+export const ANIMATION_SPEEDS: readonly AnimationSpeed[] = ["normal", "fast", "instant"];
 
 /** Shared player-facing label per speed step — used by both the Main Menu control and BattleScene's in-battle "S" hotkey. */
 export const ANIMATION_SPEED_LABELS: Record<AnimationSpeed, string> = {

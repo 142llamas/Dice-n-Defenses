@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Hero } from "../src/game/entities/Hero";
 import { heroDefinitionFromBuild, type CharacterBuild } from "../src/game/systems/CharacterBuildSystem";
 import type { HeroDefinition } from "../src/game/data/heroes";
-import { listHeroActions, firstAvailableHeroAction } from "../src/game/systems/HeroActionRegistry";
+import { listHeroActions, firstAvailableHeroAction, hotkeyDisplayLabel } from "../src/game/systems/HeroActionRegistry";
 
 /**
  * D-148: regression harness for the extraction of BattleScene's
@@ -20,7 +20,6 @@ function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
     classId: "fighter",
     level: 1,
     abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-    abilityId: "cleave",
     controlledBy: "human",
     ...overrides,
   };
@@ -46,7 +45,6 @@ describe("HeroActionRegistry", () => {
       attackRangeTiles: 1,
       attackBonus: 4,
       baseArmorClass: 10,
-      abilityId: "cleave",
     };
     const hero = new Hero(classicDef, { x: 0, y: 0 });
     const entries = listHeroActions(hero);
@@ -78,7 +76,7 @@ describe("HeroActionRegistry", () => {
   });
 
   it("Wild Shape (Druid) matches canUseWildShape, unlocked at level 2", () => {
-    const hero = heroFrom({ classId: "druid", abilityId: "produce-flame" });
+    const hero = heroFrom({ classId: "druid" });
     expect(firstAvailableHeroAction(hero, "bonusAction")).toBeUndefined();
     levelUp(hero, 1);
     expect(hero.canUseWildShape()).toBe(true);
@@ -95,7 +93,7 @@ describe("HeroActionRegistry", () => {
   });
 
   it("Bardic Inspiration (Bard) matches canUseBardicInspiration", () => {
-    const hero = heroFrom({ classId: "bard", abilityId: "vicious-mockery" });
+    const hero = heroFrom({ classId: "bard" });
     expect(hero.canUseBardicInspiration()).toBe(true);
     expect(firstAvailableHeroAction(hero, "bonusAction")?.id).toBe("bardicInspiration");
   });
@@ -109,7 +107,7 @@ describe("HeroActionRegistry", () => {
   });
 
   it("Quickened Spell (Sorcerer) matches canUseQuickenSpell, unlocked at level 3", () => {
-    const hero = heroFrom({ classId: "sorcerer", abilityId: "fire-bolt" });
+    const hero = heroFrom({ classId: "sorcerer" });
     levelUp(hero, 1);
     expect(firstAvailableHeroAction(hero, "bonusAction")).toBeUndefined();
     levelUp(hero, 1);
@@ -127,7 +125,7 @@ describe("HeroActionRegistry", () => {
   });
 
   it("Channel Divinity: Preserve Life (Life Domain Cleric) matches canUsePreserveLife, unlocked at level 2", () => {
-    const hero = heroFrom({ classId: "cleric", abilityId: "sacred-flame", subclassId: "life-domain" });
+    const hero = heroFrom({ classId: "cleric", subclassId: "life-domain" });
     expect(firstAvailableHeroAction(hero, "classAction")).toBeUndefined();
     levelUp(hero, 1);
     expect(hero.canUsePreserveLife()).toBe(true);
@@ -156,5 +154,33 @@ describe("HeroActionRegistry", () => {
     levelUp(hero, 17);
     expect(hero.canUseEmptyBody()).toBe(true);
     expect(firstAvailableHeroAction(hero, "classAction")?.id).toBe("emptyBody");
+  });
+});
+
+/**
+ * D-165 (KI-098 item 2): `hotkeyDisplayLabel` is the shared label
+ * `CharacterSheetScene`'s hotkey editor and `BattleScene`'s in-battle
+ * hotkey bar both call — proves it correctly identifies all three id
+ * sources `Hero.setActionHotkey` accepts.
+ */
+describe("hotkeyDisplayLabel", () => {
+  it("returns '(empty)' for an unset slot", () => {
+    const hero = heroFrom({ classId: "fighter" });
+    expect(hotkeyDisplayLabel(hero, undefined)).toBe("(empty)");
+  });
+
+  it("strips the keyboard-shortcut suffix from a registry action's label", () => {
+    const hero = heroFrom({ classId: "fighter" });
+    expect(hotkeyDisplayLabel(hero, "secondWind")).toBe("Bonus: Second Wind");
+  });
+
+  it("returns a known spell/cantrip's real name", () => {
+    const hero = heroFrom({ classId: "wizard" });
+    expect(hotkeyDisplayLabel(hero, "fire-bolt")).toBe("Fire Bolt");
+  });
+
+  it("falls back to the raw id for something that isn't a registry action or a known spell", () => {
+    const hero = heroFrom({ classId: "fighter" });
+    expect(hotkeyDisplayLabel(hero, "not-a-real-id")).toBe("not-a-real-id");
   });
 });

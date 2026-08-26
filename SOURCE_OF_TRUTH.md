@@ -616,6 +616,22 @@ competitive mode initially.
 > explicit request (the bar CLAUDE.md sets for touching a LOCKED decision),
 > not an agent judgment call. The loss condition is now: Stronghold Integrity
 > reaches zero, OR every hero is defeated.
+>
+> **Repo note (added 2026-08-24):** two more of this table's still-OPEN rows
+> have since been answered. "Initiative" → **per-group** (D-175): party
+> phases (Player/Enemy blocks) stay exactly as they are, but the Enemy
+> Phase itself now orders enemies by TYPE-group initiative instead of raw
+> spawn order — a real middle ground the table's own two-option framing
+> ("keep party phases or later add individual initiative?") didn't name.
+> "Level cadence" → **LOCKED to every wave** (D-174; supersedes the D-056
+> DEFAULT of every 2 waves noted above) — every living hero levels up
+> together every single wave, for the in-battle 1-20 class-level track
+> specifically. A SEPARATE overworld/campaign-only leveling track (special
+> bonuses unlocked by story progress) is a distinct, deliberately
+> not-yet-designed thing that isn't part of this table's "Level cadence"
+> item at all — see `KNOWN_ISSUES.md` KI-098 item 13. Per the first
+> repo-note above, still genuinely OPEN: rest system, multiclassing,
+> structure destruction.
 
 ## 10. GitHub and Cross-Chat Handoff Workflow
 

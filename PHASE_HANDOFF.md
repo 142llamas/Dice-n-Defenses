@@ -2,176 +2,215 @@
 
 ## Version and phase
 
-- **Version:** 0.2.0-dev, unchanged. This session built **D-159**: a
-  revert of D-157's `Scale.RESIZE` cutover back to `Scale.FIT`, after
-  Kevin's first real in-browser pass since D-154 started found it broken.
-- **Date:** August 22, 2026 (same day as D-154 through D-158, the 12th
-  decision logged in this long multi-day session).
-- Tests: unchanged at **1349**. Typecheck, all 1349 tests, and the
-  production build (126 modules, unchanged — no new files) all pass.
+- **Version:** 0.2.0-dev, unchanged. This session built **The Nameless
+  Throne** — the campaign capstone, `CAMPAIGN_STORY_DESIGN.md` §5's last
+  unbuilt piece and the final item on the whole KI-098 item 13 epic. Kevin's
+  own direct ask: "build the capstone now... epic, a true masterpiece."
+- **Date:** August 26, 2026 (continuing the same standing-instruction
+  session as every previous handoff since it was set).
+- Tests: 1444 → **1466**. Typecheck, all 1466 tests, and the production
+  build (**141 modules**, +2 for the new map and system files) all pass.
+  `npm run dev` serves HTTP 200.
 
 ## What happened
 
-Kevin reported, in his own words: "There are now large issues with the
-game buttons. The settings and sign in buttons on main menu overlap with
-the border so they don't look great. Also when I hit new game I can no
-longer see any buttons for starting the game or going back to the main
-menu. Pretty sure that is because of the new full screen sizing, so you
-need to rethink how you are going about this." He was right on both counts
-— see D-159 in `DECISIONS.md` for the full root-cause writeup, summarized
-here:
+### D-188 — The Nameless Throne: the campaign capstone
 
-`Scale.RESIZE` (D-157, shipped last session) makes the canvas's actual
-pixel size track the real browser window exactly, with NO automatic
-shrink-to-fit. `Scale.FIT` (now restored) was quietly doing something the
-entire D-154/155/156 responsive-canvas roadmap had assumed away: every
-scene's resize handling only ever recentered content HORIZONTALLY on a
-resize — none of it handled a real window SHORTER than `GAME_HEIGHT`
-(1080px), which is common on laptops once browser chrome is subtracted.
-Under `FIT`, that gap was invisible (the whole 1280x1080 design just
-visually shrank to fit, so nothing was ever actually clipped). Under
-`RESIZE`, content positioned near the bottom of the old fixed design (like
-Character Creation's Start/Back buttons) ended up below the visible
-canvas, with nothing to scroll it into view — genuinely invisible, not just
-smaller. Main Menu's corner-control overlap has the same root shape from
-the width/aspect-ratio side.
+This is the largest single build of the item-13 epic, so it was researched
+before any code was written: 3 parallel Explore agents (campaign/chapter/
+companion data model; map-authoring + enemy-reskin patterns; branch-choice/
+victory-flow mechanics), then a Plan-agent implementation pass, all
+cross-checked against the real current code. Two genuine scope forks were
+confirmed directly with Kevin via `AskUserQuestion` before designing
+further — both resolved to the lighter-scope option:
 
-**This session's fix**: reverted `main.ts`'s `scale.mode` back to
-`Phaser.Scale.FIT`, and removed `BattleScene`'s runtime scale-mode-swap
-code (which existed only to lock battles to `FIT` under the old `RESIZE`
-default — pointless now, and its `SHUTDOWN` handler would have actively
-re-broken every menu scene by flipping the whole game back to `RESIZE`
-after any battle ended, had it been left in place). This restores the
-EXACT `Scale.FIT` behavior that worked correctly across many prior
-sessions — a high-confidence revert, not a new, equally-unverified fix.
+- **Ending signal**: reuse the EXISTING Finish-or-Spare miniboss flags (5
+  regions) plus Sorrel Thane's resolved fate, instead of writing 18-24 new
+  chapter-boundary choice prompts across all 6 regions.
+- **Capstone shape**: one climactic finale battle — flat, no `chapters` —
+  not a second full 4-chapter 1-20 arc.
 
-**Not reverted**: D-157's fixes to `uiTheme.ts` (`drawScreenBackdrop`/
-`spawnAmbientMotes`/`centeredRowX`), `tooltip.ts`, and `dialogueBox.ts` —
-reading a scene's live `scale.width`/`height` instead of the fixed
-`GAME_WIDTH`/`GAME_HEIGHT` constants. These are harmless no-ops under
-`Scale.FIT` (the two are numerically identical again) and would still be
-necessary groundwork if a real responsive-canvas attempt is made later.
+**Design calls locked this session** (not specified by the original design
+doc; all documented explicitly, not silently decided): sparing a miniboss
+and Sorrel's Redeemed outcome both lean **Ashen Sovereign** ("held onto
+compassion/identity"); finishing a miniboss (or letting it breach
+unresolved — there's no `finished:<id>` flag anywhere) and Sorrel's Lost
+outcome both lean **The Hollow Empress** ("traded mercy for expedience"); a
+genuine tie resolves to Ashen, matching §5's own "true ending" framing. The
+capstone's pre-battle card always shows "Boss: Ashen Sovereign" regardless
+of which the player will actually face — an intentional non-spoiler
+(mirrors how Saltmere's card always says "Boss: Tidelord"). No HOMM3
+bonus-choice screen for the capstone — §8 left this explicitly undecided;
+resolved as a scope cut, zero code needed to enforce it.
 
-## If the responsive-canvas roadmap is picked up again
+**What was built**:
+- New `data/namelessThroneMap.ts`: one fixed 17×11 `ParsedMap` — a
+  processional hall (outer gallery strip walled off by a pillar line with
+  two crossing-gaps, opening onto a single wide nave carrying the real
+  spawn-to-exit lane), 4 hero-starts, a shop, a treasure, 4 symmetric
+  hazard tiles baked as `fire` (the Ashen Sovereign baseline). Hand-authored
+  and verified programmatically (row-width + role-position checks) before
+  being wired into anything.
+- New `systems/NamelessThroneSystem.ts` (pure, tested), mirroring
+  `ReturningMinibossSystem.ts`'s exact shape: `resolveThroneVariant` (the
+  tally/tie-break above), `withThroneVariant` (swaps the map's 4 hazard
+  tiles to `water` for Hollow — same reference for Ashen), `withThrone
+  EnemyReskins` (the same "spine clone, same reference when unchanged" swap
+  `withReturningMinibossSwap` established, generalized to 4 id pairs).
+- Six new enemy reskins in `data/enemies.ts` — verbatim stat clones (only
+  `id`/`name`/`assetKey`/`loreText`/color differ), the same
+  `corrupted-sorrel`-from-`tide-wretch` precedent: Ember Thane/Cinder
+  Adept/Ashbound Honor Guard (fire-touched, from Warden/Hexer/Gravemaw) for
+  the Ashen garrison; Drowned Thane/Hollow Caller/Drowned Honor Captain
+  (drowned/withered, from Warden/Blightcaller/The Husk) for the Hollow
+  garrison.
+- `data/campaigns.ts`: new flat `CampaignDefinition` (`nameless-throne`), 6
+  waves scaled above every region's own Ch4 finale (turnLimit 10→18,
+  completionGold 22→95, finale spawns `ashen-sovereign`), a curated loot
+  pool combining the fire- and frost-themed pools, appended to the END of
+  `CAMPAIGNS`. New exported `REGION_CAMPAIGN_IDS` — single source of truth
+  for the gating check and the test suite's own region filter.
+- `systems/CampaignProgressSystem.ts`: new `areCampaignsCompleted(progress,
+  campaignIds)` — the first "all of these ids" aggregate helper in the
+  codebase.
+- `scenes/CampaignSelectScene.ts`: the capstone card stays locked ("Complete
+  all 6 regions to unlock") until `areCampaignsCompleted` against
+  `REGION_CAMPAIGN_IDS` — the inverse of The Proving Ground's own single-id
+  gate (D-184), reusing its visual pattern.
+- `scenes/BattleScene.ts`: the variant resolves once at chapter/map-load
+  (same spot the Saltmere swap runs, stored in a new `resolvedThroneVariant`
+  field, same idiom as `saltmereReturningEnemyId`). A new intro beat
+  (`showNamelessThroneIntroIfAny`, one link in the existing
+  `showChapterIntroIfAny` chain) shows a variant-flavored line before wave
+  1. A new victory-time epilogue (`showNamelessThroneEndingIfAny`, chained
+  between `showChapterOutroIfAny` and `showEndScreen`): Ending A has the PC
+  name every companion still on the roster (active or benched) out loud by
+  reading `getCompanionDefinition(id).name`; Ending B has the PC reach for
+  a name that isn't there.
 
-D-159's own writeup in `DECISIONS.md` flags this explicitly: a real fix
-needs a strategy for VERTICAL space, not just horizontal centering —
-either (a) every scene reflows its vertical layout too, not just shifts/
-rebuilds horizontally, or (b) keep `Scale.FIT`'s shrink-to-fit behavior but
-raise the LOGICAL canvas size (`GAME_WIDTH`/`GAME_HEIGHT` themselves)
-instead of switching scale modes at all. Worth raising as an explicit
-choice with Kevin before attempting this a second time — this environment
-still has no browser to catch the next edge case blind, and the last
-attempt cost a real, confirmed regression in his hands.
+**Tests**: new `tests/namelessThroneSystem.test.ts` (16 tests — tally/
+tie-break coverage including the Sorrel-neutral and all-not-spared cases,
+never-mutates-input and same-reference-when-unchanged checks for both swap
+functions). `tests/campaigns.test.ts` needed a real fix, not just an
+addition — it hardcoded `CAMPAIGNS.length === 7` and a region filter that
+only excluded the prologue, which would have broken the moment the capstone
+was appended; now built on the new `REGION_CAMPAIGN_IDS`, plus a new
+capstone-specific describe block. `tests/campaignProgress.test.ts` gained
+`areCampaignsCompleted` coverage. `tests/enemyRoster.test.ts`'s hardcoded
+miniboss/minion role counts and its saving-throw-attacker allowlist both
+needed updating for the 6 new reskins. `tests/regionBonusSystem.test.ts`'s
+"every region has a bonus pool" check now also excludes the capstone,
+matching the documented scope cut.
 
 ## Important files
 
-- **`src/main.ts`** — `scale.mode` back to `Phaser.Scale.FIT`.
-- **`src/game/scenes/BattleScene.ts`** — removed the D-157 scale-mode-swap
-  code from `create()` and its `SHUTDOWN` handler (3 lines each site).
-- No other files touched this session.
+- `src/game/data/namelessThroneMap.ts` — new: the capstone's fixed map.
+- `src/game/systems/NamelessThroneSystem.ts` — new: `resolveThroneVariant`,
+  `withThroneVariant`, `withThroneEnemyReskins`.
+- `src/game/data/enemies.ts` — 6 new reskin entries + `ENEMY_COLORS`.
+- `src/game/data/campaigns.ts` — new capstone `CampaignDefinition`,
+  `NAMELESS_THRONE_WAVES`/`NAMELESS_THRONE_LOOT_POOL`, `REGION_CAMPAIGN_IDS`,
+  `NAMELESS_THRONE_CAMPAIGN_ID`, `CAMPAIGN_MAPS` entry.
+- `src/game/systems/CampaignProgressSystem.ts` — new `areCampaignsCompleted`.
+- `src/game/scenes/CampaignSelectScene.ts` — capstone gating + locked hint.
+- `src/game/scenes/BattleScene.ts` — variant resolution, intro beat,
+  victory epilogue, new `resolvedThroneVariant` field.
+- `tests/namelessThroneSystem.test.ts` — new.
+- `tests/campaigns.test.ts`, `tests/campaignProgress.test.ts`,
+  `tests/enemyRoster.test.ts`, `tests/regionBonusSystem.test.ts` — updated.
 
 ## Commands verified
 
 - `npm run typecheck` — clean.
-- `npm test` — **1349/1349** passing (unchanged).
-- `npm run build` — production build succeeds, 126 modules (unchanged).
+- `npm test -- --run` — **1466/1466** passing (1444 at session start).
+- `npm run build` — production build succeeds, **141 modules** (139 → 141,
+  +2 for the new map and system files).
+- `npm run dev` — serves HTTP 200.
 
 ## Manual tests completed
 
-None run here (no browser in this environment) — but this revert restores
-previously-working, many-sessions-verified behavior rather than
-introducing something new, so it's high-confidence. Still worth Kevin's
-quick look to confirm both his reported bugs (Main Menu corner-control
-overlap, Character Creation's missing Start/Back buttons) are actually
-gone, and that nothing else regressed in the process.
+None — no browser available in this environment. This is a brand-new
+endgame screen, battle, and branching epilogue — see **KI-138**'s own
+checklist in `KNOWN_ISSUES.md` for what Kevin should confirm (capstone
+gating on a fresh 6-region-complete save, both ending variants' map
+dressing/garrison/boss, both epilogue beats including a benched-companion
+case, the non-spoiler card text, the breach-reads-as-Finished edge case, no
+bonus-choice screen).
 
 ## Known issues
 
-- **KI-109**: updated in place — the two bugs Kevin found are logged as
-  fixed-by-revert (D-159); its own checklist is now mostly moot since the
-  feature it was testing (`Scale.RESIZE`) no longer exists.
-- **KI-110** (D-158, KI-034's redesign): still needs Kevin's own in-browser
-  confirmation — unaffected by this session's revert (that redesign lives
-  entirely inside `BattleScene`, touched by D-158 not D-157/D-159).
-- **KI-108** (D-156), **KI-107** (D-155), **KI-106** (D-154): unchanged —
-  their own "Update (D-157)" notes are now further annotated to say D-157
-  was reverted, so their ORIGINAL text (resizing does nothing) is accurate
-  again.
-- **KI-105** (D-153) through **KI-092** and earlier: unchanged, still
-  outstanding — see prior handoffs for the full list.
-- KI-098's remaining threads, unchanged: Progression systems, and the
-  lower-priority overworld campaign redesign.
+- **KI-138** (this session) needs Kevin's playtest confirmation.
+- **KI-136**/**KI-137** (D-186/D-187) and **KI-129** through **KI-135** are
+  unchanged and still need their own confirmation too, if that hasn't
+  happened yet.
+- Every other KI-1xx item from prior sessions is unchanged. **KI-113**
+  (D-162's horizontal-squish mitigation) is still explicitly unconfirmed.
 
-## Deferred items — the responsive-canvas roadmap (status changed this session)
+## Deferred items
 
-1. ~~The remaining ~5 harder scenes~~ **DONE (D-155)**.
-2. ~~`CharacterCreationScene`/`MapBuilderScene`'s own resize-reactivity~~
-   **DONE (D-156)**.
-3. **The actual `Scale.RESIZE` cutover — REVERTED (D-159) after shipping
-   broken (D-157).** Back to NOT DONE. See "If the responsive-canvas
-   roadmap is picked up again" above before retrying — this needs a
-   different strategy, not a repeat attempt.
-4. **`BattleScene`'s `TILE_SIZE` dynamic-scaling** — NOT STARTED, still
-   gated on step 3 (now doubly so, given step 3 just failed once already).
-5. **Raising `MAX_MAP_COLS`/`MAX_MAP_ROWS`** — pointless until step 4.
-
-## Decisions made
-
-**D-159** — logged in full in `DECISIONS.md`: reverted D-157's
-`Scale.RESIZE` cutover back to `Scale.FIT` after Kevin's first real
-in-browser pass found it broken (Main Menu corner-control overlap,
-Character Creation's Start/Back buttons invisible). Root cause and what a
-real fix would need are both documented there. No new `CONTENT_SOURCES.md`
-entry needed.
-
-## Content or license additions
-
-None.
+- **CAMPAIGN_STORY_DESIGN.md's own design/build arc is now CLOSED** — every
+  section (§2 through §8) is either built or an explicitly documented
+  scope cut. Only two items remain, both already carried across many prior
+  handoffs, neither picked up this session:
+  - Full dialogue/arc writing for the original six Pool B companions
+    (Ch1-3 beats, chapter-boundary reactions, homecoming beats) — still
+    just one-line hooks.
+  - Giving branch choices (Sorrel's Redeemed/Marked, the Finish/Spare
+    choice, region-bonus picks) real mechanical weight beyond flavor text.
+- The capstone's map layout, wave composition, enemy names/lore, and both
+  flavor/epilogue beats are all first-pass writing/design — flag directly
+  if any of it reads wrong once actually played.
 
 ## Next chat instructions
 
-1. **Confirm with Kevin that both his reported bugs are gone** (Main Menu
-   corner controls, Character Creation Start/Back buttons) — this is a
-   high-confidence revert but hasn't been seen in a real browser yet
-   either.
-2. **KI-110 (D-158's roster-strip redesign) still needs its own separate
-   in-browser confirmation** — unrelated to this session's revert, still
-   open from before.
-3. **Do NOT re-attempt the `Scale.RESIZE` cutover the same way.** If "bigger
-   maps" comes back up, raise the two options in this file's "If the
-   responsive-canvas roadmap is picked up again" section with Kevin
-   directly before writing any code — a second blind attempt at the same
-   approach already cost one real regression.
-4. **If picking up more of KI-098**: Progression systems (initiative, XP
-   distribution, 1-20 campaign pacing) is the one remaining unscoped
-   thread besides the responsive-canvas roadmap and the lower-priority
-   overworld campaign redesign.
-5. **Log a new D-NNN as each further piece ships** (next number: D-160).
+1. **Confirm D-188 with Kevin in a real playtest** before building more —
+   see KI-138's checklist. This is the single biggest unplayed build in the
+   whole item-13 epic; earlier KI items (KI-129 through KI-137) are also
+   still worth confirming if that hasn't happened.
+2. **If Kevin wants more item-13 work**: the only two things left are the
+   two "still open" items above (companion dialogue writing, and giving
+   branch choices real mechanical weight) — both are genuinely different in
+   kind from everything built so far (writing/narrative-design work, not
+   systems work), so confirm which one (if either) Kevin actually wants
+   rather than assuming.
+3. Keep verifying claims against the actual current code before building —
+   this session's own research caught that `tests/campaigns.test.ts` would
+   have broken immediately on appending the capstone (a hardcoded
+   `CAMPAIGNS.length` and a prologue-only region filter), and that a
+   miniboss "breaching" rather than being explicitly Finished/Spared has no
+   dedicated flag anywhere — both handled as documented first-pass calls,
+   not silent gaps.
 
 ## Suggested git steps (not run here; use GitHub Desktop)
 
-Commit `src/main.ts`, `src/game/scenes/BattleScene.ts` (both modified, no
-new files). Plus the doc updates (`DECISIONS.md`, `KNOWN_ISSUES.md`,
-`CHANGELOG.md`, `PROJECT_STATUS.md`, this file).
+This session touched: `src/game/data/namelessThroneMap.ts` (new),
+`src/game/systems/NamelessThroneSystem.ts` (new),
+`src/game/data/enemies.ts`, `src/game/data/campaigns.ts`,
+`src/game/systems/CampaignProgressSystem.ts`,
+`src/game/scenes/CampaignSelectScene.ts`, `src/game/scenes/BattleScene.ts`,
+`tests/namelessThroneSystem.test.ts` (new), `tests/campaigns.test.ts`,
+`tests/campaignProgress.test.ts`, `tests/enemyRoster.test.ts`,
+`tests/regionBonusSystem.test.ts`, plus doc updates (`DECISIONS.md`,
+`KNOWN_ISSUES.md`, `CHANGELOG.md`, `PROJECT_STATUS.md`,
+`CAMPAIGN_STORY_DESIGN.md`, `CONTENT_SOURCES.md`, this file). No
+Firebase-relevant change this session.
 
 ## Handoff package contents
 
-- [x] Source files: `src/main.ts`, `src/game/scenes/BattleScene.ts` (both
-      modified, no new files)
+- [x] Source files: see "Important files" above
 - [x] package.json / package-lock.json (unchanged)
 - [x] README.md (unchanged)
-- [x] DECISIONS.md (updated — D-159 appended, after D-158)
-- [x] KNOWN_ISSUES.md (updated — Open bugs section + KI-109 rewritten;
-      KI-106/107/108's "Update (D-157)" notes further annotated)
-- [x] CHANGELOG.md (updated — a new Unreleased section)
-- [x] CONTENT_SOURCES.md (unchanged — no new content)
+- [x] DECISIONS.md (updated — D-188 appended)
+- [x] KNOWN_ISSUES.md (updated — KI-138 added)
+- [x] CHANGELOG.md (updated — new Unreleased section)
+- [x] CONTENT_SOURCES.md (updated — new row for the map/waves/6 reskins)
 - [x] ASSET_PLAN.md (unchanged)
 - [x] SOURCE_OF_TRUTH.md (unchanged)
 - [x] FIREBASE_SETUP.md (unchanged)
 - [x] PHASE_12_MULTIPLAYER_FEASIBILITY.md (unchanged)
-- [x] CAMPAIGN_STORY_DESIGN.md (unchanged)
-- [x] PROJECT_STATUS.md (updated — new D-159 section added at the top)
+- [x] CAMPAIGN_STORY_DESIGN.md (updated — §9 addendum, §8's "not decided
+      yet" question resolved)
+- [x] PROJECT_STATUS.md (updated — new section added at the top)
 - [x] PHASE_HANDOFF.md (this file, fully rewritten)
-- [x] Tests: unchanged at 1349
+- [x] Tests: 1444 → 1466
 - [x] No node_modules, dist, secrets, or service-account credentials

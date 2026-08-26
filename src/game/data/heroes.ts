@@ -43,8 +43,6 @@ export interface HeroDefinition {
   attackBonus: number;
   /** Combat (Phase 13.1, D-086): Armor Class before equipped gear (10 = unarmored). */
   baseArmorClass: number;
-  /** The id of this hero's one distinct ability (see data/abilities.ts). */
-  abilityId: string;
   /** Absent means "human". */
   controlledBy?: HeroControlMode;
   /**

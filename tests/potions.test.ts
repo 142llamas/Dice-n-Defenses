@@ -19,7 +19,6 @@ const WREN_TEST_HERO_DEF: HeroDefinition = {
   attackRangeTiles: 3,
   attackBonus: 4,
   baseArmorClass: 10,
-  abilityId: "piercing-shot",
 };
 
 function wren(): Hero {
@@ -97,9 +96,9 @@ describe("Phase 22 potion effects", () => {
   it("potion of speed grants a permanent movement buff", () => {
     const hero = wren();
     const base = hero.effectiveMovementTiles;
-    hero.equippedPotions.general1 = "potion-of-speed"; // +2 tiles
+    hero.equippedPotions.general1 = "potion-of-speed"; // +4 tiles (D-172)
     hero.usePotion("general1");
-    expect(hero.effectiveMovementTiles).toBe(base + 2);
+    expect(hero.effectiveMovementTiles).toBe(base + 4);
   });
 
   it("potion of resistance grants hasDamageResistance without ever expiring or blocking Rage", () => {

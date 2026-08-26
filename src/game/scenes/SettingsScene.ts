@@ -1,10 +1,10 @@
 import Phaser from "phaser";
 import { SETTINGS_STORAGE_KEY } from "../config";
 import {
+  ANIMATION_SPEEDS,
   ANIMATION_SPEED_LABELS,
+  VOLUME_STEPS,
   loadSettings,
-  nextAnimationSpeed,
-  nextVolume,
   saveSettings,
   toggleMuted,
   type Settings,
@@ -15,6 +15,7 @@ import {
   drawScreenBackdrop,
   getViewport,
   onViewportResize,
+  openChoiceList,
   type OrnateButtonHandle,
 } from "./uiTheme";
 import { audioManager } from "./AudioManager";
@@ -51,6 +52,8 @@ export class SettingsScene extends Phaser.Scene {
   private contentObjects: Phaser.GameObjects.GameObject[] = [];
   private backdrop?: Phaser.GameObjects.Graphics;
   private titleText?: Phaser.GameObjects.Text;
+  /** D-16x: the shared full-screen list-picker overlay (`openChoiceList`), replacing the old click-to-cycle Game Speed/volume buttons. */
+  private choiceOverlay: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super("SettingsScene");
@@ -159,10 +162,8 @@ export class SettingsScene extends Phaser.Scene {
   }
 
   private buildGameSpeedButton(x: number, y: number, width: number): OrnateButtonHandle {
-    const label = () =>
-      `Game Speed: ${
-        this.battleScene ? this.battleScene.animationSpeedLabel() : ANIMATION_SPEED_LABELS[this.settings.animationSpeed]
-      }`;
+    const currentSpeed = () => (this.battleScene ? this.battleScene.animationSpeedLabel() : ANIMATION_SPEED_LABELS[this.settings.animationSpeed]);
+    const label = () => `Game Speed: ${currentSpeed()}`;
     const handle = createOrnateButton(
       this,
       x,
@@ -171,13 +172,24 @@ export class SettingsScene extends Phaser.Scene {
       54,
       label(),
       () => {
-        if (this.battleScene) {
-          this.battleScene.cycleGameSpeed();
-        } else {
-          this.settings = { ...this.settings, animationSpeed: nextAnimationSpeed(this.settings.animationSpeed) };
-          saveSettings(window.localStorage, SETTINGS_STORAGE_KEY, this.settings);
-        }
-        handle.setLabel(label());
+        openChoiceList(
+          this,
+          this.choiceOverlay,
+          "Choose Game Speed",
+          ANIMATION_SPEEDS.map((speed) => ({
+            label: ANIMATION_SPEED_LABELS[speed],
+            highlighted: currentSpeed() === ANIMATION_SPEED_LABELS[speed],
+            onPick: () => {
+              if (this.battleScene) {
+                this.battleScene.setAnimationSpeed(speed);
+              } else {
+                this.settings = { ...this.settings, animationSpeed: speed };
+                saveSettings(window.localStorage, SETTINGS_STORAGE_KEY, this.settings);
+              }
+              handle.setLabel(label());
+            },
+          })),
+        );
       },
       { variant: "secondary", depth: 5 },
     );
@@ -201,9 +213,20 @@ export class SettingsScene extends Phaser.Scene {
       54,
       text(),
       () => {
-        set(nextVolume(get()));
-        this.persistAndApply();
-        handle.setLabel(text());
+        openChoiceList(
+          this,
+          this.choiceOverlay,
+          `Choose ${label}`,
+          VOLUME_STEPS.map((v) => ({
+            label: `${v}%`,
+            highlighted: v === get(),
+            onPick: () => {
+              set(v);
+              this.persistAndApply();
+              handle.setLabel(text());
+            },
+          })),
+        );
       },
       { variant: "secondary", depth: 5 },
     );

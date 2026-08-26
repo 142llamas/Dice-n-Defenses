@@ -11,10 +11,12 @@ import {
   TUTORIAL_STORAGE_KEY,
   BESTIARY_STORAGE_KEY,
   CAMPAIGN_PROGRESS_STORAGE_KEY,
+  WORLD_FLAG_STORAGE_KEY,
+  COMPANION_ROSTER_STORAGE_KEY,
   SAVE_STORAGE_KEY,
 } from "../config";
 import { SPRITE_MANIFEST } from "../data/spriteManifest";
-import { GridSystem, type GridPosition } from "../systems/GridSystem";
+import { GridSystem, computeFittedTileSize, type GridPosition } from "../systems/GridSystem";
 import { GameMap } from "../systems/GameMap";
 import { MovementSystem } from "../systems/MovementSystem";
 import { PathfindingSystem } from "../systems/PathfindingSystem";
@@ -41,26 +43,37 @@ import { BuildSystem, type PlacedStructure } from "../systems/BuildSystem";
 import { SummonSystem } from "../systems/SummonSystem";
 import { RewardSystem } from "../systems/RewardSystem";
 import { rollLootDrop, isPotionId, type LootDropResult } from "../systems/LootSystem";
+import { drawRegionBonusChoices } from "../systems/RegionBonusSystem";
+import { REGION_BONUS_POOLS, type RegionBonusOption } from "../data/regionBonuses";
 import { averagePartyLevel, isRarityUnlockedAtLevel } from "../systems/ShopSystem";
 import { ProgressionSystem } from "../systems/ProgressionSystem";
 import { RestSystem } from "../systems/RestSystem";
-import { firstAvailableHeroAction } from "../systems/HeroActionRegistry";
-import { createTooltipController, type TooltipController } from "./tooltip";
+import { firstAvailableHeroAction, listHeroActions, hotkeyDisplayLabel } from "../systems/HeroActionRegistry";
+import { createTooltipController, attachHoverTooltip, type TooltipController } from "./tooltip";
 import { centeredRowX } from "./uiTheme";
+import { showDialogue, type DialogueBoxController, type DialogueLine } from "./dialogueBox";
 import { asiFeatureGrantedAtLevel, subclassGrantedAtLevel } from "../systems/CharacterSystem";
 import { subclassesForClass, getSubclassDefinition } from "../data/subclasses";
 import { getClassDefinition } from "../data/classes";
 import { ABILITY_SCORE_IDS, ABILITY_SCORE_NAMES, type AbilityScoreId } from "../data/abilityScores";
 import { FEAT_IDS, getFeat } from "../data/feats";
-import { Hero, BARDIC_INSPIRATION_BONUS, MAX_ATTUNEMENTS, type MagicInitiateListId } from "../entities/Hero";
+import {
+  Hero,
+  BARDIC_INSPIRATION_BONUS,
+  MAX_ATTUNEMENTS,
+  ACTION_HOTKEY_SLOT_COUNT,
+  type MagicInitiateListId,
+} from "../entities/Hero";
 import {
   fastForwardHero,
   resolveAsiForLevel,
   resolveSubclassForClass,
   resolveSpellPickForRequest,
+  spellPickTriggerLevel,
   levelUpDeltaSummary,
   type LevelUpPlan,
   type LevelUpStatSnapshot,
+  type LevelUpChoiceStep,
 } from "../systems/LevelUpPlanSystem";
 import {
   spellSwapStepsForClass,
@@ -79,7 +92,35 @@ import type { Summon } from "../entities/Summon";
 import { TEST_MAP, type ParsedMap, type TileType } from "../data/testMap";
 import { DynamicTerrainSystem } from "../systems/DynamicTerrainSystem";
 import { WAVES, type WaveDefinition } from "../data/waves";
-import { getCampaignDefinition, getCampaignMap } from "../data/campaigns";
+import {
+  getCampaignDefinition,
+  getCampaignMap,
+  getChapter,
+  isChapteredCampaign,
+  totalChapters,
+  NAMELESS_THRONE_CAMPAIGN_ID,
+  type ChapterDefinition,
+  type CampaignDefinition,
+} from "../data/campaigns";
+import { COMPANIONS, getCompanionDefinition } from "../data/companions";
+import {
+  loadCompanionRoster,
+  saveCompanionRoster,
+  recruitCompanion,
+  isCompanionRecruited,
+  isCompanionLost,
+  loseCompanion,
+  DEFAULT_COMPANION_ROSTER_STATE,
+  type CompanionRosterState,
+} from "../systems/CompanionRosterSystem";
+import {
+  recordSorrelChoice,
+  resolveSorrelFate,
+  SORREL_FATE_FLAG_ID,
+  SORREL_CHOICE_PROMPTS,
+  SORREL_FATE_FLAVOR_TEXT,
+  type SorrelChoice,
+} from "../systems/SorrelFateSystem";
 import { getMapById } from "../data/maps";
 import { ENEMY_COLORS, ENEMY_DEFINITIONS, getEnemyDefinition, type EnemyRole } from "../data/enemies";
 import type { HeroDefinition } from "../data/heroes";
@@ -152,11 +193,26 @@ import {
   loadCampaignProgress,
   saveCampaignProgress,
   markCampaignCompleted,
+  markChapterCompleted,
   DEFAULT_CAMPAIGN_PROGRESS,
   type CampaignProgress,
 } from "../systems/CampaignProgressSystem";
 import type { CharacterBuild } from "../systems/CharacterBuildSystem";
 import { saveOrUpdatePartySlot, loadSaveFile, saveSaveFile, type SavePartyResult } from "../systems/SaveSystem";
+import { loadWorldFlags, saveWorldFlags, setWorldFlag, hasWorldFlag, DEFAULT_WORLD_FLAG_STATE, type WorldFlagState } from "../systems/WorldFlagSystem";
+import {
+  SPARABLE_MINIBOSS_CHAPTERS,
+  RETURNING_MINIBOSS_FLAVOR_TEXT,
+  resolveSaltmereCh1Enemy,
+  withReturningMinibossSwap,
+  sparedFlagId,
+} from "../systems/ReturningMinibossSystem";
+import {
+  resolveThroneVariant,
+  withThroneVariant,
+  withThroneEnemyReskins,
+  type ThroneVariant,
+} from "../systems/NamelessThroneSystem";
 
 /**
  * Phase 23 (D-114): the actual battle board's per-tile color. Every non-
@@ -209,7 +265,6 @@ type Interaction =
   | { kind: "idle" }
   | { kind: "heroSelected"; heroId: string }
   | { kind: "confirmingMove"; heroId: string; dest: GridPosition }
-  | { kind: "aimingAbility"; heroId: string }
   | { kind: "building"; defId: string }
   | { kind: "equipping"; itemId: string | null }
   | { kind: "choosingSpell"; heroId: string }
@@ -483,6 +538,15 @@ export class BattleScene extends Phaser.Scene {
   /** D-148: opens the Character Sheet for the currently selected hero — visible whenever a hero is selected, regardless of `canAct()` (viewing stats needs no action). */
   private characterSheetButton!: Phaser.GameObjects.Rectangle;
   private characterSheetLabel!: Phaser.GameObjects.Text;
+  /**
+   * D-165 (KI-098 item 2): the in-battle hotkey bar — one small button per
+   * `ACTION_HOTKEY_SLOT_COUNT` slot, firing whatever `Hero.actionHotkeys()`
+   * holds there (see `triggerHotkey`). Built once in `buildHud()` for the
+   * fixed slot count, same "always allocate the max, show/hide per state"
+   * convention `heroSlotBoxes` already uses for the roster strip.
+   */
+  private hotkeyButtons: Phaser.GameObjects.Rectangle[] = [];
+  private hotkeyLabels: Phaser.GameObjects.Text[] = [];
   /** Phase 13.2 (D-087): attacks Uncanny-Dodged this enemy phase, so the combat log can say so (reference identity, not a data field on EnemyAttackEvent). */
   private uncannyDodgedThisPhase = new Set<EnemyAttackEvent>();
   /** Phase 13.8 (D-093): attacks halved by Rage/Wild Shape this enemy phase, so the combat log can say so. */
@@ -529,10 +593,20 @@ export class BattleScene extends Phaser.Scene {
    * `asiQueue` holds the heroes still waiting.
    */
   private asiOverlay: Phaser.GameObjects.GameObject[] = [];
-  private asiQueue: Hero[] = [];
+  // D-16x: carries the triggering level explicitly (not just the hero) so a
+  // choice deferred from a pre-battle fast-forward can be resolved against
+  // the RIGHT level's plan entry, not whatever level the hero has already
+  // reached by the time the prompt is shown.
+  private asiQueue: { hero: Hero; level: number }[] = [];
   private pendingAfterAsi: (() => void) | null = null;
   /** True while the ASI-or-feat overlay is up, so the board ignores input under it. */
   private choosingAsi = false;
+  /** D-181: true while the pre-region bonus-choice overlay is up (reuses `asiOverlay`/`renderAsiPrompt`), so the board ignores input under it. */
+  private choosingRegionBonus = false;
+  /** KI-098 item 13: true while the "finish or spare?" overlay for this chapter's miniboss is up (reuses `asiOverlay`/`renderAsiPrompt`), so the board ignores input under it. */
+  private choosingSparableKill = false;
+  /** D-185: true while Sorrel Thane's Drowning Vale Ch1-3 choice overlay is up (reuses `asiOverlay`/`renderAsiPrompt`), so the board ignores input under it. */
+  private choosingSorrelFateChoice = false;
   /**
    * Phase 13.11 (D-096): the subclass-choice confirmation overlay, shown
    * once per hero that just reached its class's subclass-choice level
@@ -665,6 +739,8 @@ export class BattleScene extends Phaser.Scene {
   private animationSpeed: AnimationSpeed = "normal";
   private tutorialOverlay: Phaser.GameObjects.GameObject[] = [];
   private pendingAfterTutorial: (() => void) | null = null;
+  /** D-177: the chapter intro/outro dialogue box, while one is showing — see `showChapterIntroIfAny`/`showChapterOutroIfAny`. */
+  private chapterDialogue: DialogueBoxController | null = null;
 
   /**
    * Phase 11.6 (D-079): unlock-on-encounter Bestiary progress. Loaded once in
@@ -683,6 +759,53 @@ export class BattleScene extends Phaser.Scene {
   private campaignProgress: CampaignProgress = DEFAULT_CAMPAIGN_PROGRESS;
 
   /**
+   * KI-098 item 13 (CAMPAIGN_STORY_DESIGN.md §4): persisted per-choice story
+   * flags, loaded once in `create()`. Only the "spared this miniboss" flags
+   * are written yet (see `pendingSparableKill`'s resolution below) — same
+   * "don't spam localStorage" discipline as `bestiaryProgress`/
+   * `campaignProgress`.
+   */
+  private worldFlags: WorldFlagState = DEFAULT_WORLD_FLAG_STATE;
+
+  /**
+   * KI-098 item 13 (companion roster/recruitment, Phase 1): loaded once in
+   * `create()`, same "don't spam localStorage" discipline as `worldFlags`.
+   * Only mutated here by `maybeUnlockHomeRegionCompanion` (bench a Pool B
+   * companion on their home region's Chapter 1 completion) — everything
+   * else (seeding, active/bench swaps) happens in menu scenes, not here.
+   */
+  private companionRoster: CompanionRosterState = DEFAULT_COMPANION_ROSTER_STATE;
+
+  /**
+   * Set by `resolveDeaths` when a wave's `removed` list includes the current
+   * chapter's own sparable miniboss (`SPARABLE_MINIBOSS_CHAPTERS`). Consumed
+   * and cleared by `afterWaveCleared`, which must ask "finish or spare?"
+   * BEFORE checking `isLastWave()` — the miniboss is always the finale spawn
+   * of its chapter, so resolving this any later would race the victory
+   * transition.
+   */
+  private pendingSparableKill: Enemy | null = null;
+
+  /**
+   * Set at chapter load (see `create()`) only when Saltmere Ch1 resolved to
+   * an actual returning miniboss rather than the nameless tide-wretch
+   * fallback. Read once, when that enemy id first spawns, to log its
+   * one-time "washed up on Saltmere's shore" flavor line — see
+   * `RETURNING_MINIBOSS_FLAVOR_TEXT`.
+   */
+  private saltmereReturningEnemyId: string | null = null;
+
+  /**
+   * D-188: set once at chapter load (same spot the Saltmere resolution
+   * above runs from) when this battle is the Nameless Throne capstone.
+   * Read again at victory time to pick the matching epilogue — resolving
+   * it twice from `this.worldFlags` would also be safe (nothing writes to
+   * `this.worldFlags` during a flat, chapter-less capstone battle), but
+   * storing it once matches `saltmereReturningEnemyId`'s own idiom.
+   */
+  private resolvedThroneVariant: ThroneVariant | null = null;
+
+  /**
    * The party for this battle, built by `CharacterCreationScene` (or, for a
    * Co-op battle with no hero-picker UI yet, `CoopLobbyScene`'s small
    * built-in default party — see `CharacterBuildSystem.defaultPartyBuilds`).
@@ -693,11 +816,23 @@ export class BattleScene extends Phaser.Scene {
   /**
    * D-133: each hero's Character Creation level-up planner blueprint, if one
    * was set, keyed by hero id — built once in `buildHeroes()` from
-   * `HeroDefinition.levelUpPlan`. A hero with no entry here behaves exactly
-   * as it always has (D-129's fixed defaults pre-battle, unprompted in-battle
-   * popups).
+   * `HeroDefinition.levelUpPlan`. D-16x: a hero with no entry here (or no
+   * plan entry for a given level) gets no ASI/subclass/spell-pick choice
+   * resolved silently anymore — see `pendingFastForwardAsi` etc. below and
+   * `applyClassLevelUps`'s in-battle path.
    */
   private heroLevelUpPlans: Map<string, LevelUpPlan> = new Map();
+  /**
+   * D-16x: whatever `buildHeroes()`'s pre-battle Starting Level/Team Level
+   * fast-forward couldn't resolve from an explicit plan entry, bucketed by
+   * choice kind — presented once, right before wave 1, by
+   * `presentPendingFastForwardChoices` via the exact same queues
+   * `afterWaveCleared` uses after every wave clear. Never silently
+   * defaulted, regardless of the hero's Plan Levels mode.
+   */
+  private pendingFastForwardAsi: { hero: Hero; level: number }[] = [];
+  private pendingFastForwardSubclass: Hero[] = [];
+  private pendingFastForwardSpellPicks: SpellPickRequest[] = [];
   /**
    * Phase 11.4 (D-077): the difficulty tier picked in `CharacterCreationScene`,
    * or "normal" (1x/1x) when omitted.
@@ -712,6 +847,23 @@ export class BattleScene extends Phaser.Scene {
    * chokepoint that changes based on this field.
    */
   private campaignId: string | null = null;
+  /**
+   * D-177: which chapter of a CHAPTERED campaign to play (0-based), passed
+   * via `scene.start("BattleScene", { chapterIndex })` (ultimately from
+   * `CampaignSelectScene` via `CharacterCreationScene`). `0` for a flat
+   * (non-chaptered) campaign or no campaign at all — `getChapter` already
+   * synthesizes chapter 0 from a flat campaign's own top-level fields, so
+   * this default is always safe to resolve against.
+   */
+  private chapterIndex = 0;
+  /**
+   * D-177: the chapter actually resolved this battle (see the chokepoint in
+   * `create()`) — `null` for a campaign-less run (Free Play, Co-op, a plain
+   * "Create Party" run). Set alongside `currentWaves`/`currentLootPoolIds`;
+   * read by the victory hook (`markCampaignCompletedIfAny`) and the chapter
+   * intro/outro dialogue hooks.
+   */
+  private currentChapter: ChapterDefinition | null = null;
   /**
    * Phase 12.3 (D-103): an optional cooperative-battle context, passed via
    * `scene.start("BattleScene", { coopSession })` from `CoopLobbyScene`'s
@@ -791,6 +943,7 @@ export class BattleScene extends Phaser.Scene {
     heroDefinitions: HeroDefinition[];
     difficultyId?: DifficultyId;
     campaignId?: string;
+    chapterIndex?: number;
     freePlayMapId?: string;
     freePlayWaves?: WaveDefinition[];
     customMapData?: ParsedMap;
@@ -807,6 +960,7 @@ export class BattleScene extends Phaser.Scene {
     this.heroDefinitions = data.heroDefinitions;
     this.difficultyId = data?.difficultyId ?? "normal";
     this.campaignId = data?.campaignId ?? null;
+    this.chapterIndex = data?.chapterIndex ?? 0;
     this.freePlayMapId = data?.freePlayMapId ?? null;
     this.freePlayWaves = data?.freePlayWaves ?? null;
     this.customMapData = data?.customMapData ?? null;
@@ -861,12 +1015,20 @@ export class BattleScene extends Phaser.Scene {
     this.asiQueue = [];
     this.pendingAfterAsi = null;
     this.choosingAsi = false;
+    this.choosingRegionBonus = false;
+    this.choosingSparableKill = false;
+    this.pendingSparableKill = null;
+    this.saltmereReturningEnemyId = null;
+    this.resolvedThroneVariant = null;
     this.subclassQueue = [];
     this.pendingAfterSubclass = null;
     this.choosingSubclass = false;
     this.spellPickQueue = [];
     this.pendingAfterSpellPick = null;
     this.choosingSpellPick = false;
+    this.pendingFastForwardAsi = [];
+    this.pendingFastForwardSubclass = [];
+    this.pendingFastForwardSpellPicks = [];
     this.levelUpAckQueue = [];
     this.pendingAfterLevelUpAck = null;
     this.choosingLevelUpAck = false;
@@ -888,11 +1050,14 @@ export class BattleScene extends Phaser.Scene {
     this.wavesCleared = 0;
     this.tutorialOverlay = [];
     this.pendingAfterTutorial = null;
+    this.chapterDialogue = null;
     this.keyboardFocus = "board";
     this.gridFocusIndex = 0;
     this.animationSpeed = loadSettings(window.localStorage, SETTINGS_STORAGE_KEY).animationSpeed;
     this.bestiaryProgress = loadBestiaryProgress(window.localStorage, BESTIARY_STORAGE_KEY);
     this.campaignProgress = loadCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY);
+    this.worldFlags = loadWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY);
+    this.companionRoster = loadCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY);
 
     // Phase 11.8/11.9 (D-071): the ONE chokepoint that picks which map/wave-
     // list this battle plays. `campaignId` omitted (a campaign-less "Create
@@ -901,12 +1066,39 @@ export class BattleScene extends Phaser.Scene {
     // ALSO unset — a campaign always wins if somehow both were passed — and
     // falls back to TEST_MAP/WAVES if either free-play field is missing.
     const campaign = this.campaignId ? getCampaignDefinition(this.campaignId) : null;
+    // D-177: for a chaptered campaign, resolve THIS chapter's own waves/
+    // lootPoolIds instead of the top-level (finale-describing) fields —
+    // `getChapter` synthesizes a flat campaign's own fields as chapter 0, so
+    // this resolves correctly (and `this.chapterIndex` stays 0) for every
+    // pre-D-177 path unchanged.
+    this.currentChapter = campaign ? getChapter(campaign, this.chapterIndex) : null;
     // Phase 22 (magic-item expansion): a campaign's own curated loot pool
     // (undefined for the plain 10-wave path, a campaign-less party, or
     // Free Play — all of which use LootSystem's full, unrestricted pool).
-    this.currentLootPoolIds = campaign?.lootPoolIds;
+    this.currentLootPoolIds = this.currentChapter?.lootPoolIds ?? campaign?.lootPoolIds;
     let mapData = campaign ? getCampaignMap(campaign.mapId) : TEST_MAP;
-    let waveList: WaveDefinition[] = campaign ? campaign.waves : WAVES;
+    let waveList: WaveDefinition[] = this.currentChapter ? this.currentChapter.waves : WAVES;
+    // KI-098 item 13 (CAMPAIGN_STORY_DESIGN.md §4): Saltmere Ch1's finale spot
+    // is whichever earlier-region miniboss the player spared, or the nameless
+    // tide-wretch fallback if none was. Resolved here, once, at chapter load.
+    if (this.currentChapter?.id === "saltmere-ch1") {
+      const resolved = resolveSaltmereCh1Enemy(this.worldFlags);
+      waveList = withReturningMinibossSwap(waveList, resolved.enemyId);
+      if (resolved.isReturning) this.saltmereReturningEnemyId = resolved.enemyId;
+    }
+    // D-188 (CAMPAIGN_STORY_DESIGN.md §5): the capstone's ending is picked by
+    // the same choices already recorded above/earlier this playthrough — the
+    // 5 spare-or-finish miniboss flags plus Sorrel Thane's resolved fate.
+    // Resolved once, here, before GameMap/WaveSystem are constructed below —
+    // must run before `showNamelessThroneIntroIfAny` too, but that method
+    // re-derives the same pure result from the same (by-then-unwritten-to)
+    // `this.worldFlags`, so both stay consistent regardless of order.
+    if (this.currentChapter?.id === NAMELESS_THRONE_CAMPAIGN_ID) {
+      const variant = resolveThroneVariant(this.worldFlags);
+      mapData = withThroneVariant(mapData, variant);
+      waveList = withThroneEnemyReskins(waveList, variant);
+      this.resolvedThroneVariant = variant;
+    }
     if (!campaign && this.freePlayMapId && this.freePlayWaves) {
       mapData = getMapById(this.freePlayMapId);
       waveList = this.freePlayWaves;
@@ -943,12 +1135,33 @@ export class BattleScene extends Phaser.Scene {
       longRestCharges: difficulty.longRestCharges,
     });
 
-    const gridPixelWidth = this.map.cols * TILE_SIZE;
+    // D-176 (KI-098 item 9): dynamic per-map tile size, mirroring
+    // MapBuilderScene's own shrink-to-fit pattern — never touches the global
+    // canvas/scale mode (see DECISIONS.md D-172/D-176). GRID_BOTTOM_HUD_RESERVED_PX
+    // is the fixed vertical space every HUD row below the grid needs,
+    // independent of tile size: roster/status block (78) + combat log (86) +
+    // gap (20) + gear/shop grid (4 rows * 38px = 152) + pagination nav row
+    // (30, worst case both catalogs paginated) + gap (6) + Done button
+    // half-height (15) = 403. Bottom edge = GRID_TOP_MARGIN + rows*tileSize +
+    // 403, must stay within GAME_HEIGHT — matches MapBuilderSystem.ts's own
+    // MAX_MAP_ROWS derivation exactly. Available width has no HUD margin to
+    // subtract (nothing else occupies the grid's horizontal band).
+    const GRID_BOTTOM_HUD_RESERVED_PX = 403;
+    const availableGridWidth = GAME_WIDTH;
+    const availableGridHeight = GAME_HEIGHT - GRID_TOP_MARGIN - GRID_BOTTOM_HUD_RESERVED_PX;
+    const tileSize = computeFittedTileSize(
+      this.map.cols,
+      this.map.rows,
+      availableGridWidth,
+      availableGridHeight,
+      TILE_SIZE,
+    );
+    const gridPixelWidth = this.map.cols * tileSize;
     const originX = Math.round((GAME_WIDTH - gridPixelWidth) / 2);
     this.grid = new GridSystem(
       this.map.cols,
       this.map.rows,
-      TILE_SIZE,
+      tileSize,
       originX,
       GRID_TOP_MARGIN,
     );
@@ -972,15 +1185,240 @@ export class BattleScene extends Phaser.Scene {
     this.cursorPos = this.heroes[0]?.position ?? { x: 0, y: 0 };
     this.updateHoverAt(this.cursorPos);
 
+    // D-185 (KI-098 item 13, CAMPAIGN_STORY_DESIGN.md §6): resolves Sorrel
+    // Thane's fate once Drowning Vale Chapter 4 loads, reading back
+    // Chapters 1-3's own choices. Runs after `buildHud()` (its own flavor
+    // line calls `logCombat`, which needs `combatLogText` to already
+    // exist) but still before this chapter's own wave 1 begins — safe
+    // relative to Saltmere Ch1 ever reading `SORREL_FATE_FLAG_ID`, since
+    // regions play in the fixed order the design doc's §3 table lays out
+    // (Drowning Vale is region 4, Saltmere is region 5).
+    this.resolveSorrelFateIfAny();
+
     this.waveSystem.startWave(0);
     // Phase 8 ("tutorial prompts"): a one-time how-to-play overlay before the
     // very first player phase, gated the same way a level-up choice gates the
     // next phase transition — advance() only runs once it's dismissed.
-    if (!hasSeenTutorial(window.localStorage, TUTORIAL_STORAGE_KEY)) {
-      this.showTutorial(() => this.turns.advance());
-    } else {
-      this.turns.advance(); // preparation -> player (wave 1 begins)
+    const startBattleTurns = () => {
+      if (!hasSeenTutorial(window.localStorage, TUTORIAL_STORAGE_KEY)) {
+        this.showTutorial(() => this.turns.advance());
+      } else {
+        this.turns.advance(); // preparation -> player (wave 1 begins)
+      }
+    };
+    // D-16x: any hero fast-forwarded past a level whose ASI/subclass/
+    // spell-pick choice had no explicit plan entry surfaces here as the
+    // very first popup(s) of the battle, before wave 1 — never silently
+    // defaulted, regardless of that hero's Plan Levels mode.
+    // D-177: a chaptered campaign's introText (when written) shows before
+    // even the fast-forward choices, so a chapter's own opening beat is
+    // always the very first thing the player sees.
+    // D-181: the pre-region bonus choice comes right after the chapter
+    // intro (if any) and before the fast-forward ASI/subclass/spell-pick
+    // prompts — a HOMM3-style "pick 1 of 3" that applies before anything
+    // else about the battle is decided.
+    this.showChapterIntroIfAny(() =>
+      this.showNamelessThroneIntroIfAny(() =>
+        this.showSorrelChoiceIfAny(() =>
+          this.showRegionBonusChoiceIfAny(() => this.presentPendingFastForwardChoices(startBattleTurns)),
+        ),
+      ),
+    );
+  }
+
+  /**
+   * D-185 (KI-098 item 13, CAMPAIGN_STORY_DESIGN.md §6): Sorrel Thane's own
+   * branch-chain choice, shown at the start of Drowning Vale Chapters 1-3
+   * only — a no-op (calls `onComplete` immediately) for every other
+   * campaign/chapter. Deliberately NOT gated on whether Sorrel is currently
+   * an active party hero: she isn't recruited onto the roster until this
+   * region's own Chapter 1 clears (`maybeUnlockHomeRegionCompanion`,
+   * unchanged), so Chapter 1's own choice is about a field encounter with
+   * her before recruitment — gating on party membership would also let
+   * benching her mid-region silently cancel her own fate choices, which
+   * would be a confusing, unintended side effect.
+   */
+  private showSorrelChoiceIfAny(onComplete: () => void): void {
+    if (this.campaignId !== "drowning-vale" || this.chapterIndex > 2) {
+      onComplete();
+      return;
     }
+    const prompt = SORREL_CHOICE_PROMPTS[this.chapterIndex];
+    this.choosingSorrelFateChoice = true;
+    this.renderAsiPrompt(
+      prompt.title,
+      (["support", "press"] as SorrelChoice[]).map((choice) => ({
+        label: prompt[choice].label,
+        desc: prompt[choice].desc,
+        onClick: () => {
+          this.clearAsiOverlay();
+          this.choosingSorrelFateChoice = false;
+          this.worldFlags = recordSorrelChoice(this.worldFlags, this.chapterIndex, choice);
+          saveWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY, this.worldFlags);
+          onComplete();
+        },
+      })),
+    );
+  }
+
+  /**
+   * D-185: resolves Sorrel Thane's fate once, at Drowning Vale Chapter 4's
+   * own battle-start — no player input needed, just reading back whatever
+   * Chapters 1-3 recorded. Runs synchronously alongside the other chapter-
+   * load resolution work (same spot `resolveSaltmereCh1Enemy` runs from),
+   * not as part of the async prompt chain above. A `"lost"` outcome calls
+   * the already-built, idempotent `loseCompanion` — safe to call even if
+   * she was benched (not activated) after her Chapter-1 recruit, matching
+   * how every other roster mutation in this scene already works.
+   */
+  private resolveSorrelFateIfAny(): void {
+    if (this.campaignId !== "drowning-vale" || this.chapterIndex !== 3) return;
+    if (hasWorldFlag(this.worldFlags, SORREL_FATE_FLAG_ID)) return;
+    const fate = resolveSorrelFate(this.worldFlags);
+    this.worldFlags = setWorldFlag(this.worldFlags, SORREL_FATE_FLAG_ID, fate);
+    saveWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY, this.worldFlags);
+    if (fate === "lost") {
+      this.companionRoster = loseCompanion(this.companionRoster, "sorrel-thane");
+      saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, this.companionRoster);
+    }
+    this.logCombat(SORREL_FATE_FLAVOR_TEXT[fate]);
+  }
+
+  /**
+   * D-181 (KI-098 item 13, CAMPAIGN_STORY_DESIGN.md §8): if this battle
+   * belongs to a campaign with a curated bonus pool (`data/regionBonuses.ts`
+   * — every real campaign has one), draw 3 at random and let the player
+   * pick one before continuing. A no-op (calls `onComplete` immediately)
+   * for Free Play, the classic flat campaign, or any campaign id without a
+   * pool — never a hard requirement to add one.
+   *
+   * Deliberately shown at the start of EVERY chapter, not just once per
+   * region: this engine treats each chapter as its own fresh, self-
+   * contained battle (D-179's own explicit "no cross-chapter continuity"
+   * architecture) with no existing per-region "already chose this" state
+   * to persist against. Re-offering it each chapter is the interpretation
+   * that fits that architecture without inventing new save-state, at the
+   * cost of not being a literal one-time "per region" offer per the design
+   * doc's own wording — a deliberate, documented first-pass call.
+   */
+  private showRegionBonusChoiceIfAny(onComplete: () => void): void {
+    const pool = this.campaignId ? REGION_BONUS_POOLS[this.campaignId] : undefined;
+    if (!pool || pool.length === 0) {
+      onComplete();
+      return;
+    }
+    const drawn = drawRegionBonusChoices(pool, this.random, 3);
+    this.choosingRegionBonus = true;
+    this.renderAsiPrompt(
+      "Choose a Bonus",
+      drawn.map((option) => ({
+        label: option.name,
+        desc: option.description,
+        onClick: () => {
+          this.clearAsiOverlay();
+          this.choosingRegionBonus = false;
+          this.applyRegionBonus(option);
+          onComplete();
+        },
+      })),
+    );
+  }
+
+  private applyRegionBonus(option: RegionBonusOption): void {
+    switch (option.category) {
+      case "gold":
+        this.grantRegionBonusGold(option.goldAmount!);
+        return;
+      case "xp":
+        this.grantRegionBonusXp(option.bonusHealth!);
+        return;
+      case "equipment":
+        this.grantRegionBonusEquipment(option.equipmentId!);
+        return;
+      case "structure":
+        this.grantRegionBonusStructure(option.structureId!);
+        return;
+    }
+  }
+
+  private grantRegionBonusGold(amount: number): void {
+    this.economy.award(amount);
+    this.updateGoldHud();
+    this.logCombat(`Region bonus: +${amount} starting gold!`);
+  }
+
+  private grantRegionBonusXp(amount: number): void {
+    for (const hero of this.heroes) {
+      if (hero.isAlive()) hero.grantBonusHealth(amount);
+    }
+    this.logCombat(`Region bonus: +${amount} max HP for every hero!`);
+  }
+
+  /**
+   * Same shape as `grantLootDrop`'s equipment branch (first living hero
+   * with a matching empty slot that isn't attunement/grip-blocked; sold
+   * for gold if nobody has room) — every pool entry is a common/uncommon
+   * mundane item, so the attunement/grip checks are defensive, not
+   * expected to ever actually reject one.
+   */
+  private grantRegionBonusEquipment(itemId: string): void {
+    const def = getEquipmentDefinition(itemId);
+    for (const hero of this.heroes) {
+      if (!hero.isAlive()) continue;
+      const slot = GEAR_SLOT_IDS.find((s) => gearSlotType(s) === def.slot && !hero.equippedItems[s]);
+      if (!slot) continue;
+      if (hero.wouldExceedAttunementLimit(itemId, slot)) continue;
+      if (hero.wouldConflictWithGrip(itemId, slot)) continue;
+      hero.equippedItems[slot] = itemId;
+      this.ensureHeroCape(hero);
+      hero.onGearChanged();
+      this.logCombat(`Region bonus: ${hero.name} starts equipped with ${def.name}!`);
+      this.updateGoldHud();
+      return;
+    }
+    this.economy.award(def.cost);
+    this.logCombat(`Region bonus (${def.name}) — no hero has room to equip it, sold for ${def.cost}g instead.`);
+    this.updateGoldHud();
+  }
+
+  /**
+   * Places a free structure on the first valid buildable tile found
+   * (reusing `BuildSystem.canPlace`/`place`'s own validation — buildable,
+   * unoccupied, not a spawn/exit, doesn't seal off a wall's only route —
+   * rather than trusting a hardcoded position), near the party's own
+   * starting positions. Silently does nothing on the (practically
+   * unreachable, every map has open floor near a hero start) case where no
+   * tile validates, matching this project's degrade-gracefully convention.
+   */
+  private grantRegionBonusStructure(structureId: string): void {
+    const heroPositions = this.heroes.filter((h) => h.isAlive()).map((h) => h.position);
+    for (let y = 0; y < this.map.rows; y++) {
+      for (let x = 0; x < this.map.cols; x++) {
+        const pos = { x, y };
+        if (!this.buildSystem.canPlace(structureId, pos, undefined, heroPositions).ok) continue;
+        const result = this.buildSystem.place(structureId, pos, undefined, heroPositions);
+        if (result.ok && result.structure) {
+          this.renderStructure(result.structure);
+          this.logCombat(`Region bonus: a free ${getStructureDefinition(structureId).name} is already on the field!`);
+        }
+        return;
+      }
+    }
+  }
+
+  private presentPendingFastForwardChoices(onDone: () => void): void {
+    const asi = this.pendingFastForwardAsi;
+    const subclass = this.pendingFastForwardSubclass;
+    const spellPicks = this.pendingFastForwardSpellPicks;
+    this.pendingFastForwardAsi = [];
+    this.pendingFastForwardSubclass = [];
+    this.pendingFastForwardSpellPicks = [];
+
+    const afterSpellPicks = onDone;
+    const afterAsi = () => (spellPicks.length > 0 ? this.showSpellPickChoiceQueue(spellPicks, afterSpellPicks) : afterSpellPicks());
+    const afterSubclass = () => (asi.length > 0 ? this.showAsiChoiceQueue(asi, afterAsi) : afterAsi());
+    if (subclass.length > 0) this.showSubclassChoiceQueue(subclass, afterSubclass);
+    else afterSubclass();
   }
 
   // ----- Board -----------------------------------------------------------
@@ -994,12 +1432,12 @@ export class BattleScene extends Phaser.Scene {
         const tl = this.grid.tileToWorldTopLeft(pos);
         const type = this.map.getTileType(pos) ?? "floor";
         const rect = this.add
-          .rectangle(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, TILE_SIZE, TILE_SIZE, BOARD_TERRAIN_COLORS[type], 1)
+          .rectangle(tl.x + this.grid.tileSize / 2, tl.y + this.grid.tileSize / 2, this.grid.tileSize, this.grid.tileSize, BOARD_TERRAIN_COLORS[type], 1)
           .setDepth(0);
         this.tileRects.set(`${x},${y}`, rect);
         if (type === "pit") {
           const glyph = this.add
-            .text(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, "✕", {
+            .text(tl.x + this.grid.tileSize / 2, tl.y + this.grid.tileSize / 2, "✕", {
               fontFamily: "system-ui, Arial, sans-serif",
               fontSize: "20px",
               color: "#6a3a3a",
@@ -1016,12 +1454,12 @@ export class BattleScene extends Phaser.Scene {
     const ox = this.grid.originX;
     const oy = this.grid.originY;
     for (let col = 0; col <= this.map.cols; col++) {
-      const x = ox + col * TILE_SIZE;
-      g.lineBetween(x, oy, x, oy + this.map.rows * TILE_SIZE);
+      const x = ox + col * this.grid.tileSize;
+      g.lineBetween(x, oy, x, oy + this.map.rows * this.grid.tileSize);
     }
     for (let row = 0; row <= this.map.rows; row++) {
-      const y = oy + row * TILE_SIZE;
-      g.lineBetween(ox, y, ox + this.map.cols * TILE_SIZE, y);
+      const y = oy + row * this.grid.tileSize;
+      g.lineBetween(ox, y, ox + this.map.cols * this.grid.tileSize, y);
     }
 
     for (const pos of this.map.data.spawns) this.drawMarker(pos, "IN", COLORS.spawn);
@@ -1056,7 +1494,7 @@ export class BattleScene extends Phaser.Scene {
         if (event.toTileType === "pit") {
           const tl = this.grid.tileToWorldTopLeft(pos);
           this.add
-            .text(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, "✕", {
+            .text(tl.x + this.grid.tileSize / 2, tl.y + this.grid.tileSize / 2, "✕", {
               fontFamily: "system-ui, Arial, sans-serif",
               fontSize: "20px",
               color: "#6a3a3a",
@@ -1071,11 +1509,11 @@ export class BattleScene extends Phaser.Scene {
   private drawMarker(pos: GridPosition, label: string, color: number): void {
     const tl = this.grid.tileToWorldTopLeft(pos);
     this.add
-      .rectangle(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, TILE_SIZE - 6, TILE_SIZE - 6, color, 0.5)
+      .rectangle(tl.x + this.grid.tileSize / 2, tl.y + this.grid.tileSize / 2, this.grid.tileSize - 6, this.grid.tileSize - 6, color, 0.5)
       .setStrokeStyle(2, color)
       .setDepth(3);
     this.add
-      .text(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, label, {
+      .text(tl.x + this.grid.tileSize / 2, tl.y + this.grid.tileSize / 2, label, {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "15px",
         color: "#e8e8f0",
@@ -1127,7 +1565,7 @@ export class BattleScene extends Phaser.Scene {
       const cx = token.circle.x;
       const cy = token.circle.y;
       const flutter = Math.sin(time / 180 + cx) * 5;
-      const r = TILE_SIZE * 0.34;
+      const r = this.grid.tileSize * 0.34;
       graphic.clear();
       graphic.fillStyle(COLORS.capeBillowingPlaceholder, 0.85);
       graphic.beginPath();
@@ -1161,7 +1599,16 @@ export class BattleScene extends Phaser.Scene {
     definitions.forEach((def, i) => {
       const start = starts[i] ?? starts[0];
       const hero = new Hero(def, start);
-      if (def.startingLevel && def.startingLevel > 1) this.fastForwardHeroToLevel(hero, def.startingLevel);
+      if (def.startingLevel && def.startingLevel > 1) {
+        // D-16x: whatever the fast-forward couldn't resolve from an
+        // explicit plan entry gets queued, not silently defaulted — see
+        // `presentPendingFastForwardChoices`, fired once from `create()`.
+        for (const step of this.fastForwardHeroToLevel(hero, def.startingLevel)) {
+          if (step.kind === "asi") this.pendingFastForwardAsi.push({ hero, level: step.level });
+          else if (step.kind === "subclass") this.pendingFastForwardSubclass.push(hero);
+          else this.pendingFastForwardSpellPicks.push({ hero, kind: step.spellPickKind!, tier: step.tier });
+        }
+      }
       // D-135: a Character Creation manual spell pick is a wholesale
       // override of whatever `growSpellSelections()`'s auto-fill produced
       // during construction/fast-forward above — applied once, here, after
@@ -1176,7 +1623,7 @@ export class BattleScene extends Phaser.Scene {
       this.heroes.push(hero);
       const c = this.grid.tileToWorldCenter(start);
       const color = COLORS.hero;
-      const circle = this.add.circle(c.x, c.y, TILE_SIZE * 0.34, color).setDepth(10);
+      const circle = this.add.circle(c.x, c.y, this.grid.tileSize * 0.34, color).setDepth(10);
       const label = this.add
         .text(c.x, c.y - 4, def.name[0], {
           fontFamily: "system-ui, Arial, sans-serif",
@@ -1187,7 +1634,7 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(10);
       const hp = this.add
-        .text(c.x, c.y + TILE_SIZE * 0.22, "", {
+        .text(c.x, c.y + this.grid.tileSize * 0.22, "", {
           fontFamily: "monospace",
           fontSize: "12px",
           color: "#0e0e14",
@@ -1203,7 +1650,7 @@ export class BattleScene extends Phaser.Scene {
       // (e.g. "poisoned", "silenced") — same on-token badge shape as
       // `enemyStatusBadges` (KI-027), just on the hero side.
       const badge = this.add
-        .text(c.x, c.y - TILE_SIZE * 0.34 - 14, "", {
+        .text(c.x, c.y - this.grid.tileSize * 0.34 - 14, "", {
           fontFamily: "monospace",
           fontSize: "11px",
           color: "#0e0e14",
@@ -1229,31 +1676,30 @@ export class BattleScene extends Phaser.Scene {
   /**
    * D-129: pre-battle level fast-forward, for Free Play/New Game's new
    * per-hero/team "Starting Level" control. D-133: the actual level-by-level
-   * walk and choice-trigger resolution now lives in
+   * walk and choice-trigger resolution lives in
    * `LevelUpPlanSystem.fastForwardHero` (shared with that system's own
    * `simulateHeroForPlanning`, used by the Character Creation planner UI) —
-   * this hero's plan (if any) resolves each trigger; anything the plan
-   * doesn't cover falls back to D-129's original silent defaults. Always
-   * silent regardless of the plan's `mode` — this runs once at battle setup,
-   * before the first player turn even exists, so there's no popup mechanism
-   * available and no "level 1 -> level N" story to tell the player.
+   * this hero's plan (if any) resolves each trigger explicitly covered by
+   * it. D-16x: anything NOT covered is no longer silently defaulted — it's
+   * returned here so `buildHeroes()` can queue it as a real prompt,
+   * presented right before wave 1 (see `presentPendingFastForwardChoices`).
    */
-  private fastForwardHeroToLevel(hero: Hero, targetLevel: number): void {
-    fastForwardHero(hero, targetLevel, this.heroLevelUpPlans.get(hero.id));
+  private fastForwardHeroToLevel(hero: Hero, targetLevel: number): LevelUpChoiceStep[] {
+    return fastForwardHero(hero, targetLevel, this.heroLevelUpPlans.get(hero.id));
   }
 
   private buildHighlightObjects(): void {
     this.activeRing = this.add
-      .circle(0, 0, TILE_SIZE * 0.44)
+      .circle(0, 0, this.grid.tileSize * 0.44)
       .setStrokeStyle(3, COLORS.heroActive)
       .setDepth(6)
       .setVisible(false);
     this.hoverRect = this.add
-      .rectangle(0, 0, TILE_SIZE, TILE_SIZE, COLORS.tileHover, 0.35)
+      .rectangle(0, 0, this.grid.tileSize, this.grid.tileSize, COLORS.tileHover, 0.35)
       .setDepth(5)
       .setVisible(false);
     this.pendingRect = this.add
-      .rectangle(0, 0, TILE_SIZE, TILE_SIZE, COLORS.moveConfirm, 0.35)
+      .rectangle(0, 0, this.grid.tileSize, this.grid.tileSize, COLORS.moveConfirm, 0.35)
       .setStrokeStyle(3, COLORS.moveConfirm)
       .setDepth(6)
       .setVisible(false);
@@ -1370,7 +1816,7 @@ export class BattleScene extends Phaser.Scene {
     // the grid at all — using the canvas's own width instead (minus a
     // margin) gives every map the same generous line length regardless of
     // how narrow its grid is.
-    const belowGridY = this.grid.originY + this.map.rows * TILE_SIZE + 16;
+    const belowGridY = this.grid.originY + this.map.rows * this.grid.tileSize + 16;
     const wrapWidth = GAME_WIDTH - 80;
 
     // D-158 (KI-034 redesign): `MAX_ROSTER_SLOTS` per-hero boxes, real
@@ -1389,7 +1835,14 @@ export class BattleScene extends Phaser.Scene {
         .rectangle(0, rosterY, rosterBoxWidth, rosterBoxHeight, 0x1a1a26, 0.9)
         .setStrokeStyle(2, 0x3a3a4a)
         .setDepth(30)
+        .setInteractive({ useHandCursor: true })
         .setVisible(false);
+      // D-165 (KI-098 item 3): a real click target — selects this hero
+      // normally, or targets it directly with equip mode's currently
+      // selected item (see `onRosterBoxClick`).
+      box.on("pointerdown", () => this.onRosterBoxClick(slot));
+      box.on("pointerover", () => this.showRosterHoverTooltip(slot));
+      box.on("pointerout", () => this.tooltip.hide());
       const nameText = this.add
         .text(0, rosterY - 18, "", {
           fontFamily: "system-ui, Arial, sans-serif",
@@ -1628,6 +2081,39 @@ export class BattleScene extends Phaser.Scene {
       .setVisible(false);
     this.characterSheetButton.on("pointerdown", () => this.openCharacterSheet());
 
+    // D-165 (KI-098 item 2): the pinned hotkey bar — a 4th row below Class
+    // Action/Character, same "add a new row, no horizontal room left"
+    // precedent as every row above it. `showHotkeyButtonsFor` hides an
+    // empty slot entirely and dims (but keeps clickable-looking) one whose
+    // id isn't currently usable — a pinned-but-not-castable spell is a
+    // normal state (see `Hero.setActionHotkey`), not an error.
+    const cy4 = cy3 + 40;
+    const { xs: hotkeyXs, itemWidth: hotkeyWidth } = centeredRowX(ACTION_HOTKEY_SLOT_COUNT, 80, 8, GAME_WIDTH / 2 + 283, 525);
+    for (let slot = 0; slot < ACTION_HOTKEY_SLOT_COUNT; slot++) {
+      const x = hotkeyXs[slot];
+      const button = this.add
+        .rectangle(x, cy4, hotkeyWidth, 28, 0x5a4a7a)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(31)
+        .setVisible(false);
+      const label = this.add
+        .text(x, cy4, "", {
+          fontFamily: "system-ui, Arial, sans-serif",
+          fontSize: "11px",
+          color: "#f0e8ff",
+          fontStyle: "bold",
+          align: "center",
+          wordWrap: { width: hotkeyWidth - 8 },
+        })
+        .setOrigin(0.5)
+        .setDepth(32)
+        .setVisible(false);
+      button.on("pointerdown", () => this.triggerHotkey(slot));
+      attachHoverTooltip(this.tooltip, button, x, cy4 - 20, () => this.hotkeyTooltipText(slot));
+      this.hotkeyButtons.push(button);
+      this.hotkeyLabels.push(label);
+    }
+
     this.buildShopHud(cy);
     // `buildHeroes()` runs before `buildHud()` (see `create()`), so
     // `this.heroes` is already final — safe to position the roster strip
@@ -1745,7 +2231,7 @@ export class BattleScene extends Phaser.Scene {
 
     // Ghost preview rectangle for the tile under the cursor while building.
     this.buildGhost = this.add
-      .rectangle(0, 0, TILE_SIZE - 6, TILE_SIZE - 6, COLORS.buildValid, 0.35)
+      .rectangle(0, 0, this.grid.tileSize - 6, this.grid.tileSize - 6, COLORS.buildValid, 0.35)
       .setStrokeStyle(3, COLORS.buildValid)
       .setDepth(7)
       .setVisible(false);
@@ -2067,7 +2553,13 @@ export class BattleScene extends Phaser.Scene {
         break;
       case "victory":
         this.markCampaignCompletedIfAny();
-        this.showEndScreen("Victory!", "#9be0b4");
+        // D-177: a chapter's outroText (when written) shows before the end
+        // screen, so a chapter's own closing beat lands before "Victory!".
+        // D-188: the capstone's own branch-determined ending beat shows
+        // right after that, still before "Victory!".
+        this.showChapterOutroIfAny(() =>
+          this.showNamelessThroneEndingIfAny(() => this.showEndScreen("Victory!", "#9be0b4")),
+        );
         break;
       case "defeat":
         this.showEndScreen(
@@ -2236,6 +2728,13 @@ export class BattleScene extends Phaser.Scene {
     for (const enemy of report.spawned) {
       this.spawnEnemyToken(enemy);
       this.markEnemySeen(enemy.def.id);
+      // KI-098 item 13 (CAMPAIGN_STORY_DESIGN.md §4): one-time flavor line
+      // the first time Saltmere Ch1's returning miniboss actually spawns.
+      if (this.saltmereReturningEnemyId === enemy.def.id) {
+        this.saltmereReturningEnemyId = null;
+        const flavor = RETURNING_MINIBOSS_FLAVOR_TEXT[enemy.def.id];
+        if (flavor) this.logCombat(flavor);
+      }
     }
     for (const move of report.moves) this.moveEnemyToken(move.enemy, move.to);
     // Phase 20 (D-111): reinforcements arrive with their own token right
@@ -2316,6 +2815,16 @@ export class BattleScene extends Phaser.Scene {
    * no matter which phase or source caused the kill.
    */
   private resolveDeaths(removed: Enemy[]): void {
+    // KI-098 item 13 (CAMPAIGN_STORY_DESIGN.md §4): if this chapter's own
+    // sparable miniboss just went down, stash it for `afterWaveCleared` to
+    // ask "finish or spare?" — it's always this chapter's finale spawn, so
+    // this never fires more than once per battle. Reward handling below is
+    // unaffected either way; sparing is a narrative flag, not a payout cut.
+    const sparableId = this.currentChapter ? SPARABLE_MINIBOSS_CHAPTERS[this.currentChapter.id] : undefined;
+    if (sparableId) {
+      const miniboss = removed.find((e) => e.def.id === sparableId);
+      if (miniboss) this.pendingSparableKill = miniboss;
+    }
     this.awardKillGold(removed);
     if (removed.length === 0) return;
     const report = this.waveSystem.resolveDeathTriggers(removed, this.livingHeroes());
@@ -2414,41 +2923,90 @@ export class BattleScene extends Phaser.Scene {
    * on to any Rest choice.
    */
   private afterWaveCleared(): void {
-    const proceed = () => {
-      if (this.waveSystem.isLastWave()) this.turns.transitionTo("victory");
-      else this.turns.transitionTo("betweenWave");
+    const afterSparableChoice = () => {
+      const proceed = () => {
+        if (this.waveSystem.isLastWave()) this.turns.transitionTo("victory");
+        else this.turns.transitionTo("betweenWave");
+      };
+      const afterLevelUp = () => {
+        // Resting "before the next wave" is meaningless with no next wave.
+        if (this.waveSystem.isLastWave()) proceed();
+        else this.showRestChoice(proceed);
+      };
+      if (this.progression.hasPendingLevelUp(this.wavesCleared)) {
+        const { asiHeroes, subclassHeroes, spellPickHeroes, spellSwapHeroes, plainHeroes } = this.applyClassLevelUps();
+        // D-125/D-130/D-136: plain ack -> subclass -> ASI -> spell-mastery-
+        // family pick -> level-up spell swap -> rest, same deferred-queue
+        // chaining `showAsiChoiceQueue`/`showSubclassChoiceQueue` already use.
+        const afterSpellPick = () => {
+          if (spellSwapHeroes.length > 0) this.showSpellPrepQueue(spellSwapHeroes, "levelUp", afterLevelUp);
+          else afterLevelUp();
+        };
+        const afterAsi = () => {
+          if (spellPickHeroes.length > 0) this.showSpellPickChoiceQueue(spellPickHeroes, afterSpellPick);
+          else afterSpellPick();
+        };
+        const afterSubclass = () => {
+          if (asiHeroes.length > 0) this.showAsiChoiceQueue(asiHeroes, afterAsi);
+          else afterAsi();
+        };
+        const afterPlainAck = () => {
+          if (subclassHeroes.length > 0) this.showSubclassChoiceQueue(subclassHeroes, afterSubclass);
+          else afterSubclass();
+        };
+        if (plainHeroes.length > 0) this.showLevelUpAckQueue(plainHeroes, afterPlainAck);
+        else afterPlainAck();
+      } else {
+        afterLevelUp();
+      }
     };
-    const afterLevelUp = () => {
-      // Resting "before the next wave" is meaningless with no next wave.
-      if (this.waveSystem.isLastWave()) proceed();
-      else this.showRestChoice(proceed);
-    };
-    if (this.progression.hasPendingLevelUp(this.wavesCleared)) {
-      const { asiHeroes, subclassHeroes, spellPickHeroes, spellSwapHeroes, plainHeroes } = this.applyClassLevelUps();
-      // D-125/D-130/D-136: plain ack -> subclass -> ASI -> spell-mastery-
-      // family pick -> level-up spell swap -> rest, same deferred-queue
-      // chaining `showAsiChoiceQueue`/`showSubclassChoiceQueue` already use.
-      const afterSpellPick = () => {
-        if (spellSwapHeroes.length > 0) this.showSpellPrepQueue(spellSwapHeroes, "levelUp", afterLevelUp);
-        else afterLevelUp();
-      };
-      const afterAsi = () => {
-        if (spellPickHeroes.length > 0) this.showSpellPickChoiceQueue(spellPickHeroes, afterSpellPick);
-        else afterSpellPick();
-      };
-      const afterSubclass = () => {
-        if (asiHeroes.length > 0) this.showAsiChoiceQueue(asiHeroes, afterAsi);
-        else afterAsi();
-      };
-      const afterPlainAck = () => {
-        if (subclassHeroes.length > 0) this.showSubclassChoiceQueue(subclassHeroes, afterSubclass);
-        else afterSubclass();
-      };
-      if (plainHeroes.length > 0) this.showLevelUpAckQueue(plainHeroes, afterPlainAck);
-      else afterPlainAck();
+    // KI-098 item 13 (CAMPAIGN_STORY_DESIGN.md §4): this MUST run before
+    // `isLastWave()` is ever checked — the sparable miniboss is always its
+    // chapter's finale spawn, so any later hook would race the victory
+    // transition (`proceed` above) before the player could click anything.
+    if (this.pendingSparableKill) {
+      const miniboss = this.pendingSparableKill;
+      this.pendingSparableKill = null;
+      this.showSparableKillChoice(miniboss, afterSparableChoice);
     } else {
-      afterLevelUp();
+      afterSparableChoice();
     }
+  }
+
+  /**
+   * KI-098 item 13 (CAMPAIGN_STORY_DESIGN.md §4): the "finish or spare?"
+   * choice for a chapter's own sparable miniboss. Reuses `renderAsiPrompt`/
+   * `asiOverlay`, same as every other mandatory mid-battle choice. Kill
+   * gold/loot/bestiary credit are unaffected by either option — the enemy
+   * is at 0 HP regardless, sparing is a persisted narrative flag only (read
+   * back by `resolveSaltmereCh1Enemy` far later, in a different region).
+   */
+  private showSparableKillChoice(enemy: Enemy, onDone: () => void): void {
+    this.choosingSparableKill = true;
+    const finish = () => {
+      this.clearAsiOverlay();
+      this.choosingSparableKill = false;
+      onDone();
+    };
+    const spare = () => {
+      const next = setWorldFlag(this.worldFlags, sparedFlagId(enemy.def.id), true);
+      if (next !== this.worldFlags) {
+        this.worldFlags = next;
+        saveWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY, next);
+      }
+      this.logCombat(`${enemy.def.name} is spared, and slips away wounded.`);
+      this.clearAsiOverlay();
+      this.choosingSparableKill = false;
+      onDone();
+    };
+    this.renderAsiPrompt(`${enemy.def.name} is defeated.`, [
+      { label: `Finish ${enemy.def.name}`, desc: "The killing blow lands. Nothing more to it.", onClick: finish },
+      {
+        label: `Spare ${enemy.def.name}`,
+        desc: "Let it go — some say a spared foe never truly forgets.",
+        onClick: spare,
+      },
+    ]);
   }
 
   /**
@@ -2472,13 +3030,13 @@ export class BattleScene extends Phaser.Scene {
    * on-screen popup, not just the ones with a real choice to make.
    */
   private applyClassLevelUps(): {
-    asiHeroes: Hero[];
+    asiHeroes: { hero: Hero; level: number }[];
     subclassHeroes: Hero[];
     spellPickHeroes: SpellPickRequest[];
     spellSwapHeroes: Hero[];
     plainHeroes: Hero[];
   } {
-    const needsAsi: Hero[] = [];
+    const needsAsi: { hero: Hero; level: number }[] = [];
     const needsSubclass: Hero[] = [];
     const needsSpellPick: SpellPickRequest[] = [];
     const needsSpellSwap: Hero[] = [];
@@ -2506,9 +3064,11 @@ export class BattleScene extends Phaser.Scene {
             hero.level,
           ),
         );
-        // D-133: an "auto" plan resolves every trigger silently, right here,
-        // instead of queuing an overlay — the whole point of that mode. A
-        // "prompt"/"fresh"/unset plan queues exactly as it always has.
+        // D-16x: an "auto" plan only skips the prompt when the resolver
+        // actually applied an explicit plan entry — an "auto" hero with no
+        // entry for this level still gets queued exactly like a
+        // "prompt"/"fresh"/unset hero would, instead of a silently invented
+        // default (see D-16x in DECISIONS.md and LevelUpPlanSystem.ts).
         const plan = this.heroLevelUpPlans.get(hero.id);
         const autoMode = plan?.mode === "auto";
         let hasChoice = false;
@@ -2516,8 +3076,7 @@ export class BattleScene extends Phaser.Scene {
           const classDef = getClassDefinition(hero.classId);
           if (asiFeatureGrantedAtLevel(classDef, hero.level)) {
             hasChoice = true;
-            if (autoMode) resolveAsiForLevel(hero, hero.level, plan);
-            else needsAsi.push(hero);
+            if (!(autoMode && resolveAsiForLevel(hero, hero.level, plan))) needsAsi.push({ hero, level: hero.level });
           }
           if (
             !hero.subclassId &&
@@ -2525,23 +3084,22 @@ export class BattleScene extends Phaser.Scene {
             subclassesForClass(hero.classId).length > 0
           ) {
             hasChoice = true;
-            if (autoMode) resolveSubclassForClass(hero, hero.classId, plan);
-            else needsSubclass.push(hero);
+            if (!(autoMode && resolveSubclassForClass(hero, hero.classId, plan))) needsSubclass.push(hero);
           }
           if (hero.needsSpellMasteryPick()) {
             hasChoice = true;
-            if (autoMode) resolveSpellPickForRequest(hero, { hero, kind: "mastery" }, plan);
-            else needsSpellPick.push({ hero, kind: "mastery" });
+            const request: SpellPickRequest = { hero, kind: "mastery" };
+            if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) needsSpellPick.push(request);
           } else if (hero.needsSignatureSpellsPick()) {
             hasChoice = true;
-            if (autoMode) resolveSpellPickForRequest(hero, { hero, kind: "signature" }, plan);
-            else needsSpellPick.push({ hero, kind: "signature" });
+            const request: SpellPickRequest = { hero, kind: "signature" };
+            if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) needsSpellPick.push(request);
           } else {
             const tier = arcanumTiers.find((t) => hero.needsMysticArcanumPick(t));
             if (tier !== undefined) {
               hasChoice = true;
-              if (autoMode) resolveSpellPickForRequest(hero, { hero, kind: "arcanum", tier }, plan);
-              else needsSpellPick.push({ hero, kind: "arcanum", tier });
+              const request: SpellPickRequest = { hero, kind: "arcanum", tier };
+              if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) needsSpellPick.push(request);
             }
           }
           // D-136: a level-up is ALSO the trigger for Sorcerer/Bard/Warlock's
@@ -2655,7 +3213,7 @@ export class BattleScene extends Phaser.Scene {
     // something actually happening, not a silent stat change.
     if (enemy.def.auraBuff) {
       const ring = this.add
-        .circle(c.x, c.y, TILE_SIZE * (enemy.def.auraBuff.radiusTiles + 0.5), color, 0.12)
+        .circle(c.x, c.y, this.grid.tileSize * (enemy.def.auraBuff.radiusTiles + 0.5), color, 0.12)
         .setStrokeStyle(2, color, 0.5)
         .setDepth(8);
       this.enemyAuraRings.set(enemy.instanceId, ring);
@@ -2667,7 +3225,7 @@ export class BattleScene extends Phaser.Scene {
     // "boss" role tier (Cinderlord/Tidelord, added in 11.6) had silently
     // never gotten this treatment. Both tiers now qualify.
     const isBoss = BattleScene.isBossRole(enemy.def.role);
-    const radius = TILE_SIZE * (isBoss ? 0.44 : 0.32);
+    const radius = this.grid.tileSize * (isBoss ? 0.44 : 0.32);
     const circle = this.add.circle(c.x, c.y, radius, color).setDepth(9);
     // Flying enemies (D-048) read differently on the board: a pale ring marks a
     // unit that ignores walls, so the player can tell at a glance why it isn't
@@ -2688,7 +3246,7 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(9);
     const hp = this.add
-      .text(c.x, c.y + TILE_SIZE * 0.2, "", {
+      .text(c.x, c.y + this.grid.tileSize * 0.2, "", {
         fontFamily: "monospace",
         fontSize: "12px",
         color: "#0e0e14",
@@ -2770,7 +3328,7 @@ export class BattleScene extends Phaser.Scene {
     const c = this.grid.tileToWorldCenter(to);
     const duration = this.scaledDuration(ANIM_MS);
     const isBoss = BattleScene.isBossRole(enemy.def.role);
-    const radius = TILE_SIZE * (isBoss ? 0.44 : 0.32);
+    const radius = this.grid.tileSize * (isBoss ? 0.44 : 0.32);
     const badge = this.enemyStatusBadges.get(enemy.instanceId);
     const banner = this.enemyBossBanners.get(enemy.instanceId);
     const ring = this.enemyAuraRings.get(enemy.instanceId);
@@ -2779,14 +3337,14 @@ export class BattleScene extends Phaser.Scene {
       // Reduced motion / instant speed: skip the tween, snap straight there.
       token.circle.setPosition(c.x, c.y);
       token.label.setPosition(c.x, c.y - 4);
-      token.hp.setPosition(c.x, c.y + TILE_SIZE * 0.2);
+      token.hp.setPosition(c.x, c.y + this.grid.tileSize * 0.2);
       badge?.setPosition(c.x, badgeY);
       banner?.setPosition(c.x, c.y - radius - 14);
       ring?.setPosition(c.x, c.y);
       return;
     }
     this.tweens.add({ targets: [token.circle, token.label], x: c.x, y: c.y, duration });
-    this.tweens.add({ targets: token.hp, x: c.x, y: c.y + TILE_SIZE * 0.2, duration });
+    this.tweens.add({ targets: token.hp, x: c.x, y: c.y + this.grid.tileSize * 0.2, duration });
     if (badge) this.tweens.add({ targets: badge, x: c.x, y: badgeY, duration });
     if (banner) this.tweens.add({ targets: banner, x: c.x, y: c.y - radius - 14, duration });
     if (ring) this.tweens.add({ targets: ring, x: c.x, y: c.y, duration });
@@ -2808,7 +3366,12 @@ export class BattleScene extends Phaser.Scene {
    * a second copy of it) and relabel itself from the result.
    */
   cycleGameSpeed(): AnimationSpeed {
-    this.animationSpeed = nextAnimationSpeed(this.animationSpeed);
+    return this.setAnimationSpeed(nextAnimationSpeed(this.animationSpeed));
+  }
+
+  /** D-16x: sets Game Speed directly (SettingsScene's list-picker button, replacing its old click-to-cycle), sharing `cycleGameSpeed`'s exact persist/log behavior. */
+  setAnimationSpeed(speed: AnimationSpeed): AnimationSpeed {
+    this.animationSpeed = speed;
     // Preserve every other stored setting (D-153's volume/mute fields) rather
     // than overwriting the whole record with just this one field.
     saveSettings(window.localStorage, SETTINGS_STORAGE_KEY, {
@@ -3153,6 +3716,7 @@ export class BattleScene extends Phaser.Scene {
     this.showActionSurgeButton(false);
     this.showClassActionButton(false);
     this.showCharacterSheetButton(false);
+    this.showHotkeyButtons(false);
     this.activeRing.setVisible(false);
     this.buildGhost.setVisible(false);
     this.buildGhostGlyph.setVisible(false);
@@ -3171,7 +3735,6 @@ export class BattleScene extends Phaser.Scene {
     if (
       next.kind === "heroSelected" ||
       next.kind === "confirmingMove" ||
-      next.kind === "aimingAbility" ||
       next.kind === "aimingSpell" ||
       next.kind === "aimingTileSpell"
     ) {
@@ -3188,9 +3751,7 @@ export class BattleScene extends Phaser.Scene {
           this.showActionSurgeButtonFor(hero);
           this.showClassActionButtonFor(hero);
           this.showCharacterSheetButton(true);
-        }
-        if (next.kind === "aimingAbility") {
-          this.showAbilityTargets(hero);
+          this.showHotkeyButtonsFor(hero);
         }
         if (next.kind === "aimingSpell") {
           this.showSpellTargets(hero, next.abilityId);
@@ -3228,7 +3789,7 @@ export class BattleScene extends Phaser.Scene {
     for (const tile of tiles) {
       const c = this.grid.tileToWorldCenter(tile);
       this.rangeTiles.push(
-        this.add.rectangle(c.x, c.y, TILE_SIZE - 4, TILE_SIZE - 4, COLORS.moveRange, 0.35).setDepth(2),
+        this.add.rectangle(c.x, c.y, this.grid.tileSize - 4, this.grid.tileSize - 4, COLORS.moveRange, 0.35).setDepth(2),
       );
     }
   }
@@ -3284,17 +3845,6 @@ export class BattleScene extends Phaser.Scene {
       damageType: hero.attackDamageType,
       magical: hero.attackIsMagical,
     };
-  }
-
-  /** Outline enemies the hero's aimed single-target ability could hit. */
-  private showAbilityTargets(hero: Hero): void {
-    const ability = getAbility(hero.abilityId);
-    const targets = CombatSystem.targetsInRange(
-      hero.position,
-      ability.rangeTiles,
-      this.waveSystem.enemies,
-    );
-    for (const enemy of targets) this.markTarget(enemy.position, COLORS.abilityTarget, "◆");
   }
 
   /**
@@ -3366,14 +3916,14 @@ export class BattleScene extends Phaser.Scene {
     const c = this.grid.tileToWorldCenter(pos);
     this.targetMarks.push(
       this.add
-        .rectangle(c.x, c.y, TILE_SIZE - 8, TILE_SIZE - 8, color, 0)
+        .rectangle(c.x, c.y, this.grid.tileSize - 8, this.grid.tileSize - 8, color, 0)
         .setStrokeStyle(3, color)
         .setDepth(8),
     );
     if (glyph) {
       this.targetGlyphs.push(
         this.add
-          .text(c.x + TILE_SIZE * 0.28, c.y - TILE_SIZE * 0.28, glyph, {
+          .text(c.x + this.grid.tileSize * 0.28, c.y - this.grid.tileSize * 0.28, glyph, {
             fontFamily: "system-ui, Arial, sans-serif",
             fontSize: "14px",
             color: "#ffffff",
@@ -3473,7 +4023,7 @@ export class BattleScene extends Phaser.Scene {
     for (const tile of tiles) {
       const c = this.grid.tileToWorldCenter(tile);
       this.rangeTiles.push(
-        this.add.rectangle(c.x, c.y, TILE_SIZE - 4, TILE_SIZE - 4, COLORS.moveRange, 0.35).setDepth(2),
+        this.add.rectangle(c.x, c.y, this.grid.tileSize - 4, this.grid.tileSize - 4, COLORS.moveRange, 0.35).setDepth(2),
       );
     }
   }
@@ -3498,7 +4048,7 @@ export class BattleScene extends Phaser.Scene {
 
     token.circle.setPosition(worldX, worldY);
     token.label.setPosition(worldX, worldY - 4);
-    token.hp.setPosition(worldX, worldY + TILE_SIZE * 0.2);
+    token.hp.setPosition(worldX, worldY + this.grid.tileSize * 0.2);
     token.sprite?.setPosition(worldX, worldY);
 
     if (tile) {
@@ -3577,7 +4127,10 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    hero.moveTo(tile);
+    // D-173: pass the route's real tile cost so a partial drag-move leaves
+    // any leftover budget spendable later this turn instead of consuming it
+    // all outright.
+    hero.moveTo(tile, route.usedTiles);
     this.moveHeroToken(token, hero.position);
     this.checkTreasureAt(hero);
     this.setInteraction({ kind: "heroSelected", heroId: hero.id });
@@ -3617,7 +4170,7 @@ export class BattleScene extends Phaser.Scene {
     }
     this.tweens.add({ targets: token.circle, x: c.x, y: c.y, duration });
     this.tweens.add({ targets: token.label, x: c.x, y: c.y - 4, duration });
-    this.tweens.add({ targets: token.hp, x: c.x, y: c.y + TILE_SIZE * 0.2, duration });
+    this.tweens.add({ targets: token.hp, x: c.x, y: c.y + this.grid.tileSize * 0.2, duration });
     if (token.sprite) this.tweens.add({ targets: token.sprite, x: c.x, y: c.y, duration });
   }
 
@@ -3633,28 +4186,28 @@ export class BattleScene extends Phaser.Scene {
     this.abilityLabel.setVisible(show);
   }
 
+  /**
+   * D-178: a non-caster hero has no Q-button action at all anymore — its
+   * real weapon Attack is click-to-attack, and its class bonus/class
+   * actions already have their own buttons (`showBonusActionButtonFor`/
+   * `showClassActionButtonFor`). Only a real caster (`isCasterHero`) gets
+   * this button, opening its full spellbook.
+   */
   private showAbilityButtonFor(hero: Hero): void {
-    if (!hero.canAct()) return;
-    if (this.isCasterHero(hero)) {
-      this.abilityLabel.setText("Cast a Spell (Q)");
-    } else {
-      const ability = getAbility(hero.abilityId);
-      this.abilityLabel.setText(`Ability: ${ability.name} (Q)`);
-    }
+    if (!hero.canAct() || !this.isCasterHero(hero)) return;
+    this.abilityLabel.setText("Cast a Spell (Q)");
     this.showAbilityButton(true);
   }
 
   /**
    * True for a hero with a real spellbook (`Hero.knownSpellAbilityIds`
-   * non-empty) — Wizard/Cleric/Bard/Druid/Sorcerer/Warlock — not just the
-   * one signature ability every other hero (Fighter/Rogue, the classic
-   * fixed roster) has. Phase 13.8 (D-093): deliberately checks the KNOWN
-   * spell list, not `classDef.spellcasting` presence — Paladin/Ranger are
-   * real half-casters with their own slot economy (see data/classes.ts),
-   * but that slot economy's one consequence today (Divine Smite, Hunter's
-   * Mark) lives on the bonus-action button, not a spellbook, so they must
-   * keep using their fixed signature ability here, not an empty "Cast a
-   * Spell" menu.
+   * non-empty) — Wizard/Cleric/Bard/Druid/Sorcerer/Warlock. Phase 13.8
+   * (D-093): deliberately checks the KNOWN spell list, not
+   * `classDef.spellcasting` presence — Paladin/Ranger are real half-casters
+   * with their own slot economy (see data/classes.ts), but that slot
+   * economy's one consequence today (Divine Smite, Hunter's Mark) lives on
+   * the bonus-action button, not a spellbook, so they have no "Cast a
+   * Spell" menu at all.
    */
   private isCasterHero(hero: Hero): boolean {
     return hero.knownSpellAbilityIds().length > 0;
@@ -3749,6 +4302,128 @@ export class BattleScene extends Phaser.Scene {
     if (!hero) return;
     this.scene.launch("CharacterSheetScene", { hero });
     this.scene.pause();
+  }
+
+  private showHotkeyButtons(show: boolean): void {
+    this.hotkeyButtons.forEach((b) => b.setVisible(show));
+    this.hotkeyLabels.forEach((l) => l.setVisible(show));
+  }
+
+  /**
+   * D-165 (KI-098 item 2): shows only the FILLED slots of `hero`'s hotkey
+   * bar (an empty slot has nothing worth a button for), dimming one whose
+   * id isn't currently usable rather than hiding it — matches
+   * `Hero.setActionHotkey`'s own "pinned but not usable right now is
+   * normal" precedent.
+   */
+  private showHotkeyButtonsFor(hero: Hero): void {
+    if (!hero.canAct()) return;
+    const hotkeys = hero.actionHotkeys();
+    for (let slot = 0; slot < ACTION_HOTKEY_SLOT_COUNT; slot++) {
+      const id = hotkeys[slot];
+      if (!id) continue;
+      const usable = this.hotkeyUsable(hero, id);
+      this.hotkeyButtons[slot].setVisible(true).setAlpha(usable ? 1 : 0.45);
+      this.hotkeyLabels[slot].setVisible(true).setAlpha(usable ? 1 : 0.45).setText(`${slot + 1}: ${hotkeyDisplayLabel(hero, id)}`);
+    }
+  }
+
+  /** D-165: a display-only approximation of whether `id` would actually fire right now — `triggerHotkey` re-derives the real gate itself before acting, this only controls the button's dim/bright look. */
+  private hotkeyUsable(hero: Hero, id: string): boolean {
+    const registryMatch = listHeroActions(hero).find((a) => a.id === id);
+    if (registryMatch) return registryMatch.available;
+    if (hero.knownSpellAbilityIds().includes(id)) return !hero.isSilenced && hero.canCastSpell(id);
+    return false;
+  }
+
+  /** D-165: the hotkey bar's hover tooltip — the full ability/spell description, or the registry action's own label (which has no separate description text). Empty string (no tooltip shown) for an empty slot or a mid-drag/no-selection moment. */
+  private hotkeyTooltipText(slot: number): string {
+    if (this.ui.kind !== "heroSelected") return "";
+    const hero = this.heroById(this.ui.heroId);
+    if (!hero) return "";
+    const id = hero.actionHotkeys()[slot];
+    if (!id) return "";
+    if (listHeroActions(hero).some((a) => a.id === id)) return hotkeyDisplayLabel(hero, id);
+    return getAbility(id).description;
+  }
+
+  /**
+   * D-165 (KI-098 item 2): fires whatever `Hero.actionHotkeys()[slot]`
+   * holds for the selected hero, via `dispatchAbilityId` — see that
+   * method for the actual resolution rule. An empty slot is a silent
+   * no-op; everything else `dispatchAbilityId` itself already handles.
+   */
+  private triggerHotkey(slot: number): void {
+    if (this.turns.current !== "player" || this.inputLocked()) return;
+    if (this.ui.kind !== "heroSelected") return;
+    const hero = this.heroById(this.ui.heroId);
+    if (!hero) return;
+    const abilityId = hero.actionHotkeys()[slot];
+    if (!abilityId) return;
+    this.dispatchAbilityId(hero, abilityId);
+  }
+
+  /**
+   * D-165 (KI-098 items 2 and 4): resolves `abilityId` for `hero` to the
+   * exact same handler its own un-hotkeyed, un-sheeted path already
+   * uses — `chooseSpell` for a known spell/cantrip (the spellbook
+   * overlay's own per-button handler), `onBonusActionButton`/
+   * `onClassActionButton` for a registry action (kind alone identifies
+   * which one fires, since a hero has at most one available action of
+   * either kind at once — see `HeroActionRegistry`). An id that isn't
+   * currently usable (out of spell slots, silenced, wrong turn) is a
+   * silent no-op — matches `Hero.setActionHotkey`'s own "pinned but not
+   * usable right now is normal" precedent, not an error state. Shared by
+   * `triggerHotkey` (the in-battle hotkey bar) and
+   * `castAbilityFromCharacterSheet` (the Character Sheet's own "cast from
+   * here" entry points).
+   */
+  private dispatchAbilityId(hero: Hero, abilityId: string): void {
+    if (!hero.canAct()) {
+      this.refreshStatus();
+      return;
+    }
+    const registryMatch = listHeroActions(hero).find((a) => a.id === abilityId);
+    if (registryMatch) {
+      if (!registryMatch.available) return;
+      if (registryMatch.kind === "bonusAction") this.onBonusActionButton();
+      else this.onClassActionButton();
+      return;
+    }
+    if (hero.knownSpellAbilityIds().includes(abilityId)) {
+      if (hero.isSilenced) {
+        this.logCombat(`${hero.name} is Silenced and can't cast right now`);
+        return;
+      }
+      if (!hero.canCastSpell(abilityId)) return;
+      this.chooseSpell(hero, abilityId);
+    }
+  }
+
+  /**
+   * D-165 (KI-098 item 4): the Character Sheet's "cast a spell/use an
+   * action from here" entry point — called right after
+   * `CharacterSheetScene.close()` resumes this (paused) scene, so the
+   * caster ends up right back on the battle board mid-aim, exactly as if
+   * they'd pressed Q/R/F/T or a hotkey themselves. Public since it's
+   * invoked from a different scene instance. Re-validates `heroId`
+   * against whichever hero is actually still selected — should always be
+   * the sheet's own hero, since opening the sheet requires a hero already
+   * selected and pausing/resuming this scene never changes `ui.kind` —
+   * rather than trusting the caller blindly.
+   */
+  public castAbilityFromCharacterSheet(heroId: string, abilityId: string): void {
+    if (this.turns.current !== "player" || this.inputLocked()) return;
+    if (this.ui.kind !== "heroSelected" || this.ui.heroId !== heroId) return;
+    const hero = this.heroById(heroId);
+    if (!hero) return;
+    this.dispatchAbilityId(hero, abilityId);
+  }
+
+  /** D-165 (KI-098 item 4): the Character Sheet's "drink a potion from here" entry point — same re-validation as `castAbilityFromCharacterSheet`, then just delegates to the existing `onPotionButton` (which already re-derives everything else from `this.ui`). */
+  public usePotionFromCharacterSheet(heroId: string): void {
+    if (this.ui.kind !== "heroSelected" || this.ui.heroId !== heroId) return;
+    this.onPotionButton();
   }
 
   /**
@@ -3964,15 +4639,6 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    // Aiming a single-target ability: the next click chooses the target.
-    if (this.ui.kind === "aimingAbility") {
-      const hero = this.heroById(this.ui.heroId);
-      const enemy = this.enemyAt(tile);
-      if (hero && enemy && this.isEnemyTargetable(enemy, hero)) this.castAbilityOn(hero, enemy);
-      else this.setInteraction({ kind: "heroSelected", heroId: this.ui.heroId });
-      return;
-    }
-
     // Phase 13.7 (D-092): the spellbook overlay is modal — its own buttons
     // (or Esc) are the only way to pick a spell; a board click does nothing.
     if (this.ui.kind === "choosingSpell") return;
@@ -4110,7 +4776,7 @@ export class BattleScene extends Phaser.Scene {
 
   private showUnitTooltipAt(tile: GridPosition, text: string): void {
     const c = this.grid.tileToWorldCenter(tile);
-    this.tooltip.showAt(c.x, c.y - TILE_SIZE * 0.6, text);
+    this.tooltip.showAt(c.x, c.y - this.grid.tileSize * 0.6, text);
   }
 
   /**
@@ -4222,6 +4888,54 @@ export class BattleScene extends Phaser.Scene {
     this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
 
+  /**
+   * D-165 (KI-098 item 3, "equip-flow UX rethink"): clicking a roster-strip
+   * box now does something, instead of being purely decorative — in equip
+   * mode it targets that hero directly (`resolveEquipOnHero`), the same
+   * click-item-then-click-a-hero flow as before, just aimed at the always-
+   * visible roster box instead of hunting for a small board token that
+   * might be tucked behind terrain/other units. Outside equip mode it's a
+   * second way to select a hero, identical to `selectHeroByIndex`'s own
+   * gates (this doesn't replace clicking the board token, which still
+   * works exactly as before either way).
+   */
+  private onRosterBoxClick(slot: number): void {
+    if (this.turns.current !== "player" || this.inputLocked()) return;
+    const hero = this.heroes[slot];
+    if (!hero) return;
+    if (this.ui.kind === "equipping") {
+      if (!hero.isAlive()) return;
+      // Phase 11.7 (D-071): the same proximity gate `handleEquipClick`
+      // enforces for a board-tile click.
+      if (!this.isAnyHeroNearShop()) {
+        this.rejectAt(hero.position, "Move a hero to a Shop tile to access Gear");
+        return;
+      }
+      this.resolveEquipOnHero(hero);
+      return;
+    }
+    if (this.ui.kind === "building" || this.isDebugGridKind(this.ui.kind)) return;
+    if (!hero.isAlive() || !this.canLocallyControl(hero)) return;
+    this.setInteraction({ kind: "heroSelected", heroId: hero.id });
+  }
+
+  /**
+   * D-165: the roster box's own hover tooltip — the same HP/AC text (and,
+   * in equip mode with a non-potion item selected, the same before/after
+   * `previewEquipDelta` line) `updateUnitTooltip` already shows for a
+   * board-token hover, so the two entry points read identically.
+   */
+  private showRosterHoverTooltip(slot: number): void {
+    const hero = this.heroes[slot];
+    if (!hero) return;
+    const box = this.heroSlotBoxes[slot];
+    let text = `${hero.name}\nHP ${hero.health}/${hero.effectiveMaxHealth}  ·  AC ${hero.armorClass}`;
+    if (this.ui.kind === "equipping" && this.ui.itemId && !gearCatalogEntry(this.ui.itemId).isPotion) {
+      text += `\n${this.previewEquipDelta(hero, this.ui.itemId)}`;
+    }
+    this.tooltip.showAt(box.x, box.y - box.height / 2 - 4, text);
+  }
+
   private handleEscape(): void {
     // Drag-and-drop hero move: Esc cancels an in-progress drag before any
     // other Esc behavior gets a chance to run.
@@ -4258,8 +4972,6 @@ export class BattleScene extends Phaser.Scene {
       this.exitEquipMode();
     } else if (this.isDebugGridKind(this.ui.kind)) {
       this.setInteraction({ kind: "idle" });
-    } else if (this.ui.kind === "aimingAbility") {
-      this.setInteraction({ kind: "heroSelected", heroId: this.ui.heroId });
     } else if (
       this.ui.kind === "choosingSpell" ||
       this.ui.kind === "aimingSpell" ||
@@ -4312,7 +5024,17 @@ export class BattleScene extends Phaser.Scene {
     if (this.ui.kind !== "confirmingMove") return;
     const hero = this.heroById(this.ui.heroId);
     if (!hero) return;
-    hero.moveTo(this.ui.dest);
+    // D-173: the dest was already validated reachable (isLegalMove) when
+    // this state was entered — recompute its real tile cost here so a move
+    // shorter than the full budget leaves the rest spendable later this
+    // turn, same as the drag-move flow (`resolveDrop`) already does.
+    const route = this.movement.routeThroughWaypoints([this.ui.dest], {
+      start: hero.position,
+      budget: hero.movementBudget(),
+      isOccupied: (p) => this.isHeroMovementBlocked(p),
+      blocksStopping: (p) => this.isHeroStoppingBlocked(p, hero.id),
+    });
+    hero.moveTo(this.ui.dest, route?.usedTiles);
     const token = this.heroTokens.get(hero.id);
     if (token) this.moveHeroToken(token, hero.position);
     this.checkTreasureAt(hero);
@@ -4839,14 +5561,16 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * D-178: a non-caster hero never reaches this handler at all anymore
+   * (`showAbilityButtonFor` only shows the Q button for a real caster) — Q
+   * always opens the full spellbook now, one resolver instead of a
+   * caster/non-caster branch.
+   */
   private onAbilityButton(): void {
     if (this.turns.current !== "player" || this.inputLocked()) return;
-    const heroId =
-      this.ui.kind === "heroSelected" || this.ui.kind === "aimingAbility"
-        ? this.ui.heroId
-        : null;
-    if (!heroId) return;
-    const hero = this.heroById(heroId);
+    if (this.ui.kind !== "heroSelected") return;
+    const hero = this.heroById(this.ui.heroId);
     if (!hero) return;
     if (!hero.canAct()) {
       this.refreshStatus();
@@ -4859,61 +5583,16 @@ export class BattleScene extends Phaser.Scene {
       this.logCombat(`${hero.name} is Silenced and can't cast right now`);
       return;
     }
-    // Phase 13.7 (D-092): a caster no longer has ONE fixed ability — "Q"
-    // opens a spellbook of every spell their class knows instead.
-    if (this.isCasterHero(hero)) {
-      this.setInteraction({ kind: "choosingSpell", heroId: hero.id });
-      return;
-    }
-    const ability = getAbility(hero.abilityId);
-    if (ability.kind === "aoeAdjacent") {
-      const results = CombatSystem.attackArea(
-        hero.position,
-        this.waveSystem.enemies,
-        {
-          rangeTiles: ability.rangeTiles,
-          damage: ability.damage,
-          attackBonus: hero.effectiveAttackBonus,
-          autoHit: ability.autoHit,
-          damageType: ability.damageType,
-          damageTypes: ability.damageTypes,
-          magical: true,
-        },
-        this.random,
-      );
-      if (results.length === 0) {
-        this.rejectAt(hero.position, `No enemies within reach of ${ability.name}`);
-        return;
-      }
-      hero.markActed();
-      this.playCastVisual(ability, hero.position, hero.position);
-      this.applyHeroResults(hero, ability.name, results, ability.appliesStatus, deathCauseForAbility(ability));
-      const clearedEarly = this.afterHeroDamage();
-      if (!clearedEarly) this.setInteraction({ kind: "heroSelected", heroId: hero.id });
-    } else {
-      // Single-target: enter aiming mode so the next click picks the enemy.
-      const inRange = CombatSystem.targetsInRange(
-        hero.position,
-        ability.rangeTiles,
-        this.waveSystem.enemies,
-      );
-      if (inRange.length === 0) {
-        this.rejectAt(hero.position, `No enemies within range of ${ability.name}`);
-        return;
-      }
-      this.setInteraction({ kind: "aimingAbility", heroId: hero.id });
-    }
+    if (!this.isCasterHero(hero)) return;
+    this.setInteraction({ kind: "choosingSpell", heroId: hero.id });
   }
 
   /**
-   * Resolves an enemy-targeted ability/spell. `ability` defaults to the
-   * hero's fixed signature ability (the original, still-unchanged path for
-   * a non-caster or the classic roster); Phase 13.7 (D-092) added the
-   * explicit override so `aimingSpell` can resolve whichever spell the
-   * caster picked from their spellbook through this SAME logic — one
-   * resolver, not a parallel copy.
+   * Resolves an enemy-targeted spell — shared by every spellbook-driven
+   * cast (`aimingSpell`'s `showSpellTargets`/`castChosenSpellOn`), so
+   * there's one resolver, not a parallel copy per caller.
    */
-  private castAbilityOn(hero: Hero, enemy: Enemy, ability: AbilityDefinition = getAbility(hero.abilityId)): void {
+  private castAbilityOn(hero: Hero, enemy: Enemy, ability: AbilityDefinition): void {
     if (!hero.canAct()) {
       this.setInteraction({ kind: "heroSelected", heroId: hero.id });
       return;
@@ -5005,16 +5684,9 @@ export class BattleScene extends Phaser.Scene {
     enemy.position = pos;
   }
 
-  /**
-   * Phase 13.7 (D-092): a rejected target click should re-enter whichever
-   * aiming mode actually got us here — the old fixed-ability flow
-   * (`aimingAbility`) or the new spellbook flow (`aimingSpell`) — rather
-   * than always assuming the former, now that `castAbilityOn`/
-   * `castSavingThrowAbilityOn` serve both.
-   */
+  /** A rejected target click re-enters the spellbook's aiming mode so the player can pick a different target. */
   private returnToAimingMode(hero: Hero, abilityId: string): void {
-    if (this.ui.kind === "aimingSpell") this.setInteraction({ kind: "aimingSpell", heroId: hero.id, abilityId });
-    else this.setInteraction({ kind: "aimingAbility", heroId: hero.id });
+    this.setInteraction({ kind: "aimingSpell", heroId: hero.id, abilityId });
   }
 
   /** Spends a spell slot if this ability actually costs one (leveled spells only — cantrips/mundane abilities are free). */
@@ -5039,9 +5711,9 @@ export class BattleScene extends Phaser.Scene {
    * Flame) via `SavingThrowSystem` instead of `CombatSystem`'s attack roll —
    * the target rolls its saving throw against the caster's `spellSaveDC`;
    * full damage on a failed save, none on a success. `hero.spellSaveDC`
-   * should always be set for a hero whose `abilityId` carries a
-   * `savingThrow` tag (only a caster ever gets one), but a defensive
-   * fallback DC keeps this from ever throwing if that invariant is broken.
+   * should always be set for a hero casting a `savingThrow`-tagged spell
+   * (only a caster ever gets one), but a defensive fallback DC keeps this
+   * from ever throwing if that invariant is broken.
    */
   private castSavingThrowAbilityOn(hero: Hero, ability: AbilityDefinition, enemy: Enemy): void {
     if (!CombatSystem.isInRange(hero.position, enemy.position, ability.rangeTiles) || !enemy.isAlive()) {
@@ -5319,7 +5991,7 @@ export class BattleScene extends Phaser.Scene {
   /** A minimal token for a summoned ally — same shape as a hero/enemy token, a distinct teal fill. */
   private spawnSummonToken(summon: Summon): void {
     const c = this.grid.tileToWorldCenter(summon.position);
-    const circle = this.add.circle(c.x, c.y, TILE_SIZE * 0.3, 0x2fa89a).setDepth(9).setStrokeStyle(2, 0xd8f5f0, 0.9);
+    const circle = this.add.circle(c.x, c.y, this.grid.tileSize * 0.3, 0x2fa89a).setDepth(9).setStrokeStyle(2, 0xd8f5f0, 0.9);
     const label = this.add
       .text(c.x, c.y - 4, summon.def.name[0], {
         fontFamily: "system-ui, Arial, sans-serif",
@@ -5330,7 +6002,7 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(9);
     const hp = this.add
-      .text(c.x, c.y + TILE_SIZE * 0.2, "", {
+      .text(c.x, c.y + this.grid.tileSize * 0.2, "", {
         fontFamily: "monospace",
         fontSize: "11px",
         color: "#0e0e14",
@@ -6007,13 +6679,82 @@ export class BattleScene extends Phaser.Scene {
    * `null`), and only writes to localStorage when completion actually
    * changes something new — same "don't spam localStorage" discipline as
    * `markEnemySeen`/`markEnemyKilled` above.
+   *
+   * D-177: for a CHAPTERED campaign, clearing a non-finale chapter only
+   * advances `completedChapters` (`markChapterCompleted`) — the whole-
+   * campaign `completedIds` flag (and its "[Completed]" tag on
+   * `CampaignSelectScene`'s cards) is reserved for clearing the FINAL
+   * chapter, matching a flat campaign's own single-battle-clears-it-all
+   * behavior exactly once a region's whole arc is actually done.
    */
   private markCampaignCompletedIfAny(): void {
     if (!this.campaignId) return;
+    const campaign = getCampaignDefinition(this.campaignId);
+    if (isChapteredCampaign(campaign)) {
+      const isFinalChapter = this.chapterIndex === totalChapters(campaign) - 1;
+      let next = markChapterCompleted(this.campaignProgress, this.campaignId, this.chapterIndex);
+      if (isFinalChapter) next = markCampaignCompleted(next, this.campaignId);
+      if (next === this.campaignProgress) return;
+      this.campaignProgress = next;
+      saveCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY, next);
+      if (this.chapterIndex === 0) {
+        this.maybeUnlockHomeRegionCompanion(campaign);
+        this.maybeUnlockSideMissionCompanion(campaign);
+      }
+      return;
+    }
     const next = markCampaignCompleted(this.campaignProgress, this.campaignId);
     if (next === this.campaignProgress) return;
     this.campaignProgress = next;
     saveCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY, next);
+    if (this.chapterIndex === 0) {
+      this.maybeUnlockHomeRegionCompanion(campaign);
+      this.maybeUnlockSideMissionCompanion(campaign);
+    }
+  }
+
+  /**
+   * KI-098 item 13 (companion roster, Phase 1): reaching a region's Chapter 1
+   * finale (the FIRST time it's completed, per the no-op guards above) benches
+   * that region's Pool B "mirror" companion, if it has one and isn't already
+   * recruited or permanently lost. Never forces a swap into the active 3 —
+   * `recruitCompanion` only fills an active slot if one is free, which never
+   * happens here since seeding (`CompanionSeedSystem`, run in Campaign Select/
+   * Character Creation before any battle can start) always fills all 3 active
+   * slots first — see `CompanionRosterScene` for the player's own later
+   * choice of whether to swap this companion in.
+   */
+  private maybeUnlockHomeRegionCompanion(campaign: CampaignDefinition): void {
+    const companion = COMPANIONS.find((c) => c.homeRegionId === campaign.id);
+    if (!companion) return;
+    if (isCompanionRecruited(this.companionRoster, companion.id) || isCompanionLost(this.companionRoster, companion.id)) {
+      return;
+    }
+    const next = recruitCompanion(this.companionRoster, companion.id);
+    if (next === this.companionRoster) return;
+    this.companionRoster = next;
+    saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, next);
+    this.logCombat(`${companion.name} has joined your roster (bench) — manage companions from Campaign Select.`);
+  }
+
+  /**
+   * KI-098 item 13 (Pool A side-quest missions): clearing a companion's own
+   * side mission (`data/campaigns.ts`'s `SIDE_MISSIONS`) recruits them onto
+   * the bench, same no-force-active reasoning and no-op guards as
+   * `maybeUnlockHomeRegionCompanion` above. A no-op for any non-side-mission
+   * campaign (no companion's `sideMissionId` matches its id).
+   */
+  private maybeUnlockSideMissionCompanion(campaign: CampaignDefinition): void {
+    const companion = COMPANIONS.find((c) => c.sideMissionId === campaign.id);
+    if (!companion) return;
+    if (isCompanionRecruited(this.companionRoster, companion.id) || isCompanionLost(this.companionRoster, companion.id)) {
+      return;
+    }
+    const next = recruitCompanion(this.companionRoster, companion.id);
+    if (next === this.companionRoster) return;
+    this.companionRoster = next;
+    saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, next);
+    this.logCombat(`${companion.name} has joined your roster (bench) — manage companions from Campaign Select.`);
   }
 
   private showHeroHit(enemy: Enemy): void {
@@ -6364,7 +7105,7 @@ export class BattleScene extends Phaser.Scene {
     const alpha = isWall ? 0.95 : isPlatform ? 0.6 : 0.5;
     const def = getStructureDefinition(structure.defId);
     const rect = this.add
-      .rectangle(c.x, c.y, TILE_SIZE - 6, TILE_SIZE - 6, fill, alpha)
+      .rectangle(c.x, c.y, this.grid.tileSize - 6, this.grid.tileSize - 6, fill, alpha)
       .setStrokeStyle(3, edge)
       .setDepth(isWall ? 6 : 3);
     const glyph = this.add
@@ -6463,6 +7204,19 @@ export class BattleScene extends Phaser.Scene {
     }
     const hero = this.heroAt(tile);
     if (!hero) return;
+    this.resolveEquipOnHero(hero);
+  }
+
+  /**
+   * D-165 (KI-098 item 3): the equip-resolution core both `handleEquipClick`
+   * (a board-tile click) and the roster-strip click (`onRosterBoxClick`)
+   * funnel through — given a hero and the item currently selected in equip
+   * mode, equips it into whichever slot fits, or unequips it if this hero
+   * already carries it. Callers are responsible for their own proximity/
+   * liveness gates first (each needs its own rejection message/target tile).
+   */
+  private resolveEquipOnHero(hero: Hero): void {
+    if (this.ui.kind !== "equipping") return;
     const itemId = this.ui.itemId;
     if (!itemId) return;
 
@@ -6794,7 +7548,7 @@ export class BattleScene extends Phaser.Scene {
     const c = this.grid.tileToWorldCenter(pos);
     token.circle.setPosition(c.x, c.y);
     token.label.setPosition(c.x, c.y - 4);
-    token.hp.setPosition(c.x, c.y + TILE_SIZE * 0.2);
+    token.hp.setPosition(c.x, c.y + this.grid.tileSize * 0.2);
     token.sprite?.setPosition(c.x, c.y);
   }
 
@@ -6826,7 +7580,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private flashTile(x: number, y: number, color: number, alpha: number, ms: number): void {
-    const flash = this.add.rectangle(x, y, TILE_SIZE, TILE_SIZE, color, alpha).setDepth(12);
+    const flash = this.add.rectangle(x, y, this.grid.tileSize, this.grid.tileSize, color, alpha).setDepth(12);
     const duration = this.scaledDuration(ms);
     if (duration <= 0) {
       // Reduced motion: show the flash without an animated fade, just briefly.
@@ -6855,8 +7609,8 @@ export class BattleScene extends Phaser.Scene {
     const dx = toC.x - fromC.x;
     const dy = toC.y - fromC.y;
     const dist = Math.hypot(dx, dy) || 1;
-    const offsetX = (dx / dist) * TILE_SIZE * 0.28;
-    const offsetY = (dy / dist) * TILE_SIZE * 0.28;
+    const offsetX = (dx / dist) * this.grid.tileSize * 0.28;
+    const offsetY = (dy / dist) * this.grid.tileSize * 0.28;
     const targets = [token.circle, token.label, token.hp, token.sprite].filter(
       (t): t is NonNullable<typeof t> => t !== undefined,
     );
@@ -6903,7 +7657,7 @@ export class BattleScene extends Phaser.Scene {
         this.spawnRing(
           to.x,
           to.y,
-          TILE_SIZE * 0.5,
+          this.grid.tileSize * 0.5,
           0.05,
           Math.max(1, ability.radiusTiles ?? 1) * 2 * visual.sizeScale,
           visual.color,
@@ -6914,7 +7668,7 @@ export class BattleScene extends Phaser.Scene {
           to.y,
           visual.color,
           visual.particleCount,
-          TILE_SIZE * (ability.radiusTiles ?? 1) * visual.sizeScale,
+          this.grid.tileSize * (ability.radiusTiles ?? 1) * visual.sizeScale,
           duration,
           visual.rotationDir,
         );
@@ -6924,7 +7678,7 @@ export class BattleScene extends Phaser.Scene {
         this.spawnRing(
           from.x,
           from.y,
-          TILE_SIZE * 0.5,
+          this.grid.tileSize * 0.5,
           0.05,
           Math.max(1, ability.rangeTiles) * 2 * visual.sizeScale,
           visual.color,
@@ -6938,11 +7692,11 @@ export class BattleScene extends Phaser.Scene {
       case "sparkleRise":
         this.spawnDriftMotes(
           to.x,
-          to.y + TILE_SIZE * 0.3,
+          to.y + this.grid.tileSize * 0.3,
           visual.color,
           visual.particleCount,
           0,
-          -TILE_SIZE * 0.9 * visual.sizeScale,
+          -this.grid.tileSize * 0.9 * visual.sizeScale,
           duration,
         );
         break;
@@ -6950,7 +7704,7 @@ export class BattleScene extends Phaser.Scene {
         this.drawCastGroundRune(to, visual, duration);
         break;
       case "conjureCircle":
-        this.spawnRing(to.x, to.y, TILE_SIZE * 0.45, 0.05, 1.3 * visual.sizeScale, visual.color, duration, 4);
+        this.spawnRing(to.x, to.y, this.grid.tileSize * 0.45, 0.05, 1.3 * visual.sizeScale, visual.color, duration, 4);
         break;
       case "blink":
         this.drawCastBlink(from, to, visual, duration);
@@ -6965,7 +7719,7 @@ export class BattleScene extends Phaser.Scene {
     visual: CastVisualDescriptor,
     duration: number,
   ): void {
-    const r = TILE_SIZE * 0.14 * visual.sizeScale;
+    const r = this.grid.tileSize * 0.14 * visual.sizeScale;
     const mote = this.add.circle(from.x, from.y, r, visual.color, 0.95).setDepth(13);
     this.tweens.add({
       targets: mote,
@@ -6986,7 +7740,7 @@ export class BattleScene extends Phaser.Scene {
     visual: CastVisualDescriptor,
     duration: number,
   ): void {
-    const r = TILE_SIZE * 0.16 * visual.sizeScale;
+    const r = this.grid.tileSize * 0.16 * visual.sizeScale;
     const orb = this.add.circle(from.x, from.y, r, visual.color, 0.95).setDepth(13).setStrokeStyle(2, 0xffffff, 0.5);
     const midX = (from.x + to.x) / 2 - (to.y - from.y) * 0.25 * visual.rotationDir;
     const midY = (from.y + to.y) / 2 + (to.x - from.x) * 0.25 * visual.rotationDir;
@@ -7008,8 +7762,8 @@ export class BattleScene extends Phaser.Scene {
     visual: CastVisualDescriptor,
     duration: number,
   ): void {
-    const r = TILE_SIZE * 0.18 * visual.sizeScale;
-    const mote = this.add.circle(to.x, to.y - TILE_SIZE * 2.2, r, visual.color, 0.95).setDepth(13);
+    const r = this.grid.tileSize * 0.18 * visual.sizeScale;
+    const mote = this.add.circle(to.x, to.y - this.grid.tileSize * 2.2, r, visual.color, 0.95).setDepth(13);
     this.tweens.add({
       targets: mote,
       y: to.y,
@@ -7030,9 +7784,9 @@ export class BattleScene extends Phaser.Scene {
     duration: number,
   ): void {
     const angle = Math.atan2(to.y - from.y, to.x - from.x);
-    const length = Math.hypot(to.x - from.x, to.y - from.y) || TILE_SIZE;
+    const length = Math.hypot(to.x - from.x, to.y - from.y) || this.grid.tileSize;
     const gust = this.add
-      .rectangle(from.x, from.y, length, TILE_SIZE * 0.7 * visual.sizeScale, visual.color, 0.35)
+      .rectangle(from.x, from.y, length, this.grid.tileSize * 0.7 * visual.sizeScale, visual.color, 0.35)
       .setOrigin(0, 0.5)
       .setRotation(angle)
       .setDepth(13);
@@ -7048,7 +7802,7 @@ export class BattleScene extends Phaser.Scene {
 
   /** A diamond rune that snaps in then lingers briefly — any `altersTerrainId` spell's signature. */
   private drawCastGroundRune(to: { x: number; y: number }, visual: CastVisualDescriptor, duration: number): void {
-    const size = TILE_SIZE * 0.7 * visual.sizeScale;
+    const size = this.grid.tileSize * 0.7 * visual.sizeScale;
     const rune = this.add
       .rectangle(to.x, to.y, size, size, visual.color, 0)
       .setStrokeStyle(3, visual.color, 0.9)
@@ -7083,7 +7837,7 @@ export class BattleScene extends Phaser.Scene {
   ): void {
     const puff = (x: number, y: number, grow: boolean) => {
       const c = this.add
-        .circle(x, y, TILE_SIZE * 0.32 * visual.sizeScale, visual.color, 0.7)
+        .circle(x, y, this.grid.tileSize * 0.32 * visual.sizeScale, visual.color, 0.7)
         .setDepth(13)
         .setScale(grow ? 0.2 : 1);
       this.tweens.add({
@@ -7141,7 +7895,7 @@ export class BattleScene extends Phaser.Scene {
   ): void {
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2 * rotationDir;
-      const mote = this.add.circle(x, y, TILE_SIZE * 0.07, color, 0.9).setDepth(13);
+      const mote = this.add.circle(x, y, this.grid.tileSize * 0.07, color, 0.9).setDepth(13);
       this.tweens.add({
         targets: mote,
         x: x + Math.cos(angle) * dist,
@@ -7165,8 +7919,8 @@ export class BattleScene extends Phaser.Scene {
     duration: number,
   ): void {
     for (let i = 0; i < count; i++) {
-      const offset = (i - (count - 1) / 2) * TILE_SIZE * 0.18;
-      const mote = this.add.circle(x + offset, y, TILE_SIZE * 0.07, color, 0.9).setDepth(13);
+      const offset = (i - (count - 1) / 2) * this.grid.tileSize * 0.18;
+      const mote = this.add.circle(x + offset, y, this.grid.tileSize * 0.07, color, 0.9).setDepth(13);
       this.tweens.add({
         targets: mote,
         x: x + offset + dx,
@@ -7228,28 +7982,28 @@ export class BattleScene extends Phaser.Scene {
   ): void {
     switch (shape) {
       case "collapse":
-        this.spawnBurstMotes(c.x, c.y, color, 3, TILE_SIZE * 0.3 * sizeScale, duration * 0.6);
+        this.spawnBurstMotes(c.x, c.y, color, 3, this.grid.tileSize * 0.3 * sizeScale, duration * 0.6);
         break;
       case "emberFade":
-        this.spawnDriftMotes(c.x, c.y, color, 5, 0, -TILE_SIZE * 0.8 * sizeScale, duration);
+        this.spawnDriftMotes(c.x, c.y, color, 5, 0, -this.grid.tileSize * 0.8 * sizeScale, duration);
         break;
       case "shatter":
-        this.spawnBurstMotes(c.x, c.y, color, 6, TILE_SIZE * 0.7 * sizeScale, duration * 0.7, -1);
+        this.spawnBurstMotes(c.x, c.y, color, 6, this.grid.tileSize * 0.7 * sizeScale, duration * 0.7, -1);
         break;
       case "dissolve":
-        this.spawnRing(c.x, c.y, TILE_SIZE * 0.42 * sizeScale, 1, 0.05, color, duration);
+        this.spawnRing(c.x, c.y, this.grid.tileSize * 0.42 * sizeScale, 1, 0.05, color, duration);
         break;
       case "wither":
-        this.spawnDriftMotes(c.x, c.y, color, 4, 0, TILE_SIZE * 0.4 * sizeScale, duration);
+        this.spawnDriftMotes(c.x, c.y, color, 4, 0, this.grid.tileSize * 0.4 * sizeScale, duration);
         break;
       case "radiantBurst":
-        this.spawnRing(c.x, c.y, TILE_SIZE * 0.35 * sizeScale, 0.2, 1.8 * sizeScale, color, duration, 5);
+        this.spawnRing(c.x, c.y, this.grid.tileSize * 0.35 * sizeScale, 0.2, 1.8 * sizeScale, color, duration, 5);
         break;
       case "sparkCrackle":
-        this.spawnBurstMotes(c.x, c.y, color, 7, TILE_SIZE * 0.5 * sizeScale, duration * 0.5, 1);
+        this.spawnBurstMotes(c.x, c.y, color, 7, this.grid.tileSize * 0.5 * sizeScale, duration * 0.5, 1);
         break;
       case "arcaneFade":
-        this.spawnRing(c.x, c.y, TILE_SIZE * 0.4 * sizeScale, 0.8, 0.1, color, duration);
+        this.spawnRing(c.x, c.y, this.grid.tileSize * 0.4 * sizeScale, 0.8, 0.1, color, duration);
         break;
     }
   }
@@ -7310,7 +8064,6 @@ export class BattleScene extends Phaser.Scene {
       const isSelected =
         (this.ui.kind === "heroSelected" ||
           this.ui.kind === "confirmingMove" ||
-          this.ui.kind === "aimingAbility" ||
           this.ui.kind === "choosingSpell" ||
           this.ui.kind === "aimingSpell" ||
           this.ui.kind === "aimingTileSpell") &&
@@ -7363,8 +8116,7 @@ export class BattleScene extends Phaser.Scene {
     // (already shown by the banner's own `PHASE_LABELS[phase]`) — leaves
     // this blank.
     let message = "";
-    if (this.ui.kind === "aimingAbility") message = "Click an outlined enemy to use the ability · Esc to cancel";
-    else if (this.ui.kind === "choosingSpell") message = "Pick a spell to cast · Esc to cancel";
+    if (this.ui.kind === "choosingSpell") message = "Pick a spell to cast · Esc to cancel";
     else if (this.ui.kind === "aimingSpell") message = "Click an outlined ally or enemy to cast the spell · Esc to cancel";
     else if (this.ui.kind === "aimingTileSpell") message = "Click an outlined tile to cast the spell · Esc to cancel";
     else if (this.ui.kind === "building") {
@@ -7579,8 +8331,12 @@ export class BattleScene extends Phaser.Scene {
     }
     const classDef = getClassDefinition(hero.classId);
     const plannedSubclassId = this.heroLevelUpPlans.get(hero.id)?.subclassId;
+    // Titles off `classDef.subclassChoiceLevel`, not `hero.level` — for a
+    // choice deferred from a pre-battle fast-forward, `hero.level` is
+    // already the hero's final Starting Level by the time this prompt
+    // shows, not the level that actually granted this subclass pick.
     this.renderAsiPrompt(
-      `${hero.name} reaches level ${hero.level}!`,
+      `${hero.name} reaches level ${classDef.subclassChoiceLevel}!`,
       options.map((subclass) => ({
         label: `Choose: ${subclass.name}`,
         desc: `A ${classDef.name} path chosen at level ${classDef.subclassChoiceLevel}.`,
@@ -7626,10 +8382,12 @@ export class BattleScene extends Phaser.Scene {
 
   private showSpellPickPrompt(request: SpellPickRequest): void {
     const { hero, kind, tier } = request;
-    // D-133: a hero's "prompt" plan keys its spell picks by trigger LEVEL —
-    // and `hero.level` IS that trigger level right now, since this prompt
-    // only ever fires the instant `needsXPick()` first becomes true.
-    const plannedPick = this.heroLevelUpPlans.get(hero.id)?.spellPicks[hero.level];
+    // D-16x: a hero's "prompt" plan keys its spell picks by trigger LEVEL,
+    // which isn't necessarily `hero.level` anymore — a choice deferred from
+    // a pre-battle fast-forward is presented after the hero's level has
+    // already moved past the level that actually triggered it.
+    const triggerLevel = spellPickTriggerLevel(request);
+    const plannedPick = triggerLevel !== undefined ? this.heroLevelUpPlans.get(hero.id)?.spellPicks[triggerLevel] : undefined;
     if (kind === "mastery") {
       const eligible = hero.eligibleSpellMasterySpells();
       if (eligible.length === 0) {
@@ -7692,7 +8450,8 @@ export class BattleScene extends Phaser.Scene {
   /** Signature Spells' second pick — excludes whichever spell was already picked first. */
   private showSignatureSpellSecondPick(hero: Hero, first: string, eligible: string[]): void {
     const remaining = eligible.filter((id) => id !== first);
-    const plannedPick = this.heroLevelUpPlans.get(hero.id)?.spellPicks[hero.level];
+    const triggerLevel = spellPickTriggerLevel({ hero, kind: "signature" });
+    const plannedPick = triggerLevel !== undefined ? this.heroLevelUpPlans.get(hero.id)?.spellPicks[triggerLevel] : undefined;
     const plannedSecond =
       plannedPick?.kind === "signature" && plannedPick.spellIds[0] === first ? plannedPick.spellIds[1] : undefined;
     this.renderAsiPrompt(
@@ -7906,17 +8665,17 @@ export class BattleScene extends Phaser.Scene {
    * pop" shape a multi-hero level-up would need, but nothing else in this
    * project queues per-hero overlays yet, so it's local to this feature.
    */
-  private showAsiChoiceQueue(heroes: Hero[], onDone: () => void): void {
-    this.asiQueue = [...heroes];
+  private showAsiChoiceQueue(entries: { hero: Hero; level: number }[], onDone: () => void): void {
+    this.asiQueue = [...entries];
     this.pendingAfterAsi = onDone;
     this.choosingAsi = true;
     this.advanceAsiQueue();
   }
 
-  /** Pop the next hero off `asiQueue` and show their path choice, or finish if the queue is empty. */
+  /** Pop the next entry off `asiQueue` and show its path choice, or finish if the queue is empty. */
   private advanceAsiQueue(): void {
-    const hero = this.asiQueue.shift();
-    if (!hero) {
+    const entry = this.asiQueue.shift();
+    if (!entry) {
       this.clearAsiOverlay();
       this.choosingAsi = false;
       const proceed = this.pendingAfterAsi;
@@ -7924,31 +8683,31 @@ export class BattleScene extends Phaser.Scene {
       proceed?.();
       return;
     }
-    this.showAsiPathChoice(hero);
+    this.showAsiPathChoice(entry.hero, entry.level);
   }
 
   /** Step 1: raise ability scores, or take a feat instead. */
-  private showAsiPathChoice(hero: Hero): void {
-    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[hero.level];
+  private showAsiPathChoice(hero: Hero, level: number): void {
+    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[level];
     this.renderAsiPrompt(`${hero.name} — Ability Score Improvement`, [
       {
         label: "Raise Ability Scores",
         desc: "+2 to one ability score, or +1 to two different ones.",
-        onClick: () => this.showAsiModeChoice(hero),
+        onClick: () => this.showAsiModeChoice(hero, level),
         highlighted: planned?.path === "ability",
       },
       {
         label: "Take a Feat",
         desc: "A special talent instead of raw ability scores.",
-        onClick: () => this.showFeatChoice(hero),
+        onClick: () => this.showFeatChoice(hero, level),
         highlighted: planned?.path === "feat",
       },
     ]);
   }
 
   /** Step 2a (Raise Ability Scores path): the SRD's real split — +2 to one, or +1 to two. */
-  private showAsiModeChoice(hero: Hero): void {
-    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[hero.level];
+  private showAsiModeChoice(hero: Hero, level: number): void {
+    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[level];
     const plannedAbility = planned?.path === "ability" ? planned : undefined;
     this.renderAsiPrompt(`${hero.name} — Raise Ability Scores`, [
       {
@@ -8021,20 +8780,20 @@ export class BattleScene extends Phaser.Scene {
    * spellcasting class, etc.). Falls back to the ability-score path instead
    * of a dead-end screen on the case where nothing qualifies.
    */
-  private showFeatChoice(hero: Hero): void {
+  private showFeatChoice(hero: Hero, level: number): void {
     const available = FEAT_IDS.filter((id) => hero.meetsFeatPrerequisites(id));
     if (available.length === 0) {
-      this.showAsiModeChoice(hero);
+      this.showAsiModeChoice(hero, level);
       return;
     }
-    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[hero.level];
+    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[level];
     const plannedFeatId = planned?.path === "feat" ? planned.featId : undefined;
     const choices = available.map((id) => {
       const feat = getFeat(id);
       return {
         label: feat.name,
         desc: feat.description,
-        onClick: () => this.beginFeatGrant(hero, id),
+        onClick: () => this.beginFeatGrant(hero, id, level),
         highlighted: id === plannedFeatId,
       };
     });
@@ -8048,25 +8807,25 @@ export class BattleScene extends Phaser.Scene {
    * repeatable across up to three picks) — reusing `renderAsiPrompt`
    * exactly like every other ASI/feat step, no new overlay component.
    */
-  private beginFeatGrant(hero: Hero, featId: string): void {
+  private beginFeatGrant(hero: Hero, featId: string, level: number): void {
     const feat = getFeat(featId);
-    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[hero.level];
+    const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[level];
     const plannedForThisFeat = planned?.path === "feat" && planned.featId === featId ? planned : undefined;
     if (feat.abilityScoreBoost) {
       const allowed = feat.abilityScoreBoost.allowedAbilities;
       const choices = ABILITY_SCORE_IDS.filter((id) => allowed.includes(id)).map((id) => ({
         label: `${ABILITY_SCORE_NAMES[id]} (${hero.abilityScoreValue(id)})`,
-        onClick: () => this.continueFeatGrant(hero, featId, { chosenAbility: id }),
+        onClick: () => this.continueFeatGrant(hero, featId, { chosenAbility: id }, level),
         highlighted: id === plannedForThisFeat?.chosenAbility,
       }));
       this.renderAsiPrompt(`${hero.name} — ${feat.name}: Choose an Ability`, choices);
       return;
     }
-    this.continueFeatGrant(hero, featId, {});
+    this.continueFeatGrant(hero, featId, {}, level);
   }
 
   /** Magic Initiate's own follow-up: which of the (still-unpicked) spell lists this pick draws from. */
-  private continueFeatGrant(hero: Hero, featId: string, partial: { chosenAbility?: AbilityScoreId }): void {
+  private continueFeatGrant(hero: Hero, featId: string, partial: { chosenAbility?: AbilityScoreId }, level: number): void {
     if (featId === "magic-initiate") {
       const lists: Array<{ id: MagicInitiateListId; label: string }> = [
         { id: "cleric", label: "Cleric" },
@@ -8074,7 +8833,7 @@ export class BattleScene extends Phaser.Scene {
         { id: "wizard", label: "Wizard" },
       ];
       const remaining = lists.filter((l) => !hero.magicInitiateListsTaken.includes(l.id));
-      const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[hero.level];
+      const planned = this.heroLevelUpPlans.get(hero.id)?.asiChoices[level];
       const plannedList = planned?.path === "feat" && planned.featId === featId ? planned.magicInitiateList : undefined;
       this.renderAsiPrompt(
         `${hero.name} — Magic Initiate: Choose a List`,
@@ -8193,10 +8952,13 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  /** True while a modal (ASI/feat choice, subclass choice, spell-pick choice, spell-prep swap choice, rest choice, the tutorial, the technical log, or Test Mode's debug menu) should block board input. */
+  /** True while a modal (ASI/feat choice, subclass choice, spell-pick choice, spell-prep swap choice, rest choice, the pre-region bonus choice, the spare-or-destroy miniboss choice, the tutorial, the technical log, or Test Mode's debug menu) should block board input. */
   private inputLocked(): boolean {
     return (
       this.choosingAsi ||
+      this.choosingRegionBonus ||
+      this.choosingSparableKill ||
+      this.choosingSorrelFateChoice ||
       this.choosingSubclass ||
       this.choosingSpellPick ||
       this.choosingLevelUpAck ||
@@ -8204,8 +8966,102 @@ export class BattleScene extends Phaser.Scene {
       this.choosingSpellPrep ||
       this.tutorialOverlay.length > 0 ||
       this.technicalLogOverlay.length > 0 ||
-      this.debugMenuOverlay.length > 0
+      this.debugMenuOverlay.length > 0 ||
+      this.chapterDialogue !== null
     );
+  }
+
+  /**
+   * D-177: shows a chaptered campaign's `introText` (if this chapter has
+   * one written) before `onComplete` runs — a no-op that calls `onComplete`
+   * immediately for a flat campaign, a campaign-less run, or a chapter with
+   * no `introText` yet (every chapter today — the writing pass is a
+   * separate, later session; see CAMPAIGN_STORY_DESIGN.md §9).
+   */
+  private showChapterIntroIfAny(onComplete: () => void): void {
+    const introText = this.currentChapter?.introText;
+    if (!introText) {
+      onComplete();
+      return;
+    }
+    this.chapterDialogue = showDialogue(this, [{ text: introText }], () => {
+      this.chapterDialogue = null;
+      onComplete();
+    });
+  }
+
+  /** D-177: the outroText counterpart to `showChapterIntroIfAny`, shown right before the victory end screen. */
+  private showChapterOutroIfAny(onComplete: () => void): void {
+    const outroText = this.currentChapter?.outroText;
+    if (!outroText) {
+      onComplete();
+      return;
+    }
+    this.chapterDialogue = showDialogue(this, [{ text: outroText }], () => {
+      this.chapterDialogue = null;
+      onComplete();
+    });
+  }
+
+  /**
+   * D-188: a single flavor line before wave 1 of the Nameless Throne
+   * capstone, distinct per resolved ending — a no-op for every other
+   * campaign. Reuses `this.chapterDialogue`/`showDialogue` exactly like
+   * `showChapterIntroIfAny`; no new `inputLocked()` entry needed (that
+   * check already covers `this.chapterDialogue !== null`).
+   */
+  private showNamelessThroneIntroIfAny(onComplete: () => void): void {
+    if (this.campaignId !== NAMELESS_THRONE_CAMPAIGN_ID) {
+      onComplete();
+      return;
+    }
+    const variant = resolveThroneVariant(this.worldFlags);
+    const flavor =
+      variant === "ashen-sovereign"
+        ? "The hall ahead still holds a shape you recognize — ash and ember, a throne that at least remembers being one."
+        : "The hall ahead has gone quiet and cold in a way nothing else on this road has. Even the dust seems to have stopped remembering what it was.";
+    this.chapterDialogue = showDialogue(this, [{ text: flavor }], () => {
+      this.chapterDialogue = null;
+      onComplete();
+    });
+  }
+
+  /**
+   * D-188 (CAMPAIGN_STORY_DESIGN.md §5): the capstone's own closing beat,
+   * shown right before the victory end screen — a no-op for every other
+   * campaign. Ending A (Ashen Sovereign, "held on"): the PC names every
+   * companion still on the roster (active or benched — `lostIds` are
+   * excluded by construction, see `CompanionRosterSystem.loseCompanion`)
+   * out loud. Ending B (Hollow Empress, "let it be useful"): the PC reaches
+   * for a name and it isn't there.
+   */
+  private showNamelessThroneEndingIfAny(onComplete: () => void): void {
+    if (this.campaignId !== NAMELESS_THRONE_CAMPAIGN_ID || !this.resolvedThroneVariant) {
+      onComplete();
+      return;
+    }
+    const survivorNames = [...this.companionRoster.activeIds, ...this.companionRoster.benchedIds].map(
+      (id) => getCompanionDefinition(id).name,
+    );
+    const lines: DialogueLine[] =
+      this.resolvedThroneVariant === "ashen-sovereign"
+        ? [
+            { text: "The compulsion breaks, not the body. Something that was a throne, once, simply stops." },
+            {
+              text:
+                survivorNames.length > 0
+                  ? `You say their names, out loud, one at a time: ${survivorNames.join(", ")}. Every one of them lands.`
+                  : "You try to say a name, out loud. The list should be longer than this — but you remember every one of them anyway, and that is the whole point.",
+            },
+          ]
+        : [
+            { text: "The Hollow Empress falls, and something that used to be a court falls quiet with her." },
+            { text: "You go to say a name — anyone's — and find the shape of it is already gone." },
+          ];
+    this.chapterDialogue = showDialogue(this, lines, () => {
+      this.chapterDialogue = null;
+      onComplete();
+    });
   }
 
   /**
@@ -8589,7 +9445,7 @@ export class BattleScene extends Phaser.Scene {
     if (type === "pit") {
       const tl = this.grid.tileToWorldTopLeft(tile);
       const glyph = this.add
-        .text(tl.x + TILE_SIZE / 2, tl.y + TILE_SIZE / 2, "✕", {
+        .text(tl.x + this.grid.tileSize / 2, tl.y + this.grid.tileSize / 2, "✕", {
           fontFamily: "system-ui, Arial, sans-serif",
           fontSize: "20px",
           color: "#6a3a3a",

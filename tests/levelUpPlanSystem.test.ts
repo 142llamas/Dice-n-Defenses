@@ -16,9 +16,11 @@ import {
 
 /**
  * D-133: the Character Creation level-by-level planner's pure resolution/
- * enumeration layer. Every "no plan" case here is a regression guard against
- * D-129's original fixed-default fast-forward behavior — these must stay
- * byte-for-byte identical for any existing build with no plan set.
+ * enumeration layer. D-16x removed every silent fallback default (Kevin's
+ * own words: "I want all blue-prints to be player-made") — every "no plan"
+ * case here now asserts the resolver returns unresolved (`false`, or an
+ * unresolved step from `fastForwardHero`) with NO mutation to the hero,
+ * rather than the old D-129 fixed-default behavior.
  */
 
 function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
@@ -29,7 +31,6 @@ function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
     classId: "fighter",
     level: 1,
     abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-    abilityId: "cleave",
     controlledBy: "human",
     ...overrides,
   };
@@ -40,11 +41,11 @@ function heroFromBuild(overrides: Partial<CharacterBuild> = {}): Hero {
 }
 
 describe("resolveAsiForLevel (D-133)", () => {
-  it("with no plan, raises the hero's own current-highest ability score by 2 (D-129 default)", () => {
+  it("with no plan, resolves nothing — returns false, no ability score changes", () => {
     const hero = heroFromBuild(); // str 15 is highest
     hero.levelUpClass(); // level 2, no ASI yet
-    resolveAsiForLevel(hero, 4, undefined);
-    expect(hero.abilityScoreValue("str")).toBe(17);
+    expect(resolveAsiForLevel(hero, 4, undefined)).toBe(false);
+    expect(hero.abilityScoreValue("str")).toBe(15);
   });
 
   it("a planned single-ability choice overrides the default", () => {
@@ -70,12 +71,11 @@ describe("resolveAsiForLevel (D-133)", () => {
     expect(hero.abilityScoreValue("str")).toBe(15); // no ability raise happened
   });
 
-  it("a planned feat whose prerequisites are no longer met falls back to the default ability raise, not a crash", () => {
-    const hero = heroFromBuild({ classId: "wizard", abilityId: "fire-bolt" }); // no Fighting Style feature
+  it("a planned feat whose prerequisites are no longer met resolves nothing, not a crash", () => {
+    const hero = heroFromBuild({ classId: "wizard" }); // no Fighting Style feature
     const plan: LevelUpPlan = { ...emptyLevelUpPlan("auto"), asiChoices: { 4: { path: "feat", featId: "archery" } } };
-    resolveAsiForLevel(hero, 4, plan);
-    // falls back to raising the hero's own current-highest ability score
-    expect(hero.abilityScoreValue("str")).toBe(17);
+    expect(resolveAsiForLevel(hero, 4, plan)).toBe(false);
+    expect(hero.abilityScoreValue("str")).toBe(15); // unchanged — no fallback ability raise anymore
   });
 
   it("a feat needing a chosen ability (Grappler) applies that ability's boost", () => {
@@ -93,12 +93,12 @@ describe("resolveAsiForLevel (D-133)", () => {
 });
 
 describe("resolveSubclassForClass (D-133)", () => {
-  it("with no plan, grants the class's first modeled subclass (D-129 default)", () => {
+  it("with no plan, resolves nothing — returns false, no subclass granted", () => {
     const hero = heroFromBuild();
     hero.levelUpClass();
     hero.levelUpClass();
-    resolveSubclassForClass(hero, "fighter", undefined);
-    expect(hero.subclassId).toBeDefined();
+    expect(resolveSubclassForClass(hero, "fighter", undefined)).toBe(false);
+    expect(hero.subclassId).toBeUndefined();
   });
 
   it("a planned, real subclass id is used instead of the default", () => {
@@ -108,59 +108,64 @@ describe("resolveSubclassForClass (D-133)", () => {
     expect(hero.subclassId).toBe("champion");
   });
 
-  it("an invalid/unknown planned subclass id falls back to the default rather than granting garbage", () => {
+  it("an invalid/unknown planned subclass id resolves nothing rather than granting garbage", () => {
     const hero = heroFromBuild();
     const plan: LevelUpPlan = { ...emptyLevelUpPlan("auto"), subclassId: "not-a-real-subclass" };
-    resolveSubclassForClass(hero, "fighter", plan);
-    expect(hero.subclassId).not.toBe("not-a-real-subclass");
-    expect(hero.subclassId).toBeDefined();
+    expect(resolveSubclassForClass(hero, "fighter", plan)).toBe(false);
+    expect(hero.subclassId).toBeUndefined();
   });
 });
 
 describe("resolveSpellPickForRequest (D-133)", () => {
   function wizardAtLevel(level: number): Hero {
-    const hero = heroFromBuild({ classId: "wizard", abilityId: "fire-bolt" });
+    const hero = heroFromBuild({ classId: "wizard" });
     fastForwardHero(hero, level, undefined);
     return hero;
   }
 
-  it("mastery: with no plan, picks the first eligible known spell (D-129 default)", () => {
+  it("mastery: with no plan, resolves nothing — the pick stays outstanding", () => {
     const hero = wizardAtLevel(18);
-    expect(hero.needsSpellMasteryPick()).toBe(false); // fastForwardHero already resolved it with no plan
+    expect(hero.needsSpellMasteryPick()).toBe(true); // fastForwardHero leaves it unresolved with no plan
   });
 
   it("mastery: a planned, still-eligible spell is honored", () => {
-    const hero = new Hero(heroDefinitionFromBuild(build({ classId: "wizard", abilityId: "fire-bolt" })), { x: 0, y: 0 });
+    const hero = new Hero(heroDefinitionFromBuild(build({ classId: "wizard" })), { x: 0, y: 0 });
     fastForwardHero(hero, 17, undefined);
     hero.levelUpClass(); // reach 18 without resolving the pick yet
     const eligible = hero.eligibleSpellMasterySpells();
     expect(eligible.length).toBeGreaterThan(0);
     const chosen = eligible[eligible.length - 1];
     const plan: LevelUpPlan = { ...emptyLevelUpPlan("prompt"), spellPicks: { 18: { kind: "mastery", spellId: chosen } } };
-    resolveSpellPickForRequest(hero, { hero, kind: "mastery" }, plan);
+    expect(resolveSpellPickForRequest(hero, { hero, kind: "mastery" }, plan)).toBe(true);
     expect(hero.needsSpellMasteryPick()).toBe(false);
   });
 
-  it("arcanum: a planned spell for the wrong tier is ignored, falls back to the default for that tier", () => {
-    const hero = new Hero(heroDefinitionFromBuild(build({ classId: "warlock", abilityId: "eldritch-blast" })), { x: 0, y: 0 });
+  it("arcanum: a planned spell for the wrong tier is ignored — resolves nothing for the actual tier", () => {
+    const hero = new Hero(heroDefinitionFromBuild(build({ classId: "warlock" })), { x: 0, y: 0 });
     fastForwardHero(hero, 10, undefined);
     hero.levelUpClass(); // reach 11
     const plan: LevelUpPlan = {
       ...emptyLevelUpPlan("prompt"),
       spellPicks: { 13: { kind: "arcanum", tier: 7, spellId: "some-other-spell" } },
     };
-    resolveSpellPickForRequest(hero, { hero, kind: "arcanum", tier: 6 }, plan);
-    expect(hero.needsMysticArcanumPick(6)).toBe(false);
+    expect(resolveSpellPickForRequest(hero, { hero, kind: "arcanum", tier: 6 }, plan)).toBe(false);
+    expect(hero.needsMysticArcanumPick(6)).toBe(true); // still outstanding — no fallback pick anymore
   });
 });
 
 describe("fastForwardHero / simulateHeroForPlanning (D-133)", () => {
-  it("with no plan, matches D-129's original defaults exactly (str stays the top-raised ability every ASI level)", () => {
-    const hero = heroFromBuild();
-    fastForwardHero(hero, 8, undefined);
+  it("with no plan, resolves nothing silently — every ASI/subclass trigger comes back unresolved, hero stats unchanged", () => {
+    const hero = heroFromBuild(); // Fighter, str 15
+    const unresolved = fastForwardHero(hero, 8, undefined);
     expect(hero.level).toBe(8);
-    // Fighter ASI at 4 and 6 and 8's own level-8 ASI hasn't resolved yet (loop stops before applying level 8's own trigger check past cap)
-    expect(hero.abilityScoreValue("str")).toBeGreaterThan(15);
+    expect(hero.abilityScoreValue("str")).toBe(15); // no ASI silently applied
+    expect(hero.subclassId).toBeUndefined(); // no subclass silently granted
+    expect(unresolved.map((s) => ({ level: s.level, kind: s.kind }))).toEqual([
+      { level: 3, kind: "subclass" },
+      { level: 4, kind: "asi" },
+      { level: 6, kind: "asi" },
+      { level: 8, kind: "asi" },
+    ]);
   });
 
   it("simulateHeroForPlanning applies a partial plan and returns a hero at the target level with no side effects on a real hero", () => {

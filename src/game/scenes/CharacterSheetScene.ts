@@ -16,8 +16,9 @@ import { ABILITY_SCORE_IDS, ABILITY_SCORE_NAMES, abilityModifier } from "../data
 import { getClassDefinition } from "../data/classes";
 import { getSubclassDefinition } from "../data/subclasses";
 import { proficiencyBonusForLevel } from "../systems/CharacterSystem";
-import { listHeroActions } from "../systems/HeroActionRegistry";
+import { listHeroActions, hotkeyDisplayLabel } from "../systems/HeroActionRegistry";
 import { getAbility } from "../data/abilities";
+import type { BattleScene } from "./BattleScene";
 
 /**
  * CharacterSheetScene — D-148: opened over a paused `BattleScene` (a real
@@ -31,6 +32,14 @@ import { getAbility } from "../data/abilities";
  * here (hotkeys) are reflected instantly back in `BattleScene` on resume
  * with no extra sync step, and every stat shown is read straight off the
  * same object `BattleScene` itself uses.
+ *
+ * D-165 (KI-098 item 4): the Stats tab's "Available Right Now" list and the
+ * Spellbook tab's per-spell cards are now real click targets, not just a
+ * read-only reference — clicking one closes the sheet and fires it on the
+ * resumed `BattleScene` (`castAbilityAndClose`/`usePotionAndClose`, which
+ * call the new public `BattleScene.castAbilityFromCharacterSheet`/
+ * `usePotionFromCharacterSheet`), landing the player right back on the
+ * board mid-aim exactly as if they'd pressed Q/R/F/T themselves.
  */
 
 type SheetTab = "stats" | "spellbook" | "hotkeys";
@@ -130,6 +139,48 @@ export class CharacterSheetScene extends Phaser.Scene {
     this.scene.resume("BattleScene");
   }
 
+  /**
+   * D-165 (KI-098 item 4): closes the sheet and immediately fires
+   * `abilityId` for this hero on the now-resumed `BattleScene` — a spell/
+   * cantrip from the Spellbook tab, or a registry action from the Stats
+   * tab's "Available Right Now" list. Single-target spells land
+   * the player right back on the board mid-aim, exactly as if they'd
+   * pressed Q/R/F/T themselves; an AoE/instant one resolves immediately.
+   * An id that isn't actually usable right now (out of slots, Silenced,
+   * already acted) is a silent no-op, same as every other trigger path
+   * for the same reason — see `BattleScene.dispatchAbilityId`.
+   */
+  private castAbilityAndClose(abilityId: string): void {
+    const heroId = this.hero.id;
+    this.close();
+    (this.scene.get("BattleScene") as BattleScene).castAbilityFromCharacterSheet(heroId, abilityId);
+  }
+
+  /** D-165 (KI-098 item 4): closes the sheet and drinks this hero's first loaded potion on the resumed battle — same "cast from the sheet" idea as `castAbilityAndClose`, for the one action potions don't share an id namespace with. */
+  private usePotionAndClose(): void {
+    const heroId = this.hero.id;
+    this.close();
+    (this.scene.get("BattleScene") as BattleScene).usePotionFromCharacterSheet(heroId);
+  }
+
+  /** D-165: a clickable "Available Right Now" row — same hover-color-shift, mouse-only pattern `CompendiumScene`'s row list (D-165) already uses, not a full ornate button (this list can run several rows deep). */
+  private addActionRow(x: number, y: number, label: string, onClick: () => void): void {
+    const t = this.add
+      .text(x, y, `▸ ${label}`, {
+        fontFamily: FONT_BODY,
+        fontSize: "15px",
+        color: "#2a1a10",
+        fontStyle: "bold",
+        wordWrap: { width: 1040 },
+      })
+      .setDepth(3)
+      .setInteractive({ useHandCursor: true });
+    t.on("pointerover", () => t.setColor("#7a3a10"));
+    t.on("pointerout", () => t.setColor("#2a1a10"));
+    t.on("pointerdown", onClick);
+    this.contentObjects.push(t);
+  }
+
   private buildTabs(width: number): void {
     const y = 100;
     const w = 200;
@@ -215,18 +266,26 @@ export class CharacterSheetScene extends Phaser.Scene {
 
     this.addStatLine(left, y, "Available Right Now", "18px", "#3a2a10", true);
     y += lineHeight + 4;
-    const availableLines: string[] = [];
+    // D-165 (KI-098 item 4): every line below is now a real click target —
+    // clicking one closes the sheet and fires it on the resumed battle
+    // (`castAbilityAndClose`/`usePotionAndClose`), instead of only being
+    // readable here. A caster's own line stays plain text: its actual
+    // spells live on the Spellbook tab, which already has its own click-
+    // to-cast cards (see `renderSpellbookTab`).
     if (hero.knownSpellAbilityIds().length > 0) {
-      availableLines.push("Action: Cast a Spell (see Spellbook tab)");
+      this.addStatLine(left, y, "• Action: Cast a Spell (see Spellbook tab to pick one)", "15px", "#2a1a10");
+      y += lineHeight - 4;
     } else {
-      availableLines.push(`Action: ${getAbility(hero.abilityId).name}`);
+      this.addStatLine(left, y, "• Action: Attack (click an enemy on the board)", "15px", "#2a1a10");
+      y += lineHeight - 4;
     }
-    if (hero.hasAnyPotion()) availableLines.push("Bonus/free: drink a carried potion");
+    if (hero.hasAnyPotion()) {
+      this.addActionRow(left, y, "Bonus/free: drink a carried potion", () => this.usePotionAndClose());
+      y += lineHeight - 4;
+    }
     for (const action of listHeroActions(hero).filter((a) => a.available)) {
-      availableLines.push(action.label.replace(" (R)", "").replace(" (T)", ""));
-    }
-    for (const line of availableLines) {
-      this.addStatLine(left, y, `• ${line}`, "15px", "#2a1a10");
+      const label = action.label.replace(" (R)", "").replace(" (T)", "");
+      this.addActionRow(left, y, label, () => this.castAbilityAndClose(action.id));
       y += lineHeight - 4;
     }
   }
@@ -324,6 +383,11 @@ export class CharacterSheetScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(4);
       attachHoverTooltip(this.tooltip, btn, x, yPos - height / 2 - 4, () => ability.description);
+      // D-165 (KI-098 item 4): clicking a known spell/cantrip now actually
+      // casts it (closes the sheet, resumes the battle mid-aim or
+      // resolved), instead of the card being a pure hover-for-rules-text
+      // display.
+      btn.on("pointerdown", () => this.castAbilityAndClose(id));
       this.contentObjects.push(btn, label);
     });
   }
@@ -331,12 +395,7 @@ export class CharacterSheetScene extends Phaser.Scene {
   // ----- Hotkeys tab (edit the hotkey bar) --------------------------------
 
   private hotkeyLabel(id: string | undefined): string {
-    if (!id) return "(empty)";
-    const registryMatch = listHeroActions(this.hero).find((a) => a.id === id);
-    if (registryMatch) return registryMatch.label.replace(" (R)", "").replace(" (T)", "");
-    if (id === this.hero.abilityId) return getAbility(id).name;
-    if (this.hero.knownSpellAbilityIds().includes(id)) return getAbility(id).name;
-    return id;
+    return hotkeyDisplayLabel(this.hero, id);
   }
 
   private renderHotkeysTab(): void {
@@ -395,13 +454,14 @@ export class CharacterSheetScene extends Phaser.Scene {
 
     this.addStatLine(viewportWidth / 2 - 520, 305, "Assignable actions & spells", "17px", "#3a2a10", true);
 
+    // D-178: a non-caster has no more single frozen ability to pin — its
+    // real weapon Attack is click-to-attack, not a hotkey-able id, so its
+    // assignable pool is just its available registry actions.
     const assignable = [
       ...listHeroActions(this.hero)
         .filter((a) => a.available)
         .map((a) => ({ id: a.id, label: a.label.replace(" (R)", "").replace(" (T)", "") })),
-      ...(this.hero.knownSpellAbilityIds().length === 0
-        ? [{ id: this.hero.abilityId, label: getAbility(this.hero.abilityId).name }]
-        : this.hero.knownSpellAbilityIds().map((id) => ({ id, label: getAbility(id).name }))),
+      ...this.hero.knownSpellAbilityIds().map((id) => ({ id, label: getAbility(id).name })),
     ];
 
     const columns = 4;

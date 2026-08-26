@@ -29,7 +29,6 @@ function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
     classId: "fighter",
     level: 1,
     abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-    abilityId: "cleave",
     controlledBy: "human",
     ...overrides,
   };
@@ -48,7 +47,6 @@ const NO_CLASS_HERO_DEF: HeroDefinition = {
   attackRangeTiles: 1,
   attackBonus: 4,
   baseArmorClass: 10,
-  abilityId: "cleave",
 };
 
 function heroWithNoClass(): Hero {
@@ -116,7 +114,7 @@ describe("Hero.levelUpClass — a D&D-built Fighter", () => {
 
 describe("Hero.levelUpClass — a D&D-built Rogue's Sneak Attack rider scales with level", () => {
   it("grows the rider damage baked into attackDamage as the Rogue levels", () => {
-    const hero = heroFromBuild({ classId: "rogue", abilityId: "piercing-shot" });
+    const hero = heroFromBuild({ classId: "rogue" });
     expect(hero.effectiveAttackDamage).toBe(8); // base 2 + DEX mod(+2) + Sneak Attack(+4)
     for (let i = 1; i < 5; i++) hero.levelUpClass();
     expect(hero.level).toBe(5);
@@ -131,13 +129,12 @@ describe("Hero.spellSaveDC (Phase 13.5, D-090)", () => {
 
   it("is null for a D&D-built hero whose class has no spellcasting (Fighter/Rogue)", () => {
     expect(heroFromBuild({ classId: "fighter" }).spellSaveDC).toBeNull();
-    expect(heroFromBuild({ classId: "rogue", abilityId: "piercing-shot" }).spellSaveDC).toBeNull();
+    expect(heroFromBuild({ classId: "rogue" }).spellSaveDC).toBeNull();
   });
 
   it("computes 8 + proficiency + spellcasting-ability modifier for a Cleric", () => {
     const hero = heroFromBuild({
       classId: "cleric",
-      abilityId: "sacred-flame",
       abilityScores: { str: 8, dex: 12, con: 13, int: 10, wis: 16, cha: 10 },
     });
     // WIS 16 -> +3 mod; level 1 proficiency +2; DC = 8 + 2 + 3 = 13.
@@ -147,7 +144,6 @@ describe("Hero.spellSaveDC (Phase 13.5, D-090)", () => {
   it("rises as the Cleric levels up (proficiency bonus rising)", () => {
     const hero = heroFromBuild({
       classId: "cleric",
-      abilityId: "sacred-flame",
       abilityScores: { str: 8, dex: 12, con: 13, int: 10, wis: 16, cha: 10 },
     });
     for (let i = 1; i < 5; i++) hero.levelUpClass(); // level 5: proficiency +3
@@ -166,12 +162,12 @@ describe("Hero.savingThrowBonus (Phase 13.10) — resolved by an enemy like Blig
   });
 
   it("adds proficiency bonus for a class that IS proficient in DEX saves (Rogue: DEX/INT)", () => {
-    const hero = heroFromBuild({ classId: "rogue", abilityId: "piercing-shot" }); // DEX 14 -> +2 mod, proficient
+    const hero = heroFromBuild({ classId: "rogue" }); // DEX 14 -> +2 mod, proficient
     expect(hero.savingThrowBonus).toBe(2 + 2); // mod(+2) + level-1 proficiency(+2)
   });
 
   it("rises as a proficient class levels up (proficiency bonus rising)", () => {
-    const hero = heroFromBuild({ classId: "rogue", abilityId: "piercing-shot" });
+    const hero = heroFromBuild({ classId: "rogue" });
     for (let i = 1; i < 5; i++) hero.levelUpClass(); // level 5: proficiency +3
     expect(hero.savingThrowBonus).toBe(2 + 3);
   });
@@ -342,7 +338,7 @@ describe("Hero.grantSubclass/subclassId (Phase 13.11, D-096)", () => {
   });
 
   it("HeroDefinition.subclassId (from a level-1-choice build) is applied by the constructor", () => {
-    const hero = heroFromBuild({ classId: "cleric", abilityId: "sacred-flame", subclassId: "life-domain" });
+    const hero = heroFromBuild({ classId: "cleric", subclassId: "life-domain" });
     expect(hero.subclassId).toBe("life-domain");
   });
 });
@@ -350,7 +346,7 @@ describe("Hero.grantSubclass/subclassId (Phase 13.11, D-096)", () => {
 describe("Hero.critThreshold — Champion's Improved/Superior Critical (Phase 13.11, D-096)", () => {
   it("is 20 (default) for a hero with no subclass, or a non-Champion subclass", () => {
     expect(heroFromBuild().critThreshold).toBe(20);
-    const cleric = heroFromBuild({ classId: "cleric", abilityId: "sacred-flame", subclassId: "life-domain" });
+    const cleric = heroFromBuild({ classId: "cleric", subclassId: "life-domain" });
     expect(cleric.critThreshold).toBe(20);
   });
 
@@ -373,7 +369,6 @@ describe("Hero.discipleOfLifeBonus/blessedHealerBonus — Life Domain (Phase 13.
   function lifeDomainCleric(): Hero {
     return heroFromBuild({
       classId: "cleric",
-      abilityId: "sacred-flame",
       subclassId: "life-domain",
       abilityScores: { str: 8, dex: 12, con: 13, int: 10, wis: 16, cha: 10 },
     });
@@ -399,7 +394,7 @@ describe("Hero.discipleOfLifeBonus/blessedHealerBonus — Life Domain (Phase 13.
   });
 
   it("blessedHealerBonus stays 0 for a non-Life-Domain caster at level 6+", () => {
-    const hero = heroFromBuild({ classId: "cleric", abilityId: "sacred-flame" }); // no subclass assigned
+    const hero = heroFromBuild({ classId: "cleric" }); // no subclass assigned
     for (let i = 1; i < 6; i++) hero.levelUpClass();
     expect(hero.blessedHealerBonus).toBe(0);
   });
@@ -419,7 +414,7 @@ describe("CharacterBuildSystem.subclassIdForNewBuild — picking the original su
 
 describe("Hero.armorClass — subclass AC bonuses (Phase 14.2, D-099)", () => {
   it("Path of the Ironhide adds +2 AC only while raging", () => {
-    const hero = heroFromBuild({ classId: "barbarian", abilityId: "cleave", subclassId: "path-of-the-ironhide" });
+    const hero = heroFromBuild({ classId: "barbarian", subclassId: "path-of-the-ironhide" });
     const baseAC = hero.armorClass;
     hero.useRage();
     expect(hero.armorClass).toBe(baseAC + 2);
@@ -428,23 +423,23 @@ describe("Hero.armorClass — subclass AC bonuses (Phase 14.2, D-099)", () => {
   });
 
   it("a Berserker Barbarian gets no AC bonus from raging", () => {
-    const hero = heroFromBuild({ classId: "barbarian", abilityId: "cleave", subclassId: "path-of-the-berserker" });
+    const hero = heroFromBuild({ classId: "barbarian", subclassId: "path-of-the-berserker" });
     const baseAC = hero.armorClass;
     hero.useRage();
     expect(hero.armorClass).toBe(baseAC);
   });
 
   it("Spellblade Tradition adds a flat, always-on +1 AC", () => {
-    const withSubclass = heroFromBuild({ classId: "wizard", abilityId: "fire-bolt", subclassId: "spellblade-tradition" });
-    const without = heroFromBuild({ classId: "wizard", abilityId: "fire-bolt" });
+    const withSubclass = heroFromBuild({ classId: "wizard", subclassId: "spellblade-tradition" });
+    const without = heroFromBuild({ classId: "wizard" });
     expect(withSubclass.armorClass).toBe(without.armorClass + 1);
   });
 });
 
 describe("Hero.subclassAttackBonus (Phase 14.2, D-099)", () => {
   it("is +1 for College of the Blade/Zeal Domain/Battle Tactician", () => {
-    expect(heroFromBuild({ classId: "bard", abilityId: "vicious-mockery", subclassId: "college-of-the-blade" }).subclassAttackBonus).toBe(1);
-    expect(heroFromBuild({ classId: "cleric", abilityId: "sacred-flame", subclassId: "zeal-domain" }).subclassAttackBonus).toBe(1);
+    expect(heroFromBuild({ classId: "bard", subclassId: "college-of-the-blade" }).subclassAttackBonus).toBe(1);
+    expect(heroFromBuild({ classId: "cleric", subclassId: "zeal-domain" }).subclassAttackBonus).toBe(1);
     expect(heroFromBuild({ classId: "fighter", subclassId: "battle-tactician" }).subclassAttackBonus).toBe(1);
   });
 
@@ -464,42 +459,42 @@ describe("Hero.subclassSmiteBonus — Oath of Retribution (Phase 14.2, D-099)", 
 
 describe("Hero.beastbondStrikeHeal — Beastbond Warden (Phase 14.2, D-099)", () => {
   it("is +3 for Beastbond Warden, 0 for Hunter or none", () => {
-    expect(heroFromBuild({ classId: "ranger", abilityId: "cleave", subclassId: "beastbond-warden" }).beastbondStrikeHeal).toBe(3);
-    expect(heroFromBuild({ classId: "ranger", abilityId: "cleave", subclassId: "hunter" }).beastbondStrikeHeal).toBe(0);
-    expect(heroFromBuild({ classId: "ranger", abilityId: "cleave" }).beastbondStrikeHeal).toBe(0);
+    expect(heroFromBuild({ classId: "ranger", subclassId: "beastbond-warden" }).beastbondStrikeHeal).toBe(3);
+    expect(heroFromBuild({ classId: "ranger", subclassId: "hunter" }).beastbondStrikeHeal).toBe(0);
+    expect(heroFromBuild({ classId: "ranger" }).beastbondStrikeHeal).toBe(0);
   });
 });
 
 describe("Hero.shadowbladeFirstStrikeBonus/consumeShadowbladeFirstStrike (Phase 14.2, D-099)", () => {
   it("is a flat bonus once, then 0 for the rest of the battle", () => {
-    const hero = heroFromBuild({ classId: "rogue", abilityId: "piercing-shot", subclassId: "shadowblade" });
+    const hero = heroFromBuild({ classId: "rogue", subclassId: "shadowblade" });
     expect(hero.shadowbladeFirstStrikeBonus).toBe(5);
     hero.consumeShadowbladeFirstStrike();
     expect(hero.shadowbladeFirstStrikeBonus).toBe(0);
   });
 
   it("is 0 for Thief or no subclass", () => {
-    expect(heroFromBuild({ classId: "rogue", abilityId: "piercing-shot", subclassId: "thief" }).shadowbladeFirstStrikeBonus).toBe(0);
-    expect(heroFromBuild({ classId: "rogue", abilityId: "piercing-shot" }).shadowbladeFirstStrikeBonus).toBe(0);
+    expect(heroFromBuild({ classId: "rogue", subclassId: "thief" }).shadowbladeFirstStrikeBonus).toBe(0);
+    expect(heroFromBuild({ classId: "rogue" }).shadowbladeFirstStrikeBonus).toBe(0);
   });
 });
 
 describe("Hero.effectiveMaxHealth — Way of the Iron Body / Starbound Patron flat HP-per-level bonuses (Phase 14.2, D-099)", () => {
   it("Iron Skin adds +1 max HP per Monk level, same shape as Draconic Resilience", () => {
-    const withSubclass = heroFromBuild({ classId: "monk", abilityId: "cleave", subclassId: "way-of-the-iron-body" });
-    const without = heroFromBuild({ classId: "monk", abilityId: "cleave" });
+    const withSubclass = heroFromBuild({ classId: "monk", subclassId: "way-of-the-iron-body" });
+    const without = heroFromBuild({ classId: "monk" });
     expect(withSubclass.effectiveMaxHealth).toBe(without.effectiveMaxHealth + 1);
     expect(withSubclass.health).toBe(withSubclass.effectiveMaxHealth); // starts fully healed
   });
 
   it("Umbral Ward adds +1 max HP per Warlock level", () => {
-    const withSubclass = heroFromBuild({ classId: "warlock", abilityId: "eldritch-blast", subclassId: "starbound-patron" });
-    const without = heroFromBuild({ classId: "warlock", abilityId: "eldritch-blast" });
+    const withSubclass = heroFromBuild({ classId: "warlock", subclassId: "starbound-patron" });
+    const without = heroFromBuild({ classId: "warlock" });
     expect(withSubclass.effectiveMaxHealth).toBe(without.effectiveMaxHealth + 1);
   });
 
   it("grows by 1 more each level-up, same as Draconic Resilience", () => {
-    const hero = heroFromBuild({ classId: "monk", abilityId: "cleave", subclassId: "way-of-the-iron-body" });
+    const hero = heroFromBuild({ classId: "monk", subclassId: "way-of-the-iron-body" });
     const maxAtLevel1 = hero.effectiveMaxHealth;
     hero.levelUpClass();
     expect(hero.effectiveMaxHealth).toBeGreaterThan(maxAtLevel1 + 1); // class HP gain + 1 more from Iron Skin
@@ -508,8 +503,8 @@ describe("Hero.effectiveMaxHealth — Way of the Iron Body / Starbound Patron fl
 
 describe("Hero.useWildShape — Circle of the Ashen Veil's Ember Shape heal bonus (Phase 14.2, D-099)", () => {
   it("heals more than Circle of the Land's Wild Shape", () => {
-    const ashenVeil = heroFromBuild({ classId: "druid", abilityId: "produce-flame", subclassId: "circle-of-the-ashen-veil" });
-    const land = heroFromBuild({ classId: "druid", abilityId: "produce-flame", subclassId: "circle-of-the-land" });
+    const ashenVeil = heroFromBuild({ classId: "druid", subclassId: "circle-of-the-ashen-veil" });
+    const land = heroFromBuild({ classId: "druid", subclassId: "circle-of-the-land" });
     ashenVeil.health = 1;
     land.health = 1;
     ashenVeil.useWildShape();
@@ -520,8 +515,8 @@ describe("Hero.useWildShape — Circle of the Ashen Veil's Ember Shape heal bonu
 
 describe("Hero Sorcery Points — Wildsurge Origin's Volatile Magic (Phase 14.2, D-099)", () => {
   it("grants one more Sorcery Point than a Sorcerer without the subclass", () => {
-    const wildsurge = heroFromBuild({ classId: "sorcerer", abilityId: "fire-bolt", subclassId: "wildsurge-origin" });
-    const plain = heroFromBuild({ classId: "sorcerer", abilityId: "fire-bolt" });
+    const wildsurge = heroFromBuild({ classId: "sorcerer", subclassId: "wildsurge-origin" });
+    const plain = heroFromBuild({ classId: "sorcerer" });
     for (let i = 1; i < 3; i++) {
       wildsurge.levelUpClass();
       plain.levelUpClass();
@@ -544,11 +539,11 @@ describe("Hero Sorcery Points — Wildsurge Origin's Volatile Magic (Phase 14.2,
 
 describe("Hero.colossusSlayerBonus — Hunter (Phase 14, D-097)", () => {
   it("is 0 without the subclass", () => {
-    expect(heroFromBuild({ classId: "ranger", abilityId: "cleave" }).colossusSlayerBonus).toBe(0);
+    expect(heroFromBuild({ classId: "ranger" }).colossusSlayerBonus).toBe(0);
   });
 
   it("is a flat +4 for a Hunter", () => {
-    const hero = heroFromBuild({ classId: "ranger", abilityId: "cleave", subclassId: "hunter" });
+    const hero = heroFromBuild({ classId: "ranger", subclassId: "hunter" });
     expect(hero.colossusSlayerBonus).toBe(4);
   });
 
@@ -560,29 +555,29 @@ describe("Hero.colossusSlayerBonus — Hunter (Phase 14, D-097)", () => {
 
 describe("Hero.darkOnesBlessingHeal — The Fiend (Phase 14, D-097)", () => {
   it("is 0 without the subclass", () => {
-    expect(heroFromBuild({ classId: "warlock", abilityId: "eldritch-blast" }).darkOnesBlessingHeal).toBe(0);
+    expect(heroFromBuild({ classId: "warlock" }).darkOnesBlessingHeal).toBe(0);
   });
 
   it("is a flat +5 for a Fiend Warlock", () => {
-    const hero = heroFromBuild({ classId: "warlock", abilityId: "eldritch-blast", subclassId: "the-fiend" });
+    const hero = heroFromBuild({ classId: "warlock", subclassId: "the-fiend" });
     expect(hero.darkOnesBlessingHeal).toBe(5);
   });
 });
 
 describe("Hero.effectiveMaxHealth — Draconic Bloodline's Draconic Resilience (Phase 14, D-097)", () => {
   it("adds nothing for a Sorcerer without the subclass", () => {
-    const withSubclass = heroFromBuild({ classId: "sorcerer", abilityId: "fire-bolt", subclassId: "draconic-bloodline" });
-    const without = heroFromBuild({ classId: "sorcerer", abilityId: "fire-bolt" });
+    const withSubclass = heroFromBuild({ classId: "sorcerer", subclassId: "draconic-bloodline" });
+    const without = heroFromBuild({ classId: "sorcerer" });
     expect(withSubclass.effectiveMaxHealth).toBe(without.effectiveMaxHealth + 1); // +1 HP at level 1
   });
 
   it("starts a fresh level-1 Draconic Bloodline Sorcerer at full effective health, not one HP short", () => {
-    const hero = heroFromBuild({ classId: "sorcerer", abilityId: "fire-bolt", subclassId: "draconic-bloodline" });
+    const hero = heroFromBuild({ classId: "sorcerer", subclassId: "draconic-bloodline" });
     expect(hero.health).toBe(hero.effectiveMaxHealth);
   });
 
   it("grows by 1 more HP each level, added to current health on level-up like any other HP gain", () => {
-    const hero = heroFromBuild({ classId: "sorcerer", abilityId: "fire-bolt", subclassId: "draconic-bloodline" });
+    const hero = heroFromBuild({ classId: "sorcerer", subclassId: "draconic-bloodline" });
     const maxAtLevel1 = hero.effectiveMaxHealth;
     hero.levelUpClass();
     const classGain = fixedHitDieGain(6) + 1; // Sorcerer d6 + CON mod(+1)
@@ -591,7 +586,7 @@ describe("Hero.effectiveMaxHealth — Draconic Bloodline's Draconic Resilience (
   });
 
   it("stacks correctly with Tough (both are flat HP bonuses read through flatHpBonusesTotal)", () => {
-    const hero = heroFromBuild({ classId: "sorcerer", abilityId: "fire-bolt", subclassId: "draconic-bloodline" });
+    const hero = heroFromBuild({ classId: "sorcerer", subclassId: "draconic-bloodline" });
     const before = hero.effectiveMaxHealth;
     hero.grantFeat("tough");
     expect(hero.effectiveMaxHealth).toBe(before + 2); // Tough: 2 * level 1
@@ -630,8 +625,8 @@ describe("Hero.meetsFeatPrerequisites (Phase 18, D-109)", () => {
 
   it("allows Fighting Style feats for a level-1 Fighter, but not a Wizard/Rogue (no Fighting Style feature)", () => {
     expect(heroFromBuild().meetsFeatPrerequisites("archery")).toBe(true);
-    expect(heroFromBuild({ classId: "wizard", abilityId: "fire-bolt" }).meetsFeatPrerequisites("archery")).toBe(false);
-    expect(heroFromBuild({ classId: "rogue", abilityId: "piercing-shot" }).meetsFeatPrerequisites("defense")).toBe(false);
+    expect(heroFromBuild({ classId: "wizard" }).meetsFeatPrerequisites("archery")).toBe(false);
+    expect(heroFromBuild({ classId: "rogue" }).meetsFeatPrerequisites("defense")).toBe(false);
   });
 
   it("gates every Epic Boon on level 19+", () => {
@@ -646,7 +641,7 @@ describe("Hero.meetsFeatPrerequisites (Phase 18, D-109)", () => {
     const fighter = heroFromBuild();
     for (let i = 1; i < 19; i++) fighter.levelUpClass();
     expect(fighter.meetsFeatPrerequisites("boon-of-spell-recall")).toBe(false); // Fighter has no spellcasting
-    const wizard = heroFromBuild({ classId: "wizard", abilityId: "fire-bolt" });
+    const wizard = heroFromBuild({ classId: "wizard" });
     for (let i = 1; i < 19; i++) wizard.levelUpClass();
     expect(wizard.meetsFeatPrerequisites("boon-of-spell-recall")).toBe(true);
   });
@@ -811,7 +806,7 @@ describe("Hero — Epic Boon hookups (Phase 18, D-109)", () => {
   });
 
   it("Boon of Spell Recall: the caller's 1d4 roll spares a matching-level slot, and misses spend it normally", () => {
-    const hero = heroFromBuild({ classId: "wizard", abilityId: "fire-bolt" });
+    const hero = heroFromBuild({ classId: "wizard" });
     expect(hero.hasBoonOfSpellRecall).toBe(false);
     hero.grantFeat("boon-of-spell-recall", { chosenAbility: "int" });
     expect(hero.hasBoonOfSpellRecall).toBe(true);
@@ -823,7 +818,7 @@ describe("Hero — Epic Boon hookups (Phase 18, D-109)", () => {
   });
 
   it("a hero without Boon of Spell Recall always spends the slot, regardless of the roll passed in", () => {
-    const hero = heroFromBuild({ classId: "wizard", abilityId: "fire-bolt" });
+    const hero = heroFromBuild({ classId: "wizard" });
     const before = hero.spellSlotsRemainingAt(1);
     hero.spendSpellSlotWithRecallRoll(1, 1);
     expect(hero.spellSlotsRemainingAt(1)).toBe(before - 1);

@@ -5,8 +5,8 @@ import { DEFAULT_SAVE_FILE, createSaveSlot, getSaveSlot, loadSaveFile, saveSaveF
 
 /**
  * D-148: the action hotkey bar — a curated, slot-ordered subset of what a
- * hero could use (`knownSpellAbilityIds`/`HeroActionRegistry`/`abilityId`),
- * distinct from those sources themselves. Covers the mutator's validation
+ * hero could use (`knownSpellAbilityIds`/`HeroActionRegistry`), distinct
+ * from those sources themselves. Covers the mutator's validation
  * (can't pin something the hero can't do) and proves the field survives a
  * save/load round-trip with no `SaveSystem.ts` change, mirroring
  * `preparedSpellIds`' (D-135) existing precedent.
@@ -30,7 +30,6 @@ function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
     classId: "fighter",
     level: 1,
     abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-    abilityId: "cleave",
     controlledBy: "human",
     ...overrides,
   };
@@ -46,14 +45,8 @@ describe("Hero action hotkeys (D-148)", () => {
     expect(hero.actionHotkeys()).toEqual(new Array(ACTION_HOTKEY_SLOT_COUNT).fill(undefined));
   });
 
-  it("accepts the hero's own frozen signature ability", () => {
-    const hero = heroFromBuild({ abilityId: "cleave" });
-    hero.setActionHotkey(0, "cleave");
-    expect(hero.actionHotkeys()[0]).toBe("cleave");
-  });
-
   it("accepts a known spell/cantrip id", () => {
-    const hero = heroFromBuild({ classId: "wizard", abilityId: "fire-bolt" });
+    const hero = heroFromBuild({ classId: "wizard" });
     const known = hero.knownSpellAbilityIds();
     expect(known.length).toBeGreaterThan(0);
     hero.setActionHotkey(1, known[0]);
@@ -73,30 +66,30 @@ describe("Hero action hotkeys (D-148)", () => {
   });
 
   it("clears a slot when set to undefined", () => {
-    const hero = heroFromBuild({ abilityId: "cleave" });
-    hero.setActionHotkey(0, "cleave");
+    const hero = heroFromBuild();
+    hero.setActionHotkey(0, "secondWind");
     hero.setActionHotkey(0, undefined);
     expect(hero.actionHotkeys()[0]).toBeUndefined();
   });
 
   it("ignores an out-of-range slot", () => {
-    const hero = heroFromBuild({ abilityId: "cleave" });
-    hero.setActionHotkey(-1, "cleave");
-    hero.setActionHotkey(ACTION_HOTKEY_SLOT_COUNT, "cleave");
+    const hero = heroFromBuild();
+    hero.setActionHotkey(-1, "secondWind");
+    hero.setActionHotkey(ACTION_HOTKEY_SLOT_COUNT, "secondWind");
     expect(hero.actionHotkeys().every((id) => id === undefined)).toBe(true);
   });
 
   it("setActionHotkeys bulk-applies, validating each slot independently", () => {
-    const hero = heroFromBuild({ abilityId: "cleave" });
-    hero.setActionHotkeys(["cleave", "rage", undefined]);
-    expect(hero.actionHotkeys()[0]).toBe("cleave"); // valid
-    expect(hero.actionHotkeys()[1]).toBeUndefined(); // refused
+    const hero = heroFromBuild();
+    hero.setActionHotkeys(["secondWind", "rage", undefined]);
+    expect(hero.actionHotkeys()[0]).toBe("secondWind"); // valid
+    expect(hero.actionHotkeys()[1]).toBeUndefined(); // refused (a Barbarian-only action)
     expect(hero.actionHotkeys()[2]).toBeUndefined();
   });
 
   it("survives a full save/load round-trip with no SaveSystem.ts change", () => {
     const storage = fakeStorage();
-    const partyBuild = build({ actionHotkeys: ["cleave", undefined] });
+    const partyBuild = build({ actionHotkeys: ["secondWind", undefined] });
     const fileAfterCreate = createSaveSlot(DEFAULT_SAVE_FILE, {
       id: "slot-1",
       name: "Test Party",
@@ -113,7 +106,7 @@ describe("Hero action hotkeys (D-148)", () => {
     // is the real shape a loaded save has, not the shape it was written
     // with. `setActionHotkey`/`setActionHotkeys` accept `null` for exactly
     // this reason (see their own comments).
-    expect(slot?.party[0].actionHotkeys).toEqual(["cleave", null]);
+    expect(slot?.party[0].actionHotkeys).toEqual(["secondWind", null]);
 
     // Mirrors `BattleScene.buildHeroes`'s own application of this field —
     // the Hero constructor doesn't read it directly, same treatment
@@ -121,6 +114,6 @@ describe("Hero action hotkeys (D-148)", () => {
     const def = heroDefinitionFromBuild(slot!.party[0]);
     const hero = new Hero(def, { x: 0, y: 0 });
     if (def.actionHotkeys) hero.setActionHotkeys(def.actionHotkeys);
-    expect(hero.actionHotkeys()[0]).toBe("cleave");
+    expect(hero.actionHotkeys()[0]).toBe("secondWind");
   });
 });

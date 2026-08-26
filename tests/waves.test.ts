@@ -22,6 +22,18 @@ function makeSystem(waves: WaveDefinition[], startingIntegrity = 20) {
   return ws;
 }
 
+// D-172: Grunt's real speed is now 4 tiles/phase (was 2) — the shared
+// distance-3 lane above no longer needs two phases to cross (any test that
+// wants a Grunt to survive at least one phase un-breached needs a longer
+// lane). S.....X -> spawn at (0,0), exit at (6,0); distance 6.
+function makeGruntLaneSystem(waves: WaveDefinition[], startingIntegrity = 20) {
+  const map = new GameMap(parseMapRows("lane", "Lane", ["S.....X"]));
+  const pf = new PathfindingSystem(map);
+  const ws = new WaveSystem(map, pf, waves, { startingIntegrity, random: RandomService.fixed() });
+  ws.startWave(0);
+  return ws;
+}
+
 function makeScaledSystem(
   waves: WaveDefinition[],
   enemyCountMultiplier: number,
@@ -55,27 +67,27 @@ describe("WaveSystem spawning and movement", () => {
   });
 
   it("advances a slow enemy over multiple phases before it breaches", () => {
-    const ws = makeSystem([
+    const ws = makeGruntLaneSystem([
       {
         id: "w",
-        // Grunt moves 2 tiles/phase; distance is 3, so it needs two phases.
+        // Grunt moves 4 tiles/phase (D-172); distance is 6, so it needs two phases.
         spawns: [{ enemyId: "grunt", count: 1, startTurn: 1, intervalTurns: 1 }],
         completionGold: 0,
       },
     ]);
     const t1 = ws.tickEnemyPhase();
     expect(t1.spawned.length).toBe(1);
-    expect(t1.breaches.length).toBe(0); // only reached (2,0) so far
-    expect(t1.moves[0].to).toEqual({ x: 2, y: 0 });
+    expect(t1.breaches.length).toBe(0); // only reached (4,0) so far
+    expect(t1.moves[0].to).toEqual({ x: 4, y: 0 });
     const t2 = ws.tickEnemyPhase();
     expect(t2.breaches.length).toBe(1);
-    expect(t2.breaches[0].enemy.position).toEqual({ x: 3, y: 0 });
+    expect(t2.breaches[0].enemy.position).toEqual({ x: 6, y: 0 });
   });
 });
 
 describe("WaveSystem breach damage (acceptance: occurs once)", () => {
   it("removes exactly the breach damage and only once per enemy", () => {
-    const ws = makeSystem(
+    const ws = makeGruntLaneSystem(
       [
         {
           id: "w",
@@ -85,7 +97,7 @@ describe("WaveSystem breach damage (acceptance: occurs once)", () => {
       ],
       20,
     );
-    ws.tickEnemyPhase(); // grunt to (2,0)
+    ws.tickEnemyPhase(); // grunt to (4,0)
     const before = ws.integrity;
     const t2 = ws.tickEnemyPhase(); // grunt breaches: -2
     expect(t2.breaches.length).toBe(1);
@@ -135,7 +147,7 @@ describe("WaveSystem Test Mode debug hooks (D-138)", () => {
   });
 
   it("forceEndWave() empties active enemies and flips isCurrentWaveComplete() true", () => {
-    const ws = makeSystem([
+    const ws = makeGruntLaneSystem([
       {
         id: "w",
         spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 5 }],

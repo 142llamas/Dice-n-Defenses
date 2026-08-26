@@ -11,7 +11,6 @@ const TEST_HERO_DEF: HeroDefinition = {
   attackRangeTiles: 1,
   attackBonus: 4,
   baseArmorClass: 10,
-  abilityId: "cleave",
 };
 
 /**
@@ -81,9 +80,9 @@ describe("Hero: movementReduction (slowed) folds into effectiveMovementTiles", (
     const hero = testHero();
     const base = hero.movementTiles;
     expect(hero.effectiveMovementTiles).toBe(base);
-    hero.applyStatus("slowed", 1); // -2
-    expect(hero.effectiveMovementTiles).toBe(Math.max(0, base - 2));
-    expect(hero.movementBudget()).toBe(Math.max(0, base - 2));
+    hero.applyStatus("slowed", 1); // -4 (D-172)
+    expect(hero.effectiveMovementTiles).toBe(Math.max(0, base - 4));
+    expect(hero.movementBudget()).toBe(Math.max(0, base - 4));
   });
 });
 

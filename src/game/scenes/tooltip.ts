@@ -41,9 +41,9 @@ export function createTooltipController(scene: Phaser.Scene): TooltipController 
     showAt(x: number, y: number, text: string): void {
       if (!text) return;
       // D-157: clamp against the scene's live canvas width, not the fixed
-      // GAME_WIDTH constant — under BattleScene's still-fixed Scale.FIT
-      // these are identical, but every other scene's canvas can now be a
-      // real, different width post-Scale.RESIZE cutover.
+      // GAME_WIDTH constant — a no-op today under Scale.FIT (D-159
+      // reverted the Scale.RESIZE cutover, so this is always identical to
+      // GAME_WIDTH again), kept as groundwork if that's attempted again.
       const clampedX = Math.min(Math.max(x, 90), scene.scale.width - 90);
       tooltip.setText(text).setPosition(clampedX, y).setVisible(true);
     },

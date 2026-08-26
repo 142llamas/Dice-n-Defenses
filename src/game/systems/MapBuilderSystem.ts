@@ -14,27 +14,31 @@ import type { ParsedMap, TileType } from "../data/testMap";
  * has the exact same shape as a finished one, and whether it's passed
  * `validateDraft` yet is a runtime question, not a structural one.
  *
- * Dimension caps below are NOT arbitrary: `BattleScene` renders every map at
- * a FIXED `TILE_SIZE` (64px, see config.ts) inside a 1280x1080 canvas, with a
- * status line, a combat log, and a shop/gear button grid stacked below the
- * board — none of which grows or shrinks with map size. Working through
- * that fixed layout's own bounding-box math (the same technique this
- * project used for D-046/D-055/the 900->1000->1080 canvas-height bumps):
- * belowGridY = GRID_TOP_MARGIN(90) + rows*64 + 16; cy (the button row) =
- * belowGridY + statusBlockHeight(60) + logBlockHeight(86) + 20; the Done
- * button under the taller of the shop(2-row)/gear(4-row) grids sits at
- * cy + 4*38 + 6, with its own half-height (15) below that. Requiring that
- * bottom edge to stay within the canvas (1080px, with a small safety
- * margin) caps ROWS at 9 — exactly what every existing map already uses,
- * with ~39px to spare; 10 rows overflows the canvas outright. Columns are
- * far less constrained (the grid is horizontally centered and everything
- * below it is centered/right-anchored independent of grid width), so COLS
- * can go all the way to 20 (a full-width board) safely.
+ * D-176 (KI-098 item 9): `BattleScene` used to render every map at a FIXED
+ * `TILE_SIZE` (64px), which is what originally derived these caps. It now
+ * computes a per-map tile size that shrinks to fit (`computeFittedTileSize`
+ * in `GridSystem.ts`, mirroring `MapBuilderScene`'s own shrink-to-fit
+ * pattern), clamped so it never exceeds the base 64px. The caps below
+ * assume a chosen 40px legibility floor (not a hard technical limit —
+ * tokens/HP text/VFX all scale off tile size, and much below this they get
+ * hard to read) and are re-derived against the same fixed-HUD
+ * bounding-box math as before: belowGridY = GRID_TOP_MARGIN(90) +
+ * rows*tileSize + 16; cy (the button row) = belowGridY +
+ * statusBlockHeight(78) + logBlockHeight(86) + 20; the Done button under
+ * the taller shop/gear grid sits at cy + 4*38 + 30(pagination nav, worst
+ * case) + 6, with its own half-height (15) below that — a fixed 403px of
+ * HUD below the grid's top edge, independent of tile size. Requiring the
+ * bottom edge to stay within the canvas (1080px) at the 40px floor caps
+ * ROWS at 14 (587px available ÷ 40px). Columns have no HUD margin to
+ * subtract (nothing else occupies the grid's horizontal band) — the
+ * canvas's full 1280px width ÷ 40px caps COLS at 32. These are a
+ * first-pass balance value (same status as `STARTING_GOLD`) — the 40px
+ * floor, not the shrink-to-fit mechanism itself, is what's tunable.
  */
 export const MIN_MAP_COLS = 6;
-export const MAX_MAP_COLS = 20;
+export const MAX_MAP_COLS = 32;
 export const MIN_MAP_ROWS = 6;
-export const MAX_MAP_ROWS = 9;
+export const MAX_MAP_ROWS = 14;
 /** Matches `CharacterCreationScene`'s own `MAX_PARTY_SIZE`. */
 export const MAX_HERO_STARTS = 4;
 

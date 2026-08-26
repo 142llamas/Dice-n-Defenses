@@ -1,6 +1,12 @@
 import type { WaveDefinition } from "./waves";
+import { PROLOGUE_MAP } from "./prologueMap";
 import { EMBERFORD_MAP } from "./emberfordMap";
 import { SALTMERE_MAP } from "./saltmereMap";
+import { CAUSEWAY_MAP } from "./causewayMap";
+import { CINDERFALL_RIFT_MAP } from "./cinderfallRiftMap";
+import { DROWNING_VALE_MAP } from "./drowningValeMap";
+import { FROSTBOUND_HOLLOW_MAP } from "./frostboundHollowMap";
+import { NAMELESS_THRONE_MAP } from "./namelessThroneMap";
 import type { ParsedMap } from "./testMap";
 import { POTION_ORDER } from "./potions";
 
@@ -120,6 +126,62 @@ export function getChapter(def: CampaignDefinition, chapterIndex: number): Chapt
   }
   return chapter;
 }
+
+// ----- The Proving Ground (D-184: the one-time prologue mission) ----------
+
+/**
+ * D-184 (KI-098 item 13, the "forced starting mission" gate D-183's own
+ * handoff deferred): a brand-new, fixed one-time mission every fresh
+ * campaign save must clear once before any of the 6 story regions below
+ * unlock in `CampaignSelectScene`. Deliberately generic and lore-free —
+ * NOT a 7th region, not tied to any region's theme — Kevin's own explicit
+ * call when this session picked up the deferred gate. `brute` (an existing
+ * minion with no `loreText`) stands in as the finale "boss" purely for the
+ * card's display text; no new enemy was authored for this, on purpose.
+ */
+export const PROLOGUE_CAMPAIGN_ID = "prologue";
+
+/**
+ * D-188: the 6 CAMPAIGN_STORY_DESIGN.md §3 regions — excludes the Proving
+ * Ground prologue and the Nameless Throne capstone. Single source of truth
+ * for both `CampaignSelectScene`'s capstone-gate check and
+ * `tests/campaigns.test.ts`'s own region filter, so the two can't drift.
+ */
+export const REGION_CAMPAIGN_IDS: string[] = [
+  "emberford-reach",
+  "shattered-causeway",
+  "cinderfall-rift",
+  "drowning-vale",
+  "saltmere-shallows",
+  "frostbound-hollow",
+];
+
+/** D-188: the campaign capstone, CAMPAIGN_STORY_DESIGN.md §5. */
+export const NAMELESS_THRONE_CAMPAIGN_ID = "nameless-throne";
+
+const PROLOGUE_WAVES: WaveDefinition[] = [
+  { id: "prologue-wave-1", turnLimit: 6, spawns: [{ enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 }], completionGold: 8, timeBonusGold: 4 },
+  {
+    id: "prologue-wave-2",
+    turnLimit: 7,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "grunt", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 4,
+  },
+  {
+    id: "prologue-wave-3",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 14,
+    timeBonusGold: 5,
+  },
+];
 
 // ----- Emberford Reach (volcanic: fire + acid + cliff) --------------------
 
@@ -304,7 +366,1184 @@ const SALTMERE_LOOT_POOL: string[] = [
   "boots-of-speed",
 ];
 
+/**
+ * D-177 (KI-098 item 13): the first real use of D-118's `chapters` structure
+ * — Emberford Reach and Saltmere Shallows each split into the 4-chapter
+ * region shape `CAMPAIGN_STORY_DESIGN.md` §2 specifies (Ch1 levels 1-5 ends
+ * in a miniboss, Ch2 6-10 a first, lighter encounter with the region's real
+ * boss, Ch3 11-15 a branch-payoff chapter reusing the established roster at
+ * higher counts, Ch4 16-20 the boss at full strength). Chapter names are
+ * deliberately bare/structural, not narrative — the actual chapter-boundary
+ * story writing (`introText`/`outroText`) is a separate, later pass (see
+ * CAMPAIGN_STORY_DESIGN.md §9's "still open" list); this pass is pure
+ * structure/content-authoring, matching what Kevin asked for this session.
+ *
+ * Ch4 in both regions is an EXACT reuse of the existing flat 6-wave
+ * `EMBERFORD_WAVES`/`SALTMERE_WAVES` (same array, same top-level `waves`/
+ * `bossEnemyId` fields per `ChapterDefinition`'s own "describe the finale"
+ * contract) — zero regression risk for the one chapter every existing test
+ * already validates.
+ *
+ * Saltmere's Ch1 uses `tide-wretch` (`data/enemies.ts`) instead of a real
+ * named miniboss — see that enemy's own comment for why (the design doc's
+ * "returning miniboss" mechanic isn't buildable yet).
+ */
+const EMBERFORD_CH1_WAVES: WaveDefinition[] = [
+  { id: "emberford-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "emberford-ch1-wave-2",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 13,
+    timeBonusGold: 6,
+  },
+  {
+    id: "emberford-ch1-wave-3",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+  {
+    id: "emberford-ch1-wave-4",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "basalt-colossus", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 32,
+    timeBonusGold: 10,
+  },
+];
+
+const EMBERFORD_CH2_WAVES: WaveDefinition[] = [
+  {
+    id: "emberford-ch2-wave-1",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 20,
+    timeBonusGold: 7,
+  },
+  {
+    id: "emberford-ch2-wave-2",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 24,
+    timeBonusGold: 8,
+  },
+  {
+    id: "emberford-ch2-wave-3",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "blightcaller", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 28,
+    timeBonusGold: 9,
+  },
+  {
+    id: "emberford-ch2-wave-4",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "cinderlord", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 40,
+    timeBonusGold: 12,
+  },
+];
+
+const EMBERFORD_CH3_WAVES: WaveDefinition[] = [
+  {
+    id: "emberford-ch3-wave-1",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 34,
+    timeBonusGold: 10,
+  },
+  {
+    id: "emberford-ch3-wave-2",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "brute", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 38,
+    timeBonusGold: 11,
+  },
+  {
+    id: "emberford-ch3-wave-3",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 42,
+    timeBonusGold: 12,
+  },
+  {
+    id: "emberford-ch3-wave-4",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "ravager", count: 3, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 46,
+    timeBonusGold: 13,
+  },
+];
+
+const SALTMERE_CH1_WAVES: WaveDefinition[] = [
+  { id: "saltmere-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "runner", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "saltmere-ch1-wave-2",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 13,
+    timeBonusGold: 6,
+  },
+  {
+    id: "saltmere-ch1-wave-3",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "runner", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+  {
+    id: "saltmere-ch1-wave-4",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "tide-wretch", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 32,
+    timeBonusGold: 10,
+  },
+];
+
+const SALTMERE_CH2_WAVES: WaveDefinition[] = [
+  {
+    id: "saltmere-ch2-wave-1",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "cave-drake", count: 1, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 20,
+    timeBonusGold: 7,
+  },
+  {
+    id: "saltmere-ch2-wave-2",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 24,
+    timeBonusGold: 8,
+  },
+  {
+    id: "saltmere-ch2-wave-3",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "swarmling", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 28,
+    timeBonusGold: 9,
+  },
+  {
+    id: "saltmere-ch2-wave-4",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "tidelord", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 42,
+    timeBonusGold: 12,
+  },
+];
+
+const SALTMERE_CH3_WAVES: WaveDefinition[] = [
+  {
+    id: "saltmere-ch3-wave-1",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "swarmling", count: 3, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 34,
+    timeBonusGold: 10,
+  },
+  {
+    id: "saltmere-ch3-wave-2",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "razorwing", count: 1, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 38,
+    timeBonusGold: 11,
+  },
+  {
+    id: "saltmere-ch3-wave-3",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "wisp", count: 1, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "swarmling", count: 3, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 42,
+    timeBonusGold: 12,
+  },
+  {
+    id: "saltmere-ch3-wave-4",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 46,
+    timeBonusGold: 13,
+  },
+];
+
+/**
+ * D-180 (KI-098 item 13, continuing D-179): the other four of
+ * `CAMPAIGN_STORY_DESIGN.md` §3's six regions — Shattered Causeway,
+ * Cinderfall Rift, The Drowning Vale, Frostbound Hollow — none of which had
+ * a `CampaignDefinition` at all before this pass (unlike Emberford/Saltmere,
+ * which existed as flat campaigns already; these four maps were Free-Play-
+ * only). Each gets the same 4-chapter shape D-179 established: Ch1 (1-5)
+ * ends in its own miniboss, Ch2 (6-10) a lighter first encounter with the
+ * region's real boss, Ch3 (11-15) remixes the established roster at higher
+ * counts, Ch4 (16-20) is the same flat 6-wave finale used as this
+ * campaign's own top-level `waves` (same array reference, zero regression
+ * risk, matching D-179's own "describe the finale" contract for
+ * `ChapterDefinition`). Boss assignments are `CAMPAIGN_STORY_DESIGN.md` §3's
+ * own table: Causeway (Juggernaut / The Devourer), Cinderfall Rift
+ * (Gravemaw / Warlord Korrath), Drowning Vale (The Husk / Blightmother),
+ * Frostbound Hollow (Bloodrage Warlord / Sundered King) — all eight enemies
+ * already existed in `data/enemies.ts` (Phase 20/21), so unlike D-179's
+ * Saltmere fallback, no new enemy was needed here.
+ */
+
+// ----- Shattered Causeway (chasm/pit crossing) -----------------------------
+
+const CAUSEWAY_CH1_WAVES: WaveDefinition[] = [
+  { id: "causeway-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "causeway-ch1-wave-2",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "runner", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 13,
+    timeBonusGold: 6,
+  },
+  {
+    id: "causeway-ch1-wave-3",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+  {
+    id: "causeway-ch1-wave-4",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "juggernaut", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 32,
+    timeBonusGold: 10,
+  },
+];
+
+const CAUSEWAY_CH2_WAVES: WaveDefinition[] = [
+  {
+    id: "causeway-ch2-wave-1",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 20,
+    timeBonusGold: 7,
+  },
+  {
+    id: "causeway-ch2-wave-2",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 24,
+    timeBonusGold: 8,
+  },
+  {
+    id: "causeway-ch2-wave-3",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "gilded-carrier", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 28,
+    timeBonusGold: 9,
+  },
+  {
+    id: "causeway-ch2-wave-4",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "the-devourer", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 41,
+    timeBonusGold: 12,
+  },
+];
+
+const CAUSEWAY_CH3_WAVES: WaveDefinition[] = [
+  {
+    id: "causeway-ch3-wave-1",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 34,
+    timeBonusGold: 10,
+  },
+  {
+    id: "causeway-ch3-wave-2",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "marauder", count: 3, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+    ],
+    completionGold: 38,
+    timeBonusGold: 11,
+  },
+  {
+    id: "causeway-ch3-wave-3",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "bolt-runner", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 42,
+    timeBonusGold: 12,
+  },
+  {
+    id: "causeway-ch3-wave-4",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "ravager", count: 3, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 46,
+    timeBonusGold: 13,
+  },
+];
+
+const CAUSEWAY_WAVES: WaveDefinition[] = [
+  { id: "causeway-wave-1", turnLimit: 8, spawns: [{ enemyId: "runner", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "causeway-wave-2",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 14,
+    timeBonusGold: 6,
+  },
+  {
+    id: "causeway-wave-3",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "hexer", count: 3, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 18,
+    timeBonusGold: 7,
+  },
+  {
+    id: "causeway-wave-4",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 24,
+    timeBonusGold: 8,
+  },
+  {
+    id: "causeway-wave-5",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "gilded-carrier", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 30,
+    timeBonusGold: 10,
+  },
+  {
+    id: "causeway-wave-6",
+    turnLimit: 15,
+    spawns: [
+      { enemyId: "brute", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "the-devourer", count: 1, startTurn: 4, intervalTurns: 1 },
+    ],
+    completionGold: 56,
+    timeBonusGold: 18,
+  },
+];
+
+const CAUSEWAY_LOOT_POOL: string[] = [
+  ...POTION_ORDER,
+  "boots-of-striding-and-springing",
+  "swift-greaves",
+  "wand-of-web",
+  "dagger-of-venom",
+  "travelers-cloak",
+  "iron-buckler",
+];
+
+// ----- Cinderfall Rift (volcanic, collapsing bridge) -----------------------
+
+const CINDERFALL_CH1_WAVES: WaveDefinition[] = [
+  { id: "cinderfall-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "cinderfall-ch1-wave-2",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 13,
+    timeBonusGold: 6,
+  },
+  {
+    id: "cinderfall-ch1-wave-3",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "marauder", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+  {
+    id: "cinderfall-ch1-wave-4",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "gravemaw", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 32,
+    timeBonusGold: 10,
+  },
+];
+
+const CINDERFALL_CH2_WAVES: WaveDefinition[] = [
+  {
+    id: "cinderfall-ch2-wave-1",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 20,
+    timeBonusGold: 7,
+  },
+  {
+    id: "cinderfall-ch2-wave-2",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "warcaptain", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 24,
+    timeBonusGold: 8,
+  },
+  {
+    id: "cinderfall-ch2-wave-3",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "bannerbearer", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 28,
+    timeBonusGold: 9,
+  },
+  {
+    id: "cinderfall-ch2-wave-4",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "warlord-korrath", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 40,
+    timeBonusGold: 12,
+  },
+];
+
+const CINDERFALL_CH3_WAVES: WaveDefinition[] = [
+  {
+    id: "cinderfall-ch3-wave-1",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "warcaptain", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 34,
+    timeBonusGold: 10,
+  },
+  {
+    id: "cinderfall-ch3-wave-2",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "bannerbearer", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "battlepriest", count: 1, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "grunt", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 38,
+    timeBonusGold: 11,
+  },
+  {
+    id: "cinderfall-ch3-wave-3",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "marauder", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "warcaptain", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 42,
+    timeBonusGold: 12,
+  },
+  {
+    id: "cinderfall-ch3-wave-4",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "ravager", count: 3, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "bannerbearer", count: 1, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "battlepriest", count: 1, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 46,
+    timeBonusGold: 13,
+  },
+];
+
+const CINDERFALL_WAVES: WaveDefinition[] = [
+  { id: "cinderfall-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "cinderfall-wave-2",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 14,
+    timeBonusGold: 6,
+  },
+  {
+    id: "cinderfall-wave-3",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "marauder", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "warcaptain", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 18,
+    timeBonusGold: 7,
+  },
+  {
+    id: "cinderfall-wave-4",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "bannerbearer", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 24,
+    timeBonusGold: 8,
+  },
+  {
+    id: "cinderfall-wave-5",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "battlepriest", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 30,
+    timeBonusGold: 10,
+  },
+  {
+    id: "cinderfall-wave-6",
+    turnLimit: 15,
+    spawns: [
+      { enemyId: "warcaptain", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "bannerbearer", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warlord-korrath", count: 1, startTurn: 4, intervalTurns: 1 },
+    ],
+    completionGold: 55,
+    timeBonusGold: 18,
+  },
+];
+
+const CINDERFALL_LOOT_POOL: string[] = [
+  ...POTION_ORDER,
+  "greaves-of-the-berserker",
+  "amulet-of-fury",
+  "whetstone-band",
+  "gauntlets-of-ogre-power",
+  "boots-of-the-brawler",
+  "chainmail-vest",
+];
+
+// ----- The Drowning Vale (tidal marsh) -------------------------------------
+
+const DROWNING_VALE_CH1_WAVES: WaveDefinition[] = [
+  { id: "drowning-vale-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "runner", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "drowning-vale-ch1-wave-2",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 13,
+    timeBonusGold: 6,
+  },
+  {
+    id: "drowning-vale-ch1-wave-3",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "fungal-splitter", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+  {
+    id: "drowning-vale-ch1-wave-4",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "the-husk", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 32,
+    timeBonusGold: 10,
+  },
+];
+
+const DROWNING_VALE_CH2_WAVES: WaveDefinition[] = [
+  {
+    id: "drowning-vale-ch2-wave-1",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "blightcaller", count: 2, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 20,
+    timeBonusGold: 7,
+  },
+  {
+    id: "drowning-vale-ch2-wave-2",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 24,
+    timeBonusGold: 8,
+  },
+  {
+    id: "drowning-vale-ch2-wave-3",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "blightcaller", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 28,
+    timeBonusGold: 9,
+  },
+  {
+    id: "drowning-vale-ch2-wave-4",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "blightmother", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 40,
+    timeBonusGold: 12,
+  },
+];
+
+const DROWNING_VALE_CH3_WAVES: WaveDefinition[] = [
+  {
+    id: "drowning-vale-ch3-wave-1",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "blightcaller", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 34,
+    timeBonusGold: 10,
+  },
+  {
+    id: "drowning-vale-ch3-wave-2",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexbinder", count: 1, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "blightcaller", count: 2, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 38,
+    timeBonusGold: 11,
+  },
+  {
+    id: "drowning-vale-ch3-wave-3",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 42,
+    timeBonusGold: 12,
+  },
+  {
+    id: "drowning-vale-ch3-wave-4",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "blightcaller", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexbinder", count: 1, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "plague-warden", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 46,
+    timeBonusGold: 13,
+  },
+];
+
+const DROWNING_VALE_WAVES: WaveDefinition[] = [
+  { id: "drowning-vale-wave-1", turnLimit: 8, spawns: [{ enemyId: "runner", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "drowning-vale-wave-2",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 14,
+    timeBonusGold: 6,
+  },
+  {
+    id: "drowning-vale-wave-3",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "blightcaller", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 18,
+    timeBonusGold: 7,
+  },
+  {
+    id: "drowning-vale-wave-4",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexbinder", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 24,
+    timeBonusGold: 8,
+  },
+  {
+    id: "drowning-vale-wave-5",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "blightcaller", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "fungal-splitter", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "plague-warden", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 30,
+    timeBonusGold: 10,
+  },
+  {
+    id: "drowning-vale-wave-6",
+    turnLimit: 15,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "plague-warden", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "blightmother", count: 1, startTurn: 4, intervalTurns: 1 },
+    ],
+    completionGold: 55,
+    timeBonusGold: 18,
+  },
+];
+
+const DROWNING_VALE_LOOT_POOL: string[] = [
+  ...POTION_ORDER,
+  "amulet-of-withering",
+  "periapt-of-proof-against-poison",
+  "staff-of-healing",
+  "amulet-of-warding",
+  "circlet-of-focus",
+  "band-of-vigor",
+];
+
+// ----- Frostbound Hollow (verticality, frozen ridge) -----------------------
+
+const FROSTBOUND_CH1_WAVES: WaveDefinition[] = [
+  { id: "frostbound-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "frostbound-ch1-wave-2",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "wisp", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 13,
+    timeBonusGold: 6,
+  },
+  {
+    id: "frostbound-ch1-wave-3",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "frost-warden", count: 1, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+  {
+    id: "frostbound-ch1-wave-4",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "bloodrage-warlord", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 32,
+    timeBonusGold: 10,
+  },
+];
+
+const FROSTBOUND_CH2_WAVES: WaveDefinition[] = [
+  {
+    id: "frostbound-ch2-wave-1",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 20,
+    timeBonusGold: 7,
+  },
+  {
+    id: "frostbound-ch2-wave-2",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 24,
+    timeBonusGold: 8,
+  },
+  {
+    id: "frostbound-ch2-wave-3",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 28,
+    timeBonusGold: 9,
+  },
+  {
+    id: "frostbound-ch2-wave-4",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "sundered-king", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 40,
+    timeBonusGold: 12,
+  },
+];
+
+const FROSTBOUND_CH3_WAVES: WaveDefinition[] = [
+  {
+    id: "frostbound-ch3-wave-1",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "frost-warden", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 34,
+    timeBonusGold: 10,
+  },
+  {
+    id: "frostbound-ch3-wave-2",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 38,
+    timeBonusGold: 11,
+  },
+  {
+    id: "frostbound-ch3-wave-3",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "frost-warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 42,
+    timeBonusGold: 12,
+  },
+  {
+    id: "frostbound-ch3-wave-4",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 46,
+    timeBonusGold: 13,
+  },
+];
+
+const FROSTBOUND_WAVES: WaveDefinition[] = [
+  { id: "frostbound-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "frostbound-wave-2",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "wisp", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 14,
+    timeBonusGold: 6,
+  },
+  {
+    id: "frostbound-wave-3",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "frost-warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 18,
+    timeBonusGold: 7,
+  },
+  {
+    id: "frostbound-wave-4",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 24,
+    timeBonusGold: 8,
+  },
+  {
+    id: "frostbound-wave-5",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "razorwing", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 30,
+    timeBonusGold: 10,
+  },
+  {
+    id: "frostbound-wave-6",
+    turnLimit: 15,
+    spawns: [
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ironhide", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "sundered-king", count: 1, startTurn: 4, intervalTurns: 1 },
+    ],
+    completionGold: 55,
+    timeBonusGold: 18,
+  },
+];
+
+const FROSTBOUND_LOOT_POOL: string[] = [
+  ...POTION_ORDER,
+  "frost-brand",
+  "ring-of-frostbite",
+  "bracers-of-archery",
+  "headband-of-intellect",
+  "amulet-of-health",
+  "leather-cap",
+];
+
+// ----- The Nameless Throne (D-188: the campaign capstone) -----------------
+
+/**
+ * D-188 (CAMPAIGN_STORY_DESIGN.md §5, KI-098 item 13's last remaining
+ * piece): one climactic finale battle, not a second 4-chapter region —
+ * deliberately flat, same shape as the Proving Ground prologue. Scaled
+ * above every region's own Chapter 4 finale. This is the Ashen Sovereign-
+ * dressed baseline; `NamelessThroneSystem.withThroneEnemyReskins` derives
+ * the Hollow Empress variant from this exact same list at battle-load
+ * time — no second wave list is authored.
+ */
+const NAMELESS_THRONE_WAVES: WaveDefinition[] = [
+  {
+    id: "nameless-throne-wave-1",
+    turnLimit: 10,
+    spawns: [
+      { enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 22,
+    timeBonusGold: 8,
+  },
+  {
+    id: "nameless-throne-wave-2",
+    turnLimit: 11,
+    spawns: [
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ember-thane", count: 2, startTurn: 2, intervalTurns: 2 },
+    ],
+    completionGold: 28,
+    timeBonusGold: 9,
+  },
+  {
+    id: "nameless-throne-wave-3",
+    turnLimit: 12,
+    spawns: [
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "cinder-adept", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 34,
+    timeBonusGold: 10,
+  },
+  {
+    id: "nameless-throne-wave-4",
+    turnLimit: 13,
+    spawns: [
+      { enemyId: "ember-thane", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "cinder-adept", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ironhide", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 42,
+    timeBonusGold: 13,
+  },
+  {
+    id: "nameless-throne-wave-5",
+    turnLimit: 14,
+    spawns: [
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ashbound-honor-guard", count: 1, startTurn: 3, intervalTurns: 1 },
+    ],
+    completionGold: 52,
+    timeBonusGold: 16,
+  },
+  {
+    id: "nameless-throne-wave-6",
+    turnLimit: 18,
+    spawns: [
+      { enemyId: "ember-thane", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "cinder-adept", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ashen-sovereign", count: 1, startTurn: 5, intervalTurns: 1 },
+    ],
+    completionGold: 95,
+    timeBonusGold: 26,
+  },
+];
+
+/**
+ * D-188: deliberately theme-agnostic (combines the fire- and frost/water-
+ * themed pools rather than picking one) since the finale itself is
+ * theme-agnostic until `NamelessThroneSystem.resolveThroneVariant` resolves.
+ */
+const NAMELESS_THRONE_LOOT_POOL: string[] = [
+  ...POTION_ORDER,
+  "flame-tongue",
+  "frost-brand",
+  "robe-of-the-archmagi",
+  "aegis-of-the-first-ward",
+  "boots-of-speed",
+  "ring-of-free-action",
+];
+
 export const CAMPAIGNS: CampaignDefinition[] = [
+  {
+    id: PROLOGUE_CAMPAIGN_ID,
+    name: "The Proving Ground",
+    description:
+      "Before the six roads open, every party proves itself here first. No banners, no names — just the first real fight.",
+    mapId: PROLOGUE_MAP.id,
+    waves: PROLOGUE_WAVES,
+    bossEnemyId: "brute",
+    lootPoolIds: [...POTION_ORDER],
+  },
   {
     id: "emberford-reach",
     name: "Emberford Reach",
@@ -314,6 +1553,19 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     waves: EMBERFORD_WAVES,
     bossEnemyId: "cinderlord",
     lootPoolIds: EMBERFORD_LOOT_POOL,
+    chapters: [
+      { id: "emberford-ch1", name: "Emberford Reach — Chapter 1", levelRange: [1, 5], waves: EMBERFORD_CH1_WAVES, bossEnemyId: "basalt-colossus" },
+      { id: "emberford-ch2", name: "Emberford Reach — Chapter 2", levelRange: [6, 10], waves: EMBERFORD_CH2_WAVES, bossEnemyId: "cinderlord" },
+      { id: "emberford-ch3", name: "Emberford Reach — Chapter 3", levelRange: [11, 15], waves: EMBERFORD_CH3_WAVES },
+      {
+        id: "emberford-ch4",
+        name: "Emberford Reach — Chapter 4",
+        levelRange: [16, 20],
+        waves: EMBERFORD_WAVES,
+        bossEnemyId: "cinderlord",
+        lootPoolIds: EMBERFORD_LOOT_POOL,
+      },
+    ],
   },
   {
     id: "saltmere-shallows",
@@ -324,6 +1576,366 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     waves: SALTMERE_WAVES,
     bossEnemyId: "tidelord",
     lootPoolIds: SALTMERE_LOOT_POOL,
+    chapters: [
+      { id: "saltmere-ch1", name: "Saltmere Shallows — Chapter 1", levelRange: [1, 5], waves: SALTMERE_CH1_WAVES, bossEnemyId: "tide-wretch" },
+      { id: "saltmere-ch2", name: "Saltmere Shallows — Chapter 2", levelRange: [6, 10], waves: SALTMERE_CH2_WAVES, bossEnemyId: "tidelord" },
+      { id: "saltmere-ch3", name: "Saltmere Shallows — Chapter 3", levelRange: [11, 15], waves: SALTMERE_CH3_WAVES },
+      {
+        id: "saltmere-ch4",
+        name: "Saltmere Shallows — Chapter 4",
+        levelRange: [16, 20],
+        waves: SALTMERE_WAVES,
+        bossEnemyId: "tidelord",
+        lootPoolIds: SALTMERE_LOOT_POOL,
+      },
+    ],
+  },
+  {
+    id: "shattered-causeway",
+    name: "Shattered Causeway",
+    description:
+      "A single unstable bridge is the only way across the chasm — and something that has never once gone around anything is waiting on the far side.",
+    mapId: CAUSEWAY_MAP.id,
+    waves: CAUSEWAY_WAVES,
+    bossEnemyId: "the-devourer",
+    lootPoolIds: CAUSEWAY_LOOT_POOL,
+    chapters: [
+      { id: "causeway-ch1", name: "Shattered Causeway — Chapter 1", levelRange: [1, 5], waves: CAUSEWAY_CH1_WAVES, bossEnemyId: "juggernaut" },
+      { id: "causeway-ch2", name: "Shattered Causeway — Chapter 2", levelRange: [6, 10], waves: CAUSEWAY_CH2_WAVES, bossEnemyId: "the-devourer" },
+      { id: "causeway-ch3", name: "Shattered Causeway — Chapter 3", levelRange: [11, 15], waves: CAUSEWAY_CH3_WAVES },
+      {
+        id: "causeway-ch4",
+        name: "Shattered Causeway — Chapter 4",
+        levelRange: [16, 20],
+        waves: CAUSEWAY_WAVES,
+        bossEnemyId: "the-devourer",
+        lootPoolIds: CAUSEWAY_LOOT_POOL,
+      },
+    ],
+  },
+  {
+    id: "cinderfall-rift",
+    name: "Cinderfall Rift",
+    description:
+      "Three roads cross an old battlefield on a volcanic rift, and the middle one won't hold forever. Something that has never had to swing a blade itself is watching from behind the line.",
+    mapId: CINDERFALL_RIFT_MAP.id,
+    waves: CINDERFALL_WAVES,
+    bossEnemyId: "warlord-korrath",
+    lootPoolIds: CINDERFALL_LOOT_POOL,
+    chapters: [
+      { id: "cinderfall-ch1", name: "Cinderfall Rift — Chapter 1", levelRange: [1, 5], waves: CINDERFALL_CH1_WAVES, bossEnemyId: "gravemaw" },
+      { id: "cinderfall-ch2", name: "Cinderfall Rift — Chapter 2", levelRange: [6, 10], waves: CINDERFALL_CH2_WAVES, bossEnemyId: "warlord-korrath" },
+      { id: "cinderfall-ch3", name: "Cinderfall Rift — Chapter 3", levelRange: [11, 15], waves: CINDERFALL_CH3_WAVES },
+      {
+        id: "cinderfall-ch4",
+        name: "Cinderfall Rift — Chapter 4",
+        levelRange: [16, 20],
+        waves: CINDERFALL_WAVES,
+        bossEnemyId: "warlord-korrath",
+        lootPoolIds: CINDERFALL_LOOT_POOL,
+      },
+    ],
+  },
+  {
+    id: "drowning-vale",
+    name: "The Drowning Vale",
+    description:
+      "A flooding marsh where nothing stays green for long. What looks like the worst thing out here almost never is.",
+    mapId: DROWNING_VALE_MAP.id,
+    waves: DROWNING_VALE_WAVES,
+    bossEnemyId: "blightmother",
+    lootPoolIds: DROWNING_VALE_LOOT_POOL,
+    chapters: [
+      { id: "drowning-vale-ch1", name: "The Drowning Vale — Chapter 1", levelRange: [1, 5], waves: DROWNING_VALE_CH1_WAVES, bossEnemyId: "the-husk" },
+      { id: "drowning-vale-ch2", name: "The Drowning Vale — Chapter 2", levelRange: [6, 10], waves: DROWNING_VALE_CH2_WAVES, bossEnemyId: "blightmother" },
+      { id: "drowning-vale-ch3", name: "The Drowning Vale — Chapter 3", levelRange: [11, 15], waves: DROWNING_VALE_CH3_WAVES },
+      {
+        id: "drowning-vale-ch4",
+        name: "The Drowning Vale — Chapter 4",
+        levelRange: [16, 20],
+        waves: DROWNING_VALE_WAVES,
+        bossEnemyId: "blightmother",
+        lootPoolIds: DROWNING_VALE_LOOT_POOL,
+      },
+    ],
+  },
+  {
+    id: "frostbound-hollow",
+    name: "Frostbound Hollow",
+    description:
+      "A frozen ridge splits the hollow clean in two, and something on the far side has been waiting a very long time to stop waiting.",
+    mapId: FROSTBOUND_HOLLOW_MAP.id,
+    waves: FROSTBOUND_WAVES,
+    bossEnemyId: "sundered-king",
+    lootPoolIds: FROSTBOUND_LOOT_POOL,
+    chapters: [
+      { id: "frostbound-ch1", name: "Frostbound Hollow — Chapter 1", levelRange: [1, 5], waves: FROSTBOUND_CH1_WAVES, bossEnemyId: "bloodrage-warlord" },
+      { id: "frostbound-ch2", name: "Frostbound Hollow — Chapter 2", levelRange: [6, 10], waves: FROSTBOUND_CH2_WAVES, bossEnemyId: "sundered-king" },
+      { id: "frostbound-ch3", name: "Frostbound Hollow — Chapter 3", levelRange: [11, 15], waves: FROSTBOUND_CH3_WAVES },
+      {
+        id: "frostbound-ch4",
+        name: "Frostbound Hollow — Chapter 4",
+        levelRange: [16, 20],
+        waves: FROSTBOUND_WAVES,
+        bossEnemyId: "sundered-king",
+        lootPoolIds: FROSTBOUND_LOOT_POOL,
+      },
+    ],
+  },
+  {
+    id: NAMELESS_THRONE_CAMPAIGN_ID,
+    name: "The Nameless Throne",
+    description:
+      "Six regions, six choices, one throne that was never really anyone's. Whatever answers there is the last thing standing between you and remembering your own name.",
+    mapId: NAMELESS_THRONE_MAP.id,
+    waves: NAMELESS_THRONE_WAVES,
+    // D-188: static display baseline only — the real fight is resolved at
+    // battle-load time by NamelessThroneSystem.resolveThroneVariant, per
+    // this session's own scoping call (a deliberate non-spoiler, matching
+    // how Saltmere's card always says "Boss: Tidelord" regardless of which
+    // returning miniboss is actually incoming).
+    bossEnemyId: "ashen-sovereign",
+    lootPoolIds: NAMELESS_THRONE_LOOT_POOL,
+  },
+];
+
+// ----- Pool A companion side-quest missions (KI-098 item 13, closes D-183's -
+// ----- own deferred "side-quest missions" item) ----------------------------
+
+/**
+ * D-18x: one fixed, flat, one-time mission per Pool A companion (`data/
+ * companions.ts`'s six class-coverage recruits) — the 3 not drawn into a
+ * fresh save's random starting trio (`CompanionSeedSystem`) stay locked
+ * until their own mission is cleared, at which point `BattleScene.
+ * maybeUnlockSideMissionCompanion` recruits them onto the bench (never
+ * force-active, same reasoning as the Pool B home-region unlock). Reached
+ * from `CompanionRosterScene`'s own locked Pool A card, any time — unlike
+ * The Proving Ground (D-184), nothing gates these.
+ *
+ * Deliberately NOT added to `CAMPAIGNS` — that array is exactly what
+ * `CampaignSelectScene.buildCampaignCards` renders as a region card, and
+ * these aren't regions. `getCampaignDefinition` below checks both arrays so
+ * every other consumer (`BattleScene`, `CharacterCreationScene`) needs no
+ * changes at all; a side mission is just a `campaignId` like any other flat
+ * campaign as far as they're concerned.
+ *
+ * Each mission reuses one of the six existing region maps (no new map
+ * authored — these are personal, not regional, so there's no map of their
+ * own to build) and ends on an existing REGULAR-tier enemy loosely themed
+ * to the companion, never a miniboss/boss/legendary — deliberately, so
+ * these can never collide with the returning-miniboss spare/destroy
+ * mechanic (`ReturningMinibossSystem`). Same 3-wave shape and low, fixed
+ * difficulty as The Proving Ground (D-184) — first-pass numbers, same
+ * every-campaign disclaimer: real balance is Kevin's own in-browser call,
+ * doubly so here since these can be attempted at any point in a playthrough,
+ * not just at level 1.
+ */
+const SIDE_MISSION_LOOT_POOL: string[] = [...POTION_ORDER];
+
+const BRAND_ASHCAIRN_WAVES: WaveDefinition[] = [
+  { id: "side-brand-wave-1", turnLimit: 7, spawns: [{ enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 }], completionGold: 9, timeBonusGold: 4 },
+  {
+    id: "side-brand-wave-2",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "grunt", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 12,
+    timeBonusGold: 5,
+  },
+  {
+    id: "side-brand-wave-3",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "warcaptain", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+];
+
+const WREN_CALLOWAY_WAVES: WaveDefinition[] = [
+  { id: "side-wren-wave-1", turnLimit: 7, spawns: [{ enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 }], completionGold: 9, timeBonusGold: 4 },
+  {
+    id: "side-wren-wave-2",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "runner", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 12,
+    timeBonusGold: 5,
+  },
+  {
+    id: "side-wren-wave-3",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "hexer", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "gilded-carrier", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+];
+
+const PERRIN_HOLT_WAVES: WaveDefinition[] = [
+  { id: "side-perrin-wave-1", turnLimit: 7, spawns: [{ enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 }], completionGold: 9, timeBonusGold: 4 },
+  {
+    id: "side-perrin-wave-2",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "runner", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 12,
+    timeBonusGold: 5,
+  },
+  {
+    id: "side-perrin-wave-3",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "hexer", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "blightcaller", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+];
+
+const MIRA_QUILL_WAVES: WaveDefinition[] = [
+  { id: "side-mira-wave-1", turnLimit: 7, spawns: [{ enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 }], completionGold: 9, timeBonusGold: 4 },
+  {
+    id: "side-mira-wave-2",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "wisp", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 12,
+    timeBonusGold: 5,
+  },
+  {
+    id: "side-mira-wave-3",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "ravager", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+];
+
+const CASS_FERROW_WAVES: WaveDefinition[] = [
+  { id: "side-cass-wave-1", turnLimit: 7, spawns: [{ enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 }], completionGold: 9, timeBonusGold: 4 },
+  {
+    id: "side-cass-wave-2",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "hexer", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 12,
+    timeBonusGold: 5,
+  },
+  {
+    id: "side-cass-wave-3",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ironhide", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+];
+
+const ELLERY_VANCE_WAVES: WaveDefinition[] = [
+  { id: "side-ellery-wave-1", turnLimit: 7, spawns: [{ enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 }], completionGold: 9, timeBonusGold: 4 },
+  {
+    id: "side-ellery-wave-2",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "wisp", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 12,
+    timeBonusGold: 5,
+  },
+  {
+    id: "side-ellery-wave-3",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "hexer", count: 1, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+];
+
+export const SIDE_MISSIONS: CampaignDefinition[] = [
+  {
+    id: "side-brand-ashcairn",
+    name: "Brand Ashcairn — A Fair Wage",
+    description:
+      "A caravan job Brand took for coin turns into a real fight before the road's even half done — which, if anyone asked him, is usually how it goes.",
+    mapId: CINDERFALL_RIFT_MAP.id,
+    waves: BRAND_ASHCAIRN_WAVES,
+    bossEnemyId: "warcaptain",
+    lootPoolIds: SIDE_MISSION_LOOT_POOL,
+  },
+  {
+    id: "side-wren-calloway",
+    name: "Wren Calloway — Paid in Secrets",
+    description:
+      "Wren traded a song for a rumor about a courier route worth robbing — the rumor was good, the courier's escort less so.",
+    mapId: CAUSEWAY_MAP.id,
+    waves: WREN_CALLOWAY_WAVES,
+    bossEnemyId: "gilded-carrier",
+    lootPoolIds: SIDE_MISSION_LOOT_POOL,
+  },
+  {
+    id: "side-perrin-holt",
+    name: "Perrin Holt — Stopped Asking Why",
+    description:
+      "Word reaches Perrin of a sickness spreading through a waystation. They stopped asking why they always end up in these places years ago.",
+    mapId: DROWNING_VALE_MAP.id,
+    waves: PERRIN_HOLT_WAVES,
+    bossEnemyId: "blightcaller",
+    lootPoolIds: SIDE_MISSION_LOOT_POOL,
+  },
+  {
+    id: "side-mira-quill",
+    name: "Mira Quill — Outside the Walls",
+    description:
+      "Mira's discipline was easy inside a monastery. Whether it holds up out here, against something that never breaks its own stance either, is the actual question.",
+    mapId: FROSTBOUND_HOLLOW_MAP.id,
+    waves: MIRA_QUILL_WAVES,
+    bossEnemyId: "frost-warden",
+    lootPoolIds: SIDE_MISSION_LOOT_POOL,
+  },
+  {
+    id: "side-cass-ferrow",
+    name: "Cass Ferrow — Reading the Room",
+    description:
+      "Cass clocked the opening in this fight before anyone else finished walking into it. Whether that opening is actually there or just what they want to see is the part that gets tested.",
+    mapId: EMBERFORD_MAP.id,
+    waves: CASS_FERROW_WAVES,
+    bossEnemyId: "ironhide",
+    lootPoolIds: SIDE_MISSION_LOOT_POOL,
+  },
+  {
+    id: "side-ellery-vance",
+    name: "Ellery Vance — Surfacing",
+    description:
+      "Ellery's blood-magic picks its own moments. This time it picks a bad one, and something on the tideflats is drawn to it before Ellery even meant to reach for it.",
+    mapId: SALTMERE_MAP.id,
+    waves: ELLERY_VANCE_WAVES,
+    bossEnemyId: "razorwing",
+    lootPoolIds: SIDE_MISSION_LOOT_POOL,
   },
 ];
 
@@ -331,13 +1943,19 @@ export const CAMPAIGNS: CampaignDefinition[] = [
  * `CampaignDefinition`'s `mapId` string back to the actual `ParsedMap` data
  * `BattleScene` needs to build a `GameMap` from. */
 const CAMPAIGN_MAPS: Record<string, ParsedMap> = {
+  [PROLOGUE_MAP.id]: PROLOGUE_MAP,
   [EMBERFORD_MAP.id]: EMBERFORD_MAP,
   [SALTMERE_MAP.id]: SALTMERE_MAP,
+  [CAUSEWAY_MAP.id]: CAUSEWAY_MAP,
+  [CINDERFALL_RIFT_MAP.id]: CINDERFALL_RIFT_MAP,
+  [DROWNING_VALE_MAP.id]: DROWNING_VALE_MAP,
+  [FROSTBOUND_HOLLOW_MAP.id]: FROSTBOUND_HOLLOW_MAP,
+  [NAMELESS_THRONE_MAP.id]: NAMELESS_THRONE_MAP,
 };
 
-/** Look up a campaign, throwing on an unknown id — matches `getEnemyDefinition`'s convention. */
+/** Look up a campaign, throwing on an unknown id — matches `getEnemyDefinition`'s convention. Checks both the region/prologue list and the Pool A side missions (kept as a separate array so they never render as `CampaignSelectScene` cards). */
 export function getCampaignDefinition(id: string): CampaignDefinition {
-  const def = CAMPAIGNS.find((c) => c.id === id);
+  const def = CAMPAIGNS.find((c) => c.id === id) ?? SIDE_MISSIONS.find((c) => c.id === id);
   if (!def) throw new Error(`Unknown campaign id "${id}".`);
   return def;
 }

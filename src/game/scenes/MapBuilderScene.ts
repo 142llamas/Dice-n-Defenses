@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
-import { centeredRowX, getViewport, onViewportResize } from "./uiTheme";
+import { centeredRowX, getViewport, onViewportResize, openChoiceList } from "./uiTheme";
 import { GridSystem, type GridPosition } from "../systems/GridSystem";
 import { GameMap, type TileRole } from "../systems/GameMap";
 import type { ParsedMap, TileType } from "../data/testMap";
@@ -122,6 +122,8 @@ export class MapBuilderScene extends Phaser.Scene {
 
   private widthLabel!: Phaser.GameObjects.Text;
   private heightLabel!: Phaser.GameObjects.Text;
+  /** D-16x: the shared full-screen list-picker overlay (`openChoiceList`), replacing the old click-to-cycle Width/Height buttons. */
+  private choiceOverlay: Phaser.GameObjects.GameObject[] = [];
 
   private tabButtons: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; tab: PaletteTab }[] = [];
   private swatchButtons: Phaser.GameObjects.Rectangle[] = [];
@@ -289,21 +291,45 @@ export class MapBuilderScene extends Phaser.Scene {
     // in-progress draft while preserving existing paint is out of scope for
     // this pass (pick a size, THEN paint).
     const widthBtn = this.buildSmallButton(startX + w + gap, y, w, 40, "", 0x2a2a3a, () => {
-      const next = this.draft.cols >= MAX_MAP_COLS ? MIN_MAP_COLS : this.draft.cols + 1;
-      this.draft = createBlankDraft(this.draft.id, this.draft.name, next, this.draft.rows);
-      this.rebuildGridSystem();
-      this.renderGrid();
-      this.refreshAll();
+      const widths: number[] = [];
+      for (let n = MIN_MAP_COLS; n <= MAX_MAP_COLS; n++) widths.push(n);
+      openChoiceList(
+        this,
+        this.choiceOverlay,
+        "Choose Map Width",
+        widths.map((n) => ({
+          label: `${n} tiles`,
+          highlighted: n === this.draft.cols,
+          onPick: () => {
+            this.draft = createBlankDraft(this.draft.id, this.draft.name, n, this.draft.rows);
+            this.rebuildGridSystem();
+            this.renderGrid();
+          },
+        })),
+        () => this.refreshAll(),
+      );
     });
     this.widthLabel = widthBtn.label;
     this.centeredObjects.push({ obj: widthBtn.rect, dx: dx0 + w + gap, y }, { obj: widthBtn.label, dx: dx0 + w + gap, y });
 
     const heightBtn = this.buildSmallButton(startX + 2 * (w + gap), y, w, 40, "", 0x2a2a3a, () => {
-      const next = this.draft.rows >= MAX_MAP_ROWS ? MIN_MAP_ROWS : this.draft.rows + 1;
-      this.draft = createBlankDraft(this.draft.id, this.draft.name, this.draft.cols, next);
-      this.rebuildGridSystem();
-      this.renderGrid();
-      this.refreshAll();
+      const heights: number[] = [];
+      for (let n = MIN_MAP_ROWS; n <= MAX_MAP_ROWS; n++) heights.push(n);
+      openChoiceList(
+        this,
+        this.choiceOverlay,
+        "Choose Map Height",
+        heights.map((n) => ({
+          label: `${n} tiles`,
+          highlighted: n === this.draft.rows,
+          onPick: () => {
+            this.draft = createBlankDraft(this.draft.id, this.draft.name, this.draft.cols, n);
+            this.rebuildGridSystem();
+            this.renderGrid();
+          },
+        })),
+        () => this.refreshAll(),
+      );
     });
     this.heightLabel = heightBtn.label;
     this.centeredObjects.push(

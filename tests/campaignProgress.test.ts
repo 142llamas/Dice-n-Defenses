@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CAMPAIGN_PROGRESS,
+  areCampaignsCompleted,
   getHighestCompletedChapter,
   isCampaignCompleted,
   isChapterCompleted,
@@ -77,6 +78,25 @@ describe("CampaignProgressSystem", () => {
   it("an unmentioned campaign id is reported as not completed", () => {
     const progress = markCampaignCompleted(DEFAULT_CAMPAIGN_PROGRESS, "emberford-reach");
     expect(isCampaignCompleted(progress, "saltmere-shallows")).toBe(false);
+  });
+
+  // D-188: the capstone's own gating check.
+  describe("areCampaignsCompleted", () => {
+    it("is vacuously true for an empty id list", () => {
+      expect(areCampaignsCompleted(DEFAULT_CAMPAIGN_PROGRESS, [])).toBe(true);
+    });
+
+    it("is false if even one of several ids isn't completed", () => {
+      const progress = markCampaignCompleted(DEFAULT_CAMPAIGN_PROGRESS, "emberford-reach");
+      expect(areCampaignsCompleted(progress, ["emberford-reach", "saltmere-shallows"])).toBe(false);
+    });
+
+    it("is true only once every id in the list is completed", () => {
+      let progress = markCampaignCompleted(DEFAULT_CAMPAIGN_PROGRESS, "emberford-reach");
+      expect(areCampaignsCompleted(progress, ["emberford-reach", "saltmere-shallows"])).toBe(false);
+      progress = markCampaignCompleted(progress, "saltmere-shallows");
+      expect(areCampaignsCompleted(progress, ["emberford-reach", "saltmere-shallows"])).toBe(true);
+    });
   });
 
   // D-118 — per-chapter completion tracking for CAMPAIGN_STORY_DESIGN.md's

@@ -78,6 +78,17 @@ export interface CharacterClassDefinition {
   previewSummary: string;
   hitDie: number;
   primaryAbility: AbilityScoreId;
+  /**
+   * D-178: a hero's baseline (pre-weapon) basic-Attack style — melee or
+   * ranged — used together with `primaryAbility` by
+   * `CharacterSystem.combatStatsForClassLevel` to seed `attackDamage`/
+   * `attackRangeTiles`/`attackBonus` before any real weapon is equipped
+   * (once one is, `Hero.effectiveAttackDamage`/`attackRangeTiles` fully
+   * override to the weapon's own numbers). Replaces the removed
+   * "signature action" player pick — every class's real basic attack now
+   * comes from its own fixed identity, not a chosen ability.
+   */
+  basicAttackStyle: "melee" | "ranged";
   savingThrowProficiencies: AbilityScoreId[];
   /**
    * How many attacks a basic "Attack" action makes at a given level (Extra
@@ -168,6 +179,7 @@ export const FIGHTER: CharacterClassDefinition = {
     "A weapon-first frontliner who trades subtlety for raw action economy — Second Wind and Action Surge let it outlast and out-attack almost anyone, and Extra Attack scales further than any other class.",
   hitDie: 10,
   primaryAbility: "str",
+  basicAttackStyle: "melee",
   savingThrowProficiencies: ["str", "con"],
   subclassChoiceLevel: 3,
   attacksPerActionByLevel: {
@@ -342,6 +354,7 @@ export const WIZARD: CharacterClassDefinition = {
     "A prepared spellcaster with the widest toolkit in the game — a real spellbook, Fireball/Magic Missile-tier damage, and a spell for almost any situation, at the cost of being physically fragile.",
   hitDie: 6,
   primaryAbility: "int",
+  basicAttackStyle: "ranged",
   savingThrowProficiencies: ["int", "wis"],
   subclassChoiceLevel: 2,
   attacksPerActionByLevel: {
@@ -462,6 +475,7 @@ export const ROGUE: CharacterClassDefinition = {
     "A skirmisher built around Sneak Attack's flat bonus damage and Cunning Action's extra mobility/hiding — hits hard from stealth or Advantage, but a plain attack alone is unremarkable.",
   hitDie: 8,
   primaryAbility: "dex",
+  basicAttackStyle: "melee",
   savingThrowProficiencies: ["dex", "int"],
   subclassChoiceLevel: 3,
   attacksPerActionByLevel: {
@@ -653,6 +667,7 @@ export const CLERIC: CharacterClassDefinition = {
     "A Wisdom-based caster who keeps the party standing — Channel Divinity and a healing/buff-heavy spell list make it the closest thing to dedicated support, while still able to sling Sacred Flame in a pinch.",
   hitDie: 8,
   primaryAbility: "wis",
+  basicAttackStyle: "ranged",
   savingThrowProficiencies: ["wis", "cha"],
   subclassChoiceLevel: 1,
   attacksPerActionByLevel: {
@@ -817,6 +832,7 @@ export const BARBARIAN: CharacterClassDefinition = {
     "A tanky melee brawler who gets more dangerous as the fight gets worse — Rage adds damage resistance and bonus damage, and Reckless Attack trades defense for near-guaranteed hits.",
   hitDie: 12,
   primaryAbility: "str",
+  basicAttackStyle: "melee",
   savingThrowProficiencies: ["str", "con"],
   subclassChoiceLevel: 3,
   attacksPerActionByLevel: {
@@ -873,8 +889,9 @@ export const BARBARIAN: CharacterClassDefinition = {
     {
       level: 5,
       name: "Fast Movement",
-      description: "+10ft speed while unarmored. Inert — a created hero's movementTiles comes fixed from its race, with no per-class speed modifier hookup yet.",
-      mechanicallyActive: false,
+      description:
+        "+2 tiles of movement, from level 5 on (D-172: represents a flat 10ft bonus, rescaled from 5ft/tile). Mechanically active as of D-171 — see Hero.classMovementBonus (unconditional, not gated on \"unarmored\": this game has no armor-equipped detection, the same reason Unarmored Defense itself stays inert).",
+      mechanicallyActive: true,
     },
     {
       level: 6,
@@ -976,6 +993,7 @@ export const BARD: CharacterClassDefinition = {
     "A Charisma-based caster whose real strength is versatility — a broad, unusual spell list plus Bardic Inspiration make it useful in almost any situation without being the single best at any one thing.",
   hitDie: 8,
   primaryAbility: "cha",
+  basicAttackStyle: "ranged",
   savingThrowProficiencies: ["dex", "cha"],
   subclassChoiceLevel: 3,
   attacksPerActionByLevel: {
@@ -1143,6 +1161,7 @@ export const DRUID: CharacterClassDefinition = {
     "A Wisdom-based caster themed around nature and control — Wild Shape and a spell list full of battlefield-altering terrain and summons make it flexible rather than a straightforward damage-dealer.",
   hitDie: 8,
   primaryAbility: "wis",
+  basicAttackStyle: "ranged",
   savingThrowProficiencies: ["int", "wis"],
   subclassChoiceLevel: 2,
   attacksPerActionByLevel: {
@@ -1268,6 +1287,7 @@ export const MONK: CharacterClassDefinition = {
     "A Dexterity-based martial artist who spends Ki points on extra unarmed strikes and mobility tricks (Flurry of Blows, Step of the Wind) instead of relying on weapons or armor.",
   hitDie: 8,
   primaryAbility: "dex",
+  basicAttackStyle: "melee",
   savingThrowProficiencies: ["str", "dex"],
   subclassChoiceLevel: 3,
   attacksPerActionByLevel: {
@@ -1279,7 +1299,7 @@ export const MONK: CharacterClassDefinition = {
       level: 1,
       name: "Martial Arts",
       description:
-        "Unarmed strikes scale off Dexterity instead of Strength (mechanically active — see CharacterSystem.combatStatsForClassLevel's Monk branch). The SRD's free bonus-action unarmed strike is folded into this game's Ki/Flurry of Blows below (level 2), a deliberate simplification rather than two separate bonus-action mechanics.",
+        "Unarmed strikes scale off Dexterity instead of Strength (mechanically active — this class's own primaryAbility/basicAttackStyle is dex/melee, see CharacterSystem.combatStatsForClassLevel). The SRD's free bonus-action unarmed strike is folded into this game's Ki/Flurry of Blows below (level 2), a deliberate simplification rather than two separate bonus-action mechanics.",
       mechanicallyActive: true,
     },
     {
@@ -1298,8 +1318,9 @@ export const MONK: CharacterClassDefinition = {
     {
       level: 2,
       name: "Unarmored Movement",
-      description: "+10ft speed while unarmored. Inert — same boundary as the Barbarian's Fast Movement.",
-      mechanicallyActive: false,
+      description:
+        "+2 tiles of movement, from level 2 on (D-172: represents a flat 10ft bonus, rescaled from 5ft/tile). Mechanically active as of D-171 — see Hero.classMovementBonus (unconditional, same simplification as the Barbarian's Fast Movement; the SRD's later per-level speed increases beyond this flat bonus aren't modeled, same flat-number treatment every other scaling SRD feature in this file already gets).",
+      mechanicallyActive: true,
     },
     {
       level: 3,
@@ -1451,6 +1472,7 @@ export const PALADIN: CharacterClassDefinition = {
     "A melee hybrid that blends Fighter-like durability with a small but powerful spell list and Divine Smite, turning any landed hit into a burst of extra radiant damage.",
   hitDie: 10,
   primaryAbility: "str",
+  basicAttackStyle: "melee",
   savingThrowProficiencies: ["wis", "cha"],
   subclassChoiceLevel: 3,
   attacksPerActionByLevel: {
@@ -1589,6 +1611,7 @@ export const RANGER: CharacterClassDefinition = {
     "A Dexterity-based hybrid archer/skirmisher — Hunter's Mark and a handful of nature spells make its damage steadily reliable rather than explosive, closer to a Fighter with a few spell tricks than a real caster.",
   hitDie: 10,
   primaryAbility: "dex",
+  basicAttackStyle: "ranged",
   savingThrowProficiencies: ["str", "dex"],
   subclassChoiceLevel: 3,
   attacksPerActionByLevel: {
@@ -1759,6 +1782,7 @@ export const SORCERER: CharacterClassDefinition = {
     "A Charisma-based caster with fewer known spells than a Wizard but Metamagic to bend how those spells are cast — trades breadth for the ability to twist a small toolkit further.",
   hitDie: 6,
   primaryAbility: "cha",
+  basicAttackStyle: "ranged",
   savingThrowProficiencies: ["con", "cha"],
   subclassChoiceLevel: 1,
   attacksPerActionByLevel: {
@@ -1873,6 +1897,7 @@ export const WARLOCK: CharacterClassDefinition = {
     "A Charisma-based caster built around a small number of powerful spell slots that recharge on a Short Rest instead of a Long one, plus Eldritch Invocations that customize its signature Eldritch Blast.",
   hitDie: 8,
   primaryAbility: "cha",
+  basicAttackStyle: "ranged",
   savingThrowProficiencies: ["wis", "cha"],
   subclassChoiceLevel: 1,
   attacksPerActionByLevel: {

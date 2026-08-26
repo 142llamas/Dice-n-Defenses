@@ -124,6 +124,16 @@ export function isCampaignCompleted(progress: CampaignProgress, campaignId: stri
   return progress.completedIds[campaignId] ?? false;
 }
 
+/**
+ * D-188: the capstone's own gating check — locked until every id in
+ * `campaignIds` (the 6 regions) is individually completed. Vacuously true
+ * for an empty list. The first "all of these ids" aggregate helper in this
+ * system — every other query here checks one campaign id at a time.
+ */
+export function areCampaignsCompleted(progress: CampaignProgress, campaignIds: readonly string[]): boolean {
+  return campaignIds.every((id) => isCampaignCompleted(progress, id));
+}
+
 /** -1 means no chapter of this campaign has been completed yet. */
 export function getHighestCompletedChapter(progress: CampaignProgress, campaignId: string): number {
   return progress.completedChapters[campaignId] ?? -1;

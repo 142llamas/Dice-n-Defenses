@@ -127,13 +127,17 @@ describe("WaveSystem flying enemies", () => {
 
   it("ground routing is unchanged: a ground enemy still routes around walls", () => {
     // Regression guard: with no flying, ignoreWalls defaults false everywhere.
+    // Checks after a single phase only (not two) — D-172 doubled Grunt's
+    // speed to 4 tiles/phase, and diagonal movement's cheaper-than-expected
+    // effective cost meant even a widened maze let it clear both walls AND
+    // breach the exit within two phases, vanishing it from `ws.enemies`
+    // before the assertion below. One phase's budget is a much safer bound.
     const map = new GameMap(parseMapRows("detour", "Detour", ["S.#..", "...#.", "....X"]));
     const ws = new WaveSystem(map, new PathfindingSystem(map), [wave("grunt")], {
       startingIntegrity: 20, random: RandomService.fixed(),
     });
     ws.startWave(0);
-    ws.tickEnemyPhase(); // spawn
-    ws.tickEnemyPhase(); // advance
+    ws.tickEnemyPhase(); // spawn + advance
     // Wherever it is, it never stood on a wall tile.
     expect(map.isWalkable(ws.enemies[0].position)).toBe(true);
   });

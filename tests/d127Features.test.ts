@@ -23,7 +23,6 @@ function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
     classId: "fighter",
     level: 1,
     abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-    abilityId: "cleave",
     controlledBy: "human",
     ...overrides,
   };
@@ -39,12 +38,12 @@ function levelUpTo(hero: Hero, level: number): void {
 
 describe("Rogue's Blindsense / Ranger's Feral Senses — hasStealthSense (D-127)", () => {
   it("a level-1 Rogue/Ranger has no stealth sense yet", () => {
-    expect(heroFromBuild({ classId: "rogue", abilityId: "cleave" }).hasStealthSense).toBe(false);
-    expect(heroFromBuild({ classId: "ranger", abilityId: "cleave" }).hasStealthSense).toBe(false);
+    expect(heroFromBuild({ classId: "rogue" }).hasStealthSense).toBe(false);
+    expect(heroFromBuild({ classId: "ranger" }).hasStealthSense).toBe(false);
   });
 
   it("a Rogue gains Blindsense at level 14, not level 13", () => {
-    const rogue = heroFromBuild({ classId: "rogue", abilityId: "cleave" });
+    const rogue = heroFromBuild({ classId: "rogue" });
     levelUpTo(rogue, 13);
     expect(rogue.hasStealthSense).toBe(false);
     rogue.levelUpClass();
@@ -53,7 +52,7 @@ describe("Rogue's Blindsense / Ranger's Feral Senses — hasStealthSense (D-127)
   });
 
   it("a Ranger gains Feral Senses at level 18, not level 17", () => {
-    const ranger = heroFromBuild({ classId: "ranger", abilityId: "cleave" });
+    const ranger = heroFromBuild({ classId: "ranger" });
     levelUpTo(ranger, 17);
     expect(ranger.hasStealthSense).toBe(false);
     ranger.levelUpClass();

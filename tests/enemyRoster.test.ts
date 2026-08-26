@@ -16,15 +16,15 @@ describe("Enemy roster (D-095)", () => {
     }
   });
 
-  it("has exactly five minibosses, six true bosses, two legendaries, the rest minions", () => {
+  it("has exactly six minibosses, six true bosses, two legendaries, the rest minions", () => {
     const byRole = { minion: 0, miniboss: 0, boss: 0, legendary: 0 };
     for (const def of Object.values(ENEMY_DEFINITIONS)) {
       byRole[def.role!] += 1;
     }
-    expect(byRole.miniboss).toBe(5); // 2 pre-20 + juggernaut + bloodrage-warlord + the-husk (Phase 21)
+    expect(byRole.miniboss).toBe(9); // 2 pre-20 + juggernaut + bloodrage-warlord + the-husk (Phase 21) + tide-wretch (D-177) + corrupted-sorrel (D-185) + ashbound-honor-guard + drowned-honor-captain (D-188)
     expect(byRole.boss).toBe(6); // 3 pre-20 + warlord-korrath + the-devourer + sundered-king (Phase 21)
     expect(byRole.legendary).toBe(2); // ashen-sovereign + the-hollow-empress
-    expect(byRole.minion).toBe(50); // 27 pre-21 + 21 new Phase 21 minions + 2 new Phase 25 minions
+    expect(byRole.minion).toBe(54); // 27 pre-21 + 21 new Phase 21 minions + 2 new Phase 25 minions + 4 new D-188 reskins
   });
 
   it("the four new enemies resolve by id", () => {
@@ -44,7 +44,7 @@ describe("Enemy roster (D-095)", () => {
     expect(getEnemyDefinition("blightmother").role).toBe("boss");
   });
 
-  const SAVING_THROW_ATTACKERS = ["blightcaller", "blightmother", "frost-warden", "the-hollow-empress"];
+  const SAVING_THROW_ATTACKERS = ["blightcaller", "blightmother", "frost-warden", "the-hollow-empress", "hollow-caller"];
 
   it("only the save-based attackers carry a savingThrowAttackDC — every other enemy rolls a normal to-hit", () => {
     for (const [id, def] of Object.entries(ENEMY_DEFINITIONS)) {

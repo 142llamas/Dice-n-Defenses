@@ -9,8 +9,6 @@ import {
   POINT_BUY_MIN_SCORE,
   POINT_BUY_MAX_SCORE,
   heroDefinitionFromBuild,
-  attackStyleForAbility,
-  hasDuplicateAbilities,
   hasDuplicateNames,
   type CharacterBuild,
 } from "../src/game/systems/CharacterBuildSystem";
@@ -171,18 +169,6 @@ describe("pointBuyAllocatorFromScores (D-147, piece 3)", () => {
   });
 });
 
-describe("attack style from signature ability", () => {
-  it("treats short-range abilities as melee", () => {
-    expect(attackStyleForAbility("cleave")).toBe("melee");
-    expect(attackStyleForAbility("taunting-slam")).toBe("melee");
-  });
-
-  it("treats longer-range abilities as ranged", () => {
-    expect(attackStyleForAbility("piercing-shot")).toBe("ranged");
-    expect(attackStyleForAbility("frost-bolt")).toBe("ranged");
-  });
-});
-
 function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
   return {
     id: "build-1",
@@ -191,7 +177,6 @@ function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
     classId: "fighter",
     level: 1,
     abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-    abilityId: "cleave",
     controlledBy: "human",
     ...overrides,
   };
@@ -202,21 +187,11 @@ describe("heroDefinitionFromBuild", () => {
     const def = heroDefinitionFromBuild(build());
     expect(def.id).toBe("build-1");
     expect(def.name).toBe("Kael");
-    expect(def.abilityId).toBe("cleave");
     // CON 13 -> +1 mod; level-1 Fighter max HP = hitDie(10) + conMod(1) = 11.
     expect(def.maxHealth).toBe(11);
-    // melee (cleave) uses STR mod: 15 -> +2; base weapon 2 + 2 = 4.
+    // Fighter is melee/str: 15 -> +2; base weapon 2 + 2 = 4.
     expect(def.attackDamage).toBe(4);
     expect(def.attackRangeTiles).toBe(1);
-  });
-
-  it("uses DEX instead of STR for a ranged signature ability", () => {
-    const def = heroDefinitionFromBuild(
-      build({ abilityId: "piercing-shot", abilityScores: { str: 8, dex: 15, con: 13, int: 12, wis: 10, cha: 8 } }),
-    );
-    // DEX 15 -> +2; base weapon 2 + 2 = 4.
-    expect(def.attackDamage).toBe(4);
-    expect(def.attackRangeTiles).toBe(3);
   });
 
   it("never derives attack damage below 1, even with a very low modifier", () => {
@@ -224,8 +199,8 @@ describe("heroDefinitionFromBuild", () => {
     expect(def.attackDamage).toBeGreaterThanOrEqual(1);
   });
 
-  it("defaults to the standard 3-tile speed for a Human", () => {
-    expect(heroDefinitionFromBuild(build()).movementTiles).toBe(3);
+  it("defaults to the standard 6-tile speed for a Human (D-172: 30ft ÷ 5ft/tile)", () => {
+    expect(heroDefinitionFromBuild(build()).movementTiles).toBe(6);
   });
 });
 
@@ -251,48 +226,47 @@ describe("heroDefinitionFromBuild — abilityScores (Phase 13.3, D-089)", () => 
 });
 
 describe("heroDefinitionFromBuild — race (Phase 11.3, D-075)", () => {
-  it("gives a Dwarf or Halfling the SRD's slower speed (2 tiles instead of the default 3)", () => {
-    expect(heroDefinitionFromBuild(build({ raceId: "dwarf" })).movementTiles).toBe(2);
-    expect(heroDefinitionFromBuild(build({ raceId: "halfling" })).movementTiles).toBe(2);
+  it("gives a Dwarf or Halfling the SRD's slower speed (5 tiles instead of the default 6 — D-172: real 25ft ÷ 5ft/tile)", () => {
+    expect(heroDefinitionFromBuild(build({ raceId: "dwarf" })).movementTiles).toBe(5);
+    expect(heroDefinitionFromBuild(build({ raceId: "halfling" })).movementTiles).toBe(5);
   });
 
   it("gives Elf/Half-Elf/Half-Orc the same standard speed as Human", () => {
-    expect(heroDefinitionFromBuild(build({ raceId: "elf" })).movementTiles).toBe(3);
-    expect(heroDefinitionFromBuild(build({ raceId: "half-elf" })).movementTiles).toBe(3);
-    expect(heroDefinitionFromBuild(build({ raceId: "half-orc" })).movementTiles).toBe(3);
+    expect(heroDefinitionFromBuild(build({ raceId: "elf" })).movementTiles).toBe(6);
+    expect(heroDefinitionFromBuild(build({ raceId: "half-elf" })).movementTiles).toBe(6);
+    expect(heroDefinitionFromBuild(build({ raceId: "half-orc" })).movementTiles).toBe(6);
   });
 });
 
 describe("heroDefinitionFromBuild — Rogue Sneak Attack (Phase 11.3, D-075)", () => {
   it("adds the level-1 Sneak Attack rider (+4) on top of the usual STR/DEX modifier", () => {
-    const def = heroDefinitionFromBuild(build({ classId: "rogue", abilityId: "piercing-shot" }));
-    // DEX 14 -> +2; base weapon 2 + 2 = 4, plus Sneak Attack's +4 at level 1 = 8.
+    const def = heroDefinitionFromBuild(build({ classId: "rogue" }));
+    // Rogue is melee/dex: DEX 14 -> +2; base weapon 2 + 2 = 4, plus Sneak Attack's +4 at level 1 = 8.
     expect(def.attackDamage).toBe(8);
   });
 
   it("gives the Fighter no such rider, even with an identical build otherwise", () => {
-    const def = heroDefinitionFromBuild(build({ classId: "fighter", abilityId: "piercing-shot" }));
+    const def = heroDefinitionFromBuild(build({ classId: "fighter" }));
     expect(def.attackDamage).toBe(4);
   });
 });
 
 describe("heroDefinitionFromBuild — classRiderDamage (Phase 17, D-108)", () => {
   it("carries the Rogue's Sneak Attack rider separately, so a later equipped weapon can still add it on top", () => {
-    const def = heroDefinitionFromBuild(build({ classId: "rogue", abilityId: "piercing-shot" }));
+    const def = heroDefinitionFromBuild(build({ classId: "rogue" }));
     expect(def.classRiderDamage).toBe(4); // Sneak Attack at level 1
   });
 
   it("is 0 for a class with no by-level bonus-damage table", () => {
-    const def = heroDefinitionFromBuild(build({ classId: "fighter", abilityId: "piercing-shot" }));
+    const def = heroDefinitionFromBuild(build({ classId: "fighter" }));
     expect(def.classRiderDamage).toBe(0);
   });
 });
 
 describe("heroDefinitionFromBuild — Cleric (Phase 11.3, D-075)", () => {
-  it("uses WIS (not DEX or INT) for its cast cantrip's attack modifier, and a d8-based HP total", () => {
+  it("uses WIS (not DEX or INT) for its basic-attack modifier, and a d8-based HP total", () => {
     const clericBuild = build({
       classId: "cleric",
-      abilityId: "sacred-flame",
       abilityScores: { str: 8, dex: 12, con: 13, int: 10, wis: 16, cha: 10 },
     });
     const def = heroDefinitionFromBuild(clericBuild);
@@ -304,24 +278,18 @@ describe("heroDefinitionFromBuild — Cleric (Phase 11.3, D-075)", () => {
 });
 
 describe("heroDefinitionFromBuild — Wizard (Phase 11.2, D-074)", () => {
-  it("uses INT (not DEX) for a cast cantrip's attack modifier, and a d6-based HP total", () => {
+  it("uses INT (not DEX) for its basic-attack modifier, and a d6-based HP total", () => {
     const wizardBuild = build({
       classId: "wizard",
-      abilityId: "fire-bolt",
       abilityScores: { str: 8, dex: 15, con: 13, int: 16, wis: 10, cha: 8 },
     });
     const def = heroDefinitionFromBuild(wizardBuild);
     // INT 16 -> +3; base weapon 2 + 3 = 5. If this used DEX (15 -> +2) it would be 4.
     expect(def.attackDamage).toBe(5);
-    // Fire Bolt's range (3) puts it in the "ranged" bucket for range purposes.
+    // Wizard's basicAttackStyle is ranged.
     expect(def.attackRangeTiles).toBe(3);
     // CON 13 -> +1 mod; level-1 Wizard max HP = hitDie(6) + conMod(1) = 7.
     expect(def.maxHealth).toBe(7);
-  });
-
-  it("still uses STR/DEX for a Fighter's mundane signature ability, unaffected by the spell-INT rule", () => {
-    const def = heroDefinitionFromBuild(build()); // Fighter, "cleave"
-    expect(def.attackDamage).toBe(4); // unchanged from the existing Fighter test above
   });
 });
 
@@ -367,21 +335,6 @@ describe("heroDefinitionFromBuild — manual spell picks (D-135)", () => {
 });
 
 describe("party validation", () => {
-  it("flags duplicate signature abilities across a party", () => {
-    const party = [build({ id: "a", abilityId: "cleave" }), build({ id: "b", abilityId: "cleave" })];
-    expect(hasDuplicateAbilities(party)).toBe(true);
-  });
-
-  it("does not flag a party where every ability is distinct", () => {
-    const party = [
-      build({ id: "a", abilityId: "cleave" }),
-      build({ id: "b", abilityId: "piercing-shot" }),
-      build({ id: "c", abilityId: "taunting-slam" }),
-      build({ id: "d", abilityId: "frost-bolt" }),
-    ];
-    expect(hasDuplicateAbilities(party)).toBe(false);
-  });
-
   it("flags duplicate names across a party", () => {
     const party = [build({ id: "a", name: "Kael" }), build({ id: "b", name: "Kael" })];
     expect(hasDuplicateNames(party)).toBe(true);

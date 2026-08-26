@@ -22,7 +22,6 @@ function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
     classId: "fighter",
     level: 1,
     abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-    abilityId: "cleave",
     controlledBy: "human",
     ...overrides,
   };
@@ -34,7 +33,7 @@ function heroFromBuild(overrides: Partial<CharacterBuild> = {}): Hero {
 
 describe("Barbarian's Reckless Attack (D-125)", () => {
   it("is unavailable below level 2 or for any other class", () => {
-    const level1 = heroFromBuild({ classId: "barbarian", abilityId: "cleave" });
+    const level1 = heroFromBuild({ classId: "barbarian" });
     expect(level1.canUseRecklessAttack()).toBe(false);
     const fighter = heroFromBuild();
     fighter.levelUpClass();
@@ -42,7 +41,7 @@ describe("Barbarian's Reckless Attack (D-125)", () => {
   });
 
   it("becomes available at level 2, sets both halves of the trade, and can't be re-activated the same turn", () => {
-    const hero = heroFromBuild({ classId: "barbarian", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "barbarian" });
     hero.levelUpClass();
     expect(hero.level).toBe(2);
     expect(hero.canUseRecklessAttack()).toBe(true);
@@ -53,7 +52,7 @@ describe("Barbarian's Reckless Attack (D-125)", () => {
   });
 
   it("does NOT cost the action or bonus action — only the toggle itself is spent", () => {
-    const hero = heroFromBuild({ classId: "barbarian", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "barbarian" });
     hero.levelUpClass();
     hero.activateRecklessAttack();
     expect(hero.canAct()).toBe(true);
@@ -61,7 +60,7 @@ describe("Barbarian's Reckless Attack (D-125)", () => {
   });
 
   it("lasts until the start of the hero's next turn (resetForNewTurn), not just the current attack", () => {
-    const hero = heroFromBuild({ classId: "barbarian", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "barbarian" });
     hero.levelUpClass();
     hero.activateRecklessAttack();
     expect(hero.grantsAttackerAdvantage).toBe(true);
@@ -73,13 +72,13 @@ describe("Barbarian's Reckless Attack (D-125)", () => {
 
 describe("Cleric's Channel Divinity: Preserve Life (D-125)", () => {
   function lifeCleric(): Hero {
-    return heroFromBuild({ classId: "cleric", abilityId: "sacred-flame", subclassId: "life-domain" });
+    return heroFromBuild({ classId: "cleric", subclassId: "life-domain" });
   }
 
   it("grants no uses below level 2, and none at all without the Life Domain subclass", () => {
     const level1 = lifeCleric();
     expect(level1.canUsePreserveLife()).toBe(false);
-    const noSubclass = heroFromBuild({ classId: "cleric", abilityId: "sacred-flame" });
+    const noSubclass = heroFromBuild({ classId: "cleric" });
     noSubclass.levelUpClass();
     expect(noSubclass.canUsePreserveLife()).toBe(false);
   });
@@ -104,7 +103,7 @@ describe("Cleric's Channel Divinity: Preserve Life (D-125)", () => {
     for (let i = 1; i < 6; i++) hero.levelUpClass(); // level 6
     const heroHalf = Math.floor(hero.effectiveMaxHealth / 2);
     hero.health = 1; // far below half-max
-    const ally = heroFromBuild({ classId: "fighter", abilityId: "cleave" });
+    const ally = heroFromBuild({ classId: "fighter" });
     const allyHalf = Math.floor(ally.effectiveMaxHealth / 2);
     ally.health = allyHalf - 1; // one point short of the cap
     const healed = hero.usePreserveLife([hero, ally]);
@@ -146,7 +145,7 @@ describe("hero-side stealth: isHidden/hide/reveal (D-125)", () => {
 
 describe("Ranger's Vanish (D-125)", () => {
   it("is unavailable below level 14 or for any other class", () => {
-    const ranger = heroFromBuild({ classId: "ranger", abilityId: "cleave" });
+    const ranger = heroFromBuild({ classId: "ranger" });
     for (let i = 1; i < 13; i++) ranger.levelUpClass();
     expect(ranger.canUseVanish()).toBe(false);
     const fighter = heroFromBuild();
@@ -154,7 +153,7 @@ describe("Ranger's Vanish (D-125)", () => {
   });
 
   it("spends the bonus action at level 14+ regardless of the (caller-rolled) outcome", () => {
-    const ranger = heroFromBuild({ classId: "ranger", abilityId: "cleave" });
+    const ranger = heroFromBuild({ classId: "ranger" });
     for (let i = 1; i < 14; i++) ranger.levelUpClass();
     expect(ranger.canUseVanish()).toBe(true);
     ranger.useVanish();
@@ -163,7 +162,7 @@ describe("Ranger's Vanish (D-125)", () => {
   });
 
   it("shares the bonus-action slot with Hunter's Mark — using one blocks the other", () => {
-    const ranger = heroFromBuild({ classId: "ranger", abilityId: "cleave" });
+    const ranger = heroFromBuild({ classId: "ranger" });
     for (let i = 1; i < 14; i++) ranger.levelUpClass();
     expect(ranger.canUseHuntersMark()).toBe(true);
     ranger.useVanish();
@@ -173,13 +172,13 @@ describe("Ranger's Vanish (D-125)", () => {
 
 describe("Rogue's Cunning Action: Hide (D-125)", () => {
   it("is unavailable below level 2 or for any other class", () => {
-    const level1 = heroFromBuild({ classId: "rogue", abilityId: "cleave" });
+    const level1 = heroFromBuild({ classId: "rogue" });
     expect(level1.canUseCunningActionHide()).toBe(false);
     expect(heroFromBuild().canUseCunningActionHide()).toBe(false); // Fighter
   });
 
   it("shares the bonus-action slot with Cunning Action's Dash", () => {
-    const rogue = heroFromBuild({ classId: "rogue", abilityId: "cleave" });
+    const rogue = heroFromBuild({ classId: "rogue" });
     rogue.levelUpClass();
     expect(rogue.canUseCunningActionHide()).toBe(true);
     rogue.useCunningActionHide();
@@ -189,14 +188,14 @@ describe("Rogue's Cunning Action: Hide (D-125)", () => {
 
 describe("Monk's Empty Body (D-125)", () => {
   it("is unavailable below level 18, for any other class, or without 4 Ki", () => {
-    const monk = heroFromBuild({ classId: "monk", abilityId: "cleave" });
+    const monk = heroFromBuild({ classId: "monk" });
     for (let i = 1; i < 17; i++) monk.levelUpClass();
     expect(monk.canUseEmptyBody()).toBe(false);
     expect(heroFromBuild().canUseEmptyBody()).toBe(false); // Fighter
   });
 
   it("spends this hero's whole Ki pool and the action, and hides outright with no check", () => {
-    const monk = heroFromBuild({ classId: "monk", abilityId: "cleave" });
+    const monk = heroFromBuild({ classId: "monk" });
     for (let i = 1; i < 18; i++) monk.levelUpClass();
     expect(monk.kiPointsAvailable).toBeGreaterThan(0);
     expect(monk.canUseEmptyBody()).toBe(true);
@@ -209,7 +208,7 @@ describe("Monk's Empty Body (D-125)", () => {
 
 describe("Ranger's Hide in Plain Sight + Thief's Supreme Sneak — stealthCheckModifier/stealthCheckAdvantage (D-125)", () => {
   it("adds a flat +10 for a level-10+ Ranger that hasn't moved this turn, and nothing once it has moved", () => {
-    const ranger = heroFromBuild({ classId: "ranger", abilityId: "cleave" });
+    const ranger = heroFromBuild({ classId: "ranger" });
     for (let i = 1; i < 10; i++) ranger.levelUpClass();
     const stillModifier = ranger.stealthCheckModifier();
     ranger.moveTo({ x: 1, y: 0 });
@@ -218,14 +217,14 @@ describe("Ranger's Hide in Plain Sight + Thief's Supreme Sneak — stealthCheckM
   });
 
   it("grants no Hide in Plain Sight bonus below level 10 (moving or not changes nothing)", () => {
-    const lowRanger = heroFromBuild({ classId: "ranger", abilityId: "cleave" });
+    const lowRanger = heroFromBuild({ classId: "ranger" });
     const stillModifier = lowRanger.stealthCheckModifier();
     lowRanger.moveTo({ x: 1, y: 0 });
     expect(lowRanger.stealthCheckModifier()).toBe(stillModifier);
   });
 
   it("Supreme Sneak grants Advantage for a Thief that hasn't moved; Advantage disappears once it moves", () => {
-    const thief = heroFromBuild({ classId: "rogue", abilityId: "cleave", subclassId: "thief" });
+    const thief = heroFromBuild({ classId: "rogue", subclassId: "thief" });
     for (let i = 1; i < 9; i++) thief.levelUpClass();
     expect(thief.stealthCheckAdvantage).toBe("advantage");
     thief.moveTo({ x: 1, y: 0 });
@@ -233,7 +232,7 @@ describe("Ranger's Hide in Plain Sight + Thief's Supreme Sneak — stealthCheckM
   });
 
   it("is 'normal' for the SRD Rogue sibling subclass (Shadowblade, not Thief)", () => {
-    const shadowblade = heroFromBuild({ classId: "rogue", abilityId: "cleave", subclassId: "shadowblade" });
+    const shadowblade = heroFromBuild({ classId: "rogue", subclassId: "shadowblade" });
     for (let i = 1; i < 9; i++) shadowblade.levelUpClass();
     expect(shadowblade.stealthCheckAdvantage).toBe("normal");
   });
@@ -241,7 +240,7 @@ describe("Ranger's Hide in Plain Sight + Thief's Supreme Sneak — stealthCheckM
 
 describe("Wizard's Spell Mastery (D-125)", () => {
   function wizard(): Hero {
-    return heroFromBuild({ classId: "wizard", abilityId: "fire-bolt" });
+    return heroFromBuild({ classId: "wizard" });
   }
 
   it("is not needed below level 18", () => {
@@ -285,7 +284,7 @@ describe("Wizard's Spell Mastery (D-125)", () => {
 
 describe("Wizard's Signature Spells (D-125)", () => {
   function wizard(): Hero {
-    return heroFromBuild({ classId: "wizard", abilityId: "fire-bolt" });
+    return heroFromBuild({ classId: "wizard" });
   }
 
   it("is not needed below level 20", () => {
@@ -334,7 +333,7 @@ describe("Wizard's Signature Spells (D-125)", () => {
 
 describe("Warlock's Mystic Arcanum (D-125)", () => {
   function warlock(): Hero {
-    return heroFromBuild({ classId: "warlock", abilityId: "eldritch-blast" });
+    return heroFromBuild({ classId: "warlock" });
   }
 
   it("is not needed below its unlock level (6th tier needs level 11)", () => {

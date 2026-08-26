@@ -74,7 +74,6 @@ function isCharacterBuild(value: unknown): value is CharacterBuild {
     typeof v.classId === "string" &&
     typeof v.level === "number" &&
     isAbilityScores(v.abilityScores) &&
-    typeof v.abilityId === "string" &&
     typeof v.controlledBy === "string" &&
     CONTROL_MODES.includes(v.controlledBy as HeroControlMode)
   );

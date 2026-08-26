@@ -46,6 +46,16 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    // D-16x: re-syncs the ScaleManager's tracked size against the real
+    // canvas/parent element on every entry to Main Menu — a targeted
+    // mitigation for a reported bug (a horizontal-only squish that appears
+    // after exiting a battle and persists across every later screen) whose
+    // exact mechanism couldn't be confirmed by reading the code alone (no
+    // scale-mode-swap/setGameSize/canvas.style code exists anywhere in this
+    // codebase to point at directly). Cheap and harmless if the scale state
+    // was already correct.
+    this.scale.refresh();
+
     // D-154: `initAuth` must only ever subscribe once per scene lifetime —
     // `rebuildLayout()` (below) recreates the Account button on every
     // resize, so its label refresh reads the live `this.authState`/
@@ -231,7 +241,16 @@ export class MainMenuScene extends Phaser.Scene {
     );
   }
 
-  /** Every way to actually get into a battle: New Game (above) is the hero action, these are the alternates. */
+  /**
+   * Every way to actually get into a battle: New Game (above) is the hero
+   * action, these are the alternates. D-165 (KI-098 item 5) added "Build
+   * Party" — the one entry here that DOESN'T end in a battle: it opens the
+   * exact same `CharacterCreationScene` "New Game" does (which already
+   * lets a player Save Party and Back out without ever pressing Start
+   * Battle — see that scene's own Save Party button), just under an
+   * honestly-labeled entry point instead of leaving that capability
+   * undiscoverable behind a button named "New Game."
+   */
   private buildJourneyRow(): void {
     const cx = getViewport(this).width / 2;
     createSectionLabel(this, cx, 366, "◆ Continue Your Journey ◆", 5);
@@ -242,6 +261,7 @@ export class MainMenuScene extends Phaser.Scene {
       { label: "Free Play", onClick: () => this.scene.start("FreePlayScene") },
     ];
     if (firebaseReady) entries.push({ label: "Co-op", onClick: () => this.scene.start("CoopLobbyScene") });
+    entries.push({ label: "Build Party", onClick: () => this.scene.start("CharacterCreationScene") });
 
     const width = 220;
     const { xs, itemWidth } = centeredRowX(entries.length, width, 20, cx, getViewport(this).width - 80);
@@ -348,7 +368,9 @@ export class MainMenuScene extends Phaser.Scene {
    * something either way.
    */
   private buildExitControl(): void {
-    const handle = createOrnateButton(this, 170, getViewport(this).height - 40, 190, 36, "Exit Game", () => {
+    // D-16x: was `height - 40` (only 4px clear of `drawScreenBackdrop`'s
+    // frame border on hover) — real clearance now.
+    const handle = createOrnateButton(this, 170, getViewport(this).height - 56, 190, 36, "Exit Game", () => {
       window.close();
       handle.setLabel("You may now close this tab");
       handle.setDisabled(true);
@@ -372,7 +394,7 @@ export class MainMenuScene extends Phaser.Scene {
     if (!firebaseReady) return;
 
     const x = getViewport(this).width - 170;
-    const y = 88;
+    const y = 104; // D-16x: was 88 — shifted down to match Settings clearing the frame border
 
     // D-154: shows "Connecting…" only until the FIRST auth callback ever
     // resolves (`this.authResolved`), matching this project's original
@@ -405,7 +427,7 @@ export class MainMenuScene extends Phaser.Scene {
    */
   private buildSettingsControl(): void {
     const x = getViewport(this).width - 170;
-    const y = 32;
+    const y = 48; // D-16x: was 32 — its top edge (10) sat above drawScreenBackdrop's frame line (18), a real overlap
 
     createOrnateButton(
       this,

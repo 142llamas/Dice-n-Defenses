@@ -110,7 +110,6 @@ describe("Hero turn economy", () => {
         attackRangeTiles: 1,
         attackBonus: 4,
         baseArmorClass: 10,
-        abilityId: "cleave",
       },
       { x: 0, y: 0 },
     );
@@ -126,7 +125,6 @@ describe("Hero turn economy", () => {
         attackRangeTiles: 1,
         attackBonus: 4,
         baseArmorClass: 10,
-        abilityId: "cleave",
       },
       { x: 2, y: 3 },
     );

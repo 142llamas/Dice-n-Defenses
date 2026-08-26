@@ -1,4 +1,5 @@
 import type { Hero } from "../entities/Hero";
+import { getAbility } from "../data/abilities";
 
 export type HeroActionKind = "bonusAction" | "classAction";
 
@@ -55,4 +56,20 @@ export function listHeroActions(hero: Hero): HeroActionRegistryEntry[] {
 /** The first currently-available action of `kind` for `hero`, or undefined if none applies. */
 export function firstAvailableHeroAction(hero: Hero, kind: HeroActionKind): HeroActionRegistryEntry | undefined {
   return listHeroActions(hero).find((entry) => entry.kind === kind && entry.available);
+}
+
+/**
+ * D-165 (KI-098 item 2): the shared display label for one of
+ * `Hero.actionHotkeys()`'s slots — a registry action's own label (its
+ * keyboard-shortcut suffix stripped, since a pinned hotkey slot has no such
+ * shortcut of its own), or a known spell/cantrip's name. Shared by
+ * `CharacterSheetScene`'s hotkey editor and `BattleScene`'s in-battle
+ * hotkey bar so the two can never drift apart.
+ */
+export function hotkeyDisplayLabel(hero: Hero, id: string | undefined): string {
+  if (!id) return "(empty)";
+  const registryMatch = listHeroActions(hero).find((a) => a.id === id);
+  if (registryMatch) return registryMatch.label.replace(" (R)", "").replace(" (T)", "");
+  if (hero.knownSpellAbilityIds().includes(id)) return getAbility(id).name;
+  return id;
 }

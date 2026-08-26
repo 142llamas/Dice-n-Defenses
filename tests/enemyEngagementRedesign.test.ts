@@ -39,12 +39,14 @@ function makeWs(rows: string[], enemyId = "grunt") {
 
 describe("§1 (D-139): always advance by default, forced melee only when boxed in", () => {
   it("ignores an adjacent off-path hero and keeps advancing", () => {
-    const ws = makeWs(["S..X", "...."]);
+    // A longer lane than before (D-172 doubled Grunt's speed to 4 tiles/
+    // phase) so its full, undeflected move doesn't reach the exit.
+    const ws = makeWs(["S.....X", "......."]);
     const hero = heroAt("hero-1", { x: 0, y: 1 }); // adjacent to spawn, off the row-0 route
     const t1 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 0 && p.y === 1 });
     expect(t1.attacks).toHaveLength(0);
     expect(t1.moves).toHaveLength(1);
-    expect(ws.enemies[0].position).toEqual({ x: 2, y: 0 }); // grunt's full 2-tile move, untouched
+    expect(ws.enemies[0].position).toEqual({ x: 4, y: 0 }); // grunt's full 4-tile move, untouched
   });
 
   it("forces melee when a hero is the SOLE blocker (a dead end)", () => {
@@ -57,7 +59,9 @@ describe("§1 (D-139): always advance by default, forced melee only when boxed i
   });
 
   it("reroutes around a hero blocking one of two open routes instead of fighting", () => {
-    const ws = makeWs(["S..X", "...."]);
+    // A longer lane than before (D-172 doubled Grunt's speed to 4 tiles/
+    // phase) so a full detour doesn't also reach the exit this same phase.
+    const ws = makeWs(["S.....X", "......."]);
     const hero = heroAt("hero-1", { x: 1, y: 0 }); // blocks row 0's second tile only
     const t1 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === 1 && p.y === 0 });
     expect(t1.attacks).toHaveLength(0); // detoured instead of fighting
@@ -76,7 +80,10 @@ describe("§2 (D-140): Aggressiveness — a tolerance dial on detour length", ()
   // forces a much longer one — enough to separate a low-aggressiveness
   // enemy (always worth detouring) from a high-aggressiveness one (not
   // worth it past a much smaller extra cost).
-  const rows = ["S..X", "....", "...."];
+  // A longer lane than before (D-172 nearly doubled both the Siegebreaker's
+  // and the Shadowfang's speed) so neither can reach the exit within one
+  // phase, detour or not.
+  const rows = ["S.....X", ".......", "......."];
   const blocked = (p: GridPosition) => p.x === 1 && p.y <= 1;
 
   it("a low-aggressiveness enemy (siege archetype, default 10) always pays a long detour rather than fight", () => {
@@ -193,19 +200,24 @@ describe("Enemy AI/Movement Redesign step 5 (D-143): move-attack-move + Sprint",
 
   it("Sprint doubles this phase's movement budget when the enemy isn't fighting", () => {
     const sprintDefId = "test-only-sprinter";
-    ENEMY_DEFINITIONS[sprintDefId] = { ...getEnemyDefinition("grunt"), id: sprintDefId, movementTiles: 2, sprints: true };
+    // D-172: matches the real Grunt's current 4-tile speed (not the old 2),
+    // so the plain-vs-sprint comparison below is still an apples-to-apples
+    // "same base speed, one of them doubled" check.
+    ENEMY_DEFINITIONS[sprintDefId] = { ...getEnemyDefinition("grunt"), id: sprintDefId, movementTiles: 4, sprints: true };
     try {
       // A single-row map keeps every step cardinal (5ft each) — no diagonal
       // rounding to account for, so the exact tile reached is a plain
-      // budget/5ft calculation either way.
-      const sprintWs = makeWs(["S.......X"], sprintDefId);
-      const plainWs = makeWs(["S.......X"], "grunt");
+      // budget/5ft calculation either way. Long enough that the sprinting
+      // enemy's doubled 8-tile budget doesn't reach the exit (which would
+      // breach and remove it before the position assertion below).
+      const sprintWs = makeWs(["S..........X"], sprintDefId);
+      const plainWs = makeWs(["S..........X"], "grunt");
       const t1 = sprintWs.tickEnemyPhase({});
       const t2 = plainWs.tickEnemyPhase({});
       expect(t1.moves).toHaveLength(1);
       expect(t2.moves).toHaveLength(1);
-      expect(plainWs.enemies[0].position).toEqual({ x: 2, y: 0 }); // plain movementTiles: 2
-      expect(sprintWs.enemies[0].position).toEqual({ x: 4, y: 0 }); // doubled: 4
+      expect(plainWs.enemies[0].position).toEqual({ x: 4, y: 0 }); // plain movementTiles: 4
+      expect(sprintWs.enemies[0].position).toEqual({ x: 8, y: 0 }); // doubled: 8
     } finally {
       delete ENEMY_DEFINITIONS[sprintDefId];
     }
@@ -360,13 +372,13 @@ describe("§3 (D-145): siege wall-targeting — seeking a wall not yet in range"
 
   it("is bounded to the enemy's current movement speed — a wall far outside reach doesn't distract it from its ordinary advance", () => {
     const { build, ws } = setupSiege(["S......X", "........"]);
-    build.place("barricade", { x: 6, y: 0 }); // Manhattan distance 6, well past reach (movement 2 + range 1 = 3)
+    build.place("barricade", { x: 6, y: 0 }); // Manhattan distance 6, just past reach (movement 4 + range 1 = 5, D-172)
     const ctx = siegeContext(build);
 
     const t1 = ws.tickEnemyPhase(ctx);
     expect(t1.structureAttacks).toHaveLength(0);
     expect(t1.moves).toHaveLength(1);
-    expect(ws.enemies[0].position).toEqual({ x: 2, y: 0 }); // its plain 2-tile advance, untouched
+    expect(ws.enemies[0].position).toEqual({ x: 4, y: 0 }); // its plain 4-tile advance, untouched
   });
 
   it("(committed) re-picks a fresh target once its original committed wall is destroyed, rather than getting stuck on a dead reference", () => {
@@ -437,15 +449,16 @@ describe("§3 (D-146): smart AoE/breath positioning for high-tier enemies", () =
       heroTargets,
       isBlocked: (p) => heroTargets.some((h) => h.position.x === p.x && h.position.y === p.y),
     });
-    // Cave Drake's own 2-tile movement, walked straight down the open row
-    // toward the exit — never diverting toward (1,1) the way a qualifying
-    // high-tier attacker would. Neither hero blocks that direct route at
-    // all (§1/D-139: no detour needed means nothing forces a fight), so —
-    // unlike the qualifying legendary above, which proactively seeks a
-    // fight — it doesn't even attack this phase, despite ending up within
-    // range 1 of heroA. This is the starkest possible contrast with the
-    // legendary case above (0 attacks here vs. 2 there).
-    expect(ws.enemies[0].position).toEqual({ x: 2, y: 0 });
+    // Cave Drake's own 4-tile movement (D-172), walked straight down the
+    // open row toward the exit — never diverting toward (1,1) the way a
+    // qualifying high-tier attacker would. Neither hero blocks that direct
+    // route at all (§1/D-139: no detour needed means nothing forces a
+    // fight), so — unlike the qualifying legendary above, which
+    // proactively seeks a fight — it doesn't even attack this phase,
+    // despite ending up within range 1 of heroA. This is the starkest
+    // possible contrast with the legendary case above (0 attacks here vs.
+    // 2 there).
+    expect(ws.enemies[0].position).toEqual({ x: 4, y: 0 });
     expect(t1.attacks).toHaveLength(0);
   });
 
@@ -458,8 +471,16 @@ describe("§3 (D-146): smart AoE/breath positioning for high-tier enemies", () =
       const t1 = ws.tickEnemyPhase({ heroTargets: [hero], isBlocked: (p) => p.x === hero.position.x && p.y === hero.position.y });
       // No tile could ever hit more than this one hero, so
       // `bestPositioningTile` finds nothing worth deviating for — the
-      // enemy just takes its plain 2-tile advance toward the exit.
-      expect(ws.enemies[0].position).toEqual({ x: 2, y: 0 });
+      // enemy just takes its plain, ordinary `advanceEnemy` route toward
+      // the exit. That route still has to detour around the hero's own
+      // blocked tile at (5,0) (same as any enemy would for any blocker),
+      // which the OLD 2-tile budget (D-172: now 4) never reached far enough
+      // to reveal — the affordable prefix stopped at a tile the detour and
+      // the straight line still agreed on. At 4 tiles it's far enough
+      // along that the route has already stepped off row 0 to go around
+      // (5,0), landing one row down rather than at the naively-expected
+      // straight-line (4,0).
+      expect(ws.enemies[0].position).toEqual({ x: 4, y: 1 });
       expect(t1.attacks).toHaveLength(0); // not close enough yet to attack either way
     } finally {
       delete ENEMY_DEFINITIONS[testDefId];

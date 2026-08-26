@@ -193,7 +193,13 @@ describe("Aura buff enemies (def.auraBuff)", () => {
 
 describe("Reinforcement-calling enemies (def.callsReinforcements)", () => {
   it("spawns more enemies adjacent to itself only once the interval elapses", () => {
-    const { map, pf } = setup(["S.........X", "..........."]);
+    // A much longer lane than before: the goal (exit) tile is always
+    // enterable regardless of `isBlocked` (so a route can never be fully
+    // sealed) — D-172 nearly doubled Swarmling's speed (now 6 tiles/phase),
+    // enough to reach a nearby exit directly through that exemption despite
+    // the pinning `isBlocked` below, which broke this test's "nothing may
+    // move" premise. Keeping the exit far away removes that shortcut.
+    const { map, pf } = setup(["S" + ".".repeat(29) + "X", ".".repeat(31)]);
     const ws = new WaveSystem(map, pf, [wave([{ enemyId: "cultist-caller", count: 1, startTurn: 1, intervalTurns: 1 }])], {
       startingIntegrity: 20,
       random: RandomService.fixed(),

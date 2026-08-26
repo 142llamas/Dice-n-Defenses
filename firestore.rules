@@ -152,7 +152,7 @@ service cloud.firestore {
     }
 
     function isValidBuild(build) {
-      return build.keys().hasOnly(['id', 'name', 'raceId', 'classId', 'level', 'abilityScores', 'abilityId', 'controlledBy'])
+      return build.keys().hasOnly(['id', 'name', 'raceId', 'classId', 'level', 'abilityScores', 'controlledBy'])
         && build.id is string && build.id.size() <= 100
         && build.name is string && build.name.size() <= 100
         && build.raceId is string
@@ -161,7 +161,6 @@ service cloud.firestore {
         && build.abilityScores is map
         && build.abilityScores.keys().hasOnly(['str', 'dex', 'con', 'int', 'wis', 'cha'])
         && build.abilityScores.keys().hasAll(['str', 'dex', 'con', 'int', 'wis', 'cha'])
-        && build.abilityId is string
         && build.controlledBy in ['human', 'ai', 'remote'];
     }
 
@@ -176,8 +175,9 @@ service cloud.firestore {
     // `fromSharedMapRecord`) is the real gatekeeper against a malformed
     // character on load, exactly as it already is for the hardcoded maps.
     // Bounds mirror MapBuilderSystem.ts's own MIN/MAX_MAP_COLS/ROWS exactly
-    // (6-20 cols, 6-9 rows — the row cap comes from BattleScene's fixed
-    // TILE_SIZE/HUD layout, see that file's header comment for the math).
+    // (6-32 cols, 6-14 rows as of D-176 — BattleScene now renders at a
+    // per-map shrink-to-fit tile size floored at 40px, see that file's
+    // header comment for the derivation math).
     function isValidSharedMap(mapId) {
       let data = request.resource.data;
       return data.keys().hasOnly(['id', 'name', 'authorUid', 'authorDisplayName', 'createdAt', 'updatedAt', 'cols', 'rows', 'tileRows'])
@@ -187,14 +187,14 @@ service cloud.firestore {
         && (data.authorDisplayName == null || (data.authorDisplayName is string && data.authorDisplayName.size() <= 100))
         && data.createdAt is number
         && data.updatedAt is number
-        && data.cols is number && data.cols >= 6 && data.cols <= 20
-        && data.rows is number && data.rows >= 6 && data.rows <= 9
+        && data.cols is number && data.cols >= 6 && data.cols <= 32
+        && data.rows is number && data.rows >= 6 && data.rows <= 14
         && data.tileRows is list && data.tileRows.size() == data.rows
         && isValidTileRows(data.tileRows, data.cols);
     }
 
     // No loop construct in rules — explicit per-index checks up through
-    // MAX_MAP_ROWS (9), same shape as isValidParty's fixed 4-slot pattern.
+    // MAX_MAP_ROWS (14), same shape as isValidParty's fixed 4-slot pattern.
     function isValidTileRows(rows, cols) {
       return (rows.size() < 1 || (rows[0] is string && rows[0].size() == cols))
         && (rows.size() < 2 || (rows[1] is string && rows[1].size() == cols))
@@ -204,7 +204,12 @@ service cloud.firestore {
         && (rows.size() < 6 || (rows[5] is string && rows[5].size() == cols))
         && (rows.size() < 7 || (rows[6] is string && rows[6].size() == cols))
         && (rows.size() < 8 || (rows[7] is string && rows[7].size() == cols))
-        && (rows.size() < 9 || (rows[8] is string && rows[8].size() == cols));
+        && (rows.size() < 9 || (rows[8] is string && rows[8].size() == cols))
+        && (rows.size() < 10 || (rows[9] is string && rows[9].size() == cols))
+        && (rows.size() < 11 || (rows[10] is string && rows[10].size() == cols))
+        && (rows.size() < 12 || (rows[11] is string && rows[11].size() == cols))
+        && (rows.size() < 13 || (rows[12] is string && rows[12].size() == cols))
+        && (rows.size() < 14 || (rows[13] is string && rows[13].size() == cols));
     }
   }
 }

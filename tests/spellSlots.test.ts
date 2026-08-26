@@ -24,7 +24,6 @@ function wizardBuild(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
     classId: "wizard",
     level: 1,
     abilityScores: { str: 8, dex: 12, con: 13, int: 15, wis: 10, cha: 10 },
-    abilityId: "fire-bolt",
     controlledBy: "human",
     ...overrides,
   };
@@ -38,7 +37,6 @@ function clericBuild(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
     classId: "cleric",
     level: 1,
     abilityScores: { str: 8, dex: 12, con: 13, int: 10, wis: 16, cha: 10 },
-    abilityId: "sacred-flame",
     controlledBy: "human",
     ...overrides,
   };
@@ -57,7 +55,6 @@ const NO_CLASS_HERO_DEF: HeroDefinition = {
   attackRangeTiles: 1,
   attackBonus: 4,
   baseArmorClass: 10,
-  abilityId: "cleave",
 };
 
 function heroWithNoClass(): Hero {
@@ -77,7 +74,6 @@ describe("Hero.knownSpellAbilityIds (Phase 13.7, D-092)", () => {
       classId: "fighter",
       level: 1,
       abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-      abilityId: "cleave",
       controlledBy: "human",
     };
     expect(heroFrom(fighterBuild).knownSpellAbilityIds()).toEqual([]);

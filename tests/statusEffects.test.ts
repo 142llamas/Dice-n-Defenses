@@ -49,9 +49,9 @@ describe("Enemy status effect bookkeeping", () => {
   });
 
   it("reduces effective movement while slowed, never below 0", () => {
-    const enemy = new Enemy("e#1", getEnemyDefinition("grunt"), { x: 0, y: 0 }); // 2 tiles
-    expect(enemy.effectiveMovementTiles).toBe(2);
-    enemy.applyStatus("slowed", 1); // -2
+    const enemy = new Enemy("e#1", getEnemyDefinition("grunt"), { x: 0, y: 0 }); // 4 tiles (D-172)
+    expect(enemy.effectiveMovementTiles).toBe(4);
+    enemy.applyStatus("slowed", 1); // -4 (D-172)
     expect(enemy.effectiveMovementTiles).toBe(0);
   });
 
@@ -86,18 +86,18 @@ describe("WaveSystem integration: burning", () => {
   });
 
   it("kills the enemy on the burn tick, so it never acts or breaches that phase", () => {
-    // A lane long enough that the runner (3 tiles/phase) can never reach the
-    // exit before the second burn tick kills it, isolating the burn-kill from
-    // a breach.
-    const map = new GameMap(parseMapRows("lane", "lane", ["S.......X"]));
+    // A lane long enough that the runner (6 tiles/phase, D-172) can never
+    // reach the exit before the second burn tick kills it, isolating the
+    // burn-kill from a breach.
+    const map = new GameMap(parseMapRows("lane", "lane", ["S..............X"]));
     const pf = new PathfindingSystem(map);
     const ws = new WaveSystem(map, pf, [laneWave("runner")], { startingIntegrity: 20, random: RandomService.fixed() });
     ws.startWave(0);
-    const t1 = ws.tickEnemyPhase(); // spawn + move to x=3
+    const t1 = ws.tickEnemyPhase(); // spawn + move to x=6
     const runner = t1.spawned[0]; // 3 HP
     runner.applyStatus("burning", 3); // 2 dmg/turn: two ticks defeat it
 
-    ws.tickEnemyPhase(); // burn: 3 -> 1, survives, moves to x=6
+    ws.tickEnemyPhase(); // burn: 3 -> 1, survives, moves to x=12
     const t3 = ws.tickEnemyPhase(); // burn: 1 -> 0, defeated before it can move
     expect(runner.isAlive()).toBe(false);
     expect(t3.moves).toHaveLength(0); // burned to death before it could move
@@ -129,16 +129,16 @@ describe("WaveSystem integration: stunned", () => {
 
 describe("WaveSystem integration: slowed", () => {
   it("reduces how far the enemy advances this phase", () => {
-    const map = new GameMap(parseMapRows("lane", "lane", ["S.......X"]));
+    const map = new GameMap(parseMapRows("lane", "lane", ["S..............X"]));
     const pf = new PathfindingSystem(map);
-    const ws = new WaveSystem(map, pf, [laneWave("runner")], { startingIntegrity: 20, random: RandomService.fixed() }); // 3 tiles/phase
+    const ws = new WaveSystem(map, pf, [laneWave("runner")], { startingIntegrity: 20, random: RandomService.fixed() }); // 6 tiles/phase (D-172)
     ws.startWave(0);
     const t1 = ws.tickEnemyPhase();
     const runner = t1.spawned[0];
-    runner.applyStatus("slowed", 1); // -2 movement this phase
+    runner.applyStatus("slowed", 1); // -4 movement this phase (D-172)
 
     const t2 = ws.tickEnemyPhase();
-    expect(t2.moves[0].path).toHaveLength(1); // 3 - 2 = 1 tile instead of 3
+    expect(t2.moves[0].path).toHaveLength(2); // 6 - 4 = 2 tiles instead of 6
   });
 });
 
@@ -186,7 +186,10 @@ describe("Enemy: exposed", () => {
 
 describe("WaveSystem integration: charmed", () => {
   it("redirects a charmed enemy's attack to another enemy in range instead of a hero", () => {
-    const map = new GameMap(parseMapRows("lane", "lane", ["S....X"]));
+    // A longer lane than before (D-172 doubled Grunt's speed to 4 tiles/
+    // phase) so neither grunt reaches the exit across the two spawn phases,
+    // before the test manually repositions them for the redirect check.
+    const map = new GameMap(parseMapRows("lane", "lane", ["S............X"]));
     const pf = new PathfindingSystem(map);
     const wave: WaveDefinition = {
       id: "w",

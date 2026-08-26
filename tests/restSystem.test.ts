@@ -20,7 +20,6 @@ const BASE_DEF: Omit<HeroDefinition, "id" | "classId"> = {
   attackRangeTiles: 1,
   attackBonus: 4,
   baseArmorClass: 10,
-  abilityId: "cleave",
 };
 
 function makeHero(classId?: string, id = "h1"): Hero {

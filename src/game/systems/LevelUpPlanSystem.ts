@@ -1,4 +1,4 @@
-import { ABILITY_SCORE_IDS, type AbilityScoreId } from "../data/abilityScores";
+import type { AbilityScoreId } from "../data/abilityScores";
 import { getClassDefinition } from "../data/classes";
 import { subclassesForClass } from "../data/subclasses";
 import { asiFeatureGrantedAtLevel, subclassGrantedAtLevel } from "./CharacterSystem";
@@ -18,18 +18,23 @@ import {
  * ASI/subclass/spell-pick choices are resolved, whether that's:
  *
  * - `BattleScene.fastForwardHeroToLevel` (D-129's pre-battle Starting Level
- *   fast-forward, always silent),
- * - `BattleScene.applyClassLevelUps`'s new "auto" branch (a real in-battle
- *   level-up resolved silently, same as fast-forward, because this hero's
- *   plan `mode` says to), or
+ *   fast-forward),
+ * - `BattleScene.applyClassLevelUps`'s "auto" branch (a real in-battle
+ *   level-up resolved silently, because this hero's plan `mode` says to and
+ *   an explicit plan entry covers it), or
  * - `CharacterCreationScene`'s planner UI itself, which needs to simulate a
  *   hero forward through a partial plan to show real eligible feats/spells
  *   at each future choice point (`simulateHeroForPlanning`).
  *
- * A hero with no plan (`plan` undefined, or a level with no entry in it)
- * gets EXACTLY D-129's original fixed defaults — raise the current-highest
- * ability score; the class's first modeled subclass; the first eligible
- * spell(s) — so every existing build/save/test is unaffected.
+ * D-16x: a hero with no plan (`plan` undefined, or a level with no entry in
+ * it) is left UNRESOLVED — this module never invents a choice on the
+ * player's behalf. Every resolver reports whether it actually applied an
+ * explicit plan entry; the caller is responsible for surfacing an
+ * unresolved level as a real prompt (`BattleScene.applyClassLevelUps`
+ * already does this for the live in-battle path via its existing
+ * needsAsi/needsSubclass/needsSpellPick queues; the pre-battle fast-forward
+ * path collects `fastForwardHero`'s returned unresolved steps and presents
+ * them as the very first popups of the battle, before wave 1).
  */
 
 export type AsiPlanChoice =
@@ -65,19 +70,11 @@ export interface SpellPickTrigger {
   tier?: number;
 }
 
-function spellPickTriggerLevel(request: SpellPickTrigger): number | undefined {
+export function spellPickTriggerLevel(request: SpellPickTrigger): number | undefined {
   if (request.kind === "mastery") return WIZARD_SPELL_MASTERY_LEVEL;
   if (request.kind === "signature") return WIZARD_SIGNATURE_SPELLS_LEVEL;
   if (request.kind === "arcanum" && request.tier !== undefined) return WARLOCK_MYSTIC_ARCANUM_LEVELS[request.tier];
   return undefined;
-}
-
-/** D-129's original default: this hero's own current-highest ability score. */
-export function defaultAsiAbility(hero: Hero): AbilityScoreId {
-  return ABILITY_SCORE_IDS.reduce(
-    (best, id) => ((hero.abilityScoreValue(id) ?? 0) > (hero.abilityScoreValue(best) ?? 0) ? id : best),
-    ABILITY_SCORE_IDS[0],
-  );
 }
 
 function isAsiChoiceValid(hero: Hero, choice: AsiPlanChoice): boolean {
@@ -98,76 +95,92 @@ function applyAsiChoice(hero: Hero, choice: AsiPlanChoice): void {
   }
 }
 
-/** Resolves this hero's ASI-or-feat choice at `level` — the plan's choice if present and still valid, else D-129's default. */
-export function resolveAsiForLevel(hero: Hero, level: number, plan?: LevelUpPlan): void {
+/** Resolves this hero's ASI-or-feat choice at `level` from an explicit plan entry. Returns true if applied, false (no mutation) if unresolved. */
+export function resolveAsiForLevel(hero: Hero, level: number, plan?: LevelUpPlan): boolean {
   const planned = plan?.asiChoices[level];
   if (planned && isAsiChoiceValid(hero, planned)) {
     applyAsiChoice(hero, planned);
-    return;
+    return true;
   }
-  hero.improveAbilityScore(defaultAsiAbility(hero), 2);
+  return false;
 }
 
-/** Resolves this hero's subclass choice — the plan's pick if present and a real option for this class, else the class's first modeled subclass (D-129's default). No-op for a class with no modeled subclasses. */
-export function resolveSubclassForClass(hero: Hero, classId: string, plan?: LevelUpPlan): void {
+/** Resolves this hero's subclass choice from an explicit plan entry. Returns true if applied or if this class has no modeled subclasses to choose (nothing to ask); false (no mutation) if unresolved. */
+export function resolveSubclassForClass(hero: Hero, classId: string, plan?: LevelUpPlan): boolean {
   const options = subclassesForClass(classId);
-  if (options.length === 0) return;
+  if (options.length === 0) return true;
   const wanted = plan?.subclassId;
-  const id = wanted && options.some((o) => o.id === wanted) ? wanted : options[0].id;
-  hero.grantSubclass(id);
+  if (wanted && options.some((o) => o.id === wanted)) {
+    hero.grantSubclass(wanted);
+    return true;
+  }
+  return false;
 }
 
-/** Resolves one Wizard/Warlock spell-mastery-family pick — the plan's spell(s) if present and still eligible, else D-129's "first eligible" default. A no-op if nothing is eligible yet (mirrors the existing queue's own skip behavior). */
-export function resolveSpellPickForRequest(hero: Hero, request: SpellPickTrigger, plan?: LevelUpPlan): void {
+/** Resolves one Wizard/Warlock spell-mastery-family pick from an explicit plan entry. Returns true if applied or not yet eligible (nothing to ask yet); false (no mutation) if unresolved. */
+export function resolveSpellPickForRequest(hero: Hero, request: SpellPickTrigger, plan?: LevelUpPlan): boolean {
   const triggerLevel = spellPickTriggerLevel(request);
   const planned = triggerLevel !== undefined ? plan?.spellPicks[triggerLevel] : undefined;
 
   if (request.kind === "mastery") {
     const eligible = hero.eligibleSpellMasterySpells();
-    if (eligible.length === 0) return;
-    const spellId = planned?.kind === "mastery" && eligible.includes(planned.spellId) ? planned.spellId : eligible[0];
-    hero.chooseSpellMasterySpell(spellId);
+    if (eligible.length === 0) return true;
+    if (planned?.kind === "mastery" && eligible.includes(planned.spellId)) {
+      hero.chooseSpellMasterySpell(planned.spellId);
+      return true;
+    }
+    return false;
   } else if (request.kind === "signature") {
     const eligible = hero.eligibleSignatureSpells();
-    if (eligible.length < 2) return;
+    if (eligible.length < 2) return true;
     const plannedIds = planned?.kind === "signature" ? planned.spellIds.filter((id) => eligible.includes(id)) : [];
-    const [first, second] = plannedIds.length === 2 ? plannedIds : [eligible[0], eligible[1]];
-    hero.chooseSignatureSpells([first, second]);
+    if (plannedIds.length === 2) {
+      hero.chooseSignatureSpells([plannedIds[0], plannedIds[1]]);
+      return true;
+    }
+    return false;
   } else if (request.kind === "arcanum" && request.tier !== undefined) {
     const eligible = hero.eligibleMysticArcanumSpells(request.tier);
-    if (eligible.length === 0) return;
-    const spellId =
-      planned?.kind === "arcanum" && planned.tier === request.tier && eligible.includes(planned.spellId)
-        ? planned.spellId
-        : eligible[0];
-    hero.chooseMysticArcanumSpell(request.tier, spellId);
+    if (eligible.length === 0) return true;
+    if (planned?.kind === "arcanum" && planned.tier === request.tier && eligible.includes(planned.spellId)) {
+      hero.chooseMysticArcanumSpell(request.tier, planned.spellId);
+      return true;
+    }
+    return false;
   }
+  return true;
 }
 
-function resolveSpellPickIfNeeded(hero: Hero, plan?: LevelUpPlan): void {
+/** Returns the unresolved trigger (if any) so the caller can surface it as a real prompt — undefined means either resolved from an explicit plan entry, or nothing needed choosing yet. */
+function resolveSpellPickIfNeeded(hero: Hero, plan?: LevelUpPlan): SpellPickTrigger | undefined {
   if (hero.needsSpellMasteryPick()) {
-    resolveSpellPickForRequest(hero, { hero, kind: "mastery" }, plan);
-  } else if (hero.needsSignatureSpellsPick()) {
-    resolveSpellPickForRequest(hero, { hero, kind: "signature" }, plan);
-  } else {
-    for (const tier of [6, 7, 8, 9]) {
-      if (hero.needsMysticArcanumPick(tier)) {
-        resolveSpellPickForRequest(hero, { hero, kind: "arcanum", tier }, plan);
-        break;
-      }
+    const request: SpellPickTrigger = { hero, kind: "mastery" };
+    return resolveSpellPickForRequest(hero, request, plan) ? undefined : request;
+  }
+  if (hero.needsSignatureSpellsPick()) {
+    const request: SpellPickTrigger = { hero, kind: "signature" };
+    return resolveSpellPickForRequest(hero, request, plan) ? undefined : request;
+  }
+  for (const tier of [6, 7, 8, 9]) {
+    if (hero.needsMysticArcanumPick(tier)) {
+      const request: SpellPickTrigger = { hero, kind: "arcanum", tier };
+      return resolveSpellPickForRequest(hero, request, plan) ? undefined : request;
     }
   }
+  return undefined;
 }
 
 /**
  * Walks `hero` from its current level up to `targetLevel`, resolving every
- * ASI/subclass/spell-pick trigger along the way against `plan` (falling back
- * to D-129's defaults for anything the plan doesn't cover) — always silent,
- * no popup, the same shape D-129's original `fastForwardHeroToLevel` used
- * inline. Shared by `BattleScene`'s real pre-battle fast-forward and this
+ * ASI/subclass/spell-pick trigger along the way against an explicit `plan`
+ * entry. Returns every level whose choice had no explicit plan entry — the
+ * caller (`BattleScene.buildHeroes`) is responsible for surfacing those as
+ * real prompts, since this module never invents a choice on the player's
+ * behalf. Shared by `BattleScene`'s real pre-battle fast-forward and this
  * module's own `simulateHeroForPlanning` below, so the two can never drift.
  */
-export function fastForwardHero(hero: Hero, targetLevel: number, plan?: LevelUpPlan): void {
+export function fastForwardHero(hero: Hero, targetLevel: number, plan?: LevelUpPlan): LevelUpChoiceStep[] {
+  const unresolved: LevelUpChoiceStep[] = [];
   const cap = Math.min(targetLevel, MAX_CLASS_LEVEL);
   while (hero.level < cap) {
     hero.levelUpClass();
@@ -175,13 +188,17 @@ export function fastForwardHero(hero: Hero, targetLevel: number, plan?: LevelUpP
     const classDef = getClassDefinition(hero.classId);
 
     if (asiFeatureGrantedAtLevel(classDef, hero.level)) {
-      resolveAsiForLevel(hero, hero.level, plan);
+      if (!resolveAsiForLevel(hero, hero.level, plan)) unresolved.push({ level: hero.level, kind: "asi" });
     }
     if (!hero.subclassId && subclassGrantedAtLevel(classDef, hero.level) && subclassesForClass(hero.classId).length > 0) {
-      resolveSubclassForClass(hero, hero.classId, plan);
+      if (!resolveSubclassForClass(hero, hero.classId, plan)) unresolved.push({ level: hero.level, kind: "subclass" });
     }
-    resolveSpellPickIfNeeded(hero, plan);
+    const spellRequest = resolveSpellPickIfNeeded(hero, plan);
+    if (spellRequest) {
+      unresolved.push({ level: hero.level, kind: "spellPick", spellPickKind: spellRequest.kind, tier: spellRequest.tier });
+    }
   }
+  return unresolved;
 }
 
 /**

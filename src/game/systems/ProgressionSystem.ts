@@ -1,11 +1,16 @@
 /**
  * ProgressionSystem: pure level-up CADENCE tracking. No Phaser.
  *
- * The Source of Truth's §9 "Level cadence" item is OPEN ("every wave or slower
- * after balance testing?"); this system answers it with a DEFAULT (not LOCKED)
- * choice — a level-up every LEVEL_UP_WAVE_INTERVAL completed waves — chosen so
- * a ten-wave campaign offers a handful of meaningful level-ups (waves 2, 4, 6,
- * 8, 10) without a full XP-per-kill economy.
+ * The Source of Truth's §9 "Level cadence" item was OPEN ("every wave or
+ * slower after balance testing?"), DEFAULTed to every 2 waves (D-056), then
+ * LOCKED by D-174 (KI-098 item 11) to Kevin's explicit call: this in-battle
+ * track (every living hero levels up together, real D&D 1-20 progression)
+ * should advance **every single wave** — 1 level per hero per wave, no
+ * per-kill/per-hero XP split. This is deliberately a DIFFERENT track from
+ * the not-yet-built overworld/campaign progression (a separate story-driven
+ * leveling path, campaign-only, still to be designed — see KI-098 item 13);
+ * this constant governs ONLY the in-battle track, which applies uniformly
+ * across every mode (Free Play, Campaign, Co-op, Test Mode).
  *
  * This used to also own a flat Vigor/Might level-up CHOICE for the original
  * classic fixed roster. That roster (and the choice) were removed once every
@@ -18,7 +23,7 @@
  * reachable via a level-up choice.
  */
 
-export const LEVEL_UP_WAVE_INTERVAL = 2;
+export const LEVEL_UP_WAVE_INTERVAL = 1;
 
 export class ProgressionSystem {
   private levelsGranted = 0;

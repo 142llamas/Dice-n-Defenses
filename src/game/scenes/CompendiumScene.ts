@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { CLASS_DEFINITIONS, getClassDefinition, type CharacterClassDefinition } from "../data/classes";
+import { CLASS_DEFINITIONS, getClassDefinition } from "../data/classes";
 import { SUBCLASS_DEFINITIONS } from "../data/subclasses";
 import { RACE_DEFINITIONS } from "../data/races";
 import { FEATS, FEAT_IDS } from "../data/feats";
@@ -13,6 +13,7 @@ import { ABILITY_SCORE_NAMES } from "../data/abilityScores";
 import { SKILLS, SKILL_ORDER } from "../data/skills";
 import { PORTRAIT_MANIFEST } from "../data/portraitManifest";
 import { showDialogue, type DialogueBoxController, type DialogueLine } from "./dialogueBox";
+import { createTooltipController, attachHoverTooltip, type TooltipController } from "./tooltip";
 import {
   createOrnateButton,
   centeredRowX,
@@ -47,13 +48,10 @@ import {
  * Reached from a new MainMenuScene button, alongside START and Create Party,
  * so it never interferes with either existing entry point.
  *
- * Most categories are short enough to render as one flat list. Classes are
- * one exception — four 20-level tables run 18-21 features each — so Classes
- * gets a per-class selector plus simple page-through (Prev/Next) rather than
- * risking text running off the bottom of the canvas. Phase 15 (D-104) added
- * Spells as a second exception: the catalogue grew from 14 curated entries
- * to 318 (a full SRD spell-list pass), so Spells now gets an analogous
- * per-level selector (Cantrip/1st/.../9th) plus the same Prev/Next paging.
+ * Classes gets its own per-class selector (four 20-level tables run 18-21
+ * features each) and Spells (Phase 15/D-104, 318 entries) gets an analogous
+ * per-level selector (Cantrip/1st/.../9th) — both on top of the same
+ * Prev/Next paging every other category now shares (D-165).
  *
  * D-119 added a "Dialogue" tab — NOT a rules-lookup category like the rest
  * of this scene, but a preview/demo entry point for the new
@@ -73,6 +71,16 @@ import {
  * spell-conjured, non-shop-buyable entries (Spectral Wall, Web Patch) same
  * as every other category here shows ALL data, not just what happens to be
  * purchasable right now.
+ *
+ * D-165 (KI-098 item 1): every itemized category (all but the "Dialogue"
+ * demo tab) now renders as a paginated list of compact one-line rows via
+ * `renderRowList` instead of one giant `detailText` blob with every entry's
+ * full description permanently visible — the last screen still doing that
+ * after D-158 generalized every other item preview (Gear/Shop) to the
+ * shared `tooltip.ts` hover controller. A row's full description now shows
+ * on hover, same as a Gear/Shop item button; a nested category (Subclasses'
+ * per-feature list, Races' per-trait list, Buildings'/Traps' sub-groups)
+ * gets its own non-interactive `isGroupHeader` divider row.
  */
 
 type CategoryId =
@@ -134,24 +142,17 @@ const DIALOGUE_PREVIEW_LINES_WITH_DECISION: DialogueLine[] = [
   },
 ];
 
-const FEATURES_PER_PAGE = 6;
-
-function classFeatureBlocks(cls: CharacterClassDefinition): string[] {
-  return cls.features.map(
-    (f) => `Lv${f.level}  ${f.name}${f.mechanicallyActive ? "" : "  [inert]"}\n    ${f.description}`,
-  );
-}
-
-const SPELLS_PER_PAGE = 12;
 const SPELL_LEVEL_LABELS = ["Cantrip", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th"];
 
-/**
- * Phase 17 (D-108): the real SRD weapon/armor catalogue nearly quadrupled
- * `EQUIPMENT_ORDER`'s size, so Equipment joins Classes/Spells as a paginated
- * category (same Prev/Next mechanism, no separate sub-selector needed — the
- * catalogue reads fine as one long alphabetized-by-slot list, just paged).
- */
-const EQUIPMENT_PER_PAGE = 10;
+/** D-165: one compact, always-visible row; `tooltip` (its full description) shows via the shared hover controller. A row with no `tooltip` is a non-interactive divider (a race/subclass name, a "— Walls & Gates —" group label). */
+interface DetailRow {
+  text: string;
+  tooltip?: string;
+  isGroupHeader?: boolean;
+}
+
+/** D-165: fixed line height for `renderRowList`'s paginated rows — page size is derived from this against the panel's actual available height, not a per-category constant, since every category now shares the same renderer. */
+const ROW_HEIGHT = 24;
 
 /**
  * Detail panel bounds — a bound-tome reading pane every category renders
@@ -173,6 +174,8 @@ export class CompendiumScene extends Phaser.Scene {
   private tabButtons: OrnateButtonHandle[] = [];
   private subButtons: OrnateButtonHandle[] = [];
   private detailText!: Phaser.GameObjects.Text;
+  private detailRows: Phaser.GameObjects.Text[] = [];
+  private tooltip!: TooltipController;
   private pageLabel!: Phaser.GameObjects.Text;
   private prevButton!: OrnateButtonHandle;
   private nextButton!: OrnateButtonHandle;
@@ -199,6 +202,8 @@ export class CompendiumScene extends Phaser.Scene {
     this.spellLevel = 0;
     this.page = 0;
     this.activeDialogue = undefined;
+    this.detailRows = [];
+    this.tooltip = createTooltipController(this);
 
     this.rebuildLayout();
 
@@ -211,6 +216,7 @@ export class CompendiumScene extends Phaser.Scene {
       this.input.keyboard?.removeAllListeners();
       this.activeDialogue?.destroy();
       this.activeDialogue = undefined;
+      this.tooltip.destroy();
     });
     onViewportResize(this, () => this.rebuildLayout());
   }
@@ -354,6 +360,55 @@ export class CompendiumScene extends Phaser.Scene {
     this.subButtons = [];
   }
 
+  private clearDetailRows(): void {
+    this.detailRows.forEach((r) => r.destroy());
+    this.detailRows = [];
+  }
+
+  /**
+   * D-165: the shared paginated hover-tooltip row renderer every itemized
+   * category now goes through. `headerLine` is an optional plain summary
+   * shown above the list (Classes' stat line, Spells' count line) — pass
+   * `null` for categories that never had one. Page size is derived from the
+   * panel's real remaining height so every category shares one mechanism
+   * without a per-category "how many fit" constant.
+   */
+  private renderRowList(headerLine: string | null, panelWidth: number, rows: DetailRow[]): void {
+    this.clearDetailRows();
+    this.detailText.setText(headerLine ?? "");
+
+    const startX = PANEL_LEFT + TEXT_PAD_X;
+    const startY = PANEL_TOP + TEXT_PAD_Y + (headerLine ? 34 : 0);
+    const available = PANEL_TOP + PANEL_HEIGHT - 50 - startY;
+    const rowsPerPage = Math.max(1, Math.floor(available / ROW_HEIGHT));
+    const totalPages = Math.max(1, Math.ceil(rows.length / rowsPerPage));
+    this.page = Math.max(0, Math.min(this.page, totalPages - 1));
+    const pageRows = rows.slice(this.page * rowsPerPage, (this.page + 1) * rowsPerPage);
+
+    pageRows.forEach((row, i) => {
+      const y = startY + i * ROW_HEIGHT;
+      const t = this.add
+        .text(startX, y, row.text, {
+          fontFamily: FONT_BODY,
+          fontSize: "15px",
+          color: row.isGroupHeader ? "#7a3a10" : "#2a1a10",
+          fontStyle: row.isGroupHeader ? "bold" : "normal",
+          wordWrap: { width: panelWidth - TEXT_PAD_X * 2 },
+        })
+        .setDepth(3);
+      if (row.tooltip) {
+        const tooltipText = row.tooltip;
+        t.setInteractive({ useHandCursor: true });
+        t.on("pointerover", () => t.setColor("#5a2a08"));
+        t.on("pointerout", () => t.setColor("#2a1a10"));
+        attachHoverTooltip(this.tooltip, t, startX + t.width / 2, y, () => tooltipText);
+      }
+      this.detailRows.push(t);
+    });
+
+    this.showPagination(totalPages);
+  }
+
   private refreshTabHighlights(): void {
     CATEGORIES.forEach((cat, i) => {
       this.tabButtons[i].setSelected(cat.id === this.category);
@@ -363,25 +418,52 @@ export class CompendiumScene extends Phaser.Scene {
   private renderCategory(): void {
     this.refreshTabHighlights();
     this.clearSubButtons();
+    this.clearDetailRows();
     // Switching tabs while a preview dialogue is open shouldn't leave it
     // dangling behind the newly-rendered category.
     this.activeDialogue?.destroy();
     this.activeDialogue = undefined;
 
-    if (this.category === "classes") {
-      this.buildClassSelector();
-      this.renderClassDetail();
-    } else if (this.category === "spells") {
-      this.buildSpellLevelSelector();
-      this.renderSpellsDetail();
-    } else if (this.category === "equipment") {
-      this.renderEquipmentDetail();
-    } else if (this.category === "dialoguePreview") {
-      this.hidePagination();
-      this.renderDialoguePreviewTab();
-    } else {
-      this.hidePagination();
-      this.detailText.setText(this.flatCategoryText());
+    switch (this.category) {
+      case "classes":
+        this.buildClassSelector();
+        this.renderClassDetail();
+        break;
+      case "spells":
+        this.buildSpellLevelSelector();
+        this.renderSpellsDetail();
+        break;
+      case "equipment":
+        this.renderEquipmentDetail();
+        break;
+      case "subclasses":
+        this.renderSubclassesDetail();
+        break;
+      case "races":
+        this.renderRacesDetail();
+        break;
+      case "feats":
+        this.renderFeatsDetail();
+        break;
+      case "skills":
+        this.renderSkillsDetail();
+        break;
+      case "potions":
+        this.renderPotionsDetail();
+        break;
+      case "buildings":
+        this.renderBuildingsDetail();
+        break;
+      case "traps":
+        this.renderTrapsDetail();
+        break;
+      case "statusEffects":
+        this.renderStatusEffectsDetail();
+        break;
+      case "dialoguePreview":
+        this.hidePagination();
+        this.renderDialoguePreviewTab();
+        break;
     }
   }
 
@@ -427,14 +509,43 @@ export class CompendiumScene extends Phaser.Scene {
     );
   }
 
-  /** Dispatches Prev/Next to whichever category is currently paginated. */
+  /** Dispatches Prev/Next to whichever category is currently paginated — every itemized category now is (D-165). */
   private renderPaginatedDetail(): void {
-    if (this.category === "spells") {
-      this.renderSpellsDetail();
-    } else if (this.category === "equipment") {
-      this.renderEquipmentDetail();
-    } else {
-      this.renderClassDetail();
+    switch (this.category) {
+      case "spells":
+        this.renderSpellsDetail();
+        break;
+      case "equipment":
+        this.renderEquipmentDetail();
+        break;
+      case "subclasses":
+        this.renderSubclassesDetail();
+        break;
+      case "races":
+        this.renderRacesDetail();
+        break;
+      case "feats":
+        this.renderFeatsDetail();
+        break;
+      case "skills":
+        this.renderSkillsDetail();
+        break;
+      case "potions":
+        this.renderPotionsDetail();
+        break;
+      case "buildings":
+        this.renderBuildingsDetail();
+        break;
+      case "traps":
+        this.renderTrapsDetail();
+        break;
+      case "statusEffects":
+        this.renderStatusEffectsDetail();
+        break;
+      case "classes":
+      default:
+        this.renderClassDetail();
+        break;
     }
   }
 
@@ -471,13 +582,11 @@ export class CompendiumScene extends Phaser.Scene {
       : "";
     const header = `${cls.name} — d${cls.hitDie} hit die · ${ABILITY_SCORE_NAMES[cls.primaryAbility]} primary · saves: ${saves}${castLine}`;
 
-    const blocks = classFeatureBlocks(cls);
-    const totalPages = Math.max(1, Math.ceil(blocks.length / FEATURES_PER_PAGE));
-    this.page = Math.max(0, Math.min(this.page, totalPages - 1));
-    const pageBlocks = blocks.slice(this.page * FEATURES_PER_PAGE, (this.page + 1) * FEATURES_PER_PAGE);
-
-    this.detailText.setText(`${header}\n\n${pageBlocks.join("\n\n")}`);
-    this.showPagination(totalPages);
+    const rows: DetailRow[] = cls.features.map((f) => ({
+      text: `Lv${f.level}  ${f.name}${f.mechanicallyActive ? "" : "  [inert]"}`,
+      tooltip: f.description,
+    }));
+    this.renderRowList(header, getViewport(this).width - PANEL_LEFT * 2, rows);
   }
 
   /**
@@ -518,26 +627,21 @@ export class CompendiumScene extends Phaser.Scene {
       .sort((a, b) => a.name.localeCompare(b.name));
     const header = `${SPELL_LEVEL_LABELS[this.spellLevel]}${this.spellLevel === 0 ? "s" : "-level"} — ${spells.length} spell${spells.length === 1 ? "" : "s"}`;
 
-    const totalPages = Math.max(1, Math.ceil(spells.length / SPELLS_PER_PAGE));
-    this.page = Math.max(0, Math.min(this.page, totalPages - 1));
-    const pageSpells = spells.slice(this.page * SPELLS_PER_PAGE, (this.page + 1) * SPELLS_PER_PAGE);
-
-    const lines = pageSpells.map((s) => {
-      const playable = s.abilityId ? " — playable today" : "";
-      return `${s.name} (${s.school})${playable}: ${s.description}`;
-    });
-
-    this.detailText.setText(`${header}\n\n${lines.join("\n\n")}`);
-    this.showPagination(totalPages);
+    const rows: DetailRow[] = spells.map((s) => ({
+      text: `${s.name} (${s.school})${s.abilityId ? " — playable today" : ""}`,
+      tooltip: s.description,
+    }));
+    this.renderRowList(header, getViewport(this).width - PANEL_LEFT * 2, rows);
   }
 
   /**
-   * Phase 17 (D-108): one catalogue line, with real weapon (dice/damage
-   * type/properties/mastery) or armor (AC formula/Str/stealth) detail when
-   * present — a flavor item with neither field keeps the plain
-   * bonus/attunement/proc summary every equipment line already had.
+   * Phase 17 (D-108), D-165: the row's hover tooltip — real weapon
+   * (dice/damage type/properties/mastery) or armor (AC formula/Str/stealth)
+   * detail when present, else the plain bonus/attunement/proc summary every
+   * equipment item already had. The row's always-visible `text` (see
+   * `equipmentRow`) carries only slot/rarity/name/cost now.
    */
-  private equipmentLine(id: string): string {
+  private equipmentTooltip(id: string): string {
     const e = EQUIPMENT_DEFINITIONS[id];
     const parts: string[] = [];
     if (e.attackDamage) parts.push(`+${e.attackDamage} attack`);
@@ -557,7 +661,15 @@ export class CompendiumScene extends Phaser.Scene {
       if (e.armor.stealthDisadvantage) parts.push("stealth disadvantage");
     }
     const proc = e.proc ? ` — ${e.description}` : "";
-    return `${GEAR_SLOT_TYPE_LABELS[e.slot]} [${RARITY_LABELS[e.rarity]}] — ${e.name} (${e.cost}g): ${parts.join(", ")}${proc}`;
+    return `${parts.join(", ")}${proc}`;
+  }
+
+  private equipmentRow(id: string): DetailRow {
+    const e = EQUIPMENT_DEFINITIONS[id];
+    return {
+      text: `${GEAR_SLOT_TYPE_LABELS[e.slot]} [${RARITY_LABELS[e.rarity]}] — ${e.name} (${e.cost}g)`,
+      tooltip: this.equipmentTooltip(id),
+    };
   }
 
   /**
@@ -566,104 +678,102 @@ export class CompendiumScene extends Phaser.Scene {
    * size, too many lines for one flat unpaginated block.
    */
   private renderEquipmentDetail(): void {
-    const totalPages = Math.max(1, Math.ceil(EQUIPMENT_ORDER.length / EQUIPMENT_PER_PAGE));
-    this.page = Math.max(0, Math.min(this.page, totalPages - 1));
-    const pageIds = EQUIPMENT_ORDER.slice(this.page * EQUIPMENT_PER_PAGE, (this.page + 1) * EQUIPMENT_PER_PAGE);
-    this.detailText.setText(pageIds.map((id) => this.equipmentLine(id)).join("\n\n"));
-    this.showPagination(totalPages);
+    const rows = EQUIPMENT_ORDER.map((id) => this.equipmentRow(id));
+    this.renderRowList(null, getViewport(this).width - PANEL_LEFT * 2, rows);
   }
 
-  /** Every other category is short enough to render as one flat, unpaginated list. */
-  private flatCategoryText(): string {
-    switch (this.category) {
-      case "subclasses":
-        // D-150: alphabetized for DISPLAY ONLY via a local sorted copy —
-        // `SUBCLASS_DEFINITIONS`'s own declared order must stay untouched,
-        // since `CharacterBuildSystem.subclassIdForNewBuild` relies on each
-        // class's two subclasses staying in "SRD one first, original one
-        // second" registration order within that array.
-        return [...SUBCLASS_DEFINITIONS]
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map((s) => {
-            const header = `${s.name} (${getClassDefinition(s.classId).name})`;
-            const features = s.features
-              .map((f) => `  Lv${f.level} ${f.name}${f.mechanicallyActive ? "" : " [inert]"}: ${f.description}`)
-              .join("\n");
-            return `${header}\n${features}`;
-          })
-          .join("\n\n");
-
-      case "races":
-        // D-150: local sorted copy — `RACE_DEFINITIONS`' own order backs
-        // `RACE_IDS[0]`'s default new-build race (Human) and the Character
-        // Creation race picker's order; only this Compendium display sorts.
-        return [...RACE_DEFINITIONS]
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map((r) => {
-            const header = `${r.name} — speed ${r.speedTiles} tiles`;
-            const traits = r.traits
-              .map((t) => `  ${t.name}${t.mechanicallyActive ? "" : " [flavor]"}: ${t.description}`)
-              .join("\n");
-            return `${header}\n${traits}`;
-          })
-          .join("\n\n");
-
-      case "feats":
-        // D-150: local sorted copy — `FEAT_IDS`' own order backs the ASI/
-        // feat-picker overlay's display order elsewhere; only this
-        // Compendium display sorts.
-        return [...FEAT_IDS]
-          .sort((a, b) => FEATS[a].name.localeCompare(FEATS[b].name))
-          .map((id) => {
-            const f = FEATS[id];
-            return `${f.name}${f.mechanicallyActive ? "" : " [inert]"}: ${f.description}`;
-          })
-          .join("\n\n");
-
-      case "skills":
-        // Phase 13.5 (D-090): reference-only, like every inert category above —
-        // nothing in this game calls a skill check yet. D-150: `SKILL_ORDER`
-        // itself is now alphabetical (its only consumer is this tab).
-        return SKILL_ORDER.map((id) => {
-          const s = SKILLS[id];
-          return `${s.name} (${ABILITY_SCORE_NAMES[s.ability]}): ${s.description}`;
-        }).join("\n\n");
-
-      case "potions":
-        // D-150: local sorted copy — `POTION_ORDER`'s own order backs the
-        // Shop grid's item order; only this Compendium display sorts.
-        return [...POTION_ORDER]
-          .sort((a, b) => POTION_DEFINITIONS[a].name.localeCompare(POTION_DEFINITIONS[b].name))
-          .map((id) => {
-            const p = POTION_DEFINITIONS[id];
-            return `${p.name} (${p.cost}g): ${p.description}`;
-          })
-          .join("\n\n");
-
-      case "buildings":
-        return this.buildingsText();
-
-      case "traps":
-        return this.trapsText();
-
-      case "statusEffects":
-        // D-150: local sorted copy — `STATUS_EFFECT_ORDER`'s own order backs
-        // on-token status-badge render order and the debug status picker;
-        // only this Compendium display sorts.
-        return [...STATUS_EFFECT_ORDER]
-          .sort((a, b) => STATUS_EFFECTS[a].name.localeCompare(STATUS_EFFECTS[b].name))
-          .map((id) => {
-            const s = STATUS_EFFECTS[id];
-            return `${s.name}: ${s.description}`;
-          })
-          .join("\n\n");
-
-      default:
-        return "";
-    }
+  private panelWidth(): number {
+    return getViewport(this).width - PANEL_LEFT * 2;
   }
 
-  /** Shared by `buildingsText`/`trapsText`: gold cost, or a note for the two spell-conjured structures that aren't shop-buyable (`cost: 0`, never listed in `SHOP_ORDER`). */
+  // D-150: alphabetized for DISPLAY ONLY via a local sorted copy —
+  // `SUBCLASS_DEFINITIONS`'s own declared order must stay untouched, since
+  // `CharacterBuildSystem.subclassIdForNewBuild` relies on each class's two
+  // subclasses staying in "SRD one first, original one second" registration
+  // order within that array. D-165: each subclass name is a non-interactive
+  // `isGroupHeader` divider; each of its features is its own hoverable row.
+  private renderSubclassesDetail(): void {
+    const rows: DetailRow[] = [];
+    [...SUBCLASS_DEFINITIONS]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((s) => {
+        rows.push({ text: `${s.name} (${getClassDefinition(s.classId).name})`, isGroupHeader: true });
+        s.features.forEach((f) =>
+          rows.push({
+            text: `  Lv${f.level} ${f.name}${f.mechanicallyActive ? "" : " [inert]"}`,
+            tooltip: f.description,
+          }),
+        );
+      });
+    this.renderRowList(null, this.panelWidth(), rows);
+  }
+
+  // D-150: local sorted copy — `RACE_DEFINITIONS`' own order backs
+  // `RACE_IDS[0]`'s default new-build race (Human) and the Character
+  // Creation race picker's order; only this Compendium display sorts.
+  private renderRacesDetail(): void {
+    const rows: DetailRow[] = [];
+    [...RACE_DEFINITIONS]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((r) => {
+        rows.push({ text: `${r.name} — speed ${r.speedTiles} tiles`, isGroupHeader: true });
+        r.traits.forEach((t) =>
+          rows.push({
+            text: `  ${t.name}${t.mechanicallyActive ? "" : " [flavor]"}`,
+            tooltip: t.description,
+          }),
+        );
+      });
+    this.renderRowList(null, this.panelWidth(), rows);
+  }
+
+  // D-150: local sorted copy — `FEAT_IDS`' own order backs the ASI/feat-
+  // picker overlay's display order elsewhere; only this Compendium display
+  // sorts.
+  private renderFeatsDetail(): void {
+    const rows: DetailRow[] = [...FEAT_IDS]
+      .sort((a, b) => FEATS[a].name.localeCompare(FEATS[b].name))
+      .map((id) => {
+        const f = FEATS[id];
+        return { text: `${f.name}${f.mechanicallyActive ? "" : " [inert]"}`, tooltip: f.description };
+      });
+    this.renderRowList(null, this.panelWidth(), rows);
+  }
+
+  // Phase 13.5 (D-090): reference-only — nothing in this game calls a skill
+  // check yet. D-150: `SKILL_ORDER` itself is now alphabetical (its only
+  // consumer is this tab).
+  private renderSkillsDetail(): void {
+    const rows: DetailRow[] = SKILL_ORDER.map((id) => {
+      const s = SKILLS[id];
+      return { text: `${s.name} (${ABILITY_SCORE_NAMES[s.ability]})`, tooltip: s.description };
+    });
+    this.renderRowList(null, this.panelWidth(), rows);
+  }
+
+  // D-150: local sorted copy — `POTION_ORDER`'s own order backs the Shop
+  // grid's item order; only this Compendium display sorts.
+  private renderPotionsDetail(): void {
+    const rows: DetailRow[] = [...POTION_ORDER]
+      .sort((a, b) => POTION_DEFINITIONS[a].name.localeCompare(POTION_DEFINITIONS[b].name))
+      .map((id) => {
+        const p = POTION_DEFINITIONS[id];
+        return { text: `${p.name} (${p.cost}g)`, tooltip: p.description };
+      });
+    this.renderRowList(null, this.panelWidth(), rows);
+  }
+
+  // D-150: local sorted copy — `STATUS_EFFECT_ORDER`'s own order backs
+  // on-token status-badge render order and the debug status picker; only
+  // this Compendium display sorts.
+  private renderStatusEffectsDetail(): void {
+    const rows: DetailRow[] = [...STATUS_EFFECT_ORDER]
+      .sort((a, b) => STATUS_EFFECTS[a].name.localeCompare(STATUS_EFFECTS[b].name))
+      .map((id) => ({ text: STATUS_EFFECTS[id].name, tooltip: STATUS_EFFECTS[id].description }));
+    this.renderRowList(null, this.panelWidth(), rows);
+  }
+
+  /** Shared by `renderBuildingsDetail`/`renderTrapsDetail`: gold cost, or a note for the two spell-conjured structures that aren't shop-buyable (`cost: 0`, never listed in `SHOP_ORDER`). */
   private structureCostLabel(s: StructureDefinition): string {
     return s.cost === 0 ? "spell-conjured, not shop-buyable" : `${s.cost}g`;
   }
@@ -672,20 +782,22 @@ export class CompendiumScene extends Phaser.Scene {
    * D-150: walls + gates + platforms, grouped by `kind` (a Gate/Wicket
    * Gate/Portcullis is still `kind: "wall"` with `blocksHeroes: false`, so
    * it lands in the same group as every other wall) then alphabetized by
-   * name within each group.
+   * name within each group. D-165: each group label is a non-interactive
+   * `isGroupHeader` divider row; the wall/HP/passability or platform-bonus
+   * detail that used to sit inline now lives in the row's hover tooltip.
    */
-  private buildingsText(): string {
+  private renderBuildingsDetail(): void {
     const all = Object.values(STRUCTURE_DEFINITIONS).filter((s) => s.kind !== "trap");
     const byName = (a: StructureDefinition, b: StructureDefinition) => a.name.localeCompare(b.name);
     const walls = all.filter((s) => s.kind === "wall").sort(byName);
     const platforms = all.filter((s) => s.kind === "platform").sort(byName);
 
-    const wallLine = (s: StructureDefinition): string => {
+    const wallRow = (s: StructureDefinition): DetailRow => {
       const hp = s.maxHp !== undefined ? ` · ${s.maxHp} HP` : "";
       const passable = s.blocksHeroes === false ? " · heroes pass through" : "";
-      return `${s.name} (${this.structureCostLabel(s)})${hp}${passable}: ${s.description}`;
+      return { text: `${s.name} (${this.structureCostLabel(s)})${hp}${passable}`, tooltip: s.description };
     };
-    const platformLine = (s: StructureDefinition): string => {
+    const platformRow = (s: StructureDefinition): DetailRow => {
       const bonus = s.heroBonus
         ? [
             s.heroBonus.attackDamage ? `+${s.heroBonus.attackDamage} basic-attack damage` : null,
@@ -695,42 +807,54 @@ export class CompendiumScene extends Phaser.Scene {
             .join(", ")
         : "none";
       const audience = s.heroBonus?.appliesTo === "any" ? "any hero" : `${s.heroBonus?.appliesTo ?? "any"} heroes only`;
-      return `${s.name} (${this.structureCostLabel(s)}) — ${audience}, ${bonus}: ${s.description}`;
+      return {
+        text: `${s.name} (${this.structureCostLabel(s)}) — ${audience}`,
+        tooltip: `${bonus}: ${s.description}`,
+      };
     };
 
-    const section = (label: string, defs: StructureDefinition[], line: (s: StructureDefinition) => string): string =>
-      defs.length === 0 ? "" : `— ${label} —\n${defs.map(line).join("\n\n")}`;
-
-    return [section("Walls & Gates", walls, wallLine), section("Platforms", platforms, platformLine)]
-      .filter((s) => s.length > 0)
-      .join("\n\n\n");
+    const rows: DetailRow[] = [];
+    if (walls.length > 0) {
+      rows.push({ text: "— Walls & Gates —", isGroupHeader: true });
+      walls.forEach((s) => rows.push(wallRow(s)));
+    }
+    if (platforms.length > 0) {
+      rows.push({ text: "— Platforms —", isGroupHeader: true });
+      platforms.forEach((s) => rows.push(platformRow(s)));
+    }
+    this.renderRowList(null, this.panelWidth(), rows);
   }
 
   /**
    * D-150: traps grouped by `targets` (ground vs. flying — no roster entry
    * currently targets "any") then alphabetized by name within each group.
+   * D-165: same group-header + hover-tooltip treatment as `renderBuildingsDetail`.
    */
-  private trapsText(): string {
+  private renderTrapsDetail(): void {
     const all = Object.values(STRUCTURE_DEFINITIONS).filter((s) => s.kind === "trap");
     const byName = (a: StructureDefinition, b: StructureDefinition) => a.name.localeCompare(b.name);
     const ground = all.filter((s) => (s.targets ?? "any") === "ground").sort(byName);
     const flying = all.filter((s) => s.targets === "flying").sort(byName);
     const other = all.filter((s) => (s.targets ?? "any") === "any").sort(byName);
 
-    const trapLine = (s: StructureDefinition): string => {
+    const trapRow = (s: StructureDefinition): DetailRow => {
       const dmg = s.damage !== undefined ? ` · ${s.damage} damage` : "";
       const status = s.appliesStatus
         ? ` · applies ${STATUS_EFFECTS[s.appliesStatus.statusId].name} (${s.appliesStatus.durationTurns} turns)`
         : "";
       const singleUse = s.singleUse ? " · single-use, then removed" : "";
-      return `${s.name} (${this.structureCostLabel(s)})${dmg}${status}${singleUse}: ${s.description}`;
+      return { text: `${s.name} (${this.structureCostLabel(s)})${dmg}${singleUse}`, tooltip: `${s.description}${status}` };
     };
 
-    const section = (label: string, defs: StructureDefinition[]): string =>
-      defs.length === 0 ? "" : `— ${label} —\n${defs.map(trapLine).join("\n\n")}`;
-
-    return [section("Ground", ground), section("Flying", flying), section("Any", other)]
-      .filter((s) => s.length > 0)
-      .join("\n\n\n");
+    const rows: DetailRow[] = [];
+    const section = (label: string, defs: StructureDefinition[]): void => {
+      if (defs.length === 0) return;
+      rows.push({ text: `— ${label} —`, isGroupHeader: true });
+      defs.forEach((s) => rows.push(trapRow(s)));
+    };
+    section("Ground", ground);
+    section("Flying", flying);
+    section("Any", other);
+    this.renderRowList(null, this.panelWidth(), rows);
   }
 }

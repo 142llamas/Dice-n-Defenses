@@ -10,9 +10,9 @@ import { FROSTBOUND_HOLLOW_MAP } from "../data/frostboundHollowMap";
 import { getEnemyDefinition } from "../data/enemies";
 import { getCampaignDefinition } from "../data/campaigns";
 import { loadCampaignProgress, isCampaignCompleted } from "../systems/CampaignProgressSystem";
-import { DIFFICULTY_IDS, getDifficultyDefinition, type DifficultyId } from "../data/difficulty";
+import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
 import { generateFreePlayWaves } from "../systems/FreePlayWaveGenerator";
-import { getViewport, onViewportResize } from "./uiTheme";
+import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
 
 /**
  * FreePlayScene — Phase 11.9 (D-071): a config screen for free-play mode
@@ -28,13 +28,15 @@ import { getViewport, onViewportResize } from "./uiTheme";
  * freePlayWaves }`, reusing the existing party-builder flow exactly like
  * campaigns do.
  *
- * Unlock model (D-071, this sub-phase): `TEST_MAP`/`basalt-colossus` are
- * always available. `EMBERFORD_MAP`/`cinderlord` unlock once the "Emberford
- * Reach" campaign is completed; `SALTMERE_MAP`/`tidelord` unlock once
- * "Saltmere Shallows" is completed. Locked options stay visible but
- * disabled, with a short "Complete X to unlock" hint — same spirit as
- * BestiaryScene's "seen vs. unseen" gating, just reusing
- * `CampaignProgressSystem` (already built in 11.8) instead of a new store.
+ * Unlock model (D-071, this sub-phase; extended Phase 27/D-180): `TEST_MAP`/
+ * `basalt-colossus` are always available. Every other map/boss pair unlocks
+ * once its own region's campaign is completed (`EMBERFORD_MAP`/`cinderlord`
+ * → "emberford-reach", `SALTMERE_MAP`/`tidelord` → "saltmere-shallows", and
+ * as of D-180 the other four maps/eight bosses gate on their own new
+ * campaign ids too). Locked options stay visible but disabled, with a short
+ * "Complete X to unlock" hint — same spirit as BestiaryScene's "seen vs.
+ * unseen" gating, just reusing `CampaignProgressSystem` (already built in
+ * 11.8) instead of a new store.
  */
 
 export interface GatedOption {
@@ -48,37 +50,37 @@ export const MAP_OPTIONS: GatedOption[] = [
   { id: TEST_MAP.id, name: TEST_MAP.name, unlockCampaignId: null },
   { id: EMBERFORD_MAP.id, name: EMBERFORD_MAP.name, unlockCampaignId: "emberford-reach" },
   { id: SALTMERE_MAP.id, name: SALTMERE_MAP.name, unlockCampaignId: "saltmere-shallows" },
-  // Phase 23 (D-114): four new maps, none with a campaign of their own yet —
-  // always unlocked, same staging every prior boss/enemy got before it had one.
-  { id: CAUSEWAY_MAP.id, name: CAUSEWAY_MAP.name, unlockCampaignId: null },
-  { id: DROWNING_VALE_MAP.id, name: DROWNING_VALE_MAP.name, unlockCampaignId: null },
-  { id: CINDERFALL_RIFT_MAP.id, name: CINDERFALL_RIFT_MAP.name, unlockCampaignId: null },
-  { id: FROSTBOUND_HOLLOW_MAP.id, name: FROSTBOUND_HOLLOW_MAP.name, unlockCampaignId: null },
+  // Phase 23 (D-114) built these four maps; Phase 27 (D-180) gave each its
+  // own chaptered campaign, so they now gate the same way Emberford/Saltmere
+  // already did.
+  { id: CAUSEWAY_MAP.id, name: CAUSEWAY_MAP.name, unlockCampaignId: "shattered-causeway" },
+  { id: DROWNING_VALE_MAP.id, name: DROWNING_VALE_MAP.name, unlockCampaignId: "drowning-vale" },
+  { id: CINDERFALL_RIFT_MAP.id, name: CINDERFALL_RIFT_MAP.name, unlockCampaignId: "cinderfall-rift" },
+  { id: FROSTBOUND_HOLLOW_MAP.id, name: FROSTBOUND_HOLLOW_MAP.name, unlockCampaignId: "frostbound-hollow" },
 ];
 
 const BOSS_OPTIONS: GatedOption[] = [
   { id: "basalt-colossus", name: getEnemyDefinition("basalt-colossus").name, unlockCampaignId: null },
   { id: "cinderlord", name: getEnemyDefinition("cinderlord").name, unlockCampaignId: "emberford-reach" },
   { id: "tidelord", name: getEnemyDefinition("tidelord").name, unlockCampaignId: "saltmere-shallows" },
-  // Phase 13.10 (D-095): Gravemaw/Blightmother have no campaign of their own
-  // yet (same staging Cinderlord/Tidelord had before Phase 11.8), so both
-  // stay always-unlocked here — the alternative would be dead scaffolding:
-  // data that exists but is unreachable in any actual mode.
-  { id: "gravemaw", name: getEnemyDefinition("gravemaw").name, unlockCampaignId: null },
-  { id: "blightmother", name: getEnemyDefinition("blightmother").name, unlockCampaignId: null },
-  // Phase 20 (D-111): the new miniboss/boss/legendary tier, same
-  // always-unlocked treatment — none of these has a campaign of its own
-  // yet either, so leaving them out would be dead scaffolding.
-  { id: "juggernaut", name: getEnemyDefinition("juggernaut").name, unlockCampaignId: null },
-  { id: "warlord-korrath", name: getEnemyDefinition("warlord-korrath").name, unlockCampaignId: null },
-  { id: "the-devourer", name: getEnemyDefinition("the-devourer").name, unlockCampaignId: null },
+  // Phase 13.10 (D-095)/20 (D-111)/21 (D-112): Gravemaw, Juggernaut/The
+  // Devourer, Blightmother/The Husk, and Bloodrage Warlord/Sundered King
+  // each got a real chaptered campaign in Phase 27 (D-180) and now gate the
+  // same way Cinderlord/Tidelord already did.
+  { id: "gravemaw", name: getEnemyDefinition("gravemaw").name, unlockCampaignId: "cinderfall-rift" },
+  { id: "blightmother", name: getEnemyDefinition("blightmother").name, unlockCampaignId: "drowning-vale" },
+  { id: "juggernaut", name: getEnemyDefinition("juggernaut").name, unlockCampaignId: "shattered-causeway" },
+  { id: "warlord-korrath", name: getEnemyDefinition("warlord-korrath").name, unlockCampaignId: "cinderfall-rift" },
+  { id: "the-devourer", name: getEnemyDefinition("the-devourer").name, unlockCampaignId: "shattered-causeway" },
+  // The capstone-tier legendaries have no map/campaign of their own yet
+  // (CAMPAIGN_STORY_DESIGN.md §5's "Nameless Throne" is still unbuilt) —
+  // stay always-unlocked, same "don't leave real content unreachable"
+  // reasoning the rest of this list already established.
   { id: "ashen-sovereign", name: getEnemyDefinition("ashen-sovereign").name, unlockCampaignId: null },
   { id: "the-hollow-empress", name: getEnemyDefinition("the-hollow-empress").name, unlockCampaignId: null },
-  // Phase 21 (D-112): the new miniboss/boss tier, same always-unlocked
-  // treatment — none has a campaign of its own yet.
-  { id: "bloodrage-warlord", name: getEnemyDefinition("bloodrage-warlord").name, unlockCampaignId: null },
-  { id: "the-husk", name: getEnemyDefinition("the-husk").name, unlockCampaignId: null },
-  { id: "sundered-king", name: getEnemyDefinition("sundered-king").name, unlockCampaignId: null },
+  { id: "bloodrage-warlord", name: getEnemyDefinition("bloodrage-warlord").name, unlockCampaignId: "frostbound-hollow" },
+  { id: "the-husk", name: getEnemyDefinition("the-husk").name, unlockCampaignId: "drowning-vale" },
+  { id: "sundered-king", name: getEnemyDefinition("sundered-king").name, unlockCampaignId: "frostbound-hollow" },
 ];
 
 const WAVE_COUNT_PRESETS: { label: string; count: number }[] = [
@@ -155,6 +157,8 @@ export class FreePlayScene extends Phaser.Scene {
   private minionButtons: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; source: MinionSource }[] = [];
   private difficultyButton!: Phaser.GameObjects.Rectangle;
   private difficultyLabel!: Phaser.GameObjects.Text;
+  /** D-16x: the shared full-screen list-picker overlay (`openChoiceList`), replacing the old click-to-cycle Difficulty button. */
+  private choiceOverlay: Phaser.GameObjects.GameObject[] = [];
   private startButton!: Phaser.GameObjects.Rectangle;
 
   private selectedMapId = TEST_MAP.id;
@@ -171,7 +175,14 @@ export class FreePlayScene extends Phaser.Scene {
   create(): void {
     const progress = loadCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY);
     this.unlockedCampaigns = new Set(
-      ["emberford-reach", "saltmere-shallows"].filter((id) => isCampaignCompleted(progress, id)),
+      [
+        "emberford-reach",
+        "saltmere-shallows",
+        "shattered-causeway",
+        "cinderfall-rift",
+        "drowning-vale",
+        "frostbound-hollow",
+      ].filter((id) => isCampaignCompleted(progress, id)),
     );
 
     this.cameras.main.setBackgroundColor("#0e0e14");
@@ -449,7 +460,6 @@ export class FreePlayScene extends Phaser.Scene {
     });
   }
 
-  /** Reuses `CharacterCreationScene`'s existing difficulty-picker pattern: one button that cycles the tier. */
   private buildDifficultySection(width: number, labelY: number): void {
     this.add
       .text(width / 2, labelY, "Difficulty", {
@@ -471,9 +481,18 @@ export class FreePlayScene extends Phaser.Scene {
     this.difficultyButton.on("pointerover", () => this.difficultyButton.setFillStyle(0x3a3a4a));
     this.difficultyButton.on("pointerout", () => this.difficultyButton.setFillStyle(0x2a2a3a));
     this.difficultyButton.on("pointerdown", () => {
-      const next = (DIFFICULTY_IDS.indexOf(this.selectedDifficultyId) + 1) % DIFFICULTY_IDS.length;
-      this.selectedDifficultyId = DIFFICULTY_IDS[next];
-      this.refreshAll();
+      openChoiceList(
+        this,
+        this.choiceOverlay,
+        "Choose Difficulty",
+        DIFFICULTY_IDS.map((id) => ({
+          label: getDifficultyDefinition(id).name,
+          desc: difficultyChoiceDescription(id),
+          highlighted: id === this.selectedDifficultyId,
+          onPick: () => (this.selectedDifficultyId = id),
+        })),
+        () => this.refreshAll(),
+      );
     });
   }
 

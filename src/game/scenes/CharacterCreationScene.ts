@@ -1,8 +1,12 @@
 import Phaser from "phaser";
-import { SAVE_STORAGE_KEY } from "../config";
-import { getViewport, onViewportResize } from "./uiTheme";
+import { SAVE_STORAGE_KEY, COMPANION_ROSTER_STORAGE_KEY } from "../config";
+import { getCompanionDefinition } from "../data/companions";
+import { loadCompanionRoster, saveCompanionRoster } from "../systems/CompanionRosterSystem";
+import { seedStartingCompanions } from "../systems/CompanionSeedSystem";
+import { RandomService } from "../systems/RandomService";
+import { getViewport, onViewportResize, createOrnateButton, renderChoiceOverlay, clearChoiceOverlay } from "./uiTheme";
 import { ABILITY_SCORE_IDS, ABILITY_SCORE_NAMES, modifierFor, type AbilityScoreId } from "../data/abilityScores";
-import { CHARACTER_NAME_POOL, CREATABLE_CLASS_IDS, STARTING_GEAR_IDS, signatureActionIdsForClass } from "../data/characterCreation";
+import { CHARACTER_NAME_POOL, CREATABLE_CLASS_IDS, STARTING_GEAR_IDS } from "../data/characterCreation";
 import { getAbility } from "../data/abilities";
 import { getClassDefinition } from "../data/classes";
 import { getSpell } from "../data/spells";
@@ -30,7 +34,7 @@ import {
   type LevelUpChoiceStep,
   type LevelUpPlan,
 } from "../systems/LevelUpPlanSystem";
-import { DIFFICULTY_IDS, getDifficultyDefinition, type DifficultyId } from "../data/difficulty";
+import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
 import type { WaveDefinition } from "../data/waves";
 import type { ParsedMap } from "../data/testMap";
 import {
@@ -40,7 +44,6 @@ import {
   pointBuyAllocatorFromScores,
   POINT_BUY_BUDGET,
   heroDefinitionFromBuild,
-  hasDuplicateAbilities,
   hasDuplicateNames,
   subclassIdForNewBuild,
   type AbilityScoreAllocator,
@@ -62,12 +65,14 @@ import { pushSlot } from "../cloud/CloudSaveSync";
  * CharacterCreationScene — Phase 11.1's "first pass" freeform party builder
  * (DECISIONS D-070/D-071/D-073). Lets the player build a full 4-hero party
  * (D-052's locked party size, unchanged) by, per hero: cycling a preset
- * name, picking a class, assigning the standard array across six ability
+ * name, picking a class, and assigning the standard array across six ability
  * scores (click a score to swap it with the next slot — see
- * `StandardArrayAllocator`), and picking a signature action from whatever
- * that class offers. Every class-level derived stat (HP, attack
- * damage/range) is computed live via
- * `heroDefinitionFromBuild` and shown as a preview.
+ * `StandardArrayAllocator`). Every class-level derived stat (HP, attack
+ * damage/range) is computed live via `heroDefinitionFromBuild` and shown as
+ * a preview. D-178 removed the old "pick a signature action" step — every
+ * class's basic-Attack style/ability is now a fixed part of its own
+ * identity (`CharacterClassDefinition.basicAttackStyle`/`primaryAbility`,
+ * `data/classes.ts`), not a creation-time choice.
  *
  * This scene is now the ONLY way into a battle (`MainMenuScene`'s original
  * fixed 4-hero-roster START button and its flat Vigor/Might level-up choice
@@ -75,24 +80,18 @@ import { pushSlot } from "../cloud/CloudSaveSync";
  * DECISIONS.md), reached via the "New Game" button, and hands BattleScene a
  * built roster via `scene.start("BattleScene", { heroDefinitions })`.
  *
- * Phase 11.2 (D-074) added a second, pickable class: Wizard, a spellcaster
- * whose signature action is a cantrip (Fire Bolt or Ray of Frost) instead of
- * one of the Fighter's four martial abilities — see `data/characterCreation.ts`'s
- * `signatureActionIdsForClass` for the one place that decides which list a
- * given class picks from.
+ * Phase 11.2 (D-074) added a second, pickable class: Wizard, a spellcaster.
  *
  * Phase 11.3 (D-075) added a race-cycle button (all six SRD starter races)
- * and two further classes, Rogue and Cleric — both already flow through the
- * same class-cycle button and `signatureActionIdsForClass` seam added for
- * Wizard, so neither needed scene changes beyond the new race row. A hero's
- * race sets its `movementTiles` (Dwarf/Halfling move one tile slower — see
- * `data/races.ts`); every other race trait stays flavor-only. Feats and
- * subclasses remain deferred (recorded as class-table data, not yet
- * selectable — see `data/classes.ts` and `data/feats.ts`). Every ACTIVE hero
- * must have a distinct name and a distinct signature action (enforced before
- * Start Battle is enabled), matching today's "every hero feels different"
- * property — race is NOT required to be distinct (a full-Human party is
- * exactly as valid as a mixed one).
+ * and two further classes, Rogue and Cleric — all three flow through the
+ * same class-cycle button, so none needed scene changes beyond the new race
+ * row. A hero's race sets its `movementTiles` (Dwarf/Halfling move one tile
+ * slower — see `data/races.ts`); every other race trait stays flavor-only.
+ * Feats and subclasses remain deferred (recorded as class-table data, not
+ * yet selectable — see `data/classes.ts` and `data/feats.ts`). Every ACTIVE
+ * hero must have a distinct name (enforced before Start Battle is enabled)
+ * — race is NOT required to be distinct (a full-Human party is exactly as
+ * valid as a mixed one).
  *
  * Phase 11.4 (D-077) added three more controls, all fitted into the existing
  * layout rather than reshuffling it: a per-slot Human/AI toggle (folded into
@@ -114,7 +113,10 @@ import { pushSlot } from "../cloud/CloudSaveSync";
  * `BattleScene`'s own `campaignId` data field. Reached the existing way (the
  * plain "Create Party" button on MainMenuScene, with no data), this stays
  * `undefined` — this scene's own party-building flow is otherwise identical
- * either way.
+ * either way. D-177 added the same passthrough for `chapterIndex` —
+ * `CampaignSelectScene` resolves which chapter of a chaptered campaign is
+ * next before handing off here; this scene has no chapter UI of its own,
+ * it's purely a relay hop on the way to `BattleScene`.
  *
  * Phase 11.9 (D-071) added the same passthrough pattern for free-play: when
  * reached from `FreePlayScene`, `init()` receives `freePlayMapId`/
@@ -171,8 +173,8 @@ import { pushSlot } from "../cloud/CloudSaveSync";
  * a thin wrapper around the existing `renderPlanPrompt` — the same overlay
  * primitive the Level Planner/Spell Picker wizards already share) listing
  * every option at once instead of cycling one at a time. Name (still a
- * cycle-through-a-preset-pool button; real free-text naming is piece 2),
- * ability scores, and Signature Action are unchanged in this piece.
+ * cycle-through-a-preset-pool button; real free-text naming is piece 2) and
+ * ability scores are unchanged in this piece.
  */
 
 const MAX_PARTY_SIZE = 4;
@@ -200,7 +202,6 @@ interface SlotState {
   raceIndex: number;
   /** D-147 (piece 3): whichever kind matches the scene's current party-wide `abilityScoreMethod` — swapped wholesale (not converted) when the method toggle is clicked. */
   allocator: AbilityScoreAllocator;
-  abilityIndex: number;
   controlledBy: HeroControlMode;
   /** Phase 13.11 (D-096): index into `STARTING_GEAR_IDS`, offset by 1 — 0 means "None". */
   startingGearIndex: number;
@@ -223,6 +224,8 @@ interface SlotState {
    * identical to every pre-D-135 build.
    */
   spellPicks: { cantripIds?: string[]; leveledSpellIds?: string[]; spellbookIds?: string[] };
+  /** KI-098 item 13 (companion roster, Phase 1): true for a companion-prefilled slot in campaign mode — class/race stay fixed to the companion's own identity, but equipment/spells/hotkeys/starting level stay fully editable, same as any other slot. */
+  identityLocked: boolean;
 }
 
 interface SlotWidgets {
@@ -238,7 +241,6 @@ interface SlotWidgets {
   standardArrayRowButtons: Phaser.GameObjects.Rectangle[];
   /** D-147 (piece 3): the twelve Point-Buy +/- rectangles (one pair per ability) — visible/interactive only while the method is "pointBuy". */
   pointBuyButtons: Phaser.GameObjects.Rectangle[];
-  signatureLabel: Phaser.GameObjects.Text;
   gearLabel: Phaser.GameObjects.Text;
   subclassLabel: Phaser.GameObjects.Text;
   statsLabel: Phaser.GameObjects.Text;
@@ -281,6 +283,17 @@ export class CharacterCreationScene extends Phaser.Scene {
   /** Phase 11.8 (D-071): forwarded unchanged to BattleScene; `undefined` when
    * reached via the plain "Create Party" button (no campaign selected). */
   private campaignId?: string;
+  /** D-177: the chaptered campaign's chapter to play, forwarded unchanged to BattleScene; `undefined` for a flat/non-chaptered campaign or no campaign at all. */
+  private chapterIndex?: number;
+  /**
+   * D-18x (KI-098 item 13, the "unlock mission must include them" rule):
+   * set only when reached from `UnlockMissionPartyScene` — the exact 3
+   * companion ids (in slot order: the unlock target, then the player's own
+   * two free picks) to fill slots 2-4 with, overriding the normal "3 active
+   * roster" auto-fill below. `undefined` for every other campaign entry
+   * (a normal chapter replay, the Prologue, Free Play, Co-op, a loaded save).
+   */
+  private requiredCompanionIds?: string[];
   /** Phase 11.9 (D-071): forwarded unchanged to BattleScene; `undefined`
    * unless reached from `FreePlayScene`. */
   private freePlayMapId?: string;
@@ -349,6 +362,8 @@ export class CharacterCreationScene extends Phaser.Scene {
 
   init(data?: {
     campaignId?: string;
+    chapterIndex?: number;
+    requiredCompanionIds?: string[];
     freePlayMapId?: string;
     freePlayWaves?: WaveDefinition[];
     difficultyId?: DifficultyId;
@@ -358,6 +373,8 @@ export class CharacterCreationScene extends Phaser.Scene {
     testMode?: boolean;
   }): void {
     this.campaignId = data?.campaignId;
+    this.chapterIndex = data?.chapterIndex;
+    this.requiredCompanionIds = data?.requiredCompanionIds;
     this.freePlayMapId = data?.freePlayMapId;
     this.freePlayWaves = data?.freePlayWaves;
     this.difficultyId = data?.difficultyId ?? "normal";
@@ -401,17 +418,49 @@ export class CharacterCreationScene extends Phaser.Scene {
     // only ever be changed via the one party-wide toggle below.
     this.abilityScoreMethod = this.loadedParty?.[0]?.abilityScoreMethod === "pointBuy" ? "pointBuy" : "standardArray";
 
+    // KI-098 item 13 (companion roster, Phase 1): campaign mode's party is
+    // slot 1 (the player-built hero) plus the roster's 3 active companions
+    // in slots 2-4 — never for Free Play/a plain "Create Party" run, and
+    // never over an actually-loaded save (that party was already built by
+    // hand and saved; a loaded save always wins). Seeding here defends
+    // against reaching this scene without going through CampaignSelectScene
+    // first (e.g. Load Game), and guarantees the roster is settled before
+    // slot-building below ever reads it — no async gap.
+    const companionBuildsForSlots: (CharacterBuild | undefined)[] = [];
+    if (this.campaignId && !this.loadedParty) {
+      // D-18x (KI-098 item 13, "unlock mission must include them"):
+      // `UnlockMissionPartyScene` already resolved the exact 3 companions
+      // for slots 2-4 (the unlock target plus the player's own 2 free
+      // picks) — use those verbatim instead of the normal active-roster
+      // auto-fill below, which would silently drop the not-yet-recruited
+      // target companion.
+      if (this.requiredCompanionIds && this.requiredCompanionIds.length > 0) {
+        this.requiredCompanionIds.forEach((id, i) => {
+          companionBuildsForSlots[i + 1] = getCompanionDefinition(id).build;
+        });
+      } else {
+        const roster = seedStartingCompanions(
+          loadCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY),
+          RandomService.seeded(),
+        );
+        saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, roster);
+        roster.activeIds.forEach((id, i) => {
+          companionBuildsForSlots[i + 1] = getCompanionDefinition(id).build;
+        });
+      }
+    }
+
     for (let slot = 0; slot < MAX_PARTY_SIZE; slot++) {
-      const loadedBuild = this.loadedParty?.[slot];
+      const loadedBuild = this.loadedParty?.[slot] ?? companionBuildsForSlots[slot];
       this.slots.push(
         loadedBuild
-          ? this.slotStateFromBuild(loadedBuild)
+          ? this.slotStateFromBuild(loadedBuild, !this.loadedParty && companionBuildsForSlots[slot] !== undefined)
           : {
+              identityLocked: false,
               name: CHARACTER_NAME_POOL[slot % CHARACTER_NAME_POOL.length],
               classIndex: 0,
               raceIndex: 0,
               allocator: new StandardArrayAllocator(),
-              abilityIndex: slot,
               // D-129: default to 1 human, the rest AI-controlled — Kevin's
               // own request, so a fresh party is playtest-ready without
               // manually toggling three slots every time. Loading a saved
@@ -430,10 +479,15 @@ export class CharacterCreationScene extends Phaser.Scene {
     if (this.loadedParty) {
       this.partySize = Math.min(MAX_PARTY_SIZE, Math.max(MIN_PARTY_SIZE, this.loadedParty.length));
     }
+    // KI-098 item 13 (companion roster, Phase 1): a smaller campaign party
+    // has no clean meaning once slots 2-4 are fixed companion slots — force
+    // the full 4. Free Play's own 1-4 range (the `if (this.loadedParty)`
+    // branch above, and the party-size picker itself) is untouched.
+    if (this.campaignId) this.partySize = MAX_PARTY_SIZE;
 
     this.buildBottomControls(width);
     this.buildStartButton(width);
-    this.buildBackButton(width);
+    this.buildBackButton();
     this.refreshAll();
 
     onViewportResize(this, () => this.repositionLayout());
@@ -460,6 +514,9 @@ export class CharacterCreationScene extends Phaser.Scene {
     const shift = (newWidth - this.viewportWidthAtLastLayout) / 2;
     if (shift === 0) return;
     for (const obj of this.children.list) {
+      // Anchored to the left edge (like every other scene's top-left Back
+      // button), not to the viewport center — must stay put, not shift.
+      if (obj.name === "back-button-anchor") continue;
       const positionable = obj as unknown as { x?: unknown };
       if (typeof positionable.x === "number") (positionable as { x: number }).x += shift;
     }
@@ -550,6 +607,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     classButton.on("pointerout", () => classButton.setFillStyle(0x222a2e));
     classButton.on("pointerdown", () => {
       const s = this.slots[slot];
+      if (s.identityLocked) return;
       this.openChoicePicker(
         "Choose a Class",
         CREATABLE_CLASS_IDS.map((id, i) => ({
@@ -561,7 +619,6 @@ export class CharacterCreationScene extends Phaser.Scene {
           highlighted: i === s.classIndex,
           onPick: () => {
             s.classIndex = i;
-            s.abilityIndex = 0; // the new class's action list has a different shape — start from its first entry
             // D-133: a different class has an entirely different choice ladder —
             // a stale plan would be meaningless at best, wrong at worst.
             s.levelUpPlan = emptyLevelUpPlan();
@@ -584,6 +641,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     raceButton.on("pointerout", () => raceButton.setFillStyle(0x2a2622));
     raceButton.on("pointerdown", () => {
       const s = this.slots[slot];
+      if (s.identityLocked) return;
       // D-147 (piece 5): each option's desc shows what's actually real
       // (speed, flavor traits) — deliberately no invented ability-score
       // bonus. This project's spell-prep economy (D-134) already committed
@@ -680,28 +738,13 @@ export class CharacterCreationScene extends Phaser.Scene {
       allObjects.push(rowButton, label, minusButton, minusLabel, plusButton, plusLabel);
     });
 
-    const signatureY = abilityRowsTop + ABILITY_SCORE_IDS.length * abilityRowHeight + 15;
-    const signatureButton = this.add
-      .rectangle(x, signatureY, COLUMN_WIDTH - 20, 34, 0x3a2a4a)
-      .setStrokeStyle(1, 0x5a4a7a)
-      .setInteractive({ useHandCursor: true });
-    const signatureLabel = this.add
-      .text(x, signatureY, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#f0e8ff", fontStyle: "bold" })
-      .setOrigin(0.5);
-    signatureButton.on("pointerover", () => signatureButton.setFillStyle(0x4a3a5a));
-    signatureButton.on("pointerout", () => signatureButton.setFillStyle(0x3a2a4a));
-    signatureButton.on("pointerdown", () => {
-      const s = this.slots[slot];
-      const actionIds = signatureActionIdsForClass(CREATABLE_CLASS_IDS[s.classIndex]);
-      s.abilityIndex = (s.abilityIndex + 1) % actionIds.length;
-      this.refreshAll();
-    });
-
     // Phase 13.11 (D-096): a free starting-gear pick, cycling "None" plus
-    // every common/uncommon catalogue item — sits between the signature
-    // ability and the stats preview, pushing the latter down 40px (same
-    // bounding-box-driven relayout discipline as D-075's race row).
-    const gearY = signatureY + 40;
+    // every common/uncommon catalogue item. D-178: now the first row below
+    // ability scores — sits where the removed "signature action" row used
+    // to (same `+15` gap off `abilityRowsTop`), since every class's basic
+    // attack is a fixed part of its own identity now, not a creation-time
+    // pick — everything below this row cascades off `gearY` unchanged.
+    const gearY = abilityRowsTop + ABILITY_SCORE_IDS.length * abilityRowHeight + 15;
     const gearButton = this.add
       .rectangle(x, gearY, COLUMN_WIDTH - 20, 26, 0x22282a)
       .setStrokeStyle(1, 0x3a4a4c)
@@ -791,8 +834,16 @@ export class CharacterCreationScene extends Phaser.Scene {
     levelButton.on("pointerout", () => levelButton.setFillStyle(0x28241c));
     levelButton.on("pointerdown", () => {
       const s = this.slots[slot];
-      s.startingLevel = s.startingLevel >= MAX_CLASS_LEVEL ? 1 : s.startingLevel + 1;
-      this.refreshAll();
+      const levels: number[] = [];
+      for (let n = 1; n <= MAX_CLASS_LEVEL; n++) levels.push(n);
+      this.openChoicePicker(
+        "Choose Starting Level",
+        levels.map((n) => ({
+          label: `${n}`,
+          highlighted: n === s.startingLevel,
+          onPick: () => (s.startingLevel = n),
+        })),
+      );
     });
 
     // D-133: the level-by-level Character Creation planner — opens a
@@ -835,8 +886,6 @@ export class CharacterCreationScene extends Phaser.Scene {
       classLabel,
       raceButton,
       raceLabel,
-      signatureButton,
-      signatureLabel,
       gearButton,
       gearLabel,
       subclassButton,
@@ -853,7 +902,6 @@ export class CharacterCreationScene extends Phaser.Scene {
     interactiveButtons.push(
       classButton,
       raceButton,
-      signatureButton,
       gearButton,
       subclassButton,
       levelButton,
@@ -870,7 +918,6 @@ export class CharacterCreationScene extends Phaser.Scene {
       abilityScoreLabels,
       standardArrayRowButtons,
       pointBuyButtons,
-      signatureLabel,
       gearLabel,
       subclassLabel,
       statsLabel,
@@ -906,9 +953,25 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.partySizeButton.on("pointerover", () => this.partySizeButton.setFillStyle(0x3a3a4a));
     this.partySizeButton.on("pointerout", () => this.partySizeButton.setFillStyle(0x2a2a3a));
     this.partySizeButton.on("pointerdown", () => {
-      this.partySize = this.partySize >= MAX_PARTY_SIZE ? MIN_PARTY_SIZE : this.partySize + 1;
-      this.refreshAll();
+      // KI-098 item 13 (companion roster, Phase 1): campaign mode's party
+      // size is fixed at 4 (PC + 3 active companions) — see the `create()`
+      // note by `this.partySize = MAX_PARTY_SIZE`.
+      if (this.campaignId) return;
+      const sizes: number[] = [];
+      for (let n = MIN_PARTY_SIZE; n <= MAX_PARTY_SIZE; n++) sizes.push(n);
+      this.openChoicePicker(
+        "Choose Party Size",
+        sizes.map((n) => ({
+          label: `${n}`,
+          highlighted: n === this.partySize,
+          onPick: () => (this.partySize = n),
+        })),
+      );
     });
+    if (this.campaignId) {
+      this.partySizeButton.disableInteractive();
+      this.partySizeButton.setAlpha(0.6);
+    }
 
     this.difficultyButton = this.add
       .rectangle(rightX, y, 280, 40, 0x2a2a3a)
@@ -920,9 +983,15 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.difficultyButton.on("pointerover", () => this.difficultyButton.setFillStyle(0x3a3a4a));
     this.difficultyButton.on("pointerout", () => this.difficultyButton.setFillStyle(0x2a2a3a));
     this.difficultyButton.on("pointerdown", () => {
-      const next = (DIFFICULTY_IDS.indexOf(this.difficultyId) + 1) % DIFFICULTY_IDS.length;
-      this.difficultyId = DIFFICULTY_IDS[next];
-      this.refreshAll();
+      this.openChoicePicker(
+        "Choose Difficulty",
+        DIFFICULTY_IDS.map((id) => ({
+          label: getDifficultyDefinition(id).name,
+          desc: difficultyChoiceDescription(id),
+          highlighted: id === this.difficultyId,
+          onPick: () => (this.difficultyId = id),
+        })),
+      );
     });
   }
 
@@ -968,9 +1037,19 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.teamLevelButton.on("pointerover", () => this.teamLevelButton.setFillStyle(0x342e22));
     this.teamLevelButton.on("pointerout", () => this.teamLevelButton.setFillStyle(0x28241c));
     this.teamLevelButton.on("pointerdown", () => {
-      this.teamLevelValue = this.teamLevelValue >= MAX_CLASS_LEVEL ? 1 : this.teamLevelValue + 1;
-      this.slots.forEach((s) => (s.startingLevel = this.teamLevelValue));
-      this.refreshAll();
+      const levels: number[] = [];
+      for (let n = 1; n <= MAX_CLASS_LEVEL; n++) levels.push(n);
+      this.openChoicePicker(
+        "Choose Team Level (all heroes)",
+        levels.map((n) => ({
+          label: `${n}`,
+          highlighted: n === this.teamLevelValue,
+          onPick: () => {
+            this.teamLevelValue = n;
+            this.slots.forEach((s) => (s.startingLevel = n));
+          },
+        })),
+      );
     });
   }
 
@@ -1020,6 +1099,7 @@ export class CharacterCreationScene extends Phaser.Scene {
         heroDefinitions: this.buildRoster(),
         difficultyId: this.difficultyId,
         campaignId: this.campaignId,
+        chapterIndex: this.chapterIndex,
         freePlayMapId: this.freePlayMapId,
         freePlayWaves: this.freePlayWaves,
         customMapData: this.customMapData,
@@ -1099,22 +1179,23 @@ export class CharacterCreationScene extends Phaser.Scene {
     if (slot) pushSlot(this.authState.uid, slot).catch((err) => console.error("Cloud push failed:", err));
   }
 
-  private buildBackButton(width: number): void {
-    const back = this.add
-      .rectangle(width / 2, 1040, 200, 40, 0x2a2a3a)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    const label = this.add
-      .text(width / 2, 1040, "Back to Menu", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "16px",
-        color: "#c8c8d8",
-      })
-      .setOrigin(0.5);
-    back.on("pointerover", () => back.setFillStyle(0x3a3a4a));
-    back.on("pointerout", () => back.setFillStyle(0x2a2a3a));
-    back.on("pointerdown", () => this.scene.start("MainMenuScene"));
-    label.setName("back-button-label");
+  private buildBackButton(): void {
+    // Standard top-left slot every other back-navigating scene uses
+    // (Compendium, Bestiary, Load Game, Map Builder, etc.) — this scene used
+    // to be the one outlier, centered at the bottom edge, easy to miss.
+    createOrnateButton(this, 120, 42, 160, 44, "Back (Esc)", () => this.leaveToMainMenu(), {
+      variant: "tool",
+      depth: 5,
+    }).container.setName("back-button-anchor");
+    this.input.keyboard?.on("keydown-ESC", () => this.leaveToMainMenu());
+  }
+
+  private leaveToMainMenu(): void {
+    // Don't abandon the scene while a picker/wizard overlay is open — Esc
+    // (or a stray click) shouldn't discard in-progress choices; Cancel/Back
+    // inside the overlay itself is the way out of it.
+    if (this.levelPlanOverlay.length > 0) return;
+    this.scene.start("MainMenuScene");
   }
 
   /**
@@ -1124,8 +1205,9 @@ export class CharacterCreationScene extends Phaser.Scene {
    * to index 0 via `Math.max(0, ...)` — same defensive spirit as the rest of
    * this scene.
    */
-  private slotStateFromBuild(build: CharacterBuild): SlotState {
+  private slotStateFromBuild(build: CharacterBuild, identityLocked = false): SlotState {
     return {
+      identityLocked,
       name: build.name,
       classIndex: Math.max(0, CREATABLE_CLASS_IDS.indexOf(build.classId)),
       raceIndex: Math.max(0, RACE_IDS.indexOf(build.raceId)),
@@ -1133,7 +1215,6 @@ export class CharacterCreationScene extends Phaser.Scene {
         build.abilityScoreMethod === "pointBuy"
           ? pointBuyAllocatorFromScores(build.abilityScores)
           : allocatorFromScores(build.abilityScores),
-      abilityIndex: Math.max(0, signatureActionIdsForClass(build.classId).indexOf(build.abilityId)),
       controlledBy: build.controlledBy,
       // Phase 13.11 (D-096): -1 (no starting item, or one the catalogue no
       // longer has) plus 1 lands on 0 — "None" — the same safe fallback
@@ -1163,7 +1244,6 @@ export class CharacterCreationScene extends Phaser.Scene {
   private buildsFromSlots(): CharacterBuild[] {
     return this.slots.slice(0, this.partySize).map((s, i) => {
       const classId = CREATABLE_CLASS_IDS[s.classIndex];
-      const actionIds = signatureActionIdsForClass(classId);
       return {
         id: `party-${i + 1}`,
         name: s.name,
@@ -1172,7 +1252,6 @@ export class CharacterCreationScene extends Phaser.Scene {
         level: 1,
         abilityScores: s.allocator.scores(),
         abilityScoreMethod: this.abilityScoreMethod === "pointBuy" ? "pointBuy" : undefined,
-        abilityId: actionIds[s.abilityIndex % actionIds.length],
         controlledBy: s.controlledBy,
         // Phase 13.11 (D-096): a level-1-choice class (Cleric/Sorcerer/
         // Warlock) already has a modeled subclass the instant it's created —
@@ -1240,7 +1319,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.widgets.forEach((w, slot) => this.setSlotActive(w, slot < this.partySize));
     this.refreshAbilityScoreControls();
 
-    this.partySizeLabel.setText(`Party Size: ${this.partySize}`);
+    this.partySizeLabel.setText(this.campaignId ? `Party Size: ${this.partySize} (fixed for campaigns)` : `Party Size: ${this.partySize}`);
     this.difficultyLabel.setText(`Difficulty: ${getDifficultyDefinition(this.difficultyId).name}`);
     this.abilityScoreMethodLabel.setText(
       `Ability Scores: ${this.abilityScoreMethod === "pointBuy" ? "Point Buy" : "Standard Array"}`,
@@ -1252,9 +1331,8 @@ export class CharacterCreationScene extends Phaser.Scene {
     // field is newly possible — it isn't caught by `hasDuplicateNames`
     // unless two heroes are BOTH blank.
     const blankName = builds.some((b) => !b.name.trim());
-    const duplicateAbilities = hasDuplicateAbilities(builds);
     const invalidNames = duplicateNames || blankName;
-    const valid = !invalidNames && !duplicateAbilities;
+    const valid = !invalidNames;
     this.partyValid = valid;
 
     if (valid) {
@@ -1264,14 +1342,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     } else {
       this.startButton.setFillStyle(0x4a4a4a);
       this.startButton.disableInteractive();
-      const nameMessage = blankName ? "Every hero needs a name." : "Every hero needs a unique name.";
-      this.statusText.setText(
-        invalidNames && duplicateAbilities
-          ? `${nameMessage} Every hero also needs a unique signature ability.`
-          : invalidNames
-            ? nameMessage
-            : "Every hero needs a unique signature ability.",
-      );
+      this.statusText.setText(blankName ? "Every hero needs a name." : "Every hero needs a unique name.");
     }
 
     this.refreshSaveControls(valid);
@@ -1313,7 +1384,8 @@ export class CharacterCreationScene extends Phaser.Scene {
     // D-147 (piece 2): the name field is a live-typed DOM `<input>`, not a
     // Text label re-rendered from `build.name` — writing to it here would
     // fight the player's own typing/cursor position. Nothing to set.
-    w.classLabel.setText(`Class: ${getClassDefinition(build.classId).name}`);
+    const companionTag = this.slots[slot].identityLocked ? " (Companion)" : "";
+    w.classLabel.setText(`Class: ${getClassDefinition(build.classId).name}${companionTag}`);
     w.raceLabel.setText(`Race: ${getRaceDefinition(build.raceId).name}`);
 
     ABILITY_SCORE_IDS.forEach((ability, i) => {
@@ -1333,9 +1405,6 @@ export class CharacterCreationScene extends Phaser.Scene {
       if (i === 0) this.fitLabelToColumnWidth(w.abilityScoreLabels[ability]);
     });
 
-    const ability = getAbility(build.abilityId);
-    w.signatureLabel.setText(ability.name);
-
     w.gearLabel.setText(
       build.startingEquipmentId ? `Gear: ${getEquipmentDefinition(build.startingEquipmentId).name}` : "Gear: None",
     );
@@ -1353,12 +1422,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     // would apply (see `BattleScene.fastForwardHeroToLevel`) — a deliberate
     // simplification, since ASI always targets whichever ability is highest
     // AT THE TIME, something only the actual fast-forward can resolve.
-    const leveledStats = combatStatsForClassLevel(
-      build.classId,
-      build.startingLevel ?? 1,
-      build.abilityScores,
-      build.abilityId,
-    );
+    const leveledStats = combatStatsForClassLevel(build.classId, build.startingLevel ?? 1, build.abilityScores);
     w.statsLabel.setText(
       `HP ${leveledStats.maxHealth}  ATK ${leveledStats.attackDamage}\nRange ${def.attackRangeTiles}  Move ${def.movementTiles}`,
     );
@@ -1503,15 +1567,27 @@ export class CharacterCreationScene extends Phaser.Scene {
   }
 
   private clearLevelPlanOverlay(): void {
-    for (const obj of this.levelPlanOverlay) obj.destroy();
-    this.levelPlanOverlay = [];
+    clearChoiceOverlay(this.levelPlanOverlay);
+    this.setNameInputsVisible(true);
+  }
+
+  /**
+   * The 4 hero-name fields are real HTML `<input>` DOM elements (Phaser's
+   * DOM plugin renders them in a layer above the canvas, outside normal
+   * depth sorting), so they'd otherwise stay visible on top of every
+   * full-screen picker/wizard overlay `renderPlanPrompt` draws.
+   */
+  private setNameInputsVisible(visible: boolean): void {
+    for (const w of this.widgets) {
+      w.nameInputNode.style.visibility = visible ? "visible" : "hidden";
+    }
   }
 
   private showPlanModeSelect(): void {
     this.renderPlanPrompt("How should this hero's future level-ups be handled?", [
       {
         label: "Auto-follow a blueprint",
-        desc: "Every choice you plan next applies silently, in battle — no popups at all for this hero.",
+        desc: "Every choice you've planned next applies silently, in battle — anything you leave unset still prompts live.",
         onClick: () => {
           this.planningDraft.mode = "auto";
           this.planningStepIndex = 0;
@@ -1585,8 +1661,8 @@ export class CharacterCreationScene extends Phaser.Scene {
 
   private planSkipChoice(): { label: string; desc: string; onClick: () => void } {
     return {
-      label: "Skip (use default here)",
-      desc: "Leaves this level unset — resolved with the usual default (or still prompted live, if this hero's mode is Prompted).",
+      label: "Skip (decide later)",
+      desc: "Leaves this level unset — you'll be prompted for a real choice when it comes up, regardless of this hero's mode.",
       onClick: () => this.advancePlanStep(),
     };
   }
@@ -2009,74 +2085,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     title: string,
     choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }>,
   ): void {
-    this.clearLevelPlanOverlay();
-    const { width: viewportWidth, height: viewportHeight } = getViewport(this);
-    const dim = this.add
-      .rectangle(viewportWidth / 2, viewportHeight / 2, viewportWidth, viewportHeight, 0x000000, 0.85)
-      .setDepth(60)
-      .setInteractive();
-    const titleText = this.add
-      .text(viewportWidth / 2, 90, title, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "24px",
-        color: "#f0e070",
-        fontStyle: "bold",
-        align: "center",
-        wordWrap: { width: viewportWidth - 160 },
-      })
-      .setOrigin(0.5)
-      .setDepth(61);
-    this.levelPlanOverlay.push(dim, titleText);
-
-    const hasDesc = choices.some((c) => c.desc);
-    const usableWidth = viewportWidth - 80;
-    const width = Math.min(220, Math.max(120, Math.floor(usableWidth / Math.min(choices.length, 6)) - 14));
-    const height = hasDesc ? 82 : 44;
-    const spacing = width + 14;
-    const maxPerRow = Math.max(1, Math.floor(usableWidth / spacing));
-    const rowSpacing = height + 14;
-    const rowStartY = 170 + rowSpacing / 2;
-
-    choices.forEach((choice, i) => {
-      const row = Math.floor(i / maxPerRow);
-      const col = i % maxPerRow;
-      const itemsInRow = Math.min(maxPerRow, choices.length - row * maxPerRow);
-      const rowStartX = viewportWidth / 2 - ((itemsInRow - 1) * spacing) / 2;
-      const x = rowStartX + col * spacing;
-      const y = rowStartY + row * rowSpacing;
-      const btn = this.add
-        .rectangle(x, y, width, height, 0x3a5a8a)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(61);
-      if (choice.highlighted) btn.setStrokeStyle(3, 0xf0c040);
-      const name = this.add
-        .text(x, y - (choice.desc ? 18 : 0), choice.highlighted ? `★ ${choice.label}` : choice.label, {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "13px",
-          color: choice.highlighted ? "#ffe58a" : "#e8e8f0",
-          fontStyle: "bold",
-          align: "center",
-          wordWrap: { width: width - 14 },
-        })
-        .setOrigin(0.5)
-        .setDepth(62);
-      this.levelPlanOverlay.push(btn, name);
-      if (choice.desc) {
-        const desc = this.add
-          .text(x, y + 16, choice.desc, {
-            fontFamily: "system-ui, Arial, sans-serif",
-            fontSize: "10px",
-            color: "#c8c8d8",
-            align: "center",
-            wordWrap: { width: width - 14 },
-          })
-          .setOrigin(0.5)
-          .setDepth(62);
-        this.levelPlanOverlay.push(desc);
-      }
-      btn.on("pointerover", () => btn.setFillStyle(0x4a6a9a));
-      btn.on("pointerout", () => btn.setFillStyle(0x3a5a8a));
-      btn.on("pointerdown", () => choice.onClick());
-    });
+    this.setNameInputsVisible(false);
+    renderChoiceOverlay(this, this.levelPlanOverlay, title, choices);
   }
 }

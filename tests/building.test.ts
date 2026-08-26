@@ -127,11 +127,11 @@ function laneWave(enemyId: string): WaveDefinition {
 
 describe("Traps trigger correctly during the enemy phase", () => {
   it("damages an enemy that steps onto the trap tile, without blocking it", () => {
-    // Lane S....X: spawn (0,0), exit (5,0). A grunt moves 2 tiles/phase.
+    // Lane S....X: spawn (0,0), exit (5,0). A grunt moves 4 tiles/phase (D-172).
     const map = new GameMap(parseMapRows("lane", "lane", ["S....X"]));
     const pf = new PathfindingSystem(map);
     const build = new BuildSystem(map, pf);
-    build.place("spike-trap", { x: 2, y: 0 }); // grunt reaches (2,0) on phase 1
+    build.place("spike-trap", { x: 2, y: 0 }); // grunt passes over (2,0) on phase 1
 
     const ws = new WaveSystem(map, pf, [laneWave("grunt")], { startingIntegrity: 20, random: RandomService.fixed() });
     ws.startWave(0);
@@ -142,7 +142,7 @@ describe("Traps trigger correctly during the enemy phase", () => {
     expect(t1.trapTriggers[0].result.damageDealt).toBe(3);
     expect(t1.trapTriggers[0].position).toEqual({ x: 2, y: 0 });
     expect(t1.spawned[0].health).toBe(3);
-    expect(t1.spawned[0].position).toEqual({ x: 2, y: 0 }); // passed onto the trap, still advancing
+    expect(t1.spawned[0].position).toEqual({ x: 4, y: 0 }); // passed onto the trap, then kept advancing to its full 4-tile budget
   });
 
   it("can defeat an enemy, which then does not breach", () => {
@@ -522,9 +522,12 @@ describe("Walls reroute enemies (route manipulation)", () => {
     const t1 = ws.tickEnemyPhase({ isBlocked: (p) => build.isWallAt(p) });
 
     // Instead of walking straight to (2,0), the grunt detoured onto row 1 and
-    // never stepped on the wall tile.
-    const enemy = t1.spawned[0];
-    expect(enemy.position.y).toBe(1);
+    // never stepped on the wall tile. D-172 doubled Grunt's speed, so it may
+    // now have enough budget to finish the whole detour and land back on row
+    // 0 within the same phase — check it genuinely VISITED row 1 at some
+    // point (the only way around this wall on a 2-row map) rather than
+    // asserting its exact final row.
+    expect(t1.moves[0].path.some((step) => step.y === 1)).toBe(true);
     for (const step of t1.moves[0].path) {
       expect(build.isWallAt(step)).toBe(false);
     }

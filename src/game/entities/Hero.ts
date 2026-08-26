@@ -234,7 +234,6 @@ export interface HeroSnapshot {
   movementTiles: number;
   attackRangeTiles: number;
   baseArmorClass: number;
-  abilityId: string;
   controlledBy: HeroControlMode;
   classId?: string;
   abilityScores?: AbilityScores;
@@ -246,6 +245,8 @@ export interface HeroSnapshot {
   equippedItems: Partial<Record<GearSlotId, string>>;
   equippedPotions: Partial<Record<GeneralSlotId, string>>;
   moved: boolean;
+  /** D-173: leftover-movement-budget tracking, see `Hero.movementTilesUsedThisTurn`. */
+  movementTilesUsedThisTurn: number;
   acted: boolean;
   bonusMaxHealth: number;
   bonusAttackDamage: number;
@@ -455,7 +456,6 @@ export class Hero implements Combatant {
   attackBonus: number;
   /** D-127: no longer `readonly` — a DEX-setting item needs to recompute this live. See `recomputeBaseArmorClass`. */
   baseArmorClass: number;
-  readonly abilityId: string;
   /** Phase 11.4 (D-077): "human" (default) waits for clicks; "ai" acts on its own. */
   readonly controlledBy: HeroControlMode;
   /** Phase 13.2 (D-087): which class-gated action-economy features this hero qualifies for, if any. */
@@ -595,10 +595,10 @@ export class Hero implements Combatant {
   private _spellbookIds: string[] = [];
   /**
    * D-148: this hero's curated action hotkey bar — a fixed-size, slot-
-   * ordered subset of `knownSpellAbilityIds()`/`HeroActionRegistry` entries/
-   * the frozen `abilityId` the player has pinned one click away, distinct
-   * from "what this hero COULD use" (those two sources already answer
-   * that). `undefined` means an unfilled slot. See `setActionHotkey`.
+   * ordered subset of `knownSpellAbilityIds()`/`HeroActionRegistry` entries
+   * the player has pinned one click away, distinct from "what this hero
+   * COULD use" (those two sources already answer that). `undefined` means an
+   * unfilled slot. See `setActionHotkey`.
    */
   private _actionHotkeys: (string | undefined)[] = new Array(ACTION_HOTKEY_SLOT_COUNT).fill(undefined);
 
@@ -612,6 +612,17 @@ export class Hero implements Combatant {
   equippedPotions: Partial<Record<GeneralSlotId, string>> = {};
 
   private moved = false;
+  /**
+   * KI-098 item 8 (D-173): tiles already spent moving this turn — lets a
+   * hero move, act, then move again with whatever budget is left, instead
+   * of a move consuming the whole turn's allowance outright. `moved` above
+   * still just means "has moved at all this turn" (unchanged meaning, used
+   * by Ranger's Hide in Plain Sight/Thief's Supreme Sneak/Cunning Action's
+   * own gate); this field is what `movementBudget()` actually subtracts
+   * from `effectiveMovementTiles`. Reset alongside `moved` in
+   * `resetForNewTurn()`.
+   */
+  private movementTilesUsedThisTurn = 0;
   private acted = false;
   private bonusMaxHealth = 0;
   private bonusAttackDamage = 0;
@@ -639,7 +650,6 @@ export class Hero implements Combatant {
     this.attackBonus = def.attackBonus;
     this.classRiderDamage = def.classRiderDamage ?? 0;
     this.baseArmorClass = def.baseArmorClass;
-    this.abilityId = def.abilityId;
     this.controlledBy = def.controlledBy ?? "human";
     this.classId = def.classId;
     this.abilityScores = def.abilityScores;
@@ -854,13 +864,45 @@ export class Hero implements Combatant {
   /**
    * This hero's movement allowance after status reductions (e.g. "slowed"),
    * plus Phase 22's gear-driven movement bonus (Boots of Striding and
-   * Springing/Speed) and a permanent Potion of Speed bonus, never below 0.
+   * Springing/Speed), a permanent Potion of Speed bonus, and D-171's
+   * class-based movement bonus, never below 0.
    */
   get effectiveMovementTiles(): number {
     return Math.max(
       0,
-      this.movementTiles - this.statusTotal("movementReduction") + this.gearBonus("movementBonusTiles") + this.bonusMovementTiles,
+      this.movementTiles -
+        this.statusTotal("movementReduction") +
+        this.gearBonus("movementBonusTiles") +
+        this.bonusMovementTiles +
+        this.classMovementBonus(),
     );
+  }
+
+  /**
+   * D-171 (KI-098 item 7): the Monk's Unarmored Movement (level 2+) and the
+   * Barbarian's Fast Movement (level 5+) — both already-named, previously
+   * `mechanicallyActive: false` SRD features in `data/classes.ts` (both
+   * documented there as a flat 10ft bonus). A DERIVED value, not a
+   * mutation of `bonusMovementTiles` (that field is right for a one-shot
+   * potion grant applied at a point in time; a level-gated class trait
+   * needs to recompute correctly on every level-up instead, with no
+   * separate hook into the level-up path needed). Deliberately unconditional
+   * (not gated on "no armor equipped") — this game has no armor-equipped
+   * detection at all (both classes' own "Unarmored Defense" AC feature
+   * stays inert for the exact same reason), so gating this on the same
+   * missing concept would need a new system, not just a data flip; every
+   * other simplified class number in this file (Rage's flat bonus, Sneak
+   * Attack's flat conversion) already drops a "while X" SRD qualifier the
+   * same way when the underlying condition has no system to check yet.
+   *
+   * D-172: +2, not +1 — this represents a fixed 10ft bonus, and the
+   * project-wide rescale to "1 tile = 5ft" (races.ts's own module comment)
+   * means 10ft is now 2 tiles, not 1.
+   */
+  private classMovementBonus(): number {
+    if (this.classId === "monk" && this.level >= 2) return 2;
+    if (this.classId === "barbarian" && this.level >= 5) return 2;
+    return 0;
   }
 
   /**
@@ -1566,6 +1608,22 @@ export class Hero implements Combatant {
     this.permanentDamageResistance = true;
   }
 
+  /**
+   * D-181 (CAMPAIGN_STORY_DESIGN.md §8's pre-region "XP" bonus category):
+   * this game has no separate XP-pool currency to grant — leveling is a
+   * fixed per-wave cadence (D-174), not something a flat number can buy
+   * into. "Guaranteed, permanent character power" (the design doc's own
+   * framing for this category) is modeled instead as a flat permanent max-
+   * HP grant, into the `bonusMaxHealth` slot that's existed since Phase
+   * 13.6/13.11 (see its own field comment) with nothing granting into it
+   * until now. Same "new HP is genuinely yours the instant you gain it"
+   * treatment `levelUpClass` already gives a real level-up's HP gain.
+   */
+  grantBonusHealth(amount: number): void {
+    this.bonusMaxHealth += amount;
+    this.health += amount;
+  }
+
   /** Phase 22: Restorative Ointment — clears every active status effect outright. */
   cureAllStatuses(): void {
     this.activeStatuses = [];
@@ -1683,10 +1741,9 @@ export class Hero implements Combatant {
 
   /**
    * D-148: every id this hero could currently pin to a hotkey slot — its
-   * known spells/cantrips (`knownSpellAbilityIds`), its available
-   * `HeroActionRegistry` bonus/class actions, and (for a non-caster) its
-   * one frozen signature `abilityId`. `setActionHotkey` refuses anything
-   * outside this set.
+   * known spells/cantrips (`knownSpellAbilityIds`) and its available
+   * `HeroActionRegistry` bonus/class actions. `setActionHotkey` refuses
+   * anything outside this set.
    */
   private validHotkeyIds(): Set<string> {
     const ids = [
@@ -1695,7 +1752,6 @@ export class Hero implements Combatant {
         .filter((a) => a.available)
         .map((a) => a.id),
     ];
-    if (this.abilityId) ids.push(this.abilityId);
     return new Set(ids);
   }
 
@@ -1777,7 +1833,7 @@ export class Hero implements Combatant {
    */
   private recomputeCombatStats(flatHpBonusesBefore: number): void {
     if (!this.classId || !this.abilityScores) return;
-    const stats = combatStatsForClassLevel(this.classId, this.classLevel, this.effectiveAbilityScores(), this.abilityId);
+    const stats = combatStatsForClassLevel(this.classId, this.classLevel, this.effectiveAbilityScores());
     this.applyLeveledStats(stats, flatHpBonusesBefore);
     this.recomputeBaseArmorClass();
   }
@@ -2094,11 +2150,12 @@ export class Hero implements Combatant {
   }
 
   /**
-   * A hero may move only if it is alive, hasn't already moved this turn, and
-   * isn't held by a "stunned"/"restrained"-family status (Phase 21, D-112).
+   * A hero may move only if it is alive, still has movement budget left this
+   * turn (D-173 — no longer just "hasn't moved yet," see `movementBudget()`),
+   * and isn't held by a "stunned"/"restrained"-family status (Phase 21, D-112).
    */
   canMove(): boolean {
-    return this.isAlive() && !this.moved && !this.isIncapacitatedByStatus;
+    return this.movementBudget() > 0;
   }
 
   /**
@@ -2155,10 +2212,18 @@ export class Hero implements Combatant {
     return this.classId === "rogue" && this.canUseBonusAction() && this.moved;
   }
 
-  /** Un-consumes this turn's move slot; spends the bonus action. */
+  /**
+   * Grants another full movement allowance on top of whatever's left this
+   * turn (real SRD Dash math); spends the bonus action. D-173: subtracting
+   * `effectiveMovementTiles` from the used-tiles counter (rather than
+   * resetting it to 0) means a Rogue who's only used PART of their normal
+   * move gets the full Dash bonus added on top, not just their move slot
+   * refreshed — `movementTilesUsedThisTurn` may go negative here on
+   * purpose; `movementBudget()`'s own `Math.max(0, ...)` handles that.
+   */
   useCunningActionDash(): void {
     this.bonusActed = true;
-    this.moved = false;
+    this.movementTilesUsedThisTurn -= this.effectiveMovementTiles;
   }
 
   /**
@@ -2765,19 +2830,31 @@ export class Hero implements Combatant {
 
   /**
    * Tiles this hero may still travel this turn: its full movement allowance
-   * before it has moved, and 0 afterwards (MVP: one move per turn).
+   * minus whatever it's already spent this turn (KI-098 item 8, D-173 —
+   * supersedes the original "MVP: one move per turn" all-or-nothing rule),
+   * or 0 if it's dead/incapacitated. A hero that moved partway, then acted,
+   * still has whatever budget it didn't spend.
    */
   movementBudget(): number {
-    return this.canMove() ? this.effectiveMovementTiles : 0;
+    if (!this.isAlive() || this.isIncapacitatedByStatus) return 0;
+    return Math.max(0, this.effectiveMovementTiles - this.movementTilesUsedThisTurn);
   }
 
   /**
    * Commit a move to a new tile. This is the ONLY thing that changes a hero's
    * position, which is what makes "cancel restores prior state" simple: cancel
    * just never calls this, so the hero stays exactly where it was.
+   *
+   * `tilesUsed` (D-173) is how much of this turn's movement budget the move
+   * actually spent — pass the real route length so leftover budget survives
+   * for a later move-again this same turn. Omitting it (every pre-D-173
+   * call site, and any caller that doesn't care about split movement, e.g.
+   * AI-controlled heroes) consumes whatever budget remained, matching the
+   * original one-move-per-turn behavior exactly.
    */
-  moveTo(dest: GridPosition): void {
+  moveTo(dest: GridPosition, tilesUsed?: number): void {
     this.position = { ...dest };
+    this.movementTilesUsedThisTurn += tilesUsed ?? this.movementBudget();
     this.moved = true;
   }
 
@@ -2794,6 +2871,7 @@ export class Hero implements Combatant {
    */
   resetForNewTurn(): void {
     this.moved = false;
+    this.movementTilesUsedThisTurn = 0;
     this.acted = false;
     this.bonusActed = false;
     this.reactionAvailable = true;
@@ -2836,7 +2914,6 @@ export class Hero implements Combatant {
       // from `equippedItems`, same as `armorClass`/`effectiveAttackDamage`.
       attackRangeTiles: this.baseAttackRangeTiles,
       baseArmorClass: this.baseArmorClass,
-      abilityId: this.abilityId,
       controlledBy: this.controlledBy,
       classId: this.classId,
       abilityScores: this.abilityScores ? { ...this.abilityScores } : undefined,
@@ -2848,6 +2925,7 @@ export class Hero implements Combatant {
       equippedItems: { ...this.equippedItems },
       equippedPotions: { ...this.equippedPotions },
       moved: this.moved,
+      movementTilesUsedThisTurn: this.movementTilesUsedThisTurn,
       acted: this.acted,
       bonusMaxHealth: this.bonusMaxHealth,
       bonusAttackDamage: this.bonusAttackDamage,
@@ -2921,7 +2999,6 @@ export class Hero implements Combatant {
       attackRangeTiles: snapshot.attackRangeTiles,
       attackBonus: snapshot.attackBonus,
       baseArmorClass: snapshot.baseArmorClass,
-      abilityId: snapshot.abilityId,
       controlledBy: snapshot.controlledBy,
       classId: snapshot.classId,
       abilityScores: snapshot.abilityScores,
@@ -2941,6 +3018,7 @@ export class Hero implements Combatant {
     this.equippedItems = { ...snapshot.equippedItems };
     this.equippedPotions = { ...snapshot.equippedPotions };
     this.moved = snapshot.moved;
+    this.movementTilesUsedThisTurn = snapshot.movementTilesUsedThisTurn;
     this.acted = snapshot.acted;
     this.bonusMaxHealth = snapshot.bonusMaxHealth;
     this.bonusAttackDamage = snapshot.bonusAttackDamage;

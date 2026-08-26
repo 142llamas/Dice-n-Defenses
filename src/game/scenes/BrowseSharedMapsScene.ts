@@ -1,11 +1,11 @@
 import Phaser from "phaser";
 import type { QueryDocumentSnapshot } from "firebase/firestore";
-import { DIFFICULTY_IDS, getDifficultyDefinition, type DifficultyId } from "../data/difficulty";
+import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
 import { generateFreePlayWaves } from "../systems/FreePlayWaveGenerator";
 import { fromSharedMapRecord, type SharedMapRecord } from "../systems/MapSharingSystem";
 import { listSharedMaps } from "../cloud/MapSharingSync";
 import { firebaseReady } from "../cloud/firebaseApp";
-import { getViewport, onViewportResize } from "./uiTheme";
+import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
 
 /**
  * BrowseSharedMapsScene — Phase 11.10 (D-085): browse and play maps other
@@ -75,6 +75,8 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
   private waveCountButtons: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; count: number }[] = [];
   private minionButtons: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; source: MinionSource }[] = [];
   private difficultyLabel!: Phaser.GameObjects.Text;
+  /** D-16x: the shared full-screen list-picker overlay (`openChoiceList`), replacing the old click-to-cycle Difficulty button. */
+  private choiceOverlay: Phaser.GameObjects.GameObject[] = [];
   private startButton!: Phaser.GameObjects.Rectangle;
 
   private selectedWaveCount = 7;
@@ -385,9 +387,18 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
 
     const y = labelY + 40;
     this.difficultyLabel = this.buildSmallButton(width / 2, y, 280, 40, "", 0x2a2a3a, () => {
-      const next = (DIFFICULTY_IDS.indexOf(this.selectedDifficultyId) + 1) % DIFFICULTY_IDS.length;
-      this.selectedDifficultyId = DIFFICULTY_IDS[next];
-      this.refreshBottomSections();
+      openChoiceList(
+        this,
+        this.choiceOverlay,
+        "Choose Difficulty",
+        DIFFICULTY_IDS.map((id) => ({
+          label: getDifficultyDefinition(id).name,
+          desc: difficultyChoiceDescription(id),
+          highlighted: id === this.selectedDifficultyId,
+          onPick: () => (this.selectedDifficultyId = id),
+        })),
+        () => this.refreshBottomSections(),
+      );
     }).label;
   }
 

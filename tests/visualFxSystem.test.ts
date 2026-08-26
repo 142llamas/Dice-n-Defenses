@@ -36,10 +36,10 @@ describe("inferElement", () => {
 
 describe("getCastVisual", () => {
   it("picks a structural shape from the ability's own mechanical fields, not a guess", () => {
-    expect(getCastVisual(getAbility("cleave")).shape).toBe("ringPulse"); // aoeAdjacent
-    expect(getCastVisual(getAbility("piercing-shot")).shape).toBe("homingOrb"); // autoHit
+    expect(getCastVisual(getAbility("color-spray")).shape).toBe("ringPulse"); // aoeAdjacent
+    expect(getCastVisual(getAbility("magic-missile")).shape).toBe("homingOrb"); // autoHit
     expect(getCastVisual(getAbility("sacred-flame")).shape).toBe("fallingJudgment"); // savingThrow
-    expect(getCastVisual(getAbility("frost-bolt")).shape).toBe("bolt"); // plain attack-roll single
+    expect(getCastVisual(getAbility("ray-of-frost")).shape).toBe("bolt"); // plain attack-roll single
     expect(getCastVisual(getAbility("thunderwave")).shape).toBe("gustCone"); // forcedMoveTiles wins over its own aoeAtRange kind
     expect(getCastVisual(getAbility("moonbeam")).shape).toBe("novaBurst"); // aoeAtRange, no forcedMoveTiles
     expect(getCastVisual(getAbility("misty-step")).shape).toBe("blink"); // teleportSelf
@@ -57,13 +57,13 @@ describe("getCastVisual", () => {
   it("gives visibly different colors to differently-flavored abilities", () => {
     const fire = getCastVisual(getAbility("fire-bolt"));
     const frost = getCastVisual(getAbility("ray-of-frost"));
-    const arcane = getCastVisual(getAbility("cleave")); // no school, no keyword match — arcane default
+    const arcane = getCastVisual(getAbility("color-spray")); // no school, no keyword match — arcane default
     expect(fire.color).not.toBe(frost.color);
     expect(fire.color).not.toBe(arcane.color);
   });
 
   it("never throws for any ability in the full roster, and always returns an in-range variation", () => {
-    const ids = ["cleave", "piercing-shot", "taunting-slam", "frost-bolt", "fire-bolt", "ray-of-frost", "sacred-flame", "thunderwave", "misty-step", "find-steed", "entangle", "bless"];
+    const ids = ["color-spray", "magic-missile", "fire-bolt", "ray-of-frost", "sacred-flame", "thunderwave", "misty-step", "find-steed", "entangle", "bless"];
     for (const id of ids) {
       const visual = getCastVisual(getAbility(id));
       expect([3, 5, 7]).toContain(visual.particleCount);
@@ -84,7 +84,7 @@ describe("deathCauseForAbility / getDeathVisual", () => {
   });
 
   it("falls back to arcane for an ability with no keyword match AND no real damageType", () => {
-    expect(deathCauseForAbility(getAbility("cleave"))).toBe("arcane"); // no keyword match, no damageType (not a spell)
+    expect(deathCauseForAbility(getAbility("color-spray"))).toBe("arcane"); // no keyword match, no damageType
   });
 
   it("D-131: a real damageType is the PRIMARY signal, overriding the old keyword-guess entirely", () => {

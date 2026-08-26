@@ -6,13 +6,15 @@ import type { DamageType, DamageTypeSplit } from "./weapons";
 /**
  * Ability definitions — data, not code (Source of Truth "data-driven content").
  *
- * Phase 4 gives each hero ONE distinct ability. Abilities are kept small and
- * readable on purpose: the phase boundary defers the full fifth-edition action
- * economy, concentration, large spell lists, and reactions. Each ability spends
- * the hero's single ACTION for the turn, just like a basic attack.
- *
- * All content here is ORIGINAL to this project — names, effects, and values are
- * invented, not copied or adapted from any published source. See CONTENT_SOURCES.
+ * This is now exclusively the real-spell combat-numbers table — every entry
+ * here corresponds to a real SRD cantrip/spell `data/spells.ts` can actually
+ * cast (see that file's own module comment). Each ability spends the caster's
+ * single ACTION for the turn, just like a basic attack. D-178 removed the
+ * four original, non-SRD "signature action" abilities (Cleave, Piercing
+ * Shot, Taunting Slam, Frost Bolt) this table used to also hold for the
+ * classic roster/early character-creation era — every hero's basic attack
+ * now comes from its own class's fixed `basicAttackStyle`/`primaryAbility`
+ * (`data/classes.ts`) or a real equipped weapon instead.
  *
  * Ability kinds:
  *   - "single"      : choose one enemy within `rangeTiles`; deal `damage`.
@@ -25,10 +27,10 @@ import type { DamageType, DamageTypeSplit } from "./weapons";
  *                     the caster. Reuses `CombatSystem.attackArea` centered
  *                     on the chosen tile instead of the hero.
  *
- * Phase 7 ("spell-like abilities"): an ability may carry `appliesStatus`, a
- * status effect (see data/statusEffects.ts) applied to every enemy it hits, in
- * addition to its damage. This is what makes Bram's slam and Mira's bolt read
- * as spell-like tricks rather than a bigger flat hit — the effect lingers.
+ * An ability may carry `appliesStatus`, a status effect (see
+ * data/statusEffects.ts) applied to every enemy it hits, in addition to its
+ * damage — what makes a spell like Ray of Frost read as a lingering
+ * battlefield trick rather than just a bigger flat hit.
  */
 
 export type AbilityKind = "single" | "aoeAdjacent" | "aoeAtRange";
@@ -126,9 +128,7 @@ export interface AbilityDefinition {
    * D-131: this ability's real SRD damage type, set ONLY for a real
    * castable spell (an id referenced by some `spells.ts` entry's
    * `abilityId`) whose canonical 5e version deals damage of a specific
-   * type. Left ABSENT for the four original non-spell Phase-4 abilities
-   * (`cleave`/`piercing-shot`/`taunting-slam`/`frost-bolt` — not SRD
-   * content) and for any spell whose nonzero `damage` here is this
+   * type. Left ABSENT for any spell whose nonzero `damage` here is this
    * project's own stand-in for a real 5e spell that deals NO damage at all
    * (a control/debuff/buff/heal/summon/terrain/teleport spell given a small
    * hit-number or duration to fit this game's single-target-attack/ally
@@ -159,47 +159,6 @@ export interface AbilityDefinition {
 }
 
 export const ABILITIES: Record<string, AbilityDefinition> = {
-  cleave: {
-    id: "cleave",
-    name: "Cleave",
-    description: "Strike every adjacent enemy at once.",
-    kind: "aoeAdjacent",
-    rangeTiles: 1,
-    damage: 3,
-  },
-  "piercing-shot": {
-    id: "piercing-shot",
-    name: "Piercing Shot",
-    description: "A long-range shot that punches through armour (always hits).",
-    kind: "single",
-    rangeTiles: 4,
-    damage: 4,
-    autoHit: true,
-  },
-  // Bram's ability (Phase 7): a spell-like AoE that stuns rather than merely
-  // hitting harder — the tactical payoff is buying the party a free turn
-  // against everything adjacent, not raw damage.
-  "taunting-slam": {
-    id: "taunting-slam",
-    name: "Taunting Slam",
-    description: "Slam every adjacent enemy, stunning each for a turn.",
-    kind: "aoeAdjacent",
-    rangeTiles: 1,
-    damage: 2,
-    appliesStatus: { statusId: "stunned", durationTurns: 1 },
-  },
-  // Mira's ability (Phase 7): a spell-like single-target bolt that chills its
-  // target — a route-manipulation tool at range, buying time rather than
-  // damage, and the counter to a fast threat a wall can't slow down.
-  "frost-bolt": {
-    id: "frost-bolt",
-    name: "Frost Bolt",
-    description: "A bolt of frost that chills one enemy, slowing it for two turns.",
-    kind: "single",
-    rangeTiles: 3,
-    damage: 2,
-    appliesStatus: { statusId: "slowed", durationTurns: 2 },
-  },
   // Phase 11.2 (DECISIONS D-074): the two Wizard cantrips that are
   // mechanically usable today (see data/spells.ts). Cantrips are cast
   // at-will with no spell-slot cost, which is exactly what this game's
@@ -207,7 +166,7 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
   // tracking needed, unlike the higher-level spells in spells.ts, which stay
   // data-only until a slot economy exists. Kept here (not spells.ts) because
   // this IS the combat-numbers seam BattleScene already reads via
-  // `getAbility`/`hero.abilityId` — see CharacterBuildSystem's module comment.
+  // `getAbility`.
   "fire-bolt": {
     id: "fire-bolt",
     name: "Fire Bolt",

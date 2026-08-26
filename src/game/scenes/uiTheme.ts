@@ -371,10 +371,13 @@ export function createSectionLabel(scene: Phaser.Scene, x: number, y: number, te
 /**
  * D-154: the start of a shared responsive-layout convention. Reads the
  * scene's OWN live canvas size rather than the fixed `GAME_WIDTH`/
- * `GAME_HEIGHT` constants. D-157 flipped the game over to `Scale.RESIZE`
- * (see `main.ts`), so outside of `BattleScene` (deliberately locked back to
- * a fixed `Scale.FIT` 1280x1080 for now — see `BattleScene.create()`) this
- * now reflects the real live browser window size, not a constant.
+ * `GAME_HEIGHT` constants. D-157 briefly flipped the game to
+ * `Scale.RESIZE`, then D-159 reverted it back to `Scale.FIT` after it broke
+ * Main Menu/Character Creation in real-browser testing (see `main.ts`) — so
+ * today `scene.scale.width/height` is always the fixed `GAME_WIDTH`/
+ * `GAME_HEIGHT` (1280x1080) regardless of the real window, the same as
+ * before D-157. Kept as groundwork for if a real responsive-canvas attempt
+ * is made again later (see `PHASE_HANDOFF.md`).
  */
 export function getViewport(scene: Phaser.Scene): { width: number; height: number } {
   return { width: scene.scale.width, height: scene.scale.height };
@@ -383,14 +386,140 @@ export function getViewport(scene: Phaser.Scene): { width: number; height: numbe
 /**
  * Registers `rebuild` to run whenever the scene's canvas size changes, and
  * unregisters it on scene shutdown so a stale handler never fires against a
- * torn-down scene. D-157: now that `Scale.RESIZE` is live (outside
- * `BattleScene`), this fires on a REAL window resize with `getViewport`
- * returning the new live size, not just a harmless no-op CSS-scale event.
+ * torn-down scene. Currently a no-op in practice under `Scale.FIT` (see
+ * `getViewport`'s comment above) — nothing changes `scene.scale.width/
+ * height` outside of a real window resize event, and `Scale.FIT` reports
+ * the same fixed size regardless of the window. Kept as groundwork for the
+ * same reason.
  */
 export function onViewportResize(scene: Phaser.Scene, rebuild: () => void): void {
   const handler = (): void => rebuild();
   scene.scale.on(Phaser.Scale.Events.RESIZE, handler);
   scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => scene.scale.off(Phaser.Scale.Events.RESIZE, handler));
+}
+
+export interface ChoiceOverlayOption {
+  label: string;
+  desc?: string;
+  onClick: () => void;
+  highlighted?: boolean;
+}
+
+/**
+ * D-16x: the general-purpose "full-screen list of options, pick one"
+ * overlay — lifted out of `CharacterCreationScene`'s D-147 `renderPlanPrompt`
+ * (a dim backdrop + title + wrapping button grid, with the same `highlighted`
+ * gold-outline "★ " treatment its Level Planner/Spell Picker wizards use) so
+ * any scene can replace an old "click cycles A→B→C→A" button with a real
+ * picker. Every created object is pushed onto the caller-owned `overlay`
+ * array (cleared first) rather than returned, so `clearChoiceOverlay` can
+ * destroy exactly what was drawn without the caller tracking anything else.
+ */
+export function renderChoiceOverlay(scene: Phaser.Scene, overlay: Phaser.GameObjects.GameObject[], title: string, choices: ChoiceOverlayOption[]): void {
+  clearChoiceOverlay(overlay);
+  const { width: viewportWidth, height: viewportHeight } = getViewport(scene);
+  const dim = scene.add
+    .rectangle(viewportWidth / 2, viewportHeight / 2, viewportWidth, viewportHeight, 0x000000, 0.85)
+    .setDepth(60)
+    .setInteractive();
+  const titleText = scene.add
+    .text(viewportWidth / 2, 90, title, {
+      fontFamily: "system-ui, Arial, sans-serif",
+      fontSize: "24px",
+      color: "#f0e070",
+      fontStyle: "bold",
+      align: "center",
+      wordWrap: { width: viewportWidth - 160 },
+    })
+    .setOrigin(0.5)
+    .setDepth(61);
+  overlay.push(dim, titleText);
+
+  const hasDesc = choices.some((c) => c.desc);
+  const usableWidth = viewportWidth - 80;
+  const width = Math.min(220, Math.max(120, Math.floor(usableWidth / Math.min(choices.length, 6)) - 14));
+  const height = hasDesc ? 82 : 44;
+  const spacing = width + 14;
+  const maxPerRow = Math.max(1, Math.floor(usableWidth / spacing));
+  const rowSpacing = height + 14;
+  const rowStartY = 170 + rowSpacing / 2;
+
+  choices.forEach((choice, i) => {
+    const row = Math.floor(i / maxPerRow);
+    const col = i % maxPerRow;
+    const itemsInRow = Math.min(maxPerRow, choices.length - row * maxPerRow);
+    const rowStartX = viewportWidth / 2 - ((itemsInRow - 1) * spacing) / 2;
+    const x = rowStartX + col * spacing;
+    const y = rowStartY + row * rowSpacing;
+    const btn = scene.add
+      .rectangle(x, y, width, height, 0x3a5a8a)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(61);
+    if (choice.highlighted) btn.setStrokeStyle(3, 0xf0c040);
+    const name = scene.add
+      .text(x, y - (choice.desc ? 18 : 0), choice.highlighted ? `★ ${choice.label}` : choice.label, {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "13px",
+        color: choice.highlighted ? "#ffe58a" : "#e8e8f0",
+        fontStyle: "bold",
+        align: "center",
+        wordWrap: { width: width - 14 },
+      })
+      .setOrigin(0.5)
+      .setDepth(62);
+    overlay.push(btn, name);
+    if (choice.desc) {
+      const desc = scene.add
+        .text(x, y + 16, choice.desc, {
+          fontFamily: "system-ui, Arial, sans-serif",
+          fontSize: "10px",
+          color: "#c8c8d8",
+          align: "center",
+          wordWrap: { width: width - 14 },
+        })
+        .setOrigin(0.5)
+        .setDepth(62);
+      overlay.push(desc);
+    }
+    btn.on("pointerover", () => btn.setFillStyle(0x4a6a9a));
+    btn.on("pointerout", () => btn.setFillStyle(0x3a5a8a));
+    btn.on("pointerdown", () => choice.onClick());
+  });
+}
+
+export function clearChoiceOverlay(overlay: Phaser.GameObjects.GameObject[]): void {
+  for (const obj of overlay) obj.destroy();
+  overlay.length = 0;
+}
+
+/**
+ * A one-shot "pick exactly one, then close" wrapper around
+ * `renderChoiceOverlay` for the common case (D-147's Class/Race/Gear/
+ * Subclass pickers, and every cycle-button this replaces elsewhere) — picking
+ * an option applies it and closes; Cancel discards the click and closes.
+ * `onClose` runs after either (e.g. a scene's own `refreshAll()`); pass
+ * nothing if the caller's `onPick` already does everything it needs to.
+ */
+export function openChoiceList(
+  scene: Phaser.Scene,
+  overlay: Phaser.GameObjects.GameObject[],
+  title: string,
+  options: Array<{ label: string; desc?: string; highlighted?: boolean; onPick: () => void }>,
+  onClose?: () => void,
+): void {
+  renderChoiceOverlay(scene, overlay, title, [
+    ...options.map((opt) => ({
+      label: opt.label,
+      desc: opt.desc,
+      highlighted: opt.highlighted,
+      onClick: () => {
+        opt.onPick();
+        clearChoiceOverlay(overlay);
+        onClose?.();
+      },
+    })),
+    { label: "Cancel", onClick: () => clearChoiceOverlay(overlay) },
+  ]);
 }
 
 /**

@@ -10,7 +10,7 @@ import {
   featuresAtLevel,
   activeFeaturesUpToLevel,
   bonusDamageForClassAtLevel,
-  attackStyleForAbility,
+  attackStyleForClass,
   combatStatsForClassLevel,
   savingThrowBonus,
   spellSaveDC,
@@ -299,7 +299,7 @@ describe("combatStatsForClassLevel (Phase 13.3, D-089)", () => {
   const kaelScores: AbilityScores = { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 };
 
   it("matches heroDefinitionFromBuild's own level-1 math for a Fighter (regression check for the D-089 refactor)", () => {
-    const stats = combatStatsForClassLevel("fighter", 1, kaelScores, "cleave");
+    const stats = combatStatsForClassLevel("fighter", 1, kaelScores);
     expect(stats.maxHealth).toBe(11); // hitDie(10) + CON mod(+1)
     expect(stats.attackDamage).toBe(4); // base 2 + STR mod(+2)
     expect(stats.attackBonus).toBe(4); // proficiency(+2) + STR mod(+2)
@@ -307,30 +307,30 @@ describe("combatStatsForClassLevel (Phase 13.3, D-089)", () => {
   });
 
   it("recomputes every number at a later Fighter level, including Extra Attack at 5", () => {
-    const stats = combatStatsForClassLevel("fighter", 5, kaelScores, "cleave");
+    const stats = combatStatsForClassLevel("fighter", 5, kaelScores);
     expect(stats.maxHealth).toBe(11 + fixedHitDieGain(10) * 4 + 1 * 4); // levels 2-5, CON +1 each
     expect(stats.attackBonus).toBe(3 + 2); // proficiency(+3 at 5) + STR mod(+2)
     expect(stats.attacksPerAction).toBe(2);
   });
 
   it("scales a Rogue's Sneak Attack rider into attackDamage as level rises", () => {
-    const level1 = combatStatsForClassLevel("rogue", 1, kaelScores, "piercing-shot");
-    const level5 = combatStatsForClassLevel("rogue", 5, kaelScores, "piercing-shot");
+    const level1 = combatStatsForClassLevel("rogue", 1, kaelScores);
+    const level5 = combatStatsForClassLevel("rogue", 5, kaelScores);
     expect(level1.attackDamage).toBe(8); // base 2 + DEX mod(+2) + Sneak Attack(+4)
     expect(level5.attackDamage).toBe(16); // base 2 + DEX mod(+2) + Sneak Attack(+12)
   });
 
-  it("uses the spellcasting ability, not STR/DEX, for a caster's spell-based signature action", () => {
-    const stats = combatStatsForClassLevel("wizard", 1, kaelScores, "fire-bolt");
-    // INT 12 -> +1 mod, not DEX 14 -> +2 (fire-bolt is ranged, but it's a spell).
+  it("uses the spellcasting ability, not STR/DEX, for a caster's basic-attack baseline", () => {
+    const stats = combatStatsForClassLevel("wizard", 1, kaelScores);
+    // INT 12 -> +1 mod, not DEX 14 -> +2 (Wizard's basicAttackStyle is ranged, but primaryAbility is int).
     expect(stats.attackDamage).toBe(3);
   });
 });
 
-describe("attackStyleForAbility (Phase 13.3, D-089: moved here from CharacterBuildSystem)", () => {
-  it("still classifies melee/ranged abilities the same way", () => {
-    expect(attackStyleForAbility("cleave")).toBe("melee");
-    expect(attackStyleForAbility("piercing-shot")).toBe("ranged");
+describe("attackStyleForClass (D-178: replaces attackStyleForAbility)", () => {
+  it("reads each class's own fixed basicAttackStyle", () => {
+    expect(attackStyleForClass("fighter")).toBe("melee");
+    expect(attackStyleForClass("wizard")).toBe("ranged");
   });
 });
 

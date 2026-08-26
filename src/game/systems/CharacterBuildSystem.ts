@@ -9,15 +9,15 @@ import { getRaceDefinition, RACE_IDS } from "../data/races";
 import type { HeroDefinition, HeroControlMode } from "../data/heroes";
 import { getClassDefinition } from "../data/classes";
 import { subclassesForClass } from "../data/subclasses";
-import { attackStyleForAbility, combatStatsForClassLevel } from "./CharacterSystem";
-import { CREATABLE_CLASS_IDS, CHARACTER_NAME_POOL, signatureActionIdsForClass } from "../data/characterCreation";
+import { attackStyleForClass, combatStatsForClassLevel } from "./CharacterSystem";
+import { CREATABLE_CLASS_IDS, CHARACTER_NAME_POOL } from "../data/characterCreation";
 import type { LevelUpPlan } from "./LevelUpPlanSystem";
 
 // Re-exported for existing callers/tests — this function now lives in
 // CharacterSystem.ts (Phase 13.3, D-089) alongside the rest of the pure
 // class-level math it's used by, but this file is still where a build
 // becomes a playable HeroDefinition.
-export { attackStyleForAbility };
+export { attackStyleForClass };
 
 /**
  * CharacterBuildSystem: Phase 11.1's "first pass" freeform character creator
@@ -33,21 +33,21 @@ export { attackStyleForAbility };
  *    UI button never needs to validate "did the total change" — it can't.
  *
  * 2. `heroDefinitionFromBuild` turns a finished `CharacterBuild` (name,
- *    race, class, ability scores, a chosen signature action) into the
- *    existing `HeroDefinition` shape `BattleScene` already knows how to
- *    play — this is the ONLY seam between the new D&D character system and
- *    the live game. See BattleScene's `init()`/`buildHeroes()` for where
- *    it's read.
+ *    race, class, ability scores) into the existing `HeroDefinition` shape
+ *    `BattleScene` already knows how to play — this is the ONLY seam between
+ *    the new D&D character system and the live game. See BattleScene's
+ *    `init()`/`buildHeroes()` for where it's read.
  *
  * Deliberately simple, matching this being level 1 with a still-small class
  * roster:
  * - `attackDamage`/`attackRangeTiles`/`attackBonus`/`maxHealth` all come from
  *   `CharacterSystem.combatStatsForClassLevel` — the ability-modifier/rider-
- *   damage math (STR/DEX for a mundane attack, or the caster's spellcasting
- *   ability (Wizard/Cleric: INT/WIS) if the chosen action is a spell) lives
- *   there now, not here, so `Hero.levelUpClass()` (Phase 13.3, D-089) can
- *   reuse the identical formula at any later level, not just level 1. There's
- *   still no weapon catalogue (that's Phase 11.5).
+ *   damage math (each class's own fixed `primaryAbility`/`basicAttackStyle`,
+ *   D-178 — no more player-chosen "signature action") lives there now, not
+ *   here, so `Hero.levelUpClass()` (Phase 13.3, D-089) can reuse the
+ *   identical formula at any later level, not just level 1. There's still no
+ *   weapon catalogue baked into this baseline (a real equipped weapon
+ *   overrides it — see `Hero.effectiveAttackDamage`/`attackRangeTiles`).
  * - `movementTiles` comes from the build's race (`getRaceDefinition`,
  *   Phase 11.3, D-075) — the SRD's 30ft/25ft speed split.
  * - `level` is always 1 here — a build always STARTS at level 1. What
@@ -222,7 +222,6 @@ export interface CharacterBuild {
    * right allocator kind on load without guessing from the numbers alone).
    */
   abilityScoreMethod?: "standardArray" | "pointBuy";
-  abilityId: string;
   /** Phase 11.4 (D-077): who plays this slot in battle. Defaults to "human". */
   controlledBy: HeroControlMode;
   /**
@@ -304,8 +303,8 @@ export function subclassIdForNewBuild(classId: string, subclassIndex = 0): strin
  * this same math at any later level, not just level 1.
  */
 export function heroDefinitionFromBuild(build: CharacterBuild): HeroDefinition {
-  const stats = combatStatsForClassLevel(build.classId, build.level, build.abilityScores, build.abilityId);
-  const style = attackStyleForAbility(build.abilityId);
+  const stats = combatStatsForClassLevel(build.classId, build.level, build.abilityScores);
+  const style = attackStyleForClass(build.classId);
   const dexMod = modifierFor(build.abilityScores, "dex");
   return {
     id: build.id,
@@ -316,7 +315,6 @@ export function heroDefinitionFromBuild(build: CharacterBuild): HeroDefinition {
     attackRangeTiles: style === "melee" ? MELEE_RANGE_TILES : RANGED_RANGE_TILES,
     attackBonus: stats.attackBonus,
     baseArmorClass: 10 + dexMod,
-    abilityId: build.abilityId,
     controlledBy: build.controlledBy,
     // Phase 13.2 (D-087): the seam that lets class-gated action-economy
     // features (Second Wind, Action Surge, Cunning Action, Uncanny Dodge)
@@ -359,10 +357,10 @@ export function heroDefinitionFromBuild(build: CharacterBuild): HeroDefinition {
  * character-creation UI of its own yet (Co-op's lobby has no hero-picker,
  * see `CoopLobbyScene`), so a battle still has something valid to play.
  * Deterministic (first `size` entries of `CREATABLE_CLASS_IDS`, standard
- * ability-score order, each class's first signature action, the default
- * race) so two calls with the same `size` always produce the same ids — a
- * caller that needs the roster twice (once for hero ids, once for the
- * actual `HeroDefinition`s) can call this twice rather than caching it.
+ * ability-score order, the default race) so two calls with the same `size`
+ * always produce the same ids — a caller that needs the roster twice (once
+ * for hero ids, once for the actual `HeroDefinition`s) can call this twice
+ * rather than caching it.
  */
 export function defaultPartyBuilds(size: number): CharacterBuild[] {
   return Array.from({ length: size }, (_, i) => {
@@ -374,17 +372,10 @@ export function defaultPartyBuilds(size: number): CharacterBuild[] {
       classId,
       level: 1,
       abilityScores: new StandardArrayAllocator().scores(),
-      abilityId: signatureActionIdsForClass(classId)[0],
       controlledBy: "human",
       subclassId: subclassIdForNewBuild(classId),
     };
   });
-}
-
-/** True if two or more builds share a signature ability (each hero should feel distinct). */
-export function hasDuplicateAbilities(builds: ReadonlyArray<CharacterBuild>): boolean {
-  const ids = builds.map((b) => b.abilityId);
-  return new Set(ids).size !== ids.length;
 }
 
 /** True if two or more builds share a name. */

@@ -29,7 +29,6 @@ function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
     classId: "fighter",
     level: 1,
     abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-    abilityId: "cleave",
     controlledBy: "human",
     ...overrides,
   };
@@ -76,7 +75,7 @@ describe("Fighter's Indomitable (D-124)", () => {
   });
 
   it("is always 0 for a non-Fighter, even past level 9", () => {
-    const hero = heroFromBuild({ classId: "barbarian", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "barbarian" });
     for (let i = 1; i < 9; i++) hero.levelUpClass();
     expect(hero.indomitableUsesAvailable).toBe(0);
   });
@@ -84,12 +83,12 @@ describe("Fighter's Indomitable (D-124)", () => {
 
 describe("Barbarian's Danger Sense — Combatant.savingThrowAdvantage (D-124)", () => {
   it("is 'normal' below level 2 or for any other class", () => {
-    expect(heroFromBuild({ classId: "barbarian", abilityId: "cleave" }).savingThrowAdvantage).toBe("normal");
+    expect(heroFromBuild({ classId: "barbarian" }).savingThrowAdvantage).toBe("normal");
     expect(heroFromBuild().savingThrowAdvantage).toBe("normal"); // Fighter
   });
 
   it("is 'advantage' for a Barbarian at level 2+", () => {
-    const hero = heroFromBuild({ classId: "barbarian", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "barbarian" });
     hero.levelUpClass();
     expect(hero.level).toBe(2);
     expect(hero.savingThrowAdvantage).toBe("advantage");
@@ -98,18 +97,18 @@ describe("Barbarian's Danger Sense — Combatant.savingThrowAdvantage (D-124)", 
 
 describe("Rogue's/Monk's Evasion — Combatant.evasionHalvesFailedSave (D-124)", () => {
   it("is false below level 7 for either class", () => {
-    expect(heroFromBuild({ classId: "rogue", abilityId: "cleave" }).evasionHalvesFailedSave).toBe(false);
-    expect(heroFromBuild({ classId: "monk", abilityId: "cleave" }).evasionHalvesFailedSave).toBe(false);
+    expect(heroFromBuild({ classId: "rogue" }).evasionHalvesFailedSave).toBe(false);
+    expect(heroFromBuild({ classId: "monk" }).evasionHalvesFailedSave).toBe(false);
   });
 
   it("is true for a Rogue at level 7+", () => {
-    const hero = heroFromBuild({ classId: "rogue", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "rogue" });
     for (let i = 1; i < 7; i++) hero.levelUpClass();
     expect(hero.evasionHalvesFailedSave).toBe(true);
   });
 
   it("is true for a Monk at level 7+", () => {
-    const hero = heroFromBuild({ classId: "monk", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "monk" });
     for (let i = 1; i < 7; i++) hero.levelUpClass();
     expect(hero.evasionHalvesFailedSave).toBe(true);
   });
@@ -123,26 +122,26 @@ describe("Rogue's/Monk's Evasion — Combatant.evasionHalvesFailedSave (D-124)",
 
 describe("Rogue's Elusive — Combatant.deniesAttackerAdvantage (D-124)", () => {
   it("is false below level 18", () => {
-    const hero = heroFromBuild({ classId: "rogue", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "rogue" });
     for (let i = 1; i < 17; i++) hero.levelUpClass();
     expect(hero.deniesAttackerAdvantage()).toBe(false);
   });
 
   it("is true for a Rogue at level 18+", () => {
-    const hero = heroFromBuild({ classId: "rogue", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "rogue" });
     for (let i = 1; i < 18; i++) hero.levelUpClass();
     expect(hero.deniesAttackerAdvantage()).toBe(true);
   });
 
   it("is false once defeated", () => {
-    const hero = heroFromBuild({ classId: "rogue", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "rogue" });
     for (let i = 1; i < 18; i++) hero.levelUpClass();
     hero.health = 0;
     expect(hero.deniesAttackerAdvantage()).toBe(false);
   });
 
   it("is false while incapacitated (stunned/restrained-family status)", () => {
-    const hero = heroFromBuild({ classId: "rogue", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "rogue" });
     for (let i = 1; i < 18; i++) hero.levelUpClass();
     hero.applyStatus("stunned", 1);
     expect(hero.deniesAttackerAdvantage()).toBe(false);
@@ -151,15 +150,15 @@ describe("Rogue's Elusive — Combatant.deniesAttackerAdvantage (D-124)", () => 
 
 describe("Path of the Berserker's Intimidating Presence (D-124)", () => {
   it("requires the subclass AND level 10+", () => {
-    const noSubclass = heroFromBuild({ classId: "barbarian", abilityId: "cleave" });
+    const noSubclass = heroFromBuild({ classId: "barbarian" });
     for (let i = 1; i < 10; i++) noSubclass.levelUpClass();
     expect(noSubclass.hasIntimidatingPresence).toBe(false);
 
-    const tooLow = heroFromBuild({ classId: "barbarian", abilityId: "cleave", subclassId: "path-of-the-berserker" });
+    const tooLow = heroFromBuild({ classId: "barbarian", subclassId: "path-of-the-berserker" });
     for (let i = 1; i < 9; i++) tooLow.levelUpClass();
     expect(tooLow.hasIntimidatingPresence).toBe(false);
 
-    const ready = heroFromBuild({ classId: "barbarian", abilityId: "cleave", subclassId: "path-of-the-berserker" });
+    const ready = heroFromBuild({ classId: "barbarian", subclassId: "path-of-the-berserker" });
     for (let i = 1; i < 10; i++) ready.levelUpClass();
     expect(ready.hasIntimidatingPresence).toBe(true);
   });
@@ -167,7 +166,7 @@ describe("Path of the Berserker's Intimidating Presence (D-124)", () => {
 
 describe("Path of the Berserker's Retaliation (D-124)", () => {
   it("requires the subclass, level 14+, and an available reaction", () => {
-    const hero = heroFromBuild({ classId: "barbarian", abilityId: "cleave", subclassId: "path-of-the-berserker" });
+    const hero = heroFromBuild({ classId: "barbarian", subclassId: "path-of-the-berserker" });
     for (let i = 1; i < 13; i++) hero.levelUpClass();
     expect(hero.canUseRetaliation()).toBe(false); // level 13, not yet 14
     hero.levelUpClass();
@@ -176,7 +175,7 @@ describe("Path of the Berserker's Retaliation (D-124)", () => {
   });
 
   it("spends the reaction, unavailable again until the next turn", () => {
-    const hero = heroFromBuild({ classId: "barbarian", abilityId: "cleave", subclassId: "path-of-the-berserker" });
+    const hero = heroFromBuild({ classId: "barbarian", subclassId: "path-of-the-berserker" });
     for (let i = 1; i < 14; i++) hero.levelUpClass();
     hero.useRetaliation();
     expect(hero.canUseRetaliation()).toBe(false);
@@ -185,7 +184,7 @@ describe("Path of the Berserker's Retaliation (D-124)", () => {
   });
 
   it("is unavailable to the SRD Path of the Ironhide (the other Barbarian subclass)", () => {
-    const hero = heroFromBuild({ classId: "barbarian", abilityId: "cleave", subclassId: "path-of-the-ironhide" });
+    const hero = heroFromBuild({ classId: "barbarian", subclassId: "path-of-the-ironhide" });
     for (let i = 1; i < 20; i++) hero.levelUpClass();
     expect(hero.canUseRetaliation()).toBe(false);
   });
@@ -193,13 +192,13 @@ describe("Path of the Berserker's Retaliation (D-124)", () => {
 
 describe("College of Lore's Cutting Words (D-124)", () => {
   it("requires the subclass, level 3+, an available reaction, AND a Bardic Inspiration use", () => {
-    const hero = heroFromBuild({ classId: "bard", abilityId: "cleave", subclassId: "college-of-lore" });
+    const hero = heroFromBuild({ classId: "bard", subclassId: "college-of-lore" });
     for (let i = 1; i < 3; i++) hero.levelUpClass();
     expect(hero.canUseCuttingWords()).toBe(true); // Bards start with Bardic Inspiration uses
   });
 
   it("spends the reaction AND a Bardic Inspiration use, independent of the bonus-action version", () => {
-    const hero = heroFromBuild({ classId: "bard", abilityId: "cleave", subclassId: "college-of-lore" });
+    const hero = heroFromBuild({ classId: "bard", subclassId: "college-of-lore" });
     for (let i = 1; i < 3; i++) hero.levelUpClass();
     const usesBefore = hero.bardicInspirationUsesAvailable;
     hero.useCuttingWords();
@@ -209,14 +208,14 @@ describe("College of Lore's Cutting Words (D-124)", () => {
   });
 
   it("is unavailable once Bardic Inspiration uses run out", () => {
-    const hero = heroFromBuild({ classId: "bard", abilityId: "cleave", subclassId: "college-of-lore" });
+    const hero = heroFromBuild({ classId: "bard", subclassId: "college-of-lore" });
     for (let i = 1; i < 3; i++) hero.levelUpClass();
     while (hero.bardicInspirationUsesAvailable > 0) hero.useCuttingWords();
     expect(hero.canUseCuttingWords()).toBe(false);
   });
 
   it("is unavailable to the SRD Bard College of Lore's sibling subclass (College of the Blade)", () => {
-    const hero = heroFromBuild({ classId: "bard", abilityId: "cleave", subclassId: "college-of-the-blade" });
+    const hero = heroFromBuild({ classId: "bard", subclassId: "college-of-the-blade" });
     for (let i = 1; i < 20; i++) hero.levelUpClass();
     expect(hero.canUseCuttingWords()).toBe(false);
   });
@@ -224,15 +223,15 @@ describe("College of Lore's Cutting Words (D-124)", () => {
 
 describe("Hero.bardicInspirationUsesAvailable (D-124, needed by BattleScene.applyCuttingWords)", () => {
   it("matches the constructed starting pool for a Bard", () => {
-    const hero = heroFromBuild({ classId: "bard", abilityId: "cleave" });
+    const hero = heroFromBuild({ classId: "bard" });
     expect(hero.bardicInspirationUsesAvailable).toBeGreaterThan(0);
   });
 });
 
 describe("subclass-granted spell lists via Hero.knownSpellAbilityIds (D-124)", () => {
   it("The Fiend adds Burning Hands and Command to a level-1 Warlock's spellbook — spells not otherwise known", () => {
-    const withSubclass = heroFromBuild({ classId: "warlock", abilityId: "eldritch-blast", subclassId: "the-fiend" });
-    const withoutSubclass = heroFromBuild({ classId: "warlock", abilityId: "eldritch-blast" });
+    const withSubclass = heroFromBuild({ classId: "warlock", subclassId: "the-fiend" });
+    const withoutSubclass = heroFromBuild({ classId: "warlock" });
     expect(withSubclass.knownSpellAbilityIds()).toContain("burning-hands");
     expect(withSubclass.knownSpellAbilityIds()).toContain("command");
     // Proves this is a genuinely NEW addition, not something every Warlock already knows.
@@ -241,15 +240,15 @@ describe("subclass-granted spell lists via Hero.knownSpellAbilityIds (D-124)", (
   });
 
   it("The Fiend's higher-level Expanded Spell List entries only appear once that level is reached", () => {
-    const hero = heroFromBuild({ classId: "warlock", abilityId: "eldritch-blast", subclassId: "the-fiend" });
+    const hero = heroFromBuild({ classId: "warlock", subclassId: "the-fiend" });
     expect(hero.knownSpellAbilityIds()).not.toContain("scorching-ray"); // 2nd-level tier (character level 3)
     for (let i = 1; i < 3; i++) hero.levelUpClass();
     expect(hero.knownSpellAbilityIds()).toContain("scorching-ray");
   });
 
   it("Life Domain's Domain Spells are wired and, under D-134's now-bounded prepared-spell economy, are genuinely guaranteed known regardless of what's actually prepared", () => {
-    const withSubclass = heroFromBuild({ classId: "cleric", abilityId: "sacred-flame", subclassId: "life-domain" });
-    const withoutSubclass = heroFromBuild({ classId: "cleric", abilityId: "sacred-flame" });
+    const withSubclass = heroFromBuild({ classId: "cleric", subclassId: "life-domain" });
+    const withoutSubclass = heroFromBuild({ classId: "cleric" });
     for (let i = 1; i < 9; i++) {
       withSubclass.levelUpClass();
       withoutSubclass.levelUpClass();

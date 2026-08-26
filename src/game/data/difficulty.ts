@@ -77,6 +77,13 @@ export function getDifficultyDefinition(id: DifficultyId): DifficultyDefinition 
   return DIFFICULTY_DEFINITIONS[id];
 }
 
+/** D-16x: one-line summary for a Difficulty picker option — every scene that used to cycle through this list independently (Character Creation, Free Play, Browse Shared Maps) now shares this text. */
+export function difficultyChoiceDescription(id: DifficultyId): string {
+  const d = getDifficultyDefinition(id);
+  const rests = `${d.shortRestCharges} short / ${d.longRestCharges} long rest${d.longRestCharges === 1 ? "" : "s"} per run`;
+  return `Enemies ×${d.enemyCountMultiplier} count, ×${d.enemyHpMultiplier} HP · ${rests}`;
+}
+
 /** The party size the game's wave data is balanced around (the classic fixed roster). */
 export const BALANCED_PARTY_SIZE = 4;
 

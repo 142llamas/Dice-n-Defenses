@@ -94,9 +94,12 @@ describe("Melee Platform / Ranged Perch: standing-hero attack bonus", () => {
 
 describe("Tangle Root: the third trap (damage + slow)", () => {
   it("damages and slows a ground enemy that steps on it", () => {
-    // A runner (3 tiles/phase, so -2 from the slow leaves 1, not 0 â€” see the
-    // "fully slowed" case covered separately below).
-    const map = new GameMap(parseMapRows("lane", "lane", ["S.......X"]));
+    // A runner (6 tiles/phase, D-172, so -4 from the slow leaves 2, not 0 —
+    // see the "fully slowed" case covered separately below). A longer lane
+    // than before so the runner's slowed move doesn't land exactly on the
+    // exit tile (which is always enterable regardless of distance, and
+    // would turn this into a breach instead of an ordinary move).
+    const map = new GameMap(parseMapRows("lane", "lane", ["S..............X"]));
     const pf = new PathfindingSystem(map);
     const build = new BuildSystem(map, pf);
     build.place("tangle-root", { x: 1, y: 0 });
@@ -113,16 +116,17 @@ describe("Tangle Root: the third trap (damage + slow)", () => {
     const runner = t1.spawned[0];
     expect(runner.hasStatus("slowed")).toBe(true);
 
-    // The slow reduces its movement on the VERY NEXT phase (3 -> 1 tile).
+    // The slow reduces its movement on the VERY NEXT phase (6 -> 2 tiles).
     const beforeX = runner.position.x;
     const t2 = ws.tickEnemyPhase({ trapAt: (p) => build.trapProfileAt(p) });
-    expect(t2.moves[0].path).toHaveLength(1); // normally 3 tiles/phase
-    expect(runner.position.x).toBe(beforeX + 1);
+    expect(t2.moves[0].path).toHaveLength(2); // normally 6 tiles/phase
+    expect(runner.position.x).toBe(beforeX + 2);
   });
 
   it("a fully-slowed enemy holds in place rather than corrupting its position", () => {
-    // A grunt moves exactly 2 tiles/phase, which the slow's -2 cancels out
-    // entirely â€” the edge case that exposed the advanceEnemy 0-steps bug.
+    // A grunt moves exactly 4 tiles/phase (D-172), which the slow's -4
+    // cancels out entirely â€” the edge case that exposed the advanceEnemy
+    // 0-steps bug.
     const map = new GameMap(parseMapRows("lane", "lane", ["S.......X"]));
     const pf = new PathfindingSystem(map);
     const build = new BuildSystem(map, pf);

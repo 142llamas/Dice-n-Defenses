@@ -7,17 +7,14 @@
  * text overlay would be a new UI pattern this small first pass doesn't
  * need). All names are original, no IP.
  *
- * The four signature abilities available to a Fighter OR a Rogue are the
- * project's existing four (Cleave, Piercing Shot, Taunting Slam, Frost
- * Bolt) — no new abilities were invented for either. A Wizard or Cleric
- * instead picks a signature action from its mechanically-active cantrips
- * (Wizard: Fire Bolt, Ray of Frost; Cleric: Sacred Flame — see
- * `data/spells.ts`) at character creation — this ONE choice still only
- * drives the hero's baseline combat stats (attack style/scaling via
- * `CharacterSystem.combatStatsForClassLevel`), unchanged since Phase 11.2.
- * `signatureActionIdsForClass` is the one place that decides which list a
- * given class picks from — a future fifth class only needs an entry here,
- * not a `CharacterCreationScene` rewrite. Race, unlike class, has no
+ * D-178: there is no more player-chosen "signature action." Every class's
+ * baseline basic-Attack style/ability (`CharacterClassDefinition
+ * .basicAttackStyle`/`primaryAbility`, `data/classes.ts`) is a fixed part of
+ * that class's own identity now, not a creation-time pick — a non-caster's
+ * real weapon Attack (`Hero.tryBasicAttack`) and class bonus/class actions
+ * (`HeroActionRegistry`) already work independently of any such pick, and a
+ * caster's full known-spell list (`knownSpellIdsForClass` below) was already
+ * independent of it before this change too. Race, unlike class, has no
  * per-race action list — every race uses the full six-race pool from
  * `data/races.ts` directly.
  *
@@ -28,12 +25,12 @@
  * items Phase 13.9 added (a free legendary chest piece at level 1 would be
  * a real balance problem, not a starting package).
  *
- * Phase 13.7 (D-092): in BATTLE, a caster is no longer limited to just the
- * one signature action chosen above — `knownSpellIdsForClass` lists EVERY
- * mechanically-active spell for a class, and `BattleScene`'s spellbook
- * overlay lets the player pick any of them as their action each turn,
- * spending a spell slot for a leveled one. Fighter/Rogue are not casters
- * and are unaffected — they still have exactly one ability.
+ * Phase 13.7 (D-092): in BATTLE, every caster gets its FULL real known-spell
+ * list — `knownSpellIdsForClass` lists EVERY mechanically-active spell for a
+ * class, and `BattleScene`'s spellbook overlay lets the player pick any of
+ * them as their action each turn, spending a spell slot for a leveled one.
+ * Fighter/Rogue and the other non-casters use their real weapon Attack plus
+ * whatever `HeroActionRegistry` class actions they qualify for instead.
  *
  * Phase 16 (D-106, "make all spells usable"): the six full-caster classes'
  * (Wizard/Cleric/Bard/Druid/Sorcerer/Warlock) cantrip/leveled-spell arrays
@@ -95,21 +92,10 @@ export const CREATABLE_CLASS_IDS: string[] = [
 ];
 
 /**
- * The signature abilities a non-spellbook-caster class picks at creation, in
- * cycle order. Phase 13.8 (D-093): Barbarian/Monk/Paladin/Ranger join
- * Fighter/Rogue here — each has its OWN real mechanic (Rage, Ki/Flurry,
- * Divine Smite, Hunter's Mark) that lives outside the spellbook (on the
- * bonus-action button), so their one Q-button action is still this same
- * fixed signature-ability choice, unchanged in shape since Phase 11.1.
- */
-export const SIGNATURE_ABILITY_IDS: string[] = ["cleave", "piercing-shot", "taunting-slam", "frost-bolt"];
-
-/**
  * Phase 16 (D-106): every cantrip on the Wizard's real SRD spell list that
  * this game can actually cast (7 of the SRD's 14 — Dancing Lights, Light,
  * Mage Hand, Mending, Message, Minor Illusion, and Prestidigitation stay
- * non-combat). Also the pool `signatureActionIdsForClass` cycles through at
- * creation for the one-time baseline-stat pick.
+ * non-combat).
  */
 export const WIZARD_CANTRIP_IDS: string[] = [
   "acid-splash",
@@ -143,20 +129,6 @@ export const SORCERER_CANTRIP_IDS: string[] = [
 
 /** Phase 16 (D-106): every cantrip on the Warlock's real SRD spell list this game can actually cast (4 of the SRD's 7). */
 export const WARLOCK_CANTRIP_IDS: string[] = ["chill-touch", "eldritch-blast", "poison-spray", "true-strike"];
-
-const NON_CASTER_CLASS_IDS = ["fighter", "rogue", "barbarian", "monk", "paladin", "ranger"];
-
-/** Which signature-action id list a given class picks from. Throws on an unknown class id. */
-export function signatureActionIdsForClass(classId: string): string[] {
-  if (NON_CASTER_CLASS_IDS.includes(classId)) return SIGNATURE_ABILITY_IDS;
-  if (classId === "wizard") return WIZARD_CANTRIP_IDS;
-  if (classId === "cleric") return CLERIC_CANTRIP_IDS;
-  if (classId === "bard") return BARD_CANTRIP_IDS;
-  if (classId === "druid") return DRUID_CANTRIP_IDS;
-  if (classId === "sorcerer") return SORCERER_CANTRIP_IDS;
-  if (classId === "warlock") return WARLOCK_CANTRIP_IDS;
-  throw new Error(`No signature-action list for class id "${classId}".`);
-}
 
 /**
  * Phase 16 (D-106): every leveled (1st-9th) spell on the Wizard's real SRD

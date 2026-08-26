@@ -10,6 +10,7 @@ import {
 } from "./CombatSystem";
 import { RandomService, type AdvantageMode } from "./RandomService";
 import { SavingThrowSystem } from "./SavingThrowSystem";
+import { InitiativeSystem } from "./InitiativeSystem";
 import { Enemy, type EnemySnapshot } from "../entities/Enemy";
 import { getEnemyDefinition, type EnemyDefinition } from "../data/enemies";
 import type { TrapTarget } from "../data/structures";
@@ -349,6 +350,17 @@ export class WaveSystem {
   private pendingRetry = new Set<number>(); // group indices whose spawn tile was blocked
   private nextInstance = 1;
   /**
+   * KI-098 item 10 (D-175): per-group initiative — enemy type id
+   * (`EnemyDefinition.id`) -> its rolled initiative for THIS wave, via the
+   * previously-unused `InitiativeSystem`. Rolled once, the first time a
+   * type appears this wave (bonus 0 — enemies have no ability-score-derived
+   * modifier in this data model); cleared in `startWave`. Not part of
+   * `WaveStateSnapshot` — same accepted gap as `reinforcementCooldowns`
+   * below, a Coop resync just re-rolls it, which only reshuffles enemy
+   * ACT ORDER, never anything that affects fairness/outcome.
+   */
+  private groupInitiativeRolls = new Map<string, number>();
+  /**
    * Phase 20 (D-111): per-instance phases-remaining until a reinforcement-
    * calling enemy summons again. Deliberately NOT part of `WaveStateSnapshot`
    * (a restored battle just resets each caller's timer to its full interval
@@ -471,6 +483,7 @@ export class WaveSystem {
     this.spawnedCounts.clear();
     this.pendingRetry.clear();
     this.reinforcementCooldowns.clear();
+    this.groupInitiativeRolls.clear();
     this.active = [];
   }
 
@@ -527,6 +540,7 @@ export class WaveSystem {
     this.waveTurn += 1;
 
     const spawned = this.spawnDueEnemies();
+    this.applyGroupInitiativeOrder();
     const moves: EnemyMove[] = [];
     const attacks: EnemyAttackEvent[] = [];
     const trapTriggers: TrapTrigger[] = [];
@@ -1272,6 +1286,36 @@ export class WaveSystem {
       this.spawnedCounts.set(i, already + 1);
     });
     return spawned;
+  }
+
+  /**
+   * KI-098 item 10 (D-175): sorts `this.active` IN PLACE into per-group
+   * initiative order — every enemy of the same TYPE (`EnemyDefinition.id`)
+   * acts as one group, groups act highest-roll-first, and members within a
+   * group keep their original relative (spawn) order (`Array.sort` is a
+   * stable sort, so two entries with an equal comparison never swap).
+   * Sorting `this.active` itself, rather than iterating a separately
+   * materialized snapshot array, matters for one reason: `tickEnemyPhase`'s
+   * main loop is a `for...of` over the live `this.active` array, and a
+   * same-phase reinforcement/summon (`trySpawnReinforcements` et al.) is
+   * appended to it mid-loop — a `for...of` over a live array still visits
+   * items appended during iteration, so this preserves that existing
+   * "a reinforcement can act the same phase it spawns" behavior exactly.
+   * Called once per phase, right after `spawnDueEnemies` — before that
+   * call's own newly-spawned enemies get a chance to act this same phase,
+   * they need a place in the order too.
+   */
+  private applyGroupInitiativeOrder(): void {
+    for (const enemy of this.active) {
+      if (this.groupInitiativeRolls.has(enemy.def.id)) continue;
+      const [entry] = InitiativeSystem.rollInitiative([{ id: enemy.def.id, bonus: 0 }], this.random);
+      this.groupInitiativeRolls.set(enemy.def.id, entry.roll);
+    }
+    this.active.sort((a, b) => {
+      const rollDiff = (this.groupInitiativeRolls.get(b.def.id) ?? 0) - (this.groupInitiativeRolls.get(a.def.id) ?? 0);
+      if (rollDiff !== 0) return rollDiff;
+      return a.def.id < b.def.id ? -1 : a.def.id > b.def.id ? 1 : 0;
+    });
   }
 
   /**

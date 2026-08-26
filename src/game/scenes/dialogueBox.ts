@@ -105,7 +105,8 @@ export class DialogueBoxController {
   private build(): void {
     const { scene } = this;
     // D-157: reads the scene's live canvas size (was fixed GAME_WIDTH/
-    // GAME_HEIGHT) so the scrim fills the true canvas post-Scale.RESIZE.
+    // GAME_HEIGHT) — a no-op today under Scale.FIT (D-159 reverted the
+    // Scale.RESIZE cutover), kept as groundwork if that's attempted again.
     // Known limitation, same as CharacterCreationScene's wizard overlay: a
     // resize firing while this dialogue is already open won't re-size an
     // already-drawn scrim (only a fresh `build()`/`renderLine()` reads the

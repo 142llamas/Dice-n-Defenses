@@ -145,22 +145,24 @@ export const MAGIC_ITEM_DEFINITIONS: Record<string, EquipmentDefinition> = {
   "boots-of-striding-and-springing": {
     id: "boots-of-striding-and-springing",
     name: "Boots of Striding and Springing",
-    description: "+1 movement tile. Requires attunement.",
+    description: "+2 movement tiles. Requires attunement.",
     cost: 34,
     slot: "footwear",
     rarity: "uncommon",
-    movementBonusTiles: 1,
+    // D-172: 2 tiles = the real 10ft SRD bonus, rescaled from 5ft/tile (was 1 tile under the old ~10ft/tile abstraction).
+    movementBonusTiles: 2,
     requiresAttunement: true,
     assetKey: "magic-boots-of-striding-and-springing",
   },
   "boots-of-speed": {
     id: "boots-of-speed",
     name: "Boots of Speed",
-    description: "+2 movement tiles. Requires attunement.",
+    description: "+4 movement tiles. Requires attunement.",
     cost: 78,
     slot: "footwear",
     rarity: "veryRare",
-    movementBonusTiles: 2,
+    // D-172: 4 tiles = the real 20ft bonus, rescaled from 5ft/tile (was 2 tiles).
+    movementBonusTiles: 4,
     requiresAttunement: true,
     assetKey: "magic-boots-of-speed",
   },

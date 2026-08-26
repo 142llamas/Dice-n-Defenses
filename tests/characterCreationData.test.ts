@@ -1,17 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  CREATABLE_CLASS_IDS,
-  SIGNATURE_ABILITY_IDS,
-  WIZARD_CANTRIP_IDS,
-  CLERIC_CANTRIP_IDS,
-  BARD_CANTRIP_IDS,
-  DRUID_CANTRIP_IDS,
-  SORCERER_CANTRIP_IDS,
-  WARLOCK_CANTRIP_IDS,
-  STARTING_GEAR_IDS,
-  knownSpellIdsForClass,
-  signatureActionIdsForClass,
-} from "../src/game/data/characterCreation";
+import { CREATABLE_CLASS_IDS, STARTING_GEAR_IDS, knownSpellIdsForClass } from "../src/game/data/characterCreation";
 import { getClassDefinition } from "../src/game/data/classes";
 import { getEquipmentDefinition } from "../src/game/data/equipment";
 
@@ -38,43 +26,6 @@ describe("CREATABLE_CLASS_IDS", () => {
       "warlock",
     ]);
     CREATABLE_CLASS_IDS.forEach((id) => expect(() => getClassDefinition(id)).not.toThrow());
-  });
-});
-
-describe("signatureActionIdsForClass", () => {
-  it("gives the Fighter its four existing abilities", () => {
-    expect(signatureActionIdsForClass("fighter")).toBe(SIGNATURE_ABILITY_IDS);
-  });
-
-  it("gives the Rogue the same four abilities as the Fighter (no new martial abilities invented)", () => {
-    expect(signatureActionIdsForClass("rogue")).toBe(SIGNATURE_ABILITY_IDS);
-  });
-
-  it("gives Barbarian/Monk/Paladin/Ranger the same fixed ability list too (D-093: their own real mechanic lives on the bonus-action button, not the Q-button choice)", () => {
-    expect(signatureActionIdsForClass("barbarian")).toBe(SIGNATURE_ABILITY_IDS);
-    expect(signatureActionIdsForClass("monk")).toBe(SIGNATURE_ABILITY_IDS);
-    expect(signatureActionIdsForClass("paladin")).toBe(SIGNATURE_ABILITY_IDS);
-    expect(signatureActionIdsForClass("ranger")).toBe(SIGNATURE_ABILITY_IDS);
-  });
-
-  it("gives the Wizard its cantrips, not the Fighter's ability list", () => {
-    expect(signatureActionIdsForClass("wizard")).toBe(WIZARD_CANTRIP_IDS);
-  });
-
-  it("gives the Cleric its own (shorter) cantrip list", () => {
-    expect(signatureActionIdsForClass("cleric")).toBe(CLERIC_CANTRIP_IDS);
-    expect(CLERIC_CANTRIP_IDS).not.toEqual(WIZARD_CANTRIP_IDS);
-  });
-
-  it("gives Bard/Druid/Sorcerer/Warlock their own cantrip lists (D-093)", () => {
-    expect(signatureActionIdsForClass("bard")).toBe(BARD_CANTRIP_IDS);
-    expect(signatureActionIdsForClass("druid")).toBe(DRUID_CANTRIP_IDS);
-    expect(signatureActionIdsForClass("sorcerer")).toBe(SORCERER_CANTRIP_IDS);
-    expect(signatureActionIdsForClass("warlock")).toBe(WARLOCK_CANTRIP_IDS);
-  });
-
-  it("throws for an unknown class id", () => {
-    expect(() => signatureActionIdsForClass("necromancer")).toThrow();
   });
 });
 

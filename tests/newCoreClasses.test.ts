@@ -14,7 +14,7 @@ import { spellSlotsForClassAtLevel, cantripsKnownForClassAtLevel } from "../src/
 
 const NEW_CLASS_IDS = ["barbarian", "bard", "druid", "monk", "paladin", "ranger", "sorcerer", "warlock"];
 
-function buildFor(classId: string, abilityId: string, overrides: Partial<CharacterBuild> = {}): CharacterBuild {
+function buildFor(classId: string, overrides: Partial<CharacterBuild> = {}): CharacterBuild {
   return {
     id: `build-${classId}`,
     name: "Test",
@@ -22,7 +22,6 @@ function buildFor(classId: string, abilityId: string, overrides: Partial<Charact
     classId,
     level: 1,
     abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
-    abilityId,
     controlledBy: "human",
     ...overrides,
   };
@@ -33,28 +32,28 @@ function heroFrom(build: CharacterBuild): Hero {
 }
 
 function barbarian(): Hero {
-  return heroFrom(buildFor("barbarian", "cleave"));
+  return heroFrom(buildFor("barbarian"));
 }
 function bard(): Hero {
-  return heroFrom(buildFor("bard", "vicious-mockery"));
+  return heroFrom(buildFor("bard"));
 }
 function druid(): Hero {
-  return heroFrom(buildFor("druid", "produce-flame"));
+  return heroFrom(buildFor("druid"));
 }
 function monk(overrides: Partial<CharacterBuild> = {}): Hero {
-  return heroFrom(buildFor("monk", "cleave", overrides));
+  return heroFrom(buildFor("monk", overrides));
 }
 function paladin(): Hero {
-  return heroFrom(buildFor("paladin", "cleave"));
+  return heroFrom(buildFor("paladin"));
 }
 function ranger(): Hero {
-  return heroFrom(buildFor("ranger", "cleave"));
+  return heroFrom(buildFor("ranger"));
 }
 function sorcerer(overrides: Partial<CharacterBuild> = {}): Hero {
-  return heroFrom(buildFor("sorcerer", "fire-bolt", overrides));
+  return heroFrom(buildFor("sorcerer", overrides));
 }
 function warlock(): Hero {
-  return heroFrom(buildFor("warlock", "eldritch-blast"));
+  return heroFrom(buildFor("warlock"));
 }
 
 describe("CLASS_DEFINITIONS (Phase 13.8, D-093)", () => {
@@ -101,8 +100,8 @@ describe("CLASS_DEFINITIONS (Phase 13.8, D-093)", () => {
 describe("Monk's Martial Arts: melee attacks scale off DEX, not STR (Phase 13.8, D-093)", () => {
   it("a Monk's melee attackBonus/damage move with DEX, unaffected by STR", () => {
     const scores = { str: 8, dex: 18, con: 13, int: 10, wis: 10, cha: 10 };
-    const monkStats = combatStatsForClassLevel("monk", 1, scores, "cleave"); // cleave: rangeTiles 1 -> melee
-    const fighterStats = combatStatsForClassLevel("fighter", 1, scores, "cleave");
+    const monkStats = combatStatsForClassLevel("monk", 1, scores); // Monk: melee/dex
+    const fighterStats = combatStatsForClassLevel("fighter", 1, scores); // Fighter: melee/str
     expect(monkStats.attackBonus).toBeGreaterThan(fighterStats.attackBonus);
   });
 });

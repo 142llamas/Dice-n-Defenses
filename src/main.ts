@@ -6,6 +6,8 @@ import { CharacterCreationScene } from "./game/scenes/CharacterCreationScene";
 import { CompendiumScene } from "./game/scenes/CompendiumScene";
 import { BestiaryScene } from "./game/scenes/BestiaryScene";
 import { CampaignSelectScene } from "./game/scenes/CampaignSelectScene";
+import { CompanionRosterScene } from "./game/scenes/CompanionRosterScene";
+import { UnlockMissionPartyScene } from "./game/scenes/UnlockMissionPartyScene";
 import { FreePlayScene } from "./game/scenes/FreePlayScene";
 import { TestModeScene } from "./game/scenes/TestModeScene";
 import { LoadGameScene } from "./game/scenes/LoadGameScene";
@@ -72,6 +74,8 @@ const config: Phaser.Types.Core.GameConfig = {
     CompendiumScene,
     BestiaryScene,
     CampaignSelectScene,
+    CompanionRosterScene,
+    UnlockMissionPartyScene,
     FreePlayScene,
     TestModeScene,
     LoadGameScene,

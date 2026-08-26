@@ -496,20 +496,20 @@ describe("Swarm enemies (def.swarm)", () => {
     );
     ws.startWave(0);
     // Pin both at their spawn tick so no free movement happens yet, then
-    // place them precisely: the swarm 2 tiles (its full movementTiles)
-    // behind the grunt, directly on the grunt's own path to the exit.
+    // place them precisely: the swarm 4 tiles (its full movementTiles,
+    // D-172) behind the grunt, directly on the grunt's own path to the exit.
     const t1 = ws.tickEnemyPhase({ isBlocked: () => true });
     const swarm = t1.spawned.find((e) => e.def.id === "rat-swarm")!;
     const grunt = t1.spawned.find((e) => e.def.id === "grunt")!;
-    swarm.position = { x: 5, y: 0 };
+    swarm.position = { x: 3, y: 0 };
     grunt.position = { x: 7, y: 0 };
     const gruntPosBefore = { ...grunt.position };
 
     const t2 = ws.tickEnemyPhase(); // normal movement, no isBlocked
-    // The swarm's own 2-tile movement budget lands it exactly where the
+    // The swarm's own 4-tile movement budget lands it exactly where the
     // grunt was standing — it was never backed off by the occupancy check.
     expect(swarm.position).toEqual(gruntPosBefore);
-    expect(t2.moves.find((m) => m.enemy === swarm)?.path).toHaveLength(2);
+    expect(t2.moves.find((m) => m.enemy === swarm)?.path).toHaveLength(4);
   });
 });
 

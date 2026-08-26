@@ -82,13 +82,15 @@ describe("Enemies never stack while marching", () => {
   it("a boxed-in enemy holds in place rather than overlapping the one ahead of it", () => {
     // Two grunts in a strict single-file corridor with the SECOND grunt
     // spawning right behind the first. If the first can't get far enough
-    // ahead, the second must simply not move onto its tile.
-    const map = new GameMap(parseMapRows("m", "m", ["S.....X"]));
+    // ahead, the second must simply not move onto its tile. D-172 doubled
+    // Grunt's speed to 4 tiles/phase — a longer lane than before so grunt A
+    // doesn't breach (and vanish from `ws.enemies`) before grunt B even spawns.
+    const map = new GameMap(parseMapRows("m", "m", ["S..........X"]));
     const pf = new PathfindingSystem(map);
     const ws = new WaveSystem(map, pf, [laneWave()], { startingIntegrity: 20, random: RandomService.fixed() });
     ws.startWave(0);
 
-    ws.tickEnemyPhase(); // grunt A spawns at (0,0), then moves 2 -> (2,0)
+    ws.tickEnemyPhase(); // grunt A spawns at (0,0), then moves 4 -> (4,0)
     ws.tickEnemyPhase(); // grunt B spawns at (0,0), then moves toward A
 
     const positions = ws.enemies.map((e) => e.position);
@@ -101,7 +103,10 @@ describe("Enemies never stack while marching", () => {
 
 describe("D-067: enemies may walk THROUGH each other, but never share a landing tile", () => {
   it("backs off one tile short of a stationary enemy, then passes straight through it once there's room beyond", () => {
-    const map = new GameMap(parseMapRows("m", "m", ["S.......X"])); // S=(0,0) .. X=(8,0)
+    // D-172 doubled Grunt's speed to 4 tiles/phase — a longer lane than
+    // before (twice the dot count) so the same relative choreography still
+    // has room to play out.
+    const map = new GameMap(parseMapRows("m", "m", ["S..............X"])); // S=(0,0) .. X=(15,0)
     const pf = new PathfindingSystem(map);
     const wave: WaveDefinition = {
       id: "w",
@@ -114,35 +119,35 @@ describe("D-067: enemies may walk THROUGH each other, but never share a landing 
     const ws = new WaveSystem(map, pf, [wave], { startingIntegrity: 20, random: RandomService.fixed() });
     ws.startWave(0);
 
-    // Grunt A (movementTiles 2) reaches (4,0) after two ticks; a long stun
+    // Grunt A (movementTiles 4) reaches (8,0) after two ticks; a long stun
     // then freezes it there as a deterministic, stationary occupant to test
     // passage through â€” deliberately no hero anywhere in this test, since
     // the Enemy AI/Movement Redesign (D-139/D-140) changed WHEN and WHY an
     // enemy fights a hero, not this enemy-vs-enemy passthrough rule, which
     // this isolates from hero engagement entirely.
-    ws.tickEnemyPhase(); // turn1: A spawns (0,0) -> (2,0)
-    ws.tickEnemyPhase(); // turn2: A (2,0) -> (4,0)
+    ws.tickEnemyPhase(); // turn1: A spawns (0,0) -> (4,0)
+    ws.tickEnemyPhase(); // turn2: A (4,0) -> (8,0)
     const enemyA = ws.enemies[0];
-    expect(enemyA.position).toEqual({ x: 4, y: 0 });
+    expect(enemyA.position).toEqual({ x: 8, y: 0 });
     enemyA.applyStatus("stunned", 99);
 
     ws.tickEnemyPhase(); // turn3: A stunned, holds; B not due yet (startTurn 4)
-    ws.tickEnemyPhase(); // turn4: B spawns (0,0) -> (2,0); A still holds
-    const backOffTick = ws.tickEnemyPhase(); // turn5: B (2,0) -> wants (4,0) (A's tile)
+    ws.tickEnemyPhase(); // turn4: B spawns (0,0) -> (4,0); A still holds
+    const backOffTick = ws.tickEnemyPhase(); // turn5: B (4,0) -> wants (8,0) (A's tile)
     const enemyB = ws.enemies.find((e) => e !== enemyA)!;
-    // B's 2-tile budget would land it exactly on A â€” it must back off to the
+    // B's 4-tile budget would land it exactly on A â€” it must back off to the
     // nearest earlier free tile instead of sharing A's tile.
-    expect(enemyB.position).toEqual({ x: 3, y: 0 });
-    expect(backOffTick.moves.find((m) => m.enemy === enemyB)?.to).toEqual({ x: 3, y: 0 });
+    expect(enemyB.position).toEqual({ x: 7, y: 0 });
+    expect(backOffTick.moves.find((m) => m.enemy === enemyB)?.to).toEqual({ x: 7, y: 0 });
 
-    const passThroughTick = ws.tickEnemyPhase(); // B: (3,0) -> (5,0), via A's tile
-    // B walked STRAIGHT THROUGH A's stationary tile (4,0) as an intermediate
+    const passThroughTick = ws.tickEnemyPhase(); // B: (7,0) -> (11,0), via A's tile
+    // B walked STRAIGHT THROUGH A's stationary tile (8,0) as an intermediate
     // step (no detour) and landed past it, since passing through is now
     // allowed â€” only sharing the FINAL tile is forbidden.
     const bMove = passThroughTick.moves.find((m) => m.enemy === enemyB);
-    expect(bMove?.path).toEqual([{ x: 4, y: 0 }, { x: 5, y: 0 }]);
-    expect(enemyB.position).toEqual({ x: 5, y: 0 });
-    expect(enemyA.position).toEqual({ x: 4, y: 0 }); // A is unaffected, still holding
+    expect(bMove?.path).toEqual([{ x: 8, y: 0 }, { x: 9, y: 0 }, { x: 10, y: 0 }, { x: 11, y: 0 }]);
+    expect(enemyB.position).toEqual({ x: 11, y: 0 });
+    expect(enemyA.position).toEqual({ x: 8, y: 0 }); // A is unaffected, still holding
 
     const positions = ws.enemies.map((e) => e.position);
     expect(positionsAreUnique(positions)).toBe(true);
