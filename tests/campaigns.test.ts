@@ -332,6 +332,18 @@ describe("Chapters (D-177): real chapter content", () => {
       expect(getEnemyDefinition(boss).role).toBe("boss");
     }
   });
+
+  it("KI-098 item 13 continuation: every region chapter has real introText/outroText (the writing pass CAMPAIGN_STORY_DESIGN.md §9 flagged as still open)", () => {
+    for (const campaign of REGIONS) {
+      for (let i = 0; i < totalChapters(campaign); i++) {
+        const chapter = getChapter(campaign, i);
+        expect(chapter.introText, `${chapter.id} introText`).toBeTruthy();
+        expect(chapter.introText!.trim().length).toBeGreaterThan(0);
+        expect(chapter.outroText, `${chapter.id} outroText`).toBeTruthy();
+        expect(chapter.outroText!.trim().length).toBeGreaterThan(0);
+      }
+    }
+  });
 });
 
 /**

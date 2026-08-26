@@ -34,7 +34,20 @@ import { NAMELESS_THRONE_HAZARD_POSITIONS } from "../data/namelessThroneMap";
 
 export type ThroneVariant = "ashen-sovereign" | "the-hollow-empress";
 
-export function resolveThroneVariant(worldFlags: WorldFlagState): ThroneVariant {
+export interface MercyTally {
+  ashen: number;
+  hollow: number;
+}
+
+/**
+ * The same ashen/hollow tally `resolveThroneVariant` uses to pick the
+ * capstone's boss, factored out so other beats (companion dialogue tone,
+ * KI-098 item 13 continuation) can read the player's accumulated
+ * mercy-vs-expedience lean without duplicating this loop or waiting for the
+ * capstone itself. Safe to call mid-campaign, before every region has been
+ * played — an unresolved region's flags are simply absent, not miscounted.
+ */
+export function computeMercyTally(worldFlags: WorldFlagState): MercyTally {
   let ashen = 0;
   let hollow = 0;
   for (const enemyId of Object.values(SPARABLE_MINIBOSS_CHAPTERS)) {
@@ -44,7 +57,18 @@ export function resolveThroneVariant(worldFlags: WorldFlagState): ThroneVariant 
   const sorrelFate = getWorldFlag(worldFlags, SORREL_FATE_FLAG_ID);
   if (sorrelFate === "redeemed") ashen++;
   else if (sorrelFate === "lost") hollow++;
+  return { ashen, hollow };
+}
+
+export function resolveThroneVariant(worldFlags: WorldFlagState): ThroneVariant {
+  const { ashen, hollow } = computeMercyTally(worldFlags);
   return hollow > ashen ? "the-hollow-empress" : "ashen-sovereign";
+}
+
+/** Reusable outside the capstone — same lean as `resolveThroneVariant`, without its "tie defaults Ashen" ending-specific framing baked into a branded variant name. */
+export function mercyTallyLeansHollow(worldFlags: WorldFlagState): boolean {
+  const { ashen, hollow } = computeMercyTally(worldFlags);
+  return hollow > ashen;
 }
 
 /**

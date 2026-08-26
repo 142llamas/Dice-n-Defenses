@@ -1554,9 +1554,36 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     bossEnemyId: "cinderlord",
     lootPoolIds: EMBERFORD_LOOT_POOL,
     chapters: [
-      { id: "emberford-ch1", name: "Emberford Reach — Chapter 1", levelRange: [1, 5], waves: EMBERFORD_CH1_WAVES, bossEnemyId: "basalt-colossus" },
-      { id: "emberford-ch2", name: "Emberford Reach — Chapter 2", levelRange: [6, 10], waves: EMBERFORD_CH2_WAVES, bossEnemyId: "cinderlord" },
-      { id: "emberford-ch3", name: "Emberford Reach — Chapter 3", levelRange: [11, 15], waves: EMBERFORD_CH3_WAVES },
+      {
+        id: "emberford-ch1",
+        name: "Emberford Reach — Chapter 1",
+        levelRange: [1, 5],
+        waves: EMBERFORD_CH1_WAVES,
+        bossEnemyId: "basalt-colossus",
+        introText:
+          "The road into Emberford Reach is scorched black, cliffs cut by old lava scars. Whatever's raiding this crossing hits hard and fast, and it isn't finished yet.",
+        outroText:
+          "The immediate threat is down, but the smoke over Emberford hasn't cleared — and somewhere past it, a forge is still burning that shouldn't be.",
+      },
+      {
+        id: "emberford-ch2",
+        name: "Emberford Reach — Chapter 2",
+        levelRange: [6, 10],
+        waves: EMBERFORD_CH2_WAVES,
+        bossEnemyId: "cinderlord",
+        introText:
+          "Deeper into Emberford Reach, the heat gets worse before it gets honest — this is close enough to Cinderlord's furnace to feel it for the first time.",
+        outroText:
+          "Cinderlord retreats deeper into the furnace-heart of the Reach, wounded but far from finished. Whatever's left of the smith in him hasn't shown itself yet.",
+      },
+      {
+        id: "emberford-ch3",
+        name: "Emberford Reach — Chapter 3",
+        levelRange: [11, 15],
+        waves: EMBERFORD_CH3_WAVES,
+        introText: "Emberford's ash fields stretch wider than the maps say — every step here is a step Cinderlord's forge has already claimed.",
+        outroText: "The ash fields are cleared, and the road ahead runs straight for the furnace. There's no plausible detour left.",
+      },
       {
         id: "emberford-ch4",
         name: "Emberford Reach — Chapter 4",
@@ -1564,6 +1591,8 @@ export const CAMPAIGNS: CampaignDefinition[] = [
         waves: EMBERFORD_WAVES,
         bossEnemyId: "cinderlord",
         lootPoolIds: EMBERFORD_LOOT_POOL,
+        introText: "The furnace-heart of Emberford Reach: Cinderlord's forge, and Cinderlord himself, still hammering at something that was a name once.",
+        outroText: "Cinderlord's hammer finally stops. Emberford Reach is quiet, for the first time in longer than anyone here can remember.",
       },
     ],
   },
@@ -1577,9 +1606,33 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     bossEnemyId: "tidelord",
     lootPoolIds: SALTMERE_LOOT_POOL,
     chapters: [
-      { id: "saltmere-ch1", name: "Saltmere Shallows — Chapter 1", levelRange: [1, 5], waves: SALTMERE_CH1_WAVES, bossEnemyId: "tide-wretch" },
-      { id: "saltmere-ch2", name: "Saltmere Shallows — Chapter 2", levelRange: [6, 10], waves: SALTMERE_CH2_WAVES, bossEnemyId: "tidelord" },
-      { id: "saltmere-ch3", name: "Saltmere Shallows — Chapter 3", levelRange: [11, 15], waves: SALTMERE_CH3_WAVES },
+      {
+        id: "saltmere-ch1",
+        name: "Saltmere Shallows — Chapter 1",
+        levelRange: [1, 5],
+        waves: SALTMERE_CH1_WAVES,
+        bossEnemyId: "tide-wretch",
+        introText: "Saltmere's sea wall gave out for a reason, and the tideflats it flooded are still full of things that shouldn't still be walking.",
+        outroText:
+          "The shallows are quieter now, though the tide doesn't feel finished with this place. Somewhere out past the wreckage, Tidelord is still listening.",
+      },
+      {
+        id: "saltmere-ch2",
+        name: "Saltmere Shallows — Chapter 2",
+        levelRange: [6, 10],
+        waves: SALTMERE_CH2_WAVES,
+        bossEnemyId: "tidelord",
+        introText: "Deeper into the drowned village, the water gets stranger — Tidelord has never once let go of a single thing the tide brought it.",
+        outroText: "Tidelord slips back under the tide, unhurried. It has all the time the sea has ever had.",
+      },
+      {
+        id: "saltmere-ch3",
+        name: "Saltmere Shallows — Chapter 3",
+        levelRange: [11, 15],
+        waves: SALTMERE_CH3_WAVES,
+        introText: "The flooded streets of Saltmere run deeper than any map admits. Whatever the tide still holds onto is close now.",
+        outroText: "The last dry ground in Saltmere is behind you. Ahead is nothing but Tidelord's own water, all the way down.",
+      },
       {
         id: "saltmere-ch4",
         name: "Saltmere Shallows — Chapter 4",
@@ -1587,6 +1640,8 @@ export const CAMPAIGNS: CampaignDefinition[] = [
         waves: SALTMERE_WAVES,
         bossEnemyId: "tidelord",
         lootPoolIds: SALTMERE_LOOT_POOL,
+        introText: "The deep shallows, where Tidelord keeps its drowned crew close and still calls every one of them by name.",
+        outroText: "Tidelord goes still in the shallows, and for the first time in longer than anyone can say, the water here is just water.",
       },
     ],
   },
@@ -1600,9 +1655,35 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     bossEnemyId: "the-devourer",
     lootPoolIds: CAUSEWAY_LOOT_POOL,
     chapters: [
-      { id: "causeway-ch1", name: "Shattered Causeway — Chapter 1", levelRange: [1, 5], waves: CAUSEWAY_CH1_WAVES, bossEnemyId: "juggernaut" },
-      { id: "causeway-ch2", name: "Shattered Causeway — Chapter 2", levelRange: [6, 10], waves: CAUSEWAY_CH2_WAVES, bossEnemyId: "the-devourer" },
-      { id: "causeway-ch3", name: "Shattered Causeway — Chapter 3", levelRange: [11, 15], waves: CAUSEWAY_CH3_WAVES },
+      {
+        id: "causeway-ch1",
+        name: "Shattered Causeway — Chapter 1",
+        levelRange: [1, 5],
+        waves: CAUSEWAY_CH1_WAVES,
+        bossEnemyId: "juggernaut",
+        introText:
+          "The Shattered Causeway is one unstable bridge over a chasm that doesn't forgive a wrong step — and something big enough to feel through the stone is already crossing from the other side.",
+        outroText: "The bridge holds, for now. Whatever's waiting at the far end of the Causeway has had a very long time to get hungry.",
+      },
+      {
+        id: "causeway-ch2",
+        name: "Shattered Causeway — Chapter 2",
+        levelRange: [6, 10],
+        waves: CAUSEWAY_CH2_WAVES,
+        bossEnemyId: "the-devourer",
+        introText:
+          "Past the first crossing, the chasm walls are lined with old wreckage — everything The Devourer has ever swallowed, still down there, still not quite gone.",
+        outroText: "The Devourer pulls back into the deep chasm dark, unsatisfied. It has never once needed to be patient before.",
+      },
+      {
+        id: "causeway-ch3",
+        name: "Shattered Causeway — Chapter 3",
+        levelRange: [11, 15],
+        waves: CAUSEWAY_CH3_WAVES,
+        introText:
+          "The Causeway narrows further here — every bridge on this stretch was clearly built to be crossed once, by someone who didn't plan on coming back.",
+        outroText: "The far side of the chasm is finally in sight. There's nowhere left for The Devourer to retreat to.",
+      },
       {
         id: "causeway-ch4",
         name: "Shattered Causeway — Chapter 4",
@@ -1610,6 +1691,8 @@ export const CAMPAIGNS: CampaignDefinition[] = [
         waves: CAUSEWAY_WAVES,
         bossEnemyId: "the-devourer",
         lootPoolIds: CAUSEWAY_LOOT_POOL,
+        introText: "The chasm floor, at last — a hoard of everything The Devourer has ever taken, with The Devourer still sitting in the middle of it, still keeping.",
+        outroText: "The Devourer stops moving, and for the first time in a long time, everything it was keeping stays still too.",
       },
     ],
   },
@@ -1623,9 +1706,34 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     bossEnemyId: "warlord-korrath",
     lootPoolIds: CINDERFALL_LOOT_POOL,
     chapters: [
-      { id: "cinderfall-ch1", name: "Cinderfall Rift — Chapter 1", levelRange: [1, 5], waves: CINDERFALL_CH1_WAVES, bossEnemyId: "gravemaw" },
-      { id: "cinderfall-ch2", name: "Cinderfall Rift — Chapter 2", levelRange: [6, 10], waves: CINDERFALL_CH2_WAVES, bossEnemyId: "warlord-korrath" },
-      { id: "cinderfall-ch3", name: "Cinderfall Rift — Chapter 3", levelRange: [11, 15], waves: CINDERFALL_CH3_WAVES },
+      {
+        id: "cinderfall-ch1",
+        name: "Cinderfall Rift — Chapter 1",
+        levelRange: [1, 5],
+        waves: CINDERFALL_CH1_WAVES,
+        bossEnemyId: "gravemaw",
+        introText:
+          "Cinderfall Rift was a battlefield once, and it never quite stopped being one — the middle road across the rift is already giving way underfoot.",
+        outroText: "The rift road holds, barely. Whatever remembers this battlefield best is still out there, and it isn't finished remembering.",
+      },
+      {
+        id: "cinderfall-ch2",
+        name: "Cinderfall Rift — Chapter 2",
+        levelRange: [6, 10],
+        waves: CINDERFALL_CH2_WAVES,
+        bossEnemyId: "warlord-korrath",
+        introText:
+          "Deeper into the Rift, old banners are still standing where they fell — Warlord Korrath has never once needed to fight for any of this himself.",
+        outroText: "Korrath pulls his line back rather than risk it, and lets someone else take the losses instead — same as always.",
+      },
+      {
+        id: "cinderfall-ch3",
+        name: "Cinderfall Rift — Chapter 3",
+        levelRange: [11, 15],
+        waves: CINDERFALL_CH3_WAVES,
+        introText: "The bridge over Cinderfall Rift's deepest crossing groans with every step now. It won't hold much longer, for anyone.",
+        outroText: "The bridge is still standing, somehow. Korrath's own war is running out of road to fall back across.",
+      },
       {
         id: "cinderfall-ch4",
         name: "Cinderfall Rift — Chapter 4",
@@ -1633,6 +1741,9 @@ export const CAMPAIGNS: CampaignDefinition[] = [
         waves: CINDERFALL_WAVES,
         bossEnemyId: "warlord-korrath",
         lootPoolIds: CINDERFALL_LOOT_POOL,
+        introText:
+          "The bridge finally starts to go, and on the far side of it, Warlord Korrath is standing exactly where he's always stood — behind the line.",
+        outroText: "The bridge collapses behind what's left of Korrath's war. For the first time, he's the one with nowhere left to point.",
       },
     ],
   },
@@ -1646,9 +1757,34 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     bossEnemyId: "blightmother",
     lootPoolIds: DROWNING_VALE_LOOT_POOL,
     chapters: [
-      { id: "drowning-vale-ch1", name: "The Drowning Vale — Chapter 1", levelRange: [1, 5], waves: DROWNING_VALE_CH1_WAVES, bossEnemyId: "the-husk" },
-      { id: "drowning-vale-ch2", name: "The Drowning Vale — Chapter 2", levelRange: [6, 10], waves: DROWNING_VALE_CH2_WAVES, bossEnemyId: "blightmother" },
-      { id: "drowning-vale-ch3", name: "The Drowning Vale — Chapter 3", levelRange: [11, 15], waves: DROWNING_VALE_CH3_WAVES },
+      {
+        id: "drowning-vale-ch1",
+        name: "The Drowning Vale — Chapter 1",
+        levelRange: [1, 5],
+        waves: DROWNING_VALE_CH1_WAVES,
+        bossEnemyId: "the-husk",
+        introText:
+          "The Drowning Vale floods a little more every season, and nothing that stays green out here stays green for long — including, it turns out, the people who patrol it.",
+        outroText: "The Vale's edge is cleared. What looked like the worst thing out here almost never is — and something worse is still watching from deeper in.",
+      },
+      {
+        id: "drowning-vale-ch2",
+        name: "The Drowning Vale — Chapter 2",
+        levelRange: [6, 10],
+        waves: DROWNING_VALE_CH2_WAVES,
+        bossEnemyId: "blightmother",
+        introText:
+          "Further into the marsh, the ground itself starts working against you — Blightmother's ground, and it knows every inch of it better than any map does.",
+        outroText: "Blightmother retreats into the deep marsh, and the ground she leaves behind doesn't feel any safer for it.",
+      },
+      {
+        id: "drowning-vale-ch3",
+        name: "The Drowning Vale — Chapter 3",
+        levelRange: [11, 15],
+        waves: DROWNING_VALE_CH3_WAVES,
+        introText: "The Vale's deepest reaches barely count as solid ground anymore. Whatever's still fighting for itself out here is running out of places to stand.",
+        outroText: "The marsh is nearly crossed. Whatever Blightmother's ground has left to claim, it's running out of time to claim it.",
+      },
       {
         id: "drowning-vale-ch4",
         name: "The Drowning Vale — Chapter 4",
@@ -1656,6 +1792,8 @@ export const CAMPAIGNS: CampaignDefinition[] = [
         waves: DROWNING_VALE_WAVES,
         bossEnemyId: "blightmother",
         lootPoolIds: DROWNING_VALE_LOOT_POOL,
+        introText: "Blightmother's own ground, at the Vale's rotten heart — the one place in this whole marsh that never lets go of anything.",
+        outroText: "Blightmother's hold over the Vale finally breaks, and the ground underfoot feels like ground again for the first time in this whole fight.",
       },
     ],
   },
@@ -1669,9 +1807,34 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     bossEnemyId: "sundered-king",
     lootPoolIds: FROSTBOUND_LOOT_POOL,
     chapters: [
-      { id: "frostbound-ch1", name: "Frostbound Hollow — Chapter 1", levelRange: [1, 5], waves: FROSTBOUND_CH1_WAVES, bossEnemyId: "bloodrage-warlord" },
-      { id: "frostbound-ch2", name: "Frostbound Hollow — Chapter 2", levelRange: [6, 10], waves: FROSTBOUND_CH2_WAVES, bossEnemyId: "sundered-king" },
-      { id: "frostbound-ch3", name: "Frostbound Hollow — Chapter 3", levelRange: [11, 15], waves: FROSTBOUND_CH3_WAVES },
+      {
+        id: "frostbound-ch1",
+        name: "Frostbound Hollow — Chapter 1",
+        levelRange: [1, 5],
+        waves: FROSTBOUND_CH1_WAVES,
+        bossEnemyId: "bloodrage-warlord",
+        introText:
+          "Frostbound Hollow is split clean in two by a ridge that's been frozen mid-collapse for longer than anyone alive remembers — and something on the far side has finally stopped waiting.",
+        outroText: "This side of the ridge is cleared. The Sundered King hasn't moved yet — he's had a very long time to learn patience isn't the same as safety.",
+      },
+      {
+        id: "frostbound-ch2",
+        name: "Frostbound Hollow — Chapter 2",
+        levelRange: [6, 10],
+        waves: FROSTBOUND_CH2_WAVES,
+        bossEnemyId: "sundered-king",
+        introText:
+          "Crossing the split ridge properly for the first time, the cold here isn't just weather — it's close enough now to feel like the King's own court, what's left of it.",
+        outroText: "The Sundered King withdraws deeper into his fallen court without a word. He has never once needed to explain a retreat to anyone.",
+      },
+      {
+        id: "frostbound-ch3",
+        name: "Frostbound Hollow — Chapter 3",
+        levelRange: [11, 15],
+        waves: FROSTBOUND_CH3_WAVES,
+        introText: "The far side of Frostbound Hollow's ridge is a court in ruins, still arranged as if someone were coming back to sit in it.",
+        outroText: "The ruined court is nearly crossed. Whatever the Sundered King has been waiting for, this is clearly it.",
+      },
       {
         id: "frostbound-ch4",
         name: "Frostbound Hollow — Chapter 4",
@@ -1679,6 +1842,8 @@ export const CAMPAIGNS: CampaignDefinition[] = [
         waves: FROSTBOUND_WAVES,
         bossEnemyId: "sundered-king",
         lootPoolIds: FROSTBOUND_LOOT_POOL,
+        introText: "The Sundered King's own throne, what's left of it — and the King still seated on it, exactly where he's been sitting since the ridge split.",
+        outroText: "The Sundered King finally falls, decades of waiting ending in one motion. Frostbound Hollow's ridge feels, for the first time, like it might actually be done splitting.",
       },
     ],
   },

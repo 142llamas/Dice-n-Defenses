@@ -3,6 +3,7 @@ import {
   resolveThroneVariant,
   withThroneVariant,
   withThroneEnemyReskins,
+  mercyTallyLeansHollow,
 } from "../src/game/systems/NamelessThroneSystem";
 import { SPARABLE_MINIBOSS_CHAPTERS, sparedFlagId } from "../src/game/systems/ReturningMinibossSystem";
 import { SORREL_FATE_FLAG_ID } from "../src/game/systems/SorrelFateSystem";
@@ -64,6 +65,46 @@ describe("resolveThroneVariant", () => {
     let flags = spareAll(MINIBOSS_IDS.slice(0, 2)); // 2 ashen, 3 hollow
     flags = setWorldFlag(flags, SORREL_FATE_FLAG_ID, "marked");
     expect(resolveThroneVariant(flags)).toBe("the-hollow-empress");
+  });
+});
+
+describe("mercyTallyLeansHollow", () => {
+  // KI-098 item 13 continuation: the same tally resolveThroneVariant uses,
+  // shared for dialogue-tone reactivity elsewhere — same boundary cases,
+  // minus the tie-break framing (a tie leans Ashen, i.e. NOT hollow).
+  it("is true when nothing was spared and Sorrel's fate wasn't recorded", () => {
+    expect(mercyTallyLeansHollow(EMPTY_FLAGS)).toBe(true);
+  });
+
+  it("is false when every miniboss was spared", () => {
+    expect(mercyTallyLeansHollow(spareAll(MINIBOSS_IDS))).toBe(false);
+  });
+
+  it("is false on a genuine tie (matches resolveThroneVariant's own tie-break)", () => {
+    let flags = spareAll(MINIBOSS_IDS.slice(0, 2)); // 2 ashen, 3 hollow
+    flags = setWorldFlag(flags, SORREL_FATE_FLAG_ID, "redeemed"); // 3 ashen, 3 hollow -> tie
+    expect(mercyTallyLeansHollow(flags)).toBe(false);
+  });
+
+  it("is true when hollow strictly outnumbers ashen", () => {
+    let flags = spareAll(MINIBOSS_IDS.slice(0, 2)); // 2 ashen, 3 hollow
+    flags = setWorldFlag(flags, SORREL_FATE_FLAG_ID, "lost"); // 2 ashen, 4 hollow
+    expect(mercyTallyLeansHollow(flags)).toBe(true);
+  });
+
+  it("agrees with resolveThroneVariant across a representative sample of flag combinations (the extraction didn't change behavior)", () => {
+    const samples: WorldFlagState[] = [
+      EMPTY_FLAGS,
+      spareAll(MINIBOSS_IDS),
+      spareAll(MINIBOSS_IDS.slice(0, 3)),
+      spareAll(MINIBOSS_IDS.slice(0, 2)),
+      setWorldFlag(spareAll(MINIBOSS_IDS.slice(0, 2)), SORREL_FATE_FLAG_ID, "redeemed"),
+      setWorldFlag(spareAll(MINIBOSS_IDS.slice(0, 3)), SORREL_FATE_FLAG_ID, "lost"),
+      setWorldFlag(spareAll(MINIBOSS_IDS.slice(0, 2)), SORREL_FATE_FLAG_ID, "marked"),
+    ];
+    for (const flags of samples) {
+      expect(mercyTallyLeansHollow(flags)).toBe(resolveThroneVariant(flags) === "the-hollow-empress");
+    }
   });
 });
 

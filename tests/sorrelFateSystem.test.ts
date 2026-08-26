@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   SORREL_CHOICE_FLAG_IDS,
   SORREL_FATE_FLAG_ID,
+  SORREL_REDEEMED_REWARD_EQUIPMENT_ID,
+  SORREL_MARKED_GOLD_REWARD,
   recordSorrelChoice,
   resolveSorrelFate,
   isSorrelLost,
 } from "../src/game/systems/SorrelFateSystem";
 import { setWorldFlag, getWorldFlag, type WorldFlagState } from "../src/game/systems/WorldFlagSystem";
+import { getEquipmentDefinition } from "../src/game/data/equipment";
 
 /**
  * KI-098 item 13, CAMPAIGN_STORY_DESIGN.md §6 — Sorrel Thane's Drowning
@@ -84,6 +87,18 @@ describe("resolveSorrelFate", () => {
     const flags = recordSorrelChoice(EMPTY_FLAGS, 0, "press");
     resolveSorrelFate(flags);
     expect(getWorldFlag(flags, SORREL_FATE_FLAG_ID)).toBeUndefined();
+  });
+});
+
+describe("Redeemed/Marked reward constants (KI-098 item 13 continuation, D-185 addendum close)", () => {
+  it("SORREL_REDEEMED_REWARD_EQUIPMENT_ID resolves to a real equipment definition", () => {
+    expect(() => getEquipmentDefinition(SORREL_REDEEMED_REWARD_EQUIPMENT_ID)).not.toThrow();
+  });
+
+  it("SORREL_MARKED_GOLD_REWARD is real but strictly less than the Redeemed item's value — \"survived, not unscathed\"", () => {
+    const redeemedValue = getEquipmentDefinition(SORREL_REDEEMED_REWARD_EQUIPMENT_ID).cost;
+    expect(SORREL_MARKED_GOLD_REWARD).toBeGreaterThan(0);
+    expect(SORREL_MARKED_GOLD_REWARD).toBeLessThan(redeemedValue);
   });
 });
 

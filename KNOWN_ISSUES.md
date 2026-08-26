@@ -20,6 +20,37 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
+### KI-139 — D-189: companion dialogue writing pass + real mechanical weight for branch choices (KI-098 item 13's last two open items, CAMPAIGN_STORY_DESIGN.md §9)
+- Clear any region's Chapter 1 for the first time — confirm a real
+  multi-line dialogue beat (portrait-less, named speaker) plays for that
+  region's Pool B companion, replacing the old flat "has joined your
+  roster (bench)" combat-log line (that line still appears too — it's the
+  roster-state record, unchanged).
+- Clear any region's Chapter 4 (the region's own finale boss) — confirm a
+  second dialogue beat plays right after that chapter's own closing line,
+  that companion's personal reaction to their mirror boss going down. Skip
+  this check for Drowning Vale if Sorrel was Lost — her beat is
+  deliberately suppressed once she's permanently removed from the roster.
+- Specifically for Saltmere Shallows (Fenna) and Frostbound Hollow
+  (Isolde) Chapter 4 — confirm the reaction beat's TONE differs between a
+  playthrough that mostly Spared minibosses/supported Sorrel (should read
+  as the more hopeful "ashen" variant) versus one that mostly Finished
+  minibosses/pressed Sorrel (should read as the colder "hollow" variant).
+- Finish or Spare a home miniboss (any of the 5) — confirm Spare now shows
+  an extra "owes you now — +20g" combat-log line and the gold total
+  actually increases, on top of the existing "is spared, and slips away
+  wounded" line.
+- Clear Drowning Vale Chapter 4 with Sorrel's fate landing Redeemed —
+  confirm a "Sorrel's gratitude" combat-log line appears and a hero is
+  either equipped with a Staff of Healing or, if no hero has a free matching
+  slot, gold increases by its sell value instead. Landing Marked instead —
+  confirm a distinct "Sorrel presses something into your hand" line and a
+  smaller (+25g) gold increase.
+- Known, first-pass content: all 24 chapters' intro/outro text and every
+  companion dialogue beat are first-pass writing, explicitly "punch-up-able
+  rough material" per Kevin's own framing — flag directly if any of it
+  reads wrong, same as every other new-content session in this project.
+
 ### KI-138 — D-188: The Nameless Throne, the campaign capstone (KI-098 item 13's last remaining piece, CAMPAIGN_STORY_DESIGN.md §5)
 - On a genuinely fresh save (or one that hasn't finished all 6 regions),
   open Campaign Select — confirm "The Nameless Throne" shows as `[Locked]`

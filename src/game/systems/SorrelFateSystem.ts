@@ -32,6 +32,23 @@ export const SORREL_CHOICE_FLAG_IDS: readonly string[] = [
 export const SORREL_FATE_FLAG_ID = "drowning-vale-sorrel-fate";
 
 /**
+ * KI-098 item 13 continuation (mechanical-weight pass, closes the D-185
+ * addendum's own "Redeemed/Marked flavor-only" gap): Redeemed reuses
+ * BattleScene's equip-or-sell-for-gold flow with this item — already in
+ * `DROWNING_VALE_LOOT_POOL`, uncommon, attunement-gated, thematically
+ * "held onto compassion," sized for a Chapter 4 (levels 16-20) reward.
+ */
+export const SORREL_REDEEMED_REWARD_EQUIPMENT_ID = "staff-of-healing";
+
+/**
+ * Marked: real but deliberately smaller/different than Redeemed — a flat
+ * gold grant well under the Redeemed item's value ("survived, not
+ * unscathed"), still meaningfully more than a Ch1 spare-mercy reward
+ * (`SPARE_MERCY_GOLD_REWARD`) since this resolves at Chapter 4, not Chapter 1.
+ */
+export const SORREL_MARKED_GOLD_REWARD = 25;
+
+/**
  * The 2-option choice shown at the start of each of Drowning Vale's
  * Chapters 1-3 (`BattleScene.showSorrelChoiceIfAny`). First-pass writing —
  * short, serviceable option text tied to each chapter's own beat, not a

@@ -3,6 +3,7 @@ import {
   SALTMERE_FALLBACK_ENEMY_ID,
   CORRUPTED_SORREL_ENEMY_ID,
   SPARABLE_MINIBOSS_CHAPTERS,
+  SPARE_MERCY_GOLD_REWARD,
   resolveSaltmereCh1Enemy,
   sparedFlagId,
   withReturningMinibossSwap,
@@ -33,6 +34,16 @@ describe("SPARABLE_MINIBOSS_CHAPTERS", () => {
     for (const [chapterId, enemyId] of Object.entries(SPARABLE_MINIBOSS_CHAPTERS)) {
       expect(chapterById.get(chapterId)?.bossEnemyId, chapterId).toBe(enemyId);
     }
+  });
+});
+
+describe("SPARE_MERCY_GOLD_REWARD", () => {
+  // KI-098 item 13 continuation: real, bounded mechanical weight for the
+  // Finish/Spare choice — a positive, modest amount, not tiered per-region
+  // (every "home" Ch1 spans the same level band, 1-5, across all 6 regions).
+  it("is a positive, modest flat amount", () => {
+    expect(SPARE_MERCY_GOLD_REWARD).toBeGreaterThan(0);
+    expect(SPARE_MERCY_GOLD_REWARD).toBeLessThanOrEqual(50);
   });
 });
 

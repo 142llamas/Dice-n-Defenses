@@ -149,8 +149,32 @@ Before starting (or replaying) any region, offer a choice of 3 bonuses, HOMM3-st
 - **Addendum (D-187):** D-183's other deferred item, "a rule that a companion's own unlock mission must include them," is now actually BUILT — clarified with Kevin first (the literal reading is a paradox, since the companion can't already be "in the party" before their own recruiting battle). The real rule: the companion being unlocked fights alongside the player IN the mission that recruits them — a 3-hero squad (PC + the newcomer + 2 freely-chosen already-recruited companions) for that one battle, picked on a new "Prepare the Mission" screen rather than gated/locked. Applies uniformly to both pools: a Pool A side mission (D-186), or a Pool B region's own Chapter 1 (§6) before that region's companion is recruited. This closes D-183's own deferred-item list entirely. See D-187 in `DECISIONS.md`.
 - **Addendum (D-188):** §5's capstone, **The Nameless Throne**, is now actually BUILT — the last unbuilt piece of this whole doc. Kevin's own direct ask: "build the capstone now... epic, a true masterpiece." Two scope forks confirmed with Kevin before building: the ending signal reuses the EXISTING Finish-or-Spare miniboss flags and Sorrel Thane's fate arc (no new chapter-boundary prompts across all 6 regions, contrary to a literal reading of "a series of choices" as needing brand-new content), and the capstone is one flat finale battle, not a second 4-chapter region. Valence mapping (a first-pass reading, not specified by this doc's own text): sparing/mercy leans Ashen Sovereign ("held on"), finishing/expedience leans The Hollow Empress ("let it be useful"), a genuine tie resolves to Ashen per this section's own "true ending" framing. §8's own "not decided yet" question is now resolved: the capstone does NOT get a bonus-choice screen this pass — a documented scope cut, not an oversight. See D-188 in `DECISIONS.md`. This closes this doc's entire §2-§8 design/build arc — only the two "still open" items directly below remain.
 
-**Still open, carried into the next session (this is where actual building starts):**
-- The original six companions' full personal arcs and dialogue (Ch1-3 beats, chapter-boundary reactions, homecoming beats) are still just one-line hooks — names and mirror-relationships are locked, the writing itself isn't done. Kevin isn't a writer by his own description, so the plan is a full first-draft pass on all of it, treated as punch-up-able rough material rather than final copy. The six new class-coverage recruits (§6, D-177) are deliberately NOT part of this writing pass — they're ordinary recruits by design, one-line hooks only, no boss-mirror arc expected.
-- Branch choices need to carry real mechanical weight, not just flavor text — level-up choices, equipment, and dialogue tone should all be able to shift based on earlier decisions, not only which companion is benched or which enemy shows up.
+- **Addendum (D-189):** both of the two items directly below are now
+  actually BUILT, closing this doc's entire remaining scope. Kevin's own
+  direct ask, scoped to "both, full scope" when asked which of the two he
+  meant: (1) a real first-draft dialogue pass for all 6 original
+  companions — an arrival beat (`data/companionDialogue.ts`'s
+  `COMPANION_RECRUITMENT_DIALOGUE`) when their own home region's Chapter 1
+  clears, real `introText`/`outroText` on all 24 region chapters, and a
+  "homecoming beat" (`COMPANION_MIRROR_REACTION_DIALOGUE`) when their
+  region's own Ch4 mirror boss falls — two of which (Fenna/Saltmere,
+  Isolde/Frostbound) react with genuinely different TONE depending on the
+  player's accumulated mercy-vs-expedience pattern across the campaign so
+  far, via a new shared `NamelessThroneSystem.mercyTallyLeansHollow`
+  helper; and (2) real mechanical weight for the Finish/Spare and Sorrel
+  Redeemed/Marked branch choices — an immediate gold reward for sparing
+  any home miniboss, and real (not flavor-only) rewards for Sorrel's
+  Redeemed (a healing staff) and Marked (a smaller gold grant) outcomes,
+  closing the D-185 addendum's own explicitly-flagged gap. Deliberately
+  bounded, per Kevin's own approved scope: no changes to level-up/ASI/
+  subclass selection, and no new branch-choice chains invented for the
+  other 5 companions — only Sorrel has one, per this doc's own §6. See
+  D-189 in `DECISIONS.md` for the full build.
+
+**Still open, carried into the next session:**
 - Exact bonus-choice pool contents and numeric budgets per region (§8).
-- None of this has a CONTENT_SOURCES.md entry yet, and shouldn't until it's actually implemented as data (matching how the Phase 12 design doc handled it) — flagging so it isn't forgotten once building starts.
+- All of §9's original two "still open" writing/mechanical-weight items
+  above are now resolved (D-189) — this doc's entire §2-§9 arc is closed.
+  A `CONTENT_SOURCES.md` entry for the new dialogue content was added at
+  build time (D-189), matching how every other original-content session in
+  this project has handled it.

@@ -28,6 +28,15 @@ import type { WaveDefinition } from "../data/waves";
 export const SALTMERE_FALLBACK_ENEMY_ID = "tide-wretch";
 export const CORRUPTED_SORREL_ENEMY_ID = "corrupted-sorrel";
 
+/**
+ * KI-098 item 13 continuation (mechanical-weight pass): flat gold reward at
+ * the moment a home miniboss is spared, so mercy has an immediate payoff and
+ * not just a downstream Saltmere/capstone consequence. One flat amount
+ * across all 5, not tiered — every "home" Ch1 spans the same level band
+ * (1-5) regardless of region.
+ */
+export const SPARE_MERCY_GOLD_REWARD = 20;
+
 /** The 5 "home" Ch1 chapters, in region order (Saltmere itself is region 5). */
 export const SPARABLE_MINIBOSS_CHAPTERS: Record<string, string> = {
   "emberford-ch1": "basalt-colossus", // Region 1

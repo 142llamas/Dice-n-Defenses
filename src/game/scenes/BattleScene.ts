@@ -102,7 +102,8 @@ import {
   type ChapterDefinition,
   type CampaignDefinition,
 } from "../data/campaigns";
-import { COMPANIONS, getCompanionDefinition } from "../data/companions";
+import { COMPANIONS, getCompanionDefinition, type CompanionDefinition } from "../data/companions";
+import { COMPANION_RECRUITMENT_DIALOGUE, COMPANION_MIRROR_REACTION_DIALOGUE } from "../data/companionDialogue";
 import {
   loadCompanionRoster,
   saveCompanionRoster,
@@ -119,6 +120,8 @@ import {
   SORREL_FATE_FLAG_ID,
   SORREL_CHOICE_PROMPTS,
   SORREL_FATE_FLAVOR_TEXT,
+  SORREL_REDEEMED_REWARD_EQUIPMENT_ID,
+  SORREL_MARKED_GOLD_REWARD,
   type SorrelChoice,
 } from "../systems/SorrelFateSystem";
 import { getMapById } from "../data/maps";
@@ -206,11 +209,13 @@ import {
   resolveSaltmereCh1Enemy,
   withReturningMinibossSwap,
   sparedFlagId,
+  SPARE_MERCY_GOLD_REWARD,
 } from "../systems/ReturningMinibossSystem";
 import {
   resolveThroneVariant,
   withThroneVariant,
   withThroneEnemyReskins,
+  mercyTallyLeansHollow,
   type ThroneVariant,
 } from "../systems/NamelessThroneSystem";
 
@@ -806,6 +811,14 @@ export class BattleScene extends Phaser.Scene {
   private resolvedThroneVariant: ThroneVariant | null = null;
 
   /**
+   * KI-098 item 13 continuation: set by `maybeUnlockHomeRegionCompanion` when
+   * this battle's victory just recruited a Pool B companion, consumed by
+   * `showCompanionRecruitmentIfAny` in the victory dialogue chain. Null the
+   * rest of the time (most battles recruit nobody).
+   */
+  private pendingCompanionRecruitment: CompanionDefinition | null = null;
+
+  /**
    * The party for this battle, built by `CharacterCreationScene` (or, for a
    * Co-op battle with no hero-picker UI yet, `CoopLobbyScene`'s small
    * built-in default party — see `CharacterBuildSystem.defaultPartyBuilds`).
@@ -1020,6 +1033,7 @@ export class BattleScene extends Phaser.Scene {
     this.pendingSparableKill = null;
     this.saltmereReturningEnemyId = null;
     this.resolvedThroneVariant = null;
+    this.pendingCompanionRecruitment = null;
     this.subclassQueue = [];
     this.pendingAfterSubclass = null;
     this.choosingSubclass = false;
@@ -1282,6 +1296,15 @@ export class BattleScene extends Phaser.Scene {
       saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, this.companionRoster);
     }
     this.logCombat(SORREL_FATE_FLAVOR_TEXT[fate]);
+    // KI-098 item 13 continuation (D-185 addendum close): Redeemed/Marked now
+    // carry real mechanical weight, not just the flavor line above.
+    if (fate === "redeemed") {
+      this.grantSorrelRedeemedReward();
+    } else if (fate === "marked") {
+      this.economy.award(SORREL_MARKED_GOLD_REWARD);
+      this.updateGoldHud();
+      this.logCombat(`Sorrel presses something into your hand before she goes quiet again — +${SORREL_MARKED_GOLD_REWARD}g.`);
+    }
   }
 
   /**
@@ -1357,11 +1380,11 @@ export class BattleScene extends Phaser.Scene {
   /**
    * Same shape as `grantLootDrop`'s equipment branch (first living hero
    * with a matching empty slot that isn't attunement/grip-blocked; sold
-   * for gold if nobody has room) — every pool entry is a common/uncommon
-   * mundane item, so the attunement/grip checks are defensive, not
-   * expected to ever actually reject one.
+   * for gold if nobody has room) — shared by the region-bonus equipment
+   * category and Sorrel's Redeemed reward (`grantSorrelRedeemedReward`
+   * below). `sourceLabel` only changes the combat-log prefix.
    */
-  private grantRegionBonusEquipment(itemId: string): void {
+  private grantEquipmentOrSellForGold(itemId: string, sourceLabel: string): void {
     const def = getEquipmentDefinition(itemId);
     for (const hero of this.heroes) {
       if (!hero.isAlive()) continue;
@@ -1372,13 +1395,22 @@ export class BattleScene extends Phaser.Scene {
       hero.equippedItems[slot] = itemId;
       this.ensureHeroCape(hero);
       hero.onGearChanged();
-      this.logCombat(`Region bonus: ${hero.name} starts equipped with ${def.name}!`);
+      this.logCombat(`${sourceLabel}: ${hero.name} starts equipped with ${def.name}!`);
       this.updateGoldHud();
       return;
     }
     this.economy.award(def.cost);
-    this.logCombat(`Region bonus (${def.name}) — no hero has room to equip it, sold for ${def.cost}g instead.`);
+    this.logCombat(`${sourceLabel} (${def.name}) — no hero has room to equip it, sold for ${def.cost}g instead.`);
     this.updateGoldHud();
+  }
+
+  private grantRegionBonusEquipment(itemId: string): void {
+    this.grantEquipmentOrSellForGold(itemId, "Region bonus");
+  }
+
+  /** KI-098 item 13 continuation (D-185 addendum close): Sorrel's Redeemed reward, same mechanism as a region-bonus equipment grant. */
+  private grantSorrelRedeemedReward(): void {
+    this.grantEquipmentOrSellForGold(SORREL_REDEEMED_REWARD_EQUIPMENT_ID, "Sorrel's gratitude");
   }
 
   /**
@@ -2555,10 +2587,17 @@ export class BattleScene extends Phaser.Scene {
         this.markCampaignCompletedIfAny();
         // D-177: a chapter's outroText (when written) shows before the end
         // screen, so a chapter's own closing beat lands before "Victory!".
+        // KI-098 item 13 continuation: a Ch4 mirror-boss reaction beat (if
+        // any) and a companion's own recruitment beat (if any — these two
+        // never both fire the same battle, chapterIndex 3 vs. 0) land next.
         // D-188: the capstone's own branch-determined ending beat shows
         // right after that, still before "Victory!".
         this.showChapterOutroIfAny(() =>
-          this.showNamelessThroneEndingIfAny(() => this.showEndScreen("Victory!", "#9be0b4")),
+          this.showMirrorBossReactionIfAny(() =>
+            this.showCompanionRecruitmentIfAny(() =>
+              this.showNamelessThroneEndingIfAny(() => this.showEndScreen("Victory!", "#9be0b4")),
+            ),
+          ),
         );
         break;
       case "defeat":
@@ -2978,8 +3017,11 @@ export class BattleScene extends Phaser.Scene {
    * choice for a chapter's own sparable miniboss. Reuses `renderAsiPrompt`/
    * `asiOverlay`, same as every other mandatory mid-battle choice. Kill
    * gold/loot/bestiary credit are unaffected by either option — the enemy
-   * is at 0 HP regardless, sparing is a persisted narrative flag only (read
-   * back by `resolveSaltmereCh1Enemy` far later, in a different region).
+   * is at 0 HP regardless. Sparing persists a narrative flag (read back by
+   * `resolveSaltmereCh1Enemy` far later, in a different region) AND
+   * (KI-098 item 13 continuation) grants an immediate, modest
+   * `SPARE_MERCY_GOLD_REWARD` — mercy has a real in-the-moment payoff, not
+   * just a downstream one.
    */
   private showSparableKillChoice(enemy: Enemy, onDone: () => void): void {
     this.choosingSparableKill = true;
@@ -2995,6 +3037,9 @@ export class BattleScene extends Phaser.Scene {
         saveWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY, next);
       }
       this.logCombat(`${enemy.def.name} is spared, and slips away wounded.`);
+      this.economy.award(SPARE_MERCY_GOLD_REWARD);
+      this.updateGoldHud();
+      this.logCombat(`${enemy.def.name} owes you now — +${SPARE_MERCY_GOLD_REWARD}g.`);
       this.clearAsiOverlay();
       this.choosingSparableKill = false;
       onDone();
@@ -6735,6 +6780,7 @@ export class BattleScene extends Phaser.Scene {
     this.companionRoster = next;
     saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, next);
     this.logCombat(`${companion.name} has joined your roster (bench) — manage companions from Campaign Select.`);
+    this.pendingCompanionRecruitment = companion;
   }
 
   /**
@@ -8998,6 +9044,62 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
     this.chapterDialogue = showDialogue(this, [{ text: outroText }], () => {
+      this.chapterDialogue = null;
+      onComplete();
+    });
+  }
+
+  /**
+   * KI-098 item 13 continuation: shown once, right after
+   * `maybeUnlockHomeRegionCompanion` just recruited a Pool B companion (that
+   * companion's own home region Chapter 1 clearing). A no-op for every
+   * battle that recruited nobody. Falls back to the companion's plain `hook`
+   * if `companionDialogue.ts` somehow has no entry for them, so this stays
+   * safe even against a not-yet-authored id.
+   */
+  private showCompanionRecruitmentIfAny(onComplete: () => void): void {
+    const companion = this.pendingCompanionRecruitment;
+    this.pendingCompanionRecruitment = null;
+    if (!companion) {
+      onComplete();
+      return;
+    }
+    const lines = COMPANION_RECRUITMENT_DIALOGUE[companion.id] ?? [{ speakerName: companion.name, text: companion.hook }];
+    this.chapterDialogue = showDialogue(this, lines, () => {
+      this.chapterDialogue = null;
+      onComplete();
+    });
+  }
+
+  /**
+   * KI-098 item 13 continuation: a Pool B companion's own reaction to their
+   * home region's Chapter 4 mirror boss going down — the "homecoming beat"
+   * CAMPAIGN_STORY_DESIGN.md §9 names explicitly. A no-op outside a region's
+   * own Chapter 4 finale, for a region with no companion (shouldn't happen —
+   * every region has one), or for a Lost companion (only ever Sorrel, whose
+   * fate is already resolved earlier this same chapter — see
+   * `resolveSorrelFateIfAny`). Two entries (Fenna/Isolde) pick between
+   * pre-written ashen/hollow variants via the shared mercy-tally helper
+   * instead of a single fixed sequence, giving dialogue tone real
+   * reactivity to earlier choices.
+   */
+  private showMirrorBossReactionIfAny(onComplete: () => void): void {
+    if (this.chapterIndex !== 3 || !this.campaignId) {
+      onComplete();
+      return;
+    }
+    const companion = COMPANIONS.find((c) => c.homeRegionId === this.campaignId);
+    if (!companion || isCompanionLost(this.companionRoster, companion.id)) {
+      onComplete();
+      return;
+    }
+    const entry = COMPANION_MIRROR_REACTION_DIALOGUE[companion.id];
+    if (!entry) {
+      onComplete();
+      return;
+    }
+    const lines = Array.isArray(entry) ? entry : entry[mercyTallyLeansHollow(this.worldFlags) ? "hollow" : "ashen"];
+    this.chapterDialogue = showDialogue(this, lines, () => {
       this.chapterDialogue = null;
       onComplete();
     });

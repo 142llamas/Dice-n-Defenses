@@ -1,6 +1,47 @@
 # Project Status
 
-## The Nameless Throne: the campaign capstone — DONE this session (D-188)
+## Companion dialogue writing pass + real mechanical weight for branch choices — DONE this session (D-189)
+
+Kevin's own direct ask: build a first pass at "the dialogue and branching
+story lines." Asked to scope which of `CAMPAIGN_STORY_DESIGN.md` §9's two
+remaining open items this covered, Kevin picked **both, full scope**.
+Researched via 3 parallel Explore agents plus a Plan agent, all
+cross-checked against the real current code before writing anything.
+
+- **All 6 Pool B companions now have real dialogue** — an arrival beat the
+  moment their own home region's Chapter 1 clears, and a personal
+  "homecoming" reaction when their region's own Chapter 4 mirror boss
+  falls. Both reuse the existing `showDialogue`/`DialogueLine` (D-119)
+  pipeline. Two entries (Fenna Duskwater/Saltmere, Isolde Varnhall/
+  Frostbound) pick between two written variants based on the player's
+  accumulated mercy-vs-expedience pattern across the whole campaign —
+  real dialogue-tone reactivity, not a single fixed line.
+- **All 24 region chapters now have real `introText`/`outroText`** — these
+  fields have existed since D-177 with zero authored content until now.
+- **Branch choices gained real mechanical weight, not just flavor text**:
+  sparing any of the 5 home minibosses now grants an immediate modest
+  gold reward; Sorrel Thane's Redeemed outcome (previously flavor-only)
+  now grants a real healing-staff reward, and Marked now grants a smaller
+  gold reward — closing the exact gap the D-185 addendum flagged as open.
+  Deliberately bounded: reuses only proven mechanisms
+  (`EconomySystem.award`, the existing equip-or-sell-for-gold flow), no
+  changes to level-up/ASI/subclass selection and no new branch-choice
+  chains for the other 5 companions.
+- New `data/companionDialogue.ts`. `NamelessThroneSystem`'s existing
+  ashen/hollow mercy tally (previously capstone-only) was extracted into a
+  shared, reusable `computeMercyTally`/`mercyTallyLeansHollow` — a
+  behavior-preserving refactor, so the new dialogue-tone reactivity reads
+  the exact same signal the capstone ending already does.
+- Tests: 1466 → **1482**. Typecheck, all 1482 tests, and the production
+  build (142 modules, +1) all pass. `npm run dev` serves HTTP 200. No
+  browser available in this environment — this is brand-new dialogue
+  content and reward wiring spanning all 6 regions, genuinely needs
+  Kevin's own playtest pass; see **KI-139**.
+- **This closes `CAMPAIGN_STORY_DESIGN.md`'s entire remaining scope** —
+  every item in §2 through §9 is now either built or an explicitly
+  documented, deliberate scope cut. No open items remain in that doc.
+
+## The Nameless Throne: the campaign capstone — DONE prior session (D-188)
 
 Kevin's own direct ask: build the capstone now, "epic, a true masterpiece"
 to close out the 6-region campaign epic. The last remaining piece of

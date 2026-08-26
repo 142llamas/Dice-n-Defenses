@@ -9933,6 +9933,106 @@ serves HTTP 200. No browser available in this environment — this is a
 brand-new endgame screen/battle/branching epilogue that genuinely needs
 Kevin's own playtest; see **KI-138**.
 
+### D-189 — Companion dialogue writing pass + real mechanical weight for branch choices (KI-098 item 13's last two open items, CAMPAIGN_STORY_DESIGN.md §9)
+
+Kevin's own direct ask: "build a first pass at the dialogue and branching
+story lines now." Asked to scope which of §9's two remaining open items
+this covered (full companion dialogue writing vs. giving branch choices
+real mechanical weight), Kevin picked **both, full scope** — the same
+"pick the bigger option" pattern he's confirmed before. Researched via 3
+parallel Explore agents (dialogue-box/chapter-intro-outro plumbing; every
+existing branch-choice mechanism and its current mechanical weight; the
+companion/campaign data model) plus a Plan agent, all cross-checked
+against the real current code before writing anything — every line number
+in the plan was verified directly, not trusted from an agent report alone.
+
+**The writing pass** — real first-draft prose (not placeholder text,
+per Kevin's own "not a writer, punch-up-able rough material" framing),
+reusing infrastructure that already existed end-to-end but had zero
+content: `ChapterDefinition.introText`/`outroText` (declared since D-177,
+read by `BattleScene.showChapterIntroIfAny`/`showChapterOutroIfAny`, unset
+on all 24 chapters until now) and `showDialogue`/`DialogueLine` (D-119).
+
+- All 24 region chapters (6 regions × 4) now have real `introText`/
+  `outroText` in `data/campaigns.ts`, reflecting each region's own arc and,
+  especially at Ch1 (arrival) and Ch4 (the region's own mirror boss
+  climax), that region's own Pool B companion.
+- New `data/companionDialogue.ts`: `COMPANION_RECRUITMENT_DIALOGUE` (a real
+  arrival beat per Pool B companion, replacing the flat `logCombat` line
+  `maybeUnlockHomeRegionCompanion` used to end with) and
+  `COMPANION_MIRROR_REACTION_DIALOGUE` (a "homecoming beat" — that
+  companion's own personal reaction to their region's Ch4 mirror boss going
+  down, CAMPAIGN_STORY_DESIGN.md §9's own explicit phrase). Two entries
+  (Fenna Duskwater/Saltmere, Isolde Varnhall/Frostbound) use a
+  `{ ashen, hollow }` variant-pair shape instead of one fixed sequence —
+  picked at victory time by the new shared mercy-tally helper below, so
+  dialogue tone genuinely reacts to the player's accumulated pattern of
+  earlier choices, not just a single fixed line.
+- `scenes/BattleScene.ts` gained two new chained dialogue methods
+  (`showCompanionRecruitmentIfAny`, `showMirrorBossReactionIfAny`), same
+  shape as `showNamelessThroneEndingIfAny`, wired into the existing victory
+  chain: `showChapterOutroIfAny → showMirrorBossReactionIfAny →
+  showCompanionRecruitmentIfAny → showNamelessThroneEndingIfAny →
+  showEndScreen`. Both reuse `this.chapterDialogue`, already covered by
+  `inputLocked()` — no new gating needed. `maybeUnlockHomeRegionCompanion`
+  now also stashes the recruited companion into a new
+  `pendingCompanionRecruitment` field for the recruitment beat to consume.
+
+**The mechanical-weight pass** — confirmed by full read of
+`SorrelFateSystem.ts`/`ReturningMinibossSystem.ts` that sparing any of the
+5 home minibosses granted nothing in the moment (only a later Saltmere
+reskin/capstone tally effect), and that Sorrel's Redeemed outcome only
+nudged the capstone tally while Marked had ZERO mechanical reads anywhere
+(grep-confirmed) — exactly the gap the D-185 addendum already flagged as
+open. Deliberately bounded: reuses only proven mechanisms
+(`EconomySystem.award`, the equip-or-sell-for-gold flow), and does NOT
+touch `LevelUpPlanSystem`/ASI/subclass selection (confirmed to have zero
+existing hook points for external state — wiring that in is a materially
+bigger, separate, riskier task) or invent new branch-choice chains for the
+other 5 companions.
+
+- Sparing any of the 5 home minibosses now grants an immediate
+  `SPARE_MERCY_GOLD_REWARD` (20 gold flat, symmetric across all 5 — every
+  home Ch1 spans the same 1-5 level band) in `showSparableKillChoice`'s
+  `spare` callback, framed as the spared creature "owing" the player.
+- Sorrel's Redeemed outcome now grants a real reward
+  (`SORREL_REDEEMED_REWARD_EQUIPMENT_ID = "staff-of-healing"`, already in
+  `DROWNING_VALE_LOOT_POOL`) via a new shared
+  `grantEquipmentOrSellForGold(itemId, sourceLabel)` — `grantRegion
+  BonusEquipment` was refactored into a thin wrapper around it rather than
+  duplicating the equip-or-sell logic. Marked now grants a real but smaller
+  `SORREL_MARKED_GOLD_REWARD` (25 gold — "survived, not unscathed," strictly
+  less than Redeemed's item value, strictly more than a Ch1 spare-mercy
+  grant since it resolves at Ch4). This closes the D-185 addendum's own
+  explicitly-flagged "Redeemed/Marked flavor-only" gap.
+- `systems/NamelessThroneSystem.ts`'s existing ashen/hollow tally (used
+  only by the capstone until now) was extracted into a new exported, pure
+  `computeMercyTally`/`mercyTallyLeansHollow` — a byte-for-byte-behavior-
+  preserving refactor (`resolveThroneVariant` now calls the shared helper;
+  its tie-break-to-Ashen rule is unchanged) — so the dialogue-tone
+  reactivity above reads the SAME signal the capstone does, not a
+  duplicated or diverging one.
+
+**Tests**: new `tests/companionDialogue.test.ts` (every Pool B id present
+in both dialogue maps and no Pool A id in either, `speakerName` matches
+the real companion name, exactly Fenna/Isolde use the tone-reactive
+shape). `tests/namelessThroneSystem.test.ts` gained `mercyTallyLeansHollow`
+coverage plus a cross-check against `resolveThroneVariant` proving the
+extraction didn't change behavior. `tests/returningMinibossSystem.test.ts`/
+`tests/sorrelFateSystem.test.ts` gained reward-constant sanity checks
+(positive, bounded, Marked strictly less than Redeemed's item value).
+`tests/campaigns.test.ts` gained a "every region chapter has real intro/
+outroText" assertion. Tests: 1466 → **1482**. Typecheck clean, all 1482
+tests pass, production build succeeds (142 modules, +1 for the new
+`companionDialogue.ts` file), `npm run dev` serves HTTP 200. No browser
+available in this environment — this is brand-new dialogue content and
+reward wiring spanning all 6 regions; genuinely needs Kevin's own playtest
+pass; see **KI-139**.
+
+This closes **both** of CAMPAIGN_STORY_DESIGN.md §9's remaining "still
+open" items — the design doc's own §2-§9 arc is now fully closed, no
+open items remain.
+
 - **LOCKED:** "Stronghold Integrity" is the shared loss resource; "Breach Damage"
   is what escaping enemies remove from it; "Tile" is the logical distance unit.
 - **LOCKED:** Local single-player core loop before any Firebase or multiplayer.

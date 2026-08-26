@@ -2,6 +2,40 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Companion dialogue writing pass + real mechanical weight for branch choices (D-189)
+
+Kevin's own direct ask: "build a first pass at the dialogue and branching
+story lines now." Closes both remaining "still open" items from
+`CAMPAIGN_STORY_DESIGN.md` §9 — the design doc's whole §2-§9 arc is now
+fully closed. See D-189 for the full design/build writeup.
+
+Added/Changed:
+- **All 6 Pool B companions now have real dialogue**, not just one-line
+  hooks: a proper arrival beat when their own home region's Chapter 1
+  clears (replacing a flat combat-log line), and a personal "homecoming"
+  reaction when their region's Chapter 4 mirror boss falls. Two of these
+  (Fenna Duskwater/Saltmere, Isolde Varnhall/Frostbound) react with a
+  different TONE depending on whether you leaned merciful or expedient
+  across the whole campaign so far.
+- **All 24 region chapters (6 regions × 4) now have real arrival/closing
+  narration** — the `introText`/`outroText` fields have existed since
+  D-177 with zero content until now.
+- **Sparing a home miniboss now pays off immediately**: a modest gold
+  reward on top of its existing downstream effects (Saltmere's returning
+  enemy, the capstone's ending). Sorrel Thane's Redeemed and Marked
+  outcomes (previously flavor-only) now grant real rewards too — a healing
+  staff for Redeemed, a smaller gold grant for Marked.
+- New `data/companionDialogue.ts`. `NamelessThroneSystem`'s existing
+  ashen/hollow tally was extracted into a shared, reusable
+  `computeMercyTally`/`mercyTallyLeansHollow` (byte-for-byte-behavior-
+  preserving refactor) so the new dialogue-tone reactivity reads the same
+  signal the capstone ending does.
+
+Tests: 1466 → **1482**. Typecheck clean, production build succeeds (142
+modules, +1 for the new `companionDialogue.ts` file), `npm run dev` serves
+HTTP 200. No browser available in this environment — see **D-189** in
+`DECISIONS.md` and **KI-139** in `KNOWN_ISSUES.md`.
+
 ## [Unreleased] — 0.2.0-dev — The Nameless Throne: the campaign capstone (D-188)
 
 Kevin's own direct ask: build the campaign capstone — "epic, a true
