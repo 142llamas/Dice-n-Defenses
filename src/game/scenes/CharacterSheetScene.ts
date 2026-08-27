@@ -16,6 +16,7 @@ import { ABILITY_SCORE_IDS, ABILITY_SCORE_NAMES, abilityModifier } from "../data
 import { getClassDefinition } from "../data/classes";
 import { getSubclassDefinition } from "../data/subclasses";
 import { proficiencyBonusForLevel } from "../systems/CharacterSystem";
+import { classProgressionTable, type ProgressionLevelEntry } from "../systems/ClassProgressionSystem";
 import { listHeroActions, hotkeyDisplayLabel } from "../systems/HeroActionRegistry";
 import { getAbility } from "../data/abilities";
 import type { BattleScene } from "./BattleScene";
@@ -42,12 +43,13 @@ import type { BattleScene } from "./BattleScene";
  * board mid-aim exactly as if they'd pressed Q/R/F/T themselves.
  */
 
-type SheetTab = "stats" | "spellbook" | "hotkeys";
+type SheetTab = "stats" | "spellbook" | "hotkeys" | "progression";
 
 const TAB_DEFS: { id: SheetTab; label: string }[] = [
   { id: "stats", label: "Stats" },
   { id: "spellbook", label: "Spellbook" },
   { id: "hotkeys", label: "Hotkeys" },
+  { id: "progression", label: "Progression" },
 ];
 
 const SPELL_LEVEL_LABELS = ["Cantrip", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th"];
@@ -224,7 +226,8 @@ export class CharacterSheetScene extends Phaser.Scene {
     this.tooltip.hide();
     if (this.tab === "stats") this.renderStatsTab();
     else if (this.tab === "spellbook") this.renderSpellbookTab();
-    else this.renderHotkeysTab();
+    else if (this.tab === "hotkeys") this.renderHotkeysTab();
+    else this.renderProgressionTab();
   }
 
   // ----- Stats tab (read-only) --------------------------------------------
@@ -290,7 +293,7 @@ export class CharacterSheetScene extends Phaser.Scene {
     }
   }
 
-  private addStatLine(x: number, y: number, text: string, fontSize: string, color: string, bold = false): void {
+  private addStatLine(x: number, y: number, text: string, fontSize: string, color: string, bold = false): Phaser.GameObjects.Text {
     const t = this.add
       .text(x, y, text, {
         fontFamily: FONT_BODY,
@@ -301,6 +304,62 @@ export class CharacterSheetScene extends Phaser.Scene {
       })
       .setDepth(3);
     this.contentObjects.push(t);
+    return t;
+  }
+
+  // ----- Progression tab (D-200, Party Creation Overhaul Plan 7) ---------
+  // A read-only 1-20 level reference for this hero's class/subclass,
+  // dimming levels not yet reached. See ClassProgressionSystem.ts.
+
+  private renderProgressionTab(): void {
+    const hero = this.hero;
+    const viewportWidth = getViewport(this).width;
+    this.contentObjects.push(drawParchmentPanel(this, viewportWidth / 2, 560, 1120, 840, 2));
+
+    if (!hero.classId) {
+      this.addStatLine(
+        viewportWidth / 2 - 300,
+        300,
+        "This hero has no class progression to show (classic fixed-roster hero).",
+        "16px",
+        "#2a1a10",
+      );
+      return;
+    }
+
+    const table = classProgressionTable(hero.classId, hero.subclassId);
+    const left = viewportWidth / 2 - 520;
+    const rowHeight = 34;
+    let y = 165;
+    for (const entry of table) {
+      const t = this.addStatLine(left, y, this.progressionRowText(entry), "15px", "#2a1a10");
+      if (entry.level > hero.level) t.setAlpha(0.55); // not yet reached
+      const tooltipText = this.progressionRowTooltip(entry);
+      if (tooltipText) attachHoverTooltip(this.tooltip, t, left, y - 12, () => tooltipText);
+      y += rowHeight;
+    }
+  }
+
+  private progressionRowText(entry: ProgressionLevelEntry): string {
+    const classNames = entry.classFeatures.map((f) => f.name).join(", ");
+    const subclassNames = entry.subclassFeatures.map((f) => f.name).join(", ");
+    const parts = [`Lv ${entry.level}`];
+    if (classNames) parts.push(classNames);
+    if (subclassNames) parts.push(`(${subclassNames})`);
+    if (entry.isCaster) {
+      const bits: string[] = [];
+      if (entry.cantripsKnown > 0) bits.push(`${entry.cantripsKnown} cantrips`);
+      if (entry.preparedCount > 0) bits.push(`${entry.preparedCount} prepared`);
+      const slots = entry.spellSlots.filter((n) => n > 0);
+      if (slots.length > 0) bits.push(`slots ${entry.spellSlots.join("/")}`.replace(/(\/0)+$/, ""));
+      if (entry.spellbookSize !== undefined) bits.push(`spellbook ${entry.spellbookSize}`);
+      if (bits.length > 0) parts.push(bits.join(", "));
+    }
+    return parts.length > 1 ? parts.join(" — ") : `Lv ${entry.level} —`;
+  }
+
+  private progressionRowTooltip(entry: ProgressionLevelEntry): string {
+    return [...entry.classFeatures, ...entry.subclassFeatures].map((f) => f.description).join("\n\n");
   }
 
   // ----- Spellbook tab (level-grouped, hover for full rules text) --------

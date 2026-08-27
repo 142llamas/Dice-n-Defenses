@@ -4,6 +4,9 @@ import {
   MAX_ACTIVE_COMPANIONS,
   activateCompanion,
   benchCompanion,
+  getCompanionBuild,
+  getPartyInventory,
+  getPcBuild,
   isCompanionActive,
   isCompanionBenched,
   isCompanionLost,
@@ -12,9 +15,14 @@ import {
   loseCompanion,
   recruitCompanion,
   saveCompanionRoster,
+  setCompanionBuild,
+  setPartyInventory,
+  setPcBuild,
   type CompanionRosterState,
   type CompanionRosterStorage,
+  type PartyInventoryEntry,
 } from "../src/game/systems/CompanionRosterSystem";
+import type { CharacterBuild } from "../src/game/systems/CharacterBuildSystem";
 
 /** A minimal in-memory stand-in for window.localStorage, for pure-logic tests. */
 function fakeStorage(): CompanionRosterStorage {
@@ -33,6 +41,19 @@ function fullActiveState(): CompanionRosterState {
   state = recruitCompanion(state, "fenna");
   state = recruitCompanion(state, "isolde");
   return state;
+}
+
+function build(overrides: Partial<CharacterBuild> = {}): CharacterBuild {
+  return {
+    id: "build-1",
+    name: "Kael",
+    raceId: "human",
+    classId: "fighter",
+    level: 1,
+    abilityScores: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
+    controlledBy: "human",
+    ...overrides,
+  };
 }
 
 /**
@@ -162,5 +183,141 @@ describe("CompanionRosterSystem", () => {
     state = loseCompanion(state, "dorian");
     saveCompanionRoster(storage, "k", state);
     expect(loadCompanionRoster(storage, "k")).toEqual(state);
+  });
+
+  it("losing a companion preserves companionBuilds/pcBuild (Plan 3.1 — loseCompanion used to drop unlisted fields)", () => {
+    let state = setPcBuild(fullActiveState(), build({ id: "pc" }));
+    state = setCompanionBuild(state, "hollis", build({ id: "hollis-build" }));
+    state = loseCompanion(state, "fenna");
+    expect(getPcBuild(state)?.id).toBe("pc");
+    expect(getCompanionBuild(state, "hollis")?.id).toBe("hollis-build");
+  });
+});
+
+/** Party Creation Overhaul Plan 3.1: persisted mutable builds per companion/PC. */
+describe("CompanionRosterSystem — persisted builds (Plan 3.1)", () => {
+  it("getCompanionBuild/getPcBuild are undefined on the default state", () => {
+    expect(getCompanionBuild(DEFAULT_COMPANION_ROSTER_STATE, "hollis")).toBeUndefined();
+    expect(getPcBuild(DEFAULT_COMPANION_ROSTER_STATE)).toBeUndefined();
+  });
+
+  it("setCompanionBuild/getCompanionBuild round-trip without clobbering roster lists or other companions", () => {
+    let state = fullActiveState();
+    state = setCompanionBuild(state, "hollis", build({ id: "hollis-build", name: "Hollis" }));
+    expect(getCompanionBuild(state, "hollis")?.name).toBe("Hollis");
+    expect(getCompanionBuild(state, "fenna")).toBeUndefined();
+    expect(state.activeIds).toEqual(["hollis", "fenna", "isolde"]);
+  });
+
+  it("setCompanionBuild overwrites a prior copy for the same companion", () => {
+    let state = setCompanionBuild(DEFAULT_COMPANION_ROSTER_STATE, "hollis", build({ name: "First" }));
+    state = setCompanionBuild(state, "hollis", build({ name: "Second" }));
+    expect(getCompanionBuild(state, "hollis")?.name).toBe("Second");
+  });
+
+  it("setPcBuild/getPcBuild round-trip, independent of companionBuilds", () => {
+    let state = setCompanionBuild(DEFAULT_COMPANION_ROSTER_STATE, "hollis", build({ id: "hollis-build" }));
+    state = setPcBuild(state, build({ id: "pc-build", name: "Player" }));
+    expect(getPcBuild(state)?.name).toBe("Player");
+    expect(getCompanionBuild(state, "hollis")?.id).toBe("hollis-build");
+  });
+
+  it("loadCompanionRoster/saveCompanionRoster round-trip includes companionBuilds and pcBuild", () => {
+    const storage = fakeStorage();
+    let state = setCompanionBuild(DEFAULT_COMPANION_ROSTER_STATE, "hollis", build({ id: "hollis-build" }));
+    state = setPcBuild(state, build({ id: "pc-build" }));
+    saveCompanionRoster(storage, "k", state);
+    const loaded = loadCompanionRoster(storage, "k");
+    expect(loaded.companionBuilds).toEqual({ hollis: build({ id: "hollis-build" }) });
+    expect(loaded.pcBuild).toEqual(build({ id: "pc-build" }));
+  });
+
+  it("loadCompanionRoster drops a malformed companionBuilds entry but keeps the rest", () => {
+    const storage = fakeStorage();
+    storage.setItem(
+      "k",
+      JSON.stringify({
+        ...DEFAULT_COMPANION_ROSTER_STATE,
+        companionBuilds: { hollis: build({ id: "ok" }), fenna: { junk: true } },
+      }),
+    );
+    const loaded = loadCompanionRoster(storage, "k");
+    expect(getCompanionBuild(loaded, "hollis")?.id).toBe("ok");
+    expect(getCompanionBuild(loaded, "fenna")).toBeUndefined();
+  });
+
+  it("loadCompanionRoster falls back to undefined for a malformed pcBuild rather than throwing", () => {
+    const storage = fakeStorage();
+    storage.setItem("k", JSON.stringify({ ...DEFAULT_COMPANION_ROSTER_STATE, pcBuild: "not a build" }));
+    expect(getPcBuild(loadCompanionRoster(storage, "k"))).toBeUndefined();
+  });
+
+  it("a pre-Plan-3 blob (no companionBuilds/pcBuild keys at all) loads both as undefined, everything else intact — proves no migration is needed", () => {
+    const storage = fakeStorage();
+    storage.setItem("k", JSON.stringify({ activeIds: ["hollis"], benchedIds: ["fenna"], lostIds: ["sorrel"] }));
+    const loaded = loadCompanionRoster(storage, "k");
+    expect(loaded.companionBuilds).toBeUndefined();
+    expect(loaded.pcBuild).toBeUndefined();
+    expect(loaded.activeIds).toEqual(["hollis"]);
+    expect(loaded.benchedIds).toEqual(["fenna"]);
+    expect(loaded.lostIds).toEqual(["sorrel"]);
+  });
+});
+
+/** Party Creation Overhaul Plan 2.3: the shared party inventory pool. */
+describe("CompanionRosterSystem — party inventory (Plan 2.3)", () => {
+  function entry(overrides: Partial<PartyInventoryEntry> = {}): PartyInventoryEntry {
+    return { id: "pool-1", itemId: "longsword", originCompanionId: "hollis", originSlot: "weapon", ...overrides };
+  }
+
+  it("getPartyInventory is empty on the default state", () => {
+    expect(getPartyInventory(DEFAULT_COMPANION_ROSTER_STATE)).toEqual([]);
+  });
+
+  it("setPartyInventory/getPartyInventory round-trip without clobbering roster lists or builds", () => {
+    let state = setPcBuild(fullActiveState(), build({ id: "pc" }));
+    state = setPartyInventory(state, [entry()]);
+    expect(getPartyInventory(state)).toEqual([entry()]);
+    expect(getPcBuild(state)?.id).toBe("pc");
+    expect(state.activeIds).toEqual(["hollis", "fenna", "isolde"]);
+  });
+
+  it("setPartyInventory with an empty array stores undefined, matching the field's own absent-means-empty convention", () => {
+    const state = setPartyInventory(DEFAULT_COMPANION_ROSTER_STATE, [entry()]);
+    const cleared = setPartyInventory(state, []);
+    expect(cleared.partyInventory).toBeUndefined();
+    expect(getPartyInventory(cleared)).toEqual([]);
+  });
+
+  it("loadCompanionRoster/saveCompanionRoster round-trip includes partyInventory", () => {
+    const storage = fakeStorage();
+    const state = setPartyInventory(DEFAULT_COMPANION_ROSTER_STATE, [entry(), entry({ id: "pool-2", itemId: "chain-shirt", originSlot: "chest" })]);
+    saveCompanionRoster(storage, "k", state);
+    expect(getPartyInventory(loadCompanionRoster(storage, "k"))).toEqual(getPartyInventory(state));
+  });
+
+  it("loadCompanionRoster drops a malformed partyInventory entry but keeps well-formed ones", () => {
+    const storage = fakeStorage();
+    storage.setItem(
+      "k",
+      JSON.stringify({ ...DEFAULT_COMPANION_ROSTER_STATE, partyInventory: [entry(), { junk: true }, { id: "pool-3" }] }),
+    );
+    expect(getPartyInventory(loadCompanionRoster(storage, "k"))).toEqual([entry()]);
+  });
+
+  it("loadCompanionRoster falls back to empty for a non-array partyInventory rather than throwing", () => {
+    const storage = fakeStorage();
+    storage.setItem("k", JSON.stringify({ ...DEFAULT_COMPANION_ROSTER_STATE, partyInventory: "not an array" }));
+    expect(getPartyInventory(loadCompanionRoster(storage, "k"))).toEqual([]);
+  });
+
+  it("a pre-Plan-2.3 blob (no partyInventory key at all) loads as empty — proves no migration is needed", () => {
+    const storage = fakeStorage();
+    storage.setItem("k", JSON.stringify({ activeIds: ["hollis"], benchedIds: [], lostIds: [] }));
+    expect(getPartyInventory(loadCompanionRoster(storage, "k"))).toEqual([]);
+  });
+
+  it("DEFAULT_COMPANION_ROSTER_STATE has no partyInventory (Reset Campaign Progress wipes the pool for free)", () => {
+    expect(DEFAULT_COMPANION_ROSTER_STATE.partyInventory).toBeUndefined();
   });
 });

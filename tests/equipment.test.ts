@@ -452,10 +452,13 @@ describe("Magic-item expansion (Phase 22)", () => {
 });
 
 /**
- * Phase 13.11 (D-096): a free starting-equipment pick from character
- * creation, applied straight into `equippedItems` by the Hero constructor.
+ * @deprecated legacy path — Phase 13.11 (D-096)'s original single starting-
+ * equipment pick, applied straight into `equippedItems` by the Hero
+ * constructor. Kept only as a back-compat regression test for a pre-Plan-2
+ * (D-193) save's `HeroDefinition.startingEquipmentId` — see the
+ * `startingGearIds` describe block below for the real, current path.
  */
-describe("Hero starting equipment (Phase 13.11, D-096)", () => {
+describe("Hero starting equipment — LEGACY startingEquipmentId (Phase 13.11, D-096; back-compat per D-193)", () => {
   function heroWithStartingGear(startingEquipmentId?: string): Hero {
     return new Hero({ ...WREN_TEST_HERO_DEF, startingEquipmentId }, { x: 0, y: 0 });
   }
@@ -476,6 +479,60 @@ describe("Hero starting equipment (Phase 13.11, D-096)", () => {
     const hero = heroWithStartingGear("whetstone-band"); // ring, +2 attack damage
     expect(hero.equippedItems.ring1).toBe("whetstone-band");
     expect(hero.effectiveAttackDamage).toBe(3 + 2);
+  });
+});
+
+/**
+ * D-193 (Party Creation Overhaul Plan 2): the real per-slot starting-gear
+ * loadout, applied straight into `equippedItems` by the Hero constructor.
+ */
+describe("Hero starting equipment — startingGearIds (D-193)", () => {
+  function heroWithStartingGearIds(startingGearIds?: Partial<Record<string, string>>): Hero {
+    return new Hero({ ...WREN_TEST_HERO_DEF, startingGearIds }, { x: 0, y: 0 });
+  }
+
+  it("is unaffected when startingGearIds is absent", () => {
+    const hero = heroWithStartingGearIds(undefined);
+    expect(hero.equippedItems).toEqual({});
+    expect(hero.armorClass).toBe(10);
+  });
+
+  it("fills all 3 slots at once, and AC/attack damage compose correctly across them", () => {
+    // longsword (weapon, no flat bonus), chain-shirt (chest, AC 13 capped-Dex
+    // armor — replaces the base formula; WREN_TEST_HERO_DEF has no
+    // abilityScores, so Dex mod is 0), shield (+2 AC on top).
+    const hero = heroWithStartingGearIds({ weapon: "longsword", chest: "chain-shirt", shield: "shield" });
+    expect(hero.equippedItems).toEqual({ weapon: "longsword", chest: "chain-shirt", shield: "shield" });
+    expect(hero.armorClass).toBe(13 + 0 + 2);
+  });
+
+  it("fills a caster's focus (amulet) third slot alongside weapon+chest", () => {
+    const hero = heroWithStartingGearIds({ weapon: "dagger", chest: "padded-armor", amulet: "arcane-focus" });
+    expect(hero.equippedItems).toEqual({ weapon: "dagger", chest: "padded-armor", amulet: "arcane-focus" });
+    // arcane-focus grants +1 attack damage — confirm it's actually summed in.
+    const withoutFocus = heroWithStartingGearIds({ weapon: "dagger", chest: "padded-armor" });
+    expect(hero.effectiveAttackDamage).toBe(withoutFocus.effectiveAttackDamage + 1);
+  });
+
+  it("fills all 10 real gear slots at once (Kevin's expanded scope: every slot is a free creation-time pick, not just weapon/chest/third)", () => {
+    const gearIds = {
+      weapon: "longsword",
+      shield: "shield",
+      head: "circlet-of-focus",
+      chest: "chain-shirt",
+      legs: "swift-greaves",
+      back: "cape-of-billowing",
+      ring1: "whetstone-band",
+      ring2: "band-of-vigor",
+      amulet: "amulet-of-warding",
+      footwear: "boots-of-striding",
+    };
+    const hero = heroWithStartingGearIds(gearIds);
+    expect(hero.equippedItems).toEqual(gearIds);
+    // Every one of these grants a flat AC and/or attack-damage bonus — a
+    // sanity check that nothing overwrites another slot's contribution.
+    expect(hero.armorClass).toBeGreaterThan(13); // chain-shirt's own base AC alone
+    expect(hero.effectiveAttackDamage).toBeGreaterThan(3); // WREN_TEST_HERO_DEF's base 3
   });
 });
 

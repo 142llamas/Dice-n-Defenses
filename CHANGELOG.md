@@ -2,6 +2,350 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Two Known Issues bug fixes (D-201, D-202)
+
+Picked from `KNOWN_ISSUES.md` — Kevin: "let's fix both here and now."
+
+Added/Changed:
+- **D-201**: a campaign party saved mid-battle (pause menu's "Save Party"/
+  "Save & Exit") and reloaded via Load Game now correctly restores its
+  companion identity/gear lock, point-buy ability scores, forced party
+  size, and hidden difficulty picker — previously re-entered Character
+  Creation fully free-pick with no campaign context at all. `SaveSlot`
+  gains optional `campaignId`/`chapterIndex` fields.
+- **D-202**: Character Creation now resumes a "plain" (non-campaign, non-
+  Free-Play) draft — typed names, class/race, gear, everything — across a
+  Back-to-Main-Menu-then-return round trip, instead of always resetting to
+  defaults. No repro was ever obtained for this one; fixed on Kevin's own
+  explicit go-ahead, flagged as unconfirmed against his original report.
+
+Tests: 1575 (+5, new `saveSystem.test.ts` coverage for D-201;
+`CharacterCreationScene` isn't unit-tested, so D-202 added none). Typecheck
+clean, all tests pass, production build succeeds (145 modules, unchanged).
+No browser available in this environment — see `KNOWN_ISSUES.md` KI-151/
+KI-152.
+
+## [Unreleased] — 0.2.0-dev — Party Creation Overhaul Plan 7: the level-progression reference screen (D-200)
+
+The last remaining item on the Party Creation Overhaul roadmap — closes the
+whole epic. A level-by-level (1-20) reference for what a class/subclass
+gets at each level, including spell slots/cantrips/prepared counts for
+casters. See D-200 for the full writeup.
+
+Added/Changed:
+- New pure `ClassProgressionSystem.ts` — assembles class/subclass feature
+  lists with the existing spellcasting/spell-prep tables into a 1-20 table,
+  no new game-balance numbers.
+- Compendium's Classes detail view now shows a real per-level table
+  (feature rows plus a condensed spell-slot/cantrip/prepared/spellbook
+  line for casters) instead of a flat feature list. Subclasses tab is
+  unchanged.
+- Character Sheet gains a new "Progression" tab — the same table for the
+  viewed hero's actual class+subclass, dimming levels not yet reached,
+  with a hover tooltip for full feature text.
+
+Tests: 1570 (+9, new `classProgressionSystem.test.ts`). Typecheck clean,
+all tests pass, production build succeeds (145 modules, +1). No browser
+available in this environment — needs Kevin's own pass — see
+`KNOWN_ISSUES.md` KI-150.
+
+## [Unreleased] — 0.2.0-dev — Party Creation Overhaul Plan 6: the level-up blueprint library (D-199)
+
+The Character Creation "Plan Levels" wizard can now save a plan as a
+named, reusable blueprint — usable by any future character of that class,
+in any save or campaign, forever — and, per Kevin's own correction of
+D-136, plan a caster's level-up-triggered spell swaps too. See D-199 for
+the full writeup, including the two open design questions the plan doc
+left unresolved (storage backend, decoupling the cadence setting).
+
+Added/Changed:
+- New global blueprint library (`BlueprintLibrarySystem.ts`, local-only
+  storage) — create, edit, use as-is, and delete named blueprints per class.
+- "Plan Levels" now opens a 3-way choice (Create New / Select Saved /
+  No Blueprint) instead of jumping straight into the wizard; the Done
+  screen gains a "Save as Blueprint" option alongside the unchanged
+  this-hero-only "Save & Close".
+- The Auto/Prompted/Fresh cadence setting moved OUT of the wizard into its
+  own small per-hero pill next to "Plan Levels" — decoupled from "which
+  plan," locked to Auto for an AI-controlled hero.
+- A caster's level-up-triggered cantrip/prepared-spell swaps are now
+  plannable in the wizard, resolved silently in "Auto" mode when fully
+  planned, pre-highlighted in "Prompted" mode otherwise. The separate
+  Long-Rest full-relist mechanic is untouched.
+
+Tests: 1561 (+21 — a new `blueprintLibrarySystem.test.ts` plus more
+`levelUpPlanSystem.test.ts` coverage). Typecheck clean, all tests pass,
+production build succeeds (144 modules, +1 for the new system file). No
+browser available in this environment — the largest UI addition on the
+whole roadmap, needs Kevin's own dedicated playtest pass — see
+`KNOWN_ISSUES.md` KI-149.
+
+## [Unreleased] — 0.2.0-dev — Party Creation Overhaul Plan 5: AI-hero level-up defaults + Human/AI toggle clarity (D-198)
+
+Kevin's own playtest complaint: an AI-controlled hero could still land a
+real level-up choice popup (ASI/subclass/spell pick) with nobody there to
+answer it, and the Human/AI toggle button's plain gray label made its
+current state easy to miss. See D-198 for the full writeup, including the
+two decisions confirmed directly with Kevin (a hard mode-lock rather than
+just a smarter default, and inventing a simple choice rather than leaving
+an AI hero permanently without one — a deliberate, narrow exception to
+D-16x's "never invent a choice" rule).
+
+Added/Changed:
+- An AI-controlled hero's level-up mode is locked to "Auto" — Character
+  Creation's Plan Levels wizard only offers "Auto-follow a blueprint" (plus
+  Cancel) for an AI-controlled slot.
+- An AI-controlled hero never sees an in-battle level-up popup: an
+  unresolved choice (no blueprint entry) now applies a simple invented
+  default (its class's primary ability +2, its first modeled subclass, the
+  first eligible spell) instead of queuing a prompt nobody would answer —
+  both for a real in-battle level-up and for the pre-battle Starting-Level
+  fast-forward. Human/remote-controlled heroes are completely unaffected —
+  still get the usual real popups.
+- The Human/AI toggle button now has a genuinely distinct look per state
+  (gilt border/brighter fill for AI, reusing the existing ornate-button
+  "selected" treatment) and clearer text ("Hero N — AI-Controlled" /
+  "Human-Controlled").
+
+Tests: 1540 (+7, all new in `levelUpPlanSystem.test.ts`). Typecheck clean,
+all tests pass, production build succeeds (143 modules, unchanged). No
+browser available in this environment — needs Kevin's own playtest pass —
+see `KNOWN_ISSUES.md` KI-148.
+
+## [Unreleased] — 0.2.0-dev — Party Creation Overhaul Plan 2.3: shared party inventory pool (D-197)
+
+An XCOM2-style shared gear pool between a campaign's active and benched
+companions, per Kevin's own spec: benched companions' gear used to just
+sit unreachable on them — now "Unequip All Benched Heroes" moves it into
+a shared pool, any active hero can equip from it during party setup, and
+mission start resolves it (claimed items become permanently the
+claimer's, unclaimed items silently return to their original owner — no
+item is ever lost or duplicated). See D-197 for the full writeup.
+
+Added/Changed:
+- New "Unequip All Benched Heroes" button (Companions screen), two-click
+  confirm, plus a "Party Inventory: N items" count label.
+- New "Pool" button next to Gear for every active hero in Character
+  Creation (campaign mode) — draw a pooled item into any gear slot, same
+  two-level picker shape as the existing Gear button.
+- A reactivated companion whose gear was pooled no longer shows it as
+  still equipped while it's sitting claimable in the pool.
+- Campaign Select now forwards the selected Difficulty to the Companions
+  screen, so unequipping accounts for a companion's actual
+  difficulty-trimmed kit rather than assuming Normal.
+
+Tests: 1533 (+22 — a new `partyInventorySystem.test.ts` plus more
+`companionRosterSystem.test.ts` coverage). Typecheck clean, all tests
+pass, production build succeeds (143 modules, +1 for the new system
+file). No browser available in this environment — this is a multi-step
+flow that needs Kevin's own playtest pass — see `KNOWN_ISSUES.md` KI-147.
+
+## [Unreleased] — 0.2.0-dev — Party Creation Overhaul Plan 4: hero stat preview shows AC instead of ATK/Range (D-196)
+
+Character Creation's per-hero stats line read `HP {n}  ATK {n}\nRange
+{n}  Move {n}` — Kevin's own note: "Attack means nothing now that we've
+switched to actual DnD character sheet based stats... AC should replace
+those 2 useless stats." Both were already dead: ATK never factored in an
+equipped weapon, and Range was a fixed melee/ranged constant off the
+class, never the real weapon-aware range used everywhere else in the
+game. See D-196 for the full writeup.
+
+Added/Changed:
+- The stats line now reads `HP {n}  AC {n}\nMove {n}`, computed off a real
+  scratch `Hero` fast-forwarded to the chosen Starting Level under that
+  hero's own level-up plan — the AC number genuinely reflects equipped
+  gear, subclass bonuses, and ASI-granted feats (e.g. Defense fighting
+  style), not just a level-1 guess.
+
+Tests: 1511 (unchanged — pure UI wiring reusing already-tested
+`LevelUpPlanSystem.simulateHeroForPlanning` and `Hero.armorClass`).
+Typecheck clean, all tests pass, production build succeeds (142 modules,
+unchanged). No browser available in this environment — the stats line's
+layout and whether the AC number matches the in-battle HUD need Kevin's
+own playtest pass — see `KNOWN_ISSUES.md` KI-146.
+
+## [Unreleased] — 0.2.0-dev — Party Creation Overhaul Plan 3: campaign party/character persistence + Reset Campaign Progress (D-195)
+
+The overhaul roadmap's own "biggest structural item": campaigns previously
+had no cross-chapter continuity at all — every visit rebuilt the PC and
+companions from scratch. Closed the ENTIRE plan (3.3, 3.1, 3.2, 3.5, 3.6,
+3.7, and 3.4) in one session. Along the way, resolved a real architecture
+question with Kevin directly: the game's companion roster/campaign
+progress/world flags are (correctly, by design) shared across all 7
+campaign entries as one continuous playthrough, not isolated per campaign —
+so persisted builds live in that same shared storage rather than a new
+per-campaign key, and a new "Reset Campaign Progress" action gives a real
+clean-slate option instead. See D-195 for the full writeup, including why
+per-campaign isolation was rejected.
+
+Added/Changed:
+- Once a campaign has been fully cleared at least once, its companions'
+  ability scores unlock (class/race stay fixed to their identity) — a real
+  reward for finishing the story, not available before then.
+- A companion's or the PC's gear/spells/level-plan/name now actually
+  persists between missions — editing them and clicking Start Battle
+  commits the change, and it's still there on the next chapter visit.
+- Once a PC's build has been committed once, their Class/Race/ability
+  scores lock permanently for that playthrough (matching companions'
+  existing lock) — gear/spells/level-plan/name stay fully editable.
+- Companion ability scores (Standard Array dropdown, Point Buy +/-) are now
+  actually locked in campaign mode — previously only Class/Race/Gear were.
+- Difficulty is now chosen on Campaign Select, not in Character Creation —
+  a new control there replaces Character Creation's own Difficulty button,
+  which is hidden in campaign mode.
+- The Party Size and "Save New Party"/"Update Saved Party" buttons are now
+  fully hidden (not just disabled) in campaign-mode Character Creation —
+  both are redundant now that campaign party state persists automatically.
+- New: "Reset Campaign Progress" (Campaign Select, next to "Companions") —
+  a two-click-confirm action that wipes the shared companion roster/
+  persisted builds, campaign progress, and world flags back to defaults,
+  for starting a genuinely new playthrough. Free Play saves are untouched.
+
+Tests: 1511 (+9). Typecheck clean, all tests pass, production build
+succeeds (142 modules, unchanged). No browser available in this
+environment — the relocated Difficulty/Reset control row, the two-click
+confirm's feel, and the full chapter-to-chapter persistence flow all need
+Kevin's own playtest pass — see `KNOWN_ISSUES.md` KI-145.
+
+## [Unreleased] — 0.2.0-dev — Campaign-mode gear economy: fixed difficulty-scaled companion kits + PC point-buy (D-194)
+
+Kevin, right after seeing D-193's free-pick-everything gear system: in
+campaign mode specifically, companions shouldn't be freely editable at
+all (fixed kit, scaled down on harder difficulty, always keeping weapon +
+class implement), and the PC should choose through a real point-buy
+economy instead of picking for free. Free Play/manual Create Party is
+unaffected. See D-194 for the full writeup.
+
+Added/Changed:
+- Campaign difficulty now sets a "Gear Points" budget for the PC's
+  starting-gear picker (Easy 12, Normal 9, Hard 6, Nightmare 4 — first-
+  pass numbers) — every item costs 1 (common) or 2 (uncommon) points, the
+  picker shows items you can't afford as simply not there, and Start/Save
+  are blocked if a later difficulty change pushes you over budget.
+- Campaign companions' Gear button is now locked (matches Class/Race) —
+  their kit is fixed, derived from their authored baseline, and scales
+  with difficulty: full kit on Easy/Normal, chest armor dropped on Hard,
+  chest and shield both dropped on Nightmare. Weapon and a caster's
+  spellcasting focus/holy symbol/etc. always survive, at every difficulty.
+
+Tests: 1502 (+11). Typecheck clean, all tests pass, production build
+succeeds. No browser available in this environment; the point-buy UI's
+feel, the companion-lock behavior, and whether these first-pass budget
+numbers feel right in play all need Kevin's own playtest pass — see
+`KNOWN_ISSUES.md` KI-144.
+
+## [Unreleased] — 0.2.0-dev — Party Creation Overhaul Plan 2 (2.1 + 2.2): real multi-slot (all 10) starting gear + real per-companion kits (D-193)
+
+Kevin: "Now do plan 2." Character Creation's single starting-gear pick
+became a real per-slot loadout, and all 12 campaign companions got real,
+authored starting kits instead of a generic flavor-item pool. 2.1 shipped
+first as a 3-slot picker (Weapon/Armor/a class-appropriate Shield-or-Focus
+third slot); Kevin then asked about the other 7 slots and picked full
+expansion — every one of the 10 real gear slots is now an independent free
+pick at creation, no class gating on any of them. 2.3 (party inventory) is
+explicitly deferred — no meaningful persistence target exists for it until
+Plan 3.1 is built. See D-193 for the full writeup.
+
+Added/Changed:
+- The Gear button now opens a real 10-row menu (Weapon, Shield, Head,
+  Chest, Legs, Back, Ring 1, Ring 2, Amulet, Footwear) instead of a single
+  flat pick list; each slot independently offers "None" plus every
+  common/uncommon item of that slot type, open to every class.
+- 4 new common-rarity spellcasting-focus items (Holy Symbol, Arcane Focus,
+  Druidic Totem, Component Pouch), reusing the existing "amulet" gear slot.
+- All 12 campaign companions now have a real weapon + chest armor + third-
+  slot kit matching their class (e.g. Hollis Vane: Longsword/Chain Shirt/
+  Shield; Isolde Varnhall: Dagger/Padded Armor/Arcane Focus), replacing the
+  old single generic flavor-item pick; their other 7 slots start empty,
+  fillable later via the in-battle Shop. Mira Quill (Monk) deliberately
+  gets no chest armor, preserving her unarmored-defense AC formula.
+- `CharacterBuild.startingEquipmentId`/`HeroDefinition.startingEquipmentId`
+  are now legacy-only (kept for a pre-Plan-2 save's read-time fallback, not
+  written by any new build) — replaced by `startingGearIds`, a per-slot map.
+
+Tests: 1491 (+6 net). Typecheck clean, all tests pass, production build
+succeeds. No browser available in this environment; the new UI and every
+AC/attack-damage number it affects need Kevin's own playtest pass — see
+`KNOWN_ISSUES.md` KI-143.
+
+## [Unreleased] — 0.2.0-dev — Party Creation Overhaul Plan 1: ability-score assignment UX (D-192)
+
+Kevin: "Let's build plan 1 now." Standard Array's click-to-cycle control
+became a per-value dropdown with auto-swap; the Standard-Array-vs-Point-Buy
+method choice moved from one scene-wide button to a small per-hero pill.
+Point Buy's own controls are unchanged, per Kevin's explicit steer. See
+D-192 for the full writeup.
+
+Added/Changed:
+- Clicking a Standard Array ability now opens a small dropdown offering the
+  6 standard values (15/14/13/12/10/8) plus "—" (unset) instead of cycling
+  through them one click at a time. Picking a value already assigned to a
+  different ability swaps the two abilities' values.
+- Each hero now has their own Standard Array/Point Buy method pill instead
+  of sharing one party-wide toggle — one hero can use Point Buy while
+  another uses Standard Array.
+- Start Battle/Save Party are now blocked if a Standard Array hero has any
+  ability left unassigned, with a status message naming the hero.
+- `StandardArrayAllocator` (`CharacterBuildSystem.ts`) gained `assign()`/
+  `valueFor()`/`isComplete()`; `cycle()` is removed. Its constructor and
+  `allocatorFromScores` are unchanged, so no other call site needed edits.
+
+Tests: 1485 (+3, `StandardArrayAllocator`'s suite rewritten against the new
+`assign()` semantics). Typecheck clean, production build succeeds, `npm run
+dev` serves HTTP 200. No browser available in this environment; needs
+Kevin's own playtest pass — see `KNOWN_ISSUES.md` KI-142.
+
+## [Unreleased] — 0.2.0-dev — Party Creation Overhaul Plan 8: ornate/parchment theme for Character Creation (D-191)
+
+Kevin's own steer from the D-190 session: apply the D-123 ornate/parchment
+theme to `CharacterCreationScene` right after Plan 0, before the plan's
+other mini-plans build brand-new UI in the same scene. See D-191 for the
+full writeup.
+
+Added/Changed:
+- Every hand-rolled button/panel in Character Creation (Human/AI toggle,
+  Class/Race/Gear/Subclass/Starting Level/Plan Levels/Spells pickers, both
+  ability-score control sets, Party Size/Difficulty/Ability Score Method/
+  Team Level, Start Battle/Save Party) now uses the same carved-plaque
+  ornate-button component Compendium/Bestiary/Main Menu already use, with
+  real hover/click feedback instead of a flat rectangle.
+- The scene's flat dark background is now the shared wood/stone
+  `drawScreenBackdrop`; each hero column's plain dark panel is now a
+  parchment panel, matching the rest of the game's fantasy chrome.
+- Row heights and spacing grew slightly throughout the column to fit the
+  taller ornate controls — no data/logic change, purely layout numbers.
+
+Zero data/logic changes — every choice, validation rule, and computed
+value is unchanged; this is a presentation-only pass. No browser available
+in this environment; needs Kevin's own playtest pass — see `KNOWN_ISSUES.md`
+KI-141 for the specific things to check.
+
+## [Unreleased] — 0.2.0-dev — Party & Character Creation overhaul: roadmap plan + "Plan 0" bug fixes (D-190)
+
+Kevin's first real playtest pass of Character Creation/campaign party
+creation surfaced a large batch of notes. Result: a new roadmap doc,
+`PARTY_CREATION_OVERHAUL_PLAN.md` (8 independent mini-plans), plus the
+first mini-plan (bug fixes) shipped the same session. See D-190 for the
+full writeup.
+
+Added/Changed:
+- The shared choice-picker overlay (`uiTheme.ts`'s `renderChoiceOverlay`,
+  used by every Class/Race/Gear/Subclass button) now sizes each row to its
+  own real wrapped-text height instead of a fixed constant — a long
+  description no longer runs into the next row.
+- Character Creation's Class/Race row labels now get the same overflow
+  protection the Subclass row already had; the Race row also starts at a
+  larger, easier-to-read font size.
+- Subclass row wording shortened across all three of its display variants
+  — long enough before that it could still overrun even at the smallest
+  allowed font size.
+- Point Buy's "Points Left" readout is now its own dedicated row instead
+  of being appended onto (and pushing off-screen) the STR row's label.
+
+Not fixed this session (needs a fresh repro from Kevin): hero name fields
+reportedly moving/losing typed text across option screens — see
+`KNOWN_ISSUES.md`'s "Open bugs" section.
+
 ## [Unreleased] — 0.2.0-dev — Companion dialogue writing pass + real mechanical weight for branch choices (D-189)
 
 Kevin's own direct ask: "build a first pass at the dialogue and branching

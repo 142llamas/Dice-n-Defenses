@@ -304,4 +304,121 @@ describe("SaveSystem", () => {
     const loaded = loadSaveFile(storage, "k");
     expect(loaded).toEqual(file);
   });
+
+  describe("D-201: campaignId/chapterIndex (a campaign-linked save slot)", () => {
+    it("createSaveSlot records campaignId/chapterIndex when given, and omits them otherwise", () => {
+      const withCampaign = createSaveSlot(DEFAULT_SAVE_FILE, {
+        id: "a",
+        name: "Ash's Party",
+        createdAt: 100,
+        party: [build()],
+        partySize: 1,
+        difficultyId: "normal",
+        campaignId: "emberford-reach",
+        chapterIndex: 2,
+      });
+      expect(getSaveSlot(withCampaign, "a")).toMatchObject({ campaignId: "emberford-reach", chapterIndex: 2 });
+
+      const withoutCampaign = createSaveSlot(DEFAULT_SAVE_FILE, {
+        id: "b",
+        name: "Classic Party",
+        createdAt: 100,
+        party: [build()],
+        partySize: 1,
+        difficultyId: "normal",
+      });
+      expect(getSaveSlot(withoutCampaign, "b")?.campaignId).toBeUndefined();
+      expect(getSaveSlot(withoutCampaign, "b")?.chapterIndex).toBeUndefined();
+    });
+
+    it("updateSaveSlot overwrites campaignId/chapterIndex on the matching slot", () => {
+      const created = createSaveSlot(DEFAULT_SAVE_FILE, {
+        id: "a",
+        name: "Ash's Party",
+        createdAt: 100,
+        party: [build()],
+        partySize: 1,
+        difficultyId: "normal",
+      });
+      const updated = updateSaveSlot(created, "a", {
+        party: [build()],
+        partySize: 1,
+        difficultyId: "normal",
+        campaignId: "saltmere-shallows",
+        chapterIndex: 3,
+        updatedAt: 200,
+      });
+      expect(getSaveSlot(updated, "a")).toMatchObject({ campaignId: "saltmere-shallows", chapterIndex: 3 });
+    });
+
+    it("saveOrUpdatePartySlot passes campaignId/chapterIndex through on both create and update", () => {
+      const created = saveOrUpdatePartySlot(DEFAULT_SAVE_FILE, {
+        loadedSlotId: undefined,
+        builds: [build()],
+        partySize: 1,
+        difficultyId: "normal",
+        campaignId: "emberford-reach",
+        chapterIndex: 1,
+        now: 100,
+      });
+      expect(getSaveSlot(created!.file, created!.slotId)).toMatchObject({
+        campaignId: "emberford-reach",
+        chapterIndex: 1,
+      });
+
+      const updated = saveOrUpdatePartySlot(created!.file, {
+        loadedSlotId: created!.slotId,
+        builds: [build()],
+        partySize: 1,
+        difficultyId: "normal",
+        campaignId: "emberford-reach",
+        chapterIndex: 2,
+        now: 200,
+      });
+      expect(getSaveSlot(updated!.file, created!.slotId)).toMatchObject({
+        campaignId: "emberford-reach",
+        chapterIndex: 2,
+      });
+    });
+
+    it("loadSaveFile accepts a slot with campaignId/chapterIndex present, and one without", () => {
+      const storage = fakeStorage();
+      const file = createSaveSlot(DEFAULT_SAVE_FILE, {
+        id: "a",
+        name: "Campaign Party",
+        createdAt: 100,
+        party: [build()],
+        partySize: 1,
+        difficultyId: "normal",
+        campaignId: "emberford-reach",
+        chapterIndex: 2,
+      });
+      saveSaveFile(storage, "k", file);
+      const loaded = loadSaveFile(storage, "k");
+      expect(loaded.slots).toHaveLength(1);
+      expect(loaded.slots[0]).toMatchObject({ campaignId: "emberford-reach", chapterIndex: 2 });
+    });
+
+    it("loadSaveFile rejects a slot with a non-string campaignId or non-number chapterIndex", () => {
+      const storage = fakeStorage();
+      const good = createSaveSlot(DEFAULT_SAVE_FILE, {
+        id: "a",
+        name: "Good Party",
+        createdAt: 1,
+        party: [build()],
+        partySize: 1,
+        difficultyId: "normal",
+      }).slots[0];
+      storage.setItem(
+        "k",
+        JSON.stringify({
+          version: CURRENT_SAVE_VERSION,
+          slots: [good, { ...good, id: "b", campaignId: 123 }, { ...good, id: "c", chapterIndex: "two" }],
+        }),
+      );
+      const file = loadSaveFile(storage, "k");
+      expect(file.slots).toHaveLength(1);
+      expect(file.slots[0].id).toBe("a");
+    });
+  });
 });

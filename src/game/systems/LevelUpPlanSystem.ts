@@ -1,8 +1,16 @@
-import type { AbilityScoreId } from "../data/abilityScores";
+import { ABILITY_SCORE_IDS, type AbilityScoreId } from "../data/abilityScores";
 import { getClassDefinition } from "../data/classes";
 import { subclassesForClass } from "../data/subclasses";
+import { getSpell } from "../data/spells";
 import { asiFeatureGrantedAtLevel, subclassGrantedAtLevel } from "./CharacterSystem";
 import { heroDefinitionFromBuild, type CharacterBuild } from "./CharacterBuildSystem";
+import {
+  eligibleCantripPool,
+  eligibleLeveledSpellPool,
+  maxCastableSpellLevel,
+  spellSwapStepsForClass,
+  type SpellSwapStepKind,
+} from "./SpellPreparationSystem";
 import {
   Hero,
   MAX_CLASS_LEVEL,
@@ -47,9 +55,30 @@ export type SpellPickPlanChoice =
   | { kind: "signature"; spellIds: [string, string] }
   | { kind: "arcanum"; tier: number; spellId: string };
 
+/**
+ * D-199 (Party Creation Overhaul Plan 6.5): a level-up-triggered "replace
+ * exactly one" cantrip/prepared-spell swap — the recurring D-136 mechanic,
+ * now plannable ahead of time like ASI/subclass/spellPicks. Deliberately
+ * only the level-up trigger; the separate Long-Rest full-relist mechanic
+ * stays real-time-only, per Kevin's own explicit narrowing of D-136 (see
+ * D-199's writeup).
+ */
+export interface LevelUpSpellSwapChoice {
+  kind: SpellSwapStepKind;
+  dropId: string;
+  learnId: string;
+}
+
 export type LevelUpPlanMode = "auto" | "prompt" | "fresh";
 
 export interface LevelUpPlan {
+  /**
+   * D-199 (Plan 6.4): vestigial once this plan is saved as a library
+   * blueprint — applying a blueprint to a hero always overwrites `mode`
+   * with that hero's own per-hero cadence control, never reads this back.
+   * Still the live, authoritative field for a hero's OWN in-progress
+   * `SlotState.levelUpPlan`/`CharacterBuild.levelUpPlan` (unchanged).
+   */
   mode: LevelUpPlanMode;
   /** Only meaningful for a class whose `subclassChoiceLevel` is > 1 — a level-1-choice class picks at Character Creation already. */
   subclassId?: string;
@@ -57,10 +86,12 @@ export interface LevelUpPlan {
   asiChoices: Partial<Record<number, AsiPlanChoice>>;
   /** Keyed by the level the spell-mastery-family pick triggers at (not by tier — Warlock's 4 tiers each land at a distinct level). */
   spellPicks: Partial<Record<number, SpellPickPlanChoice>>;
+  /** D-199: keyed by the level a level-up-triggered swap opportunity exists — an array since one level can need both a cantrip AND a prepared swap (e.g. Sorcerer). */
+  spellSwaps: Partial<Record<number, LevelUpSpellSwapChoice[]>>;
 }
 
 export function emptyLevelUpPlan(mode: LevelUpPlanMode = "fresh"): LevelUpPlan {
-  return { mode, asiChoices: {}, spellPicks: {} };
+  return { mode, asiChoices: {}, spellPicks: {}, spellSwaps: {} };
 }
 
 /** D-125's pending spell-mastery-family pick shape, mirrored here (not imported from `BattleScene` — a scene file — to keep this module Phaser-free); structurally identical to `BattleScene`'s own `SpellPickRequest`. */
@@ -151,6 +182,104 @@ export function resolveSpellPickForRequest(hero: Hero, request: SpellPickTrigger
   return true;
 }
 
+/** D-199: this hero's current cantrip/prepared list for a swap kind — mirrors `BattleScene.spellPrepCurrent`. */
+function swapCurrentList(hero: Hero, kind: SpellSwapStepKind): readonly string[] {
+  return kind === "cantrips" ? hero.knownCantripIds : hero.preparedSpellIds;
+}
+
+/** D-199: the pool a swap's replacement can be drawn from — mirrors `BattleScene.spellPrepPool`. */
+function swapEligiblePool(hero: Hero, classId: string, level: number, kind: SpellSwapStepKind): string[] {
+  if (kind === "cantrips") return eligibleCantripPool(classId);
+  const maxLevel = maxCastableSpellLevel(classId, level);
+  const pool = classId === "wizard" ? [...hero.spellbookIds] : eligibleLeveledSpellPool(classId);
+  return pool.filter((id) => getSpell(id).level <= maxLevel);
+}
+
+/**
+ * Resolves EVERY level-up-triggered spell-swap step at `level` (cantrip
+ * and/or prepared, per `spellSwapStepsForClass`) from explicit plan
+ * entries — all or nothing: if any of this level's steps lacks a valid
+ * plan entry (missing, a stale `dropId` no longer known, or a `learnId`
+ * no longer eligible), NOTHING is applied and this returns `false`,
+ * leaving the whole level for the caller to surface as a real prompt
+ * instead of silently pre-resolving only part of it (which would leave a
+ * live popup re-asking for a swap that already happened). Returns `true`
+ * (no mutation) when this level has no swap opportunity at all, or when
+ * every step resolved.
+ */
+export function resolveSpellSwapStepsForLevel(hero: Hero, level: number, plan?: LevelUpPlan): boolean {
+  const classId = hero.classId;
+  if (!classId) return true;
+  const steps = spellSwapStepsForClass(classId, level, "levelUp");
+  if (steps.length === 0) return true;
+
+  const planned = plan?.spellSwaps[level] ?? [];
+  const resolved: LevelUpSpellSwapChoice[] = [];
+  for (const kind of steps) {
+    const choice = planned.find((c) => c.kind === kind);
+    if (!choice) return false;
+    const current = swapCurrentList(hero, kind);
+    if (!current.includes(choice.dropId)) return false;
+    const eligible = swapEligiblePool(hero, classId, level, kind).filter((id) => !current.includes(id));
+    if (!eligible.includes(choice.learnId)) return false;
+    resolved.push(choice);
+  }
+  for (const choice of resolved) {
+    const current = swapCurrentList(hero, choice.kind);
+    const next = current.filter((id) => id !== choice.dropId).concat(choice.learnId);
+    if (choice.kind === "cantrips") hero.chooseCantrips(next);
+    else hero.choosePreparedSpells(next);
+  }
+  return true;
+}
+
+/** D-198's ability-score cap, mirrored here (not exported from `Hero.ts`) purely so the fallback below can skip an already-maxed candidate ability. */
+const FALLBACK_ABILITY_SCORE_CAP = 20;
+
+/**
+ * D-198 (Party Creation Overhaul Plan 5.1): a hard rule enforced regardless
+ * of what `plan`/`plan.mode` actually say — an AI-controlled hero has nobody
+ * present to answer a level-up prompt, so `BattleScene.applyClassLevelUps`
+ * calls these (only for `hero.controlledBy === "ai"`) whenever the explicit-
+ * plan resolvers above returned false, instead of ever queuing a popup for
+ * a hero nobody will click through. Each picks a simple, always-valid
+ * default rather than trying to be clever — this is a safety net for an AI
+ * hero with no blueprint (Plan 6) prepared for it yet, not a real AI
+ * strategy.
+ */
+export function autoResolveAsiForLevel(hero: Hero): void {
+  if (!hero.classId) return;
+  const classDef = getClassDefinition(hero.classId);
+  const candidates: AbilityScoreId[] = [
+    classDef.primaryAbility,
+    ...(classDef.spellcasting ? [classDef.spellcasting.spellcastingAbility] : []),
+    ...ABILITY_SCORE_IDS,
+  ];
+  const ability =
+    candidates.find((id) => (hero.abilityScoreValue(id) ?? 0) < FALLBACK_ABILITY_SCORE_CAP) ?? classDef.primaryAbility;
+  hero.improveAbilityScore(ability, 2);
+}
+
+/** D-198: defaults to this class's first modeled subclass — see `autoResolveAsiForLevel`'s doc comment. */
+export function autoResolveSubclassForClass(hero: Hero, classId: string): void {
+  const options = subclassesForClass(classId);
+  if (options.length > 0) hero.grantSubclass(options[0].id);
+}
+
+/** D-198: defaults to the first eligible spell(s) — see `autoResolveAsiForLevel`'s doc comment. */
+export function autoResolveSpellPickForRequest(hero: Hero, request: SpellPickTrigger): void {
+  if (request.kind === "mastery") {
+    const eligible = hero.eligibleSpellMasterySpells();
+    if (eligible.length > 0) hero.chooseSpellMasterySpell(eligible[0]);
+  } else if (request.kind === "signature") {
+    const eligible = hero.eligibleSignatureSpells();
+    if (eligible.length >= 2) hero.chooseSignatureSpells([eligible[0], eligible[1]]);
+  } else if (request.kind === "arcanum" && request.tier !== undefined) {
+    const eligible = hero.eligibleMysticArcanumSpells(request.tier);
+    if (eligible.length > 0) hero.chooseMysticArcanumSpell(request.tier, eligible[0]);
+  }
+}
+
 /** Returns the unresolved trigger (if any) so the caller can surface it as a real prompt — undefined means either resolved from an explicit plan entry, or nothing needed choosing yet. */
 function resolveSpellPickIfNeeded(hero: Hero, plan?: LevelUpPlan): SpellPickTrigger | undefined {
   if (hero.needsSpellMasteryPick()) {
@@ -197,6 +326,12 @@ export function fastForwardHero(hero: Hero, targetLevel: number, plan?: LevelUpP
     if (spellRequest) {
       unresolved.push({ level: hero.level, kind: "spellPick", spellPickKind: spellRequest.kind, tier: spellRequest.tier });
     }
+    // D-199 (Plan 6.5): silently applies a planned level-up spell swap when
+    // the plan covers it, does nothing otherwise — matches today's baseline
+    // exactly when no plan exists (fast-forward never surfaced a swap popup
+    // before this decision, and still doesn't; only a real in-battle
+    // level-up, via `BattleScene.applyClassLevelUps`, ever queues one).
+    resolveSpellSwapStepsForLevel(hero, hero.level, plan);
   }
   return unresolved;
 }
@@ -258,13 +393,15 @@ export function levelUpDeltaSummary(
   return parts.length > 0 ? parts.join(", ") : "No stat changes this level.";
 }
 
-export type LevelUpChoiceStepKind = "subclass" | "asi" | "spellPick";
+export type LevelUpChoiceStepKind = "subclass" | "asi" | "spellPick" | "spellSwap";
 
 export interface LevelUpChoiceStep {
   level: number;
   kind: LevelUpChoiceStepKind;
   spellPickKind?: "mastery" | "signature" | "arcanum";
   tier?: number;
+  /** Only set for a `"spellSwap"` step — see `LevelUpSpellSwapChoice`. */
+  spellSwapKind?: SpellSwapStepKind;
 }
 
 /**
@@ -291,6 +428,17 @@ export function futureChoiceSteps(classId: string): LevelUpChoiceStep[] {
   } else if (classId === "warlock") {
     for (const tier of [6, 7, 8, 9]) {
       steps.push({ level: WARLOCK_MYSTIC_ARCANUM_LEVELS[tier], kind: "spellPick", spellPickKind: "arcanum", tier });
+    }
+  }
+  // D-199 (Plan 6.5): a level-up-triggered spell-swap opportunity recurs at
+  // almost every level for a caster (not a one-time gate like the steps
+  // above) — this can add many steps for e.g. a Sorcerer (cantrip AND
+  // prepared swaps, most levels 2-20). The wizard's existing per-step
+  // "Skip (decide later)" choice is the intended escape hatch, same as it
+  // already is for ASI.
+  for (let level = 2; level <= MAX_CLASS_LEVEL; level++) {
+    for (const spellSwapKind of spellSwapStepsForClass(classId, level, "levelUp")) {
+      steps.push({ level, kind: "spellSwap", spellSwapKind });
     }
   }
 

@@ -1,12 +1,51 @@
 import Phaser from "phaser";
-import { SAVE_STORAGE_KEY, COMPANION_ROSTER_STORAGE_KEY } from "../config";
+import {
+  SAVE_STORAGE_KEY,
+  COMPANION_ROSTER_STORAGE_KEY,
+  CAMPAIGN_PROGRESS_STORAGE_KEY,
+  BLUEPRINT_LIBRARY_STORAGE_KEY,
+} from "../config";
+import { loadCampaignProgress, isCampaignCompleted } from "../systems/CampaignProgressSystem";
 import { getCompanionDefinition } from "../data/companions";
-import { loadCompanionRoster, saveCompanionRoster } from "../systems/CompanionRosterSystem";
+import {
+  loadCompanionRoster,
+  saveCompanionRoster,
+  getCompanionBuild,
+  setCompanionBuild,
+  getPcBuild,
+  setPcBuild,
+  getPartyInventory,
+  type PartyInventoryEntry,
+} from "../systems/CompanionRosterSystem";
+import { visibleGearForOrigin, resolvePartyInventory } from "../systems/PartyInventorySystem";
 import { seedStartingCompanions } from "../systems/CompanionSeedSystem";
 import { RandomService } from "../systems/RandomService";
-import { getViewport, onViewportResize, createOrnateButton, renderChoiceOverlay, clearChoiceOverlay } from "./uiTheme";
-import { ABILITY_SCORE_IDS, ABILITY_SCORE_NAMES, modifierFor, type AbilityScoreId } from "../data/abilityScores";
-import { CHARACTER_NAME_POOL, CREATABLE_CLASS_IDS, STARTING_GEAR_IDS } from "../data/characterCreation";
+import {
+  getViewport,
+  onViewportResize,
+  createOrnateButton,
+  renderChoiceOverlay,
+  clearChoiceOverlay,
+  drawScreenBackdrop,
+  drawParchmentPanel,
+  FONT_DISPLAY,
+  FONT_BODY,
+  type OrnateButtonHandle,
+} from "./uiTheme";
+import {
+  ABILITY_SCORE_IDS,
+  ABILITY_SCORE_NAMES,
+  STANDARD_ARRAY,
+  modifierFor,
+  type AbilityScoreId,
+} from "../data/abilityScores";
+import {
+  CHARACTER_NAME_POOL,
+  CREATABLE_CLASS_IDS,
+  startingGearIdsForSlotType,
+  startingGearPointCost,
+  companionStartingGearForDifficulty,
+} from "../data/characterCreation";
 import { getAbility } from "../data/abilities";
 import { getClassDefinition } from "../data/classes";
 import { getSpell } from "../data/spells";
@@ -20,9 +59,10 @@ import {
   preparedSpellCountForClassAtLevel,
   defaultFill,
   type SpellPickStepKind,
+  type SpellSwapStepKind,
 } from "../systems/SpellPreparationSystem";
 import { subclassesForClass, getSubclassDefinition } from "../data/subclasses";
-import { getEquipmentDefinition } from "../data/equipment";
+import { getEquipmentDefinition, gearSlotType, GEAR_SLOT_IDS, GEAR_SLOT_LABELS, type GearSlotId } from "../data/equipment";
 import { FEAT_IDS, getFeat } from "../data/feats";
 import { RACE_IDS, getRaceDefinition } from "../data/races";
 import type { HeroDefinition, HeroControlMode } from "../data/heroes";
@@ -31,9 +71,20 @@ import {
   emptyLevelUpPlan,
   fastForwardHero,
   futureChoiceSteps,
+  simulateHeroForPlanning,
   type LevelUpChoiceStep,
   type LevelUpPlan,
+  type LevelUpPlanMode,
+  type LevelUpSpellSwapChoice,
 } from "../systems/LevelUpPlanSystem";
+import {
+  blueprintsForClass,
+  deleteBlueprint,
+  loadBlueprintLibrary,
+  saveBlueprintLibrary,
+  upsertBlueprint,
+  type LevelUpBlueprint,
+} from "../systems/BlueprintLibrarySystem";
 import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
 import type { WaveDefinition } from "../data/waves";
 import type { ParsedMap } from "../data/testMap";
@@ -64,10 +115,10 @@ import { pushSlot } from "../cloud/CloudSaveSync";
 /**
  * CharacterCreationScene — Phase 11.1's "first pass" freeform party builder
  * (DECISIONS D-070/D-071/D-073). Lets the player build a full 4-hero party
- * (D-052's locked party size, unchanged) by, per hero: cycling a preset
- * name, picking a class, and assigning the standard array across six ability
- * scores (click a score to swap it with the next slot — see
- * `StandardArrayAllocator`). Every class-level derived stat (HP, attack
+ * (D-052's locked party size, unchanged) by, per hero: typing a name,
+ * picking a class, and assigning ability scores via Standard Array (a
+ * per-stat dropdown with auto-swap, Party Creation Overhaul Plan 1.1 — see
+ * `StandardArrayAllocator.assign`) or Point Buy. Every class-level derived stat (HP, attack
  * damage/range) is computed live via `heroDefinitionFromBuild` and shown as
  * a preview. D-178 removed the old "pick a signature action" step — every
  * class's basic-Attack style/ability is now a fixed part of its own
@@ -195,16 +246,61 @@ function columnCenterX(width: number, slot: number): number {
   return firstColumnLeft + slot * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_WIDTH / 2;
 }
 
+/**
+ * D-202 (Plan 0.6's actual fix): a "plain" entry (Main Menu's New Game/
+ * Build Party — no campaign, no Free Play/custom map) resumes the last
+ * thing typed/picked here, instead of the previous "always reset to
+ * CHARACTER_NAME_POOL defaults" behavior that silently discarded a typed
+ * name (or any other in-progress pick) on a Back-to-Main-Menu-then-return
+ * round trip. Module-level, not a class field, because the scene instance
+ * itself is torn down and rebuilt by `scene.start()` — lost on a real page
+ * reload (never touches `localStorage`), by design: this is a same-session
+ * convenience, not a save. Reuses the exact `loadedParty` ->
+ * `slotStateFromBuild` reconstruction Load Game already established,
+ * sourced from `buildsFromSlots()`'s own already-tested serialization
+ * instead of a real save slot — no new snapshot/restore logic needed.
+ */
+let lastPlainDraft: CharacterBuild[] | undefined;
+
 interface SlotState {
   /** D-147 (piece 2): free-text hero name, editable via a DOM `<input>` (see `buildSlotUi`'s name row) — previously an index into `CHARACTER_NAME_POOL`. The pool is still used to seed a fresh slot's default. */
   name: string;
   classIndex: number;
   raceIndex: number;
-  /** D-147 (piece 3): whichever kind matches the scene's current party-wide `abilityScoreMethod` — swapped wholesale (not converted) when the method toggle is clicked. */
+  /** Party Creation Overhaul Plan 1.2: whichever kind matches THIS SLOT's own `abilityScoreMethod` — swapped wholesale (not converted) when this hero's own method pill is clicked. Was scene-wide/party-wide before Plan 1.2. */
   allocator: AbilityScoreAllocator;
+  /** Party Creation Overhaul Plan 1.2: per-hero ability-score allocation method — was one scene-wide field before this. */
+  abilityScoreMethod: "standardArray" | "pointBuy";
   controlledBy: HeroControlMode;
-  /** Phase 13.11 (D-096): index into `STARTING_GEAR_IDS`, offset by 1 — 0 means "None". */
-  startingGearIndex: number;
+  /**
+   * D-193 (Party Creation Overhaul Plan 2): one index per gear slot
+   * (`GearSlotId`) into `startingGearIdsForSlotType(gearSlotType(slotId))`,
+   * offset by 1 — 0/absent means "None" for that slot. All 10 slots are
+   * independently pickable at creation (Kevin's explicit call, expanding
+   * past this item's original weapon/chest/third-slot-only scope) —
+   * replaces the old single `startingGearIndex`.
+   */
+  gearIndices: Partial<Record<GearSlotId, number>>;
+  /**
+   * D-194: a companion's (`identityLocked`) authored "normal"-difficulty
+   * kit, snapshotted (defensive copy, never a bare reference into
+   * `companions.ts`'s shared singleton) at `slotStateFromBuild` time.
+   * `buildsFromSlots` recomputes this companion's ACTUAL kit fresh every
+   * call via `companionStartingGearForDifficulty(baselineGearIds,
+   * this.difficultyId)`, so a live Difficulty change updates it
+   * immediately. Undefined for a non-companion slot — `gearIndices` above
+   * is the only source of truth there.
+   */
+  baselineGearIds?: Partial<Record<GearSlotId, string>>;
+  /**
+   * Party Creation Overhaul Plan 2.3: pool entry id claimed for this gear
+   * slot THIS SESSION — ephemeral, like `gearIndices`, not persisted until
+   * Start Battle (see `openPoolPicker`). Wins over both a catalogue pick
+   * and a companion's difficulty-trimmed baseline in `buildsFromSlots`.
+   * Available to every active slot, not just companions — the PC can draw
+   * from the pool too.
+   */
+  poolGearIds?: Partial<Record<GearSlotId, string>>;
   /**
    * Phase 14.2 (D-099): which of the current class's two modeled subclasses
    * to assign, for a level-1-choice class (Cleric/Sorcerer/Warlock) — 0 =
@@ -224,62 +320,113 @@ interface SlotState {
    * identical to every pre-D-135 build.
    */
   spellPicks: { cantripIds?: string[]; leveledSpellIds?: string[]; spellbookIds?: string[] };
-  /** KI-098 item 13 (companion roster, Phase 1): true for a companion-prefilled slot in campaign mode — class/race stay fixed to the companion's own identity, but equipment/spells/hotkeys/starting level stay fully editable, same as any other slot. */
+  /**
+   * KI-098 item 13 (companion roster, Phase 1): true for a companion-
+   * prefilled slot in campaign mode — class/race stay fixed to the
+   * companion's own identity, and spells/hotkeys/starting level stay fully
+   * editable, same as any other slot. Party Creation Overhaul Plan 3.2:
+   * ALSO true for a returning PC (slot 0) once a persisted `pcBuild` exists
+   * for this playthrough — identity is frozen the same way. Guards
+   * Class/Race only — see `gearLocked`/`abilityScoreLocked` below for the
+   * two places PC and companion locking (and, for 3.4, one companion vs.
+   * another) diverge; `identityLocked` alone can no longer answer "is this
+   * slot's ability score editable."
+   */
   identityLocked: boolean;
+  /**
+   * Party Creation Overhaul Plan 3.2: whether GEAR specifically is locked to
+   * a fixed/economy-derived kit. For a companion this is always equal to
+   * `identityLocked` (D-194: a real campaign companion never gets a free
+   * player-editable kit). For a returning PC (identity-locked once a
+   * persisted `pcBuild` exists) this stays false — the PC's gear/spells/
+   * level-plan/name remain editable "like a normal PC always could," only
+   * class/race/ability-scores freeze. Split into its own field because
+   * `identityLocked` alone can't distinguish "companion" from "returning
+   * PC" for the Gear button/`baselineGearIds`/`buildsFromSlots` checks that
+   * only ever wanted the companion behavior.
+   */
+  gearLocked: boolean;
+  /**
+   * Party Creation Overhaul Plan 3.4: whether ABILITY SCORES specifically
+   * are locked. Equal to `identityLocked` for a returning PC (unchanged —
+   * a PC's stats freeze the same as class/race, Plan 3.4 doesn't touch the
+   * PC) and for a companion whose campaign hasn't been completed yet. For a
+   * companion once `this.campaignId` has been fully cleared at least once
+   * (`isCampaignCompleted`), this is false while `identityLocked` stays
+   * true — class/race stay fixed to the companion's identity, but ability
+   * scores become player-customizable, Kevin's own "completing a campaign
+   * unlocks stat customization for its companions" reward. Split into its
+   * own field for the same reason `gearLocked` was: `identityLocked` can't
+   * distinguish "still locked" from "unlocked by 3.4" on its own.
+   */
+  abilityScoreLocked: boolean;
 }
 
 interface SlotWidgets {
-  controlLabel: Phaser.GameObjects.Text;
+  /** Party Creation Overhaul Plan 8: the Human/AI toggle, now an ornate button — its handle owns both the plaque and the label together. */
+  controlHandle: OrnateButtonHandle;
   /** D-147 (piece 2): a real DOM `<input>`, not a Text label — its own value is read live on each "input" event, not re-set by `refreshSlot`. */
   nameInput: Phaser.GameObjects.DOMElement;
   /** The raw `<input>` node inside `nameInput`, kept separately so `setSlotActive` can toggle `.disabled` — a Phaser `Rectangle`'s `disableInteractive` doesn't apply to a real HTML element. */
   nameInputNode: HTMLInputElement;
-  classLabel: Phaser.GameObjects.Text;
-  raceLabel: Phaser.GameObjects.Text;
-  abilityScoreLabels: Record<AbilityScoreId, Phaser.GameObjects.Text>;
-  /** D-147 (piece 3): the six Standard-Array cycle-row rectangles — visible/interactive only while the party-wide method is "standardArray". */
-  standardArrayRowButtons: Phaser.GameObjects.Rectangle[];
-  /** D-147 (piece 3): the twelve Point-Buy +/- rectangles (one pair per ability) — visible/interactive only while the method is "pointBuy". */
-  pointBuyButtons: Phaser.GameObjects.Rectangle[];
-  gearLabel: Phaser.GameObjects.Text;
-  subclassLabel: Phaser.GameObjects.Text;
+  classHandle: OrnateButtonHandle;
+  raceHandle: OrnateButtonHandle;
+  /** Party Creation Overhaul Plan 1.2: this hero's own Standard Array/Point Buy toggle pill — replaces the old single party-wide button. */
+  abilityMethodHandle: OrnateButtonHandle;
+  /** Standard Array mode: one dropdown-trigger ornate button per ability, label IS the score text (Party Creation Overhaul Plan 1.1: opens a per-value dropdown instead of cycling). */
+  standardArrayHandles: Record<AbilityScoreId, OrnateButtonHandle>;
+  /**
+   * Point Buy mode: a plain, non-clickable value readout between the
+   * minus/plus buttons — `createOrnateButton` owns its label internally, so
+   * once the ability score row's Standard-Array button and Point-Buy
+   * steppers are all real ornate buttons, they can no longer share one Text
+   * object riding on the row; this is Point Buy's own copy of the same
+   * score text.
+   */
+  pointBuyValueLabels: Record<AbilityScoreId, Phaser.GameObjects.Text>;
+  /** D-147 (piece 3): the six Standard-Array dropdown-trigger row handles — visible/interactive only while this hero's own method (Plan 1.2) is "standardArray". */
+  standardArrayRowButtons: OrnateButtonHandle[];
+  /** D-147 (piece 3): the twelve Point-Buy +/- handles (one pair per ability) — visible/interactive only while this hero's own method is "pointBuy". */
+  pointBuyButtons: OrnateButtonHandle[];
+  gearHandle: OrnateButtonHandle;
+  /** Party Creation Overhaul Plan 2.3: "draw from the shared party inventory pool" — half-width, sharing `gearY`'s row with `gearHandle` (narrowed to match) rather than its own row, since every Y constant below cascades off `gearY`. Hidden entirely outside campaign mode. */
+  poolHandle: OrnateButtonHandle;
+  subclassHandle: OrnateButtonHandle;
   statsLabel: Phaser.GameObjects.Text;
-  levelLabel: Phaser.GameObjects.Text;
-  /** D-133: the "Plan Levels" row's label — see `openLevelPlanner`. */
-  planLabel: Phaser.GameObjects.Text;
-  /** D-135: the "Spells" row's label — see `openSpellPicker`. */
-  spellsLabel: Phaser.GameObjects.Text;
+  levelHandle: OrnateButtonHandle;
+  /** D-133: the "Plan Levels" row — see `openLevelPlanner`. Party Creation Overhaul Plan 6.4: now half-width, sharing `planY` with `cadenceHandle` (D-133's old Auto/Prompted/Fresh mode picker, decoupled from the wizard). */
+  planHandle: OrnateButtonHandle;
+  /** Party Creation Overhaul Plan 6.4: the Auto/Prompted/Fresh cadence toggle, decoupled from "which plan" (`planHandle`) — click-cycles, locked to Auto (disabled) for an AI-controlled hero, same hard rule as D-198's Human/AI toggle. */
+  cadenceHandle: OrnateButtonHandle;
+  /** D-135: the "Spells" row — see `openSpellPicker`. */
+  spellsHandle: OrnateButtonHandle;
+  /** Playtest fix (Party Creation Overhaul, Plan 0): Point Buy's "Points Left" readout, now its own row instead of riding on the STR label. */
+  pointsLeftLabel: Phaser.GameObjects.Text;
   /** Every GameObject this slot created, for dimming an inactive (beyond party size) slot. */
   allObjects: Phaser.GameObjects.GameObject[];
-  /** The interactive rectangles among `allObjects`, for disabling an inactive slot's clicks. */
-  interactiveButtons: Phaser.GameObjects.Rectangle[];
+  /** The interactive handles among `allObjects`, for disabling an inactive slot's clicks. */
+  interactiveButtons: OrnateButtonHandle[];
 }
 
 export class CharacterCreationScene extends Phaser.Scene {
   private slots: SlotState[] = [];
   private widgets: SlotWidgets[] = [];
-  private startButton!: Phaser.GameObjects.Rectangle;
+  private startHandle!: OrnateButtonHandle;
   private statusText!: Phaser.GameObjects.Text;
   private partyValid = false;
   private partySize = MAX_PARTY_SIZE;
   private difficultyId: DifficultyId = "normal";
-  private partySizeButton!: Phaser.GameObjects.Rectangle;
-  private partySizeLabel!: Phaser.GameObjects.Text;
-  private difficultyButton!: Phaser.GameObjects.Rectangle;
-  private difficultyLabel!: Phaser.GameObjects.Text;
+  private partySizeHandle!: OrnateButtonHandle;
+  private difficultyHandle!: OrnateButtonHandle;
   /** D-129: the "set every slot's Starting Level at once" control — see `buildTeamLevelControl`. */
   private teamLevelValue = 1;
-  private teamLevelButton!: Phaser.GameObjects.Rectangle;
-  private teamLevelLabel!: Phaser.GameObjects.Text;
+  private teamLevelHandle!: OrnateButtonHandle;
   /**
-   * D-147 (piece 3): a party-wide ability-score allocation method — real 5e
-   * practice treats this as a table-wide ruleset choice, not a per-hero one.
-   * Switching it resets every slot's allocator to a FRESH instance of the
-   * new kind (no attempted conversion between the two).
+   * Party Creation Overhaul Plan 1.1: the single open ability-score dropdown
+   * (at most one at a time — opening a new one closes whichever was open).
+   * `null` when none is open.
    */
-  private abilityScoreMethod: "standardArray" | "pointBuy" = "standardArray";
-  private abilityScoreMethodButton!: Phaser.GameObjects.Rectangle;
-  private abilityScoreMethodLabel!: Phaser.GameObjects.Text;
+  private openDropdown: { close: () => void } | null = null;
   /** Phase 11.8 (D-071): forwarded unchanged to BattleScene; `undefined` when
    * reached via the plain "Create Party" button (no campaign selected). */
   private campaignId?: string;
@@ -294,6 +441,22 @@ export class CharacterCreationScene extends Phaser.Scene {
    * (a normal chapter replay, the Prologue, Free Play, Co-op, a loaded save).
    */
   private requiredCompanionIds?: string[];
+  /**
+   * Party Creation Overhaul Plan 3.1: which companion id (if any) each slot
+   * was prefilled from — the write side of persisted companion builds needs
+   * this at Start Battle time to know which roster entry to update.
+   * `undefined` at slot 0 always (the PC is tracked via `setPcBuild`, not
+   * this map) and at every slot for Free Play/a plain "Create Party" run.
+   */
+  private companionIdForSlot: (string | undefined)[] = [];
+  /**
+   * Party Creation Overhaul Plan 2.3: the shared party inventory pool as of
+   * this scene's own `create()` — read once, alongside the same roster load
+   * companion prefill already does (no second `localStorage` read). Used by
+   * `openPoolPicker`/`buildsFromSlots` to source "draw from pool" options;
+   * always empty for Free Play (no `campaignId`, no roster/pool concept).
+   */
+  private partyInventorySnapshot: PartyInventoryEntry[] = [];
   /** Phase 11.9 (D-071): forwarded unchanged to BattleScene; `undefined`
    * unless reached from `FreePlayScene`. */
   private freePlayMapId?: string;
@@ -310,8 +473,7 @@ export class CharacterCreationScene extends Phaser.Scene {
   private saveFile!: SaveFile;
   /** Phase 10 (D-084): tracked so a save can be mirrored to the cloud when signed in with Google. */
   private authState: AuthState = { uid: null, isAnonymous: true, displayName: null };
-  private savePartyButton!: Phaser.GameObjects.Rectangle;
-  private savePartyLabel!: Phaser.GameObjects.Text;
+  private savePartyHandle!: OrnateButtonHandle;
   private saveStatusLabel!: Phaser.GameObjects.Text;
 
   /**
@@ -325,6 +487,19 @@ export class CharacterCreationScene extends Phaser.Scene {
   private planningDraft: LevelUpPlan = emptyLevelUpPlan();
   private planningSteps: LevelUpChoiceStep[] = [];
   private planningStepIndex = 0;
+  /**
+   * Party Creation Overhaul Plan 6.2/6.3: which saved blueprint (if any)
+   * `planningDraft` was loaded from via "Select a Saved Blueprint" → Edit —
+   * `undefined` for "Create a New Blueprint"/"No Blueprint". Wizard-session-
+   * scoped only (like `planningDraft` itself), never persisted — reopening
+   * Plan Levels always starts fresh at `showBlueprintEntryChoice`. Drives
+   * `showBlueprintSaveScreen`'s "Update" vs. "Save as New" choice.
+   */
+  private planningBlueprintId: string | undefined = undefined;
+  /** Plan 6.2: which blueprint's Delete button is armed (two-click confirm, no timer — reset by navigating to any other button in the same submenu). */
+  private blueprintDeleteArmedId: string | null = null;
+  /** Plan 6.3: a fresh blueprint's synthetic id — `Date.now()` plus this (incremented per save) breaks a same-millisecond tie, same idiom `CompanionRosterScene.onUnequipAllClicked` already uses for pool-entry ids. */
+  private blueprintSaveCounter = 0;
 
   /**
    * D-135: the "Spells" wizard overlay's own working state — reuses
@@ -382,6 +557,18 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.loadedParty = data?.loadedParty;
     this.customMapData = data?.customMapData;
     this.testMode = data?.testMode ?? false;
+
+    // D-202: see `lastPlainDraft`'s own doc comment. Only kicks in when
+    // this visit didn't already bring its own party (Load Game already
+    // won above).
+    if (!this.loadedParty && this.isPlainEntry()) {
+      this.loadedParty = lastPlainDraft;
+    }
+  }
+
+  /** D-202: no campaign, no Free Play/custom map — Main Menu's "New Game"/"Build Party", the only entry points `lastPlainDraft` applies to. */
+  private isPlainEntry(): boolean {
+    return !this.campaignId && !this.freePlayMapId && !this.customMapData;
   }
 
   create(): void {
@@ -390,44 +577,69 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.saveFile = loadSaveFile(window.localStorage, SAVE_STORAGE_KEY);
     initAuth((state) => (this.authState = state));
 
-    this.cameras.main.setBackgroundColor("#0e0e14");
+    // Party Creation Overhaul Plan 8: the ornate/parchment theme (D-123),
+    // same recipe CompendiumScene/MainMenuScene already use. Deliberately no
+    // `spawnAmbientMotes` here — this is a dense, click-heavy data-entry
+    // screen, same category CompendiumScene reasoned motes out of.
+    drawScreenBackdrop(this);
     const width = getViewport(this).width;
     this.viewportWidthAtLastLayout = width;
 
     this.add
-      .text(width / 2, 36, "BUILD YOUR PARTY", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "32px",
-        color: "#e8e8f0",
+      .text(width / 2, 42, "BUILD YOUR PARTY", {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "34px",
+        color: "#f0dfa8",
         fontStyle: "bold",
+        letterSpacing: 2 as unknown as number,
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setShadow(0, 2, "#000000", 6, true, true)
+      .setDepth(1);
 
     this.add
       .text(
         width / 2,
-        72,
-        "Type a hero's name directly. Click a class, race, gear, or subclass to choose from a list. Click an ability score or signature action to cycle it.",
-        { fontFamily: "system-ui, Arial, sans-serif", fontSize: "15px", color: "#8a8aa0" },
+        76,
+        "Type a hero's name directly. Click a class, race, gear, or subclass to choose from a list. In Standard Array mode, click an ability score to pick its value from a dropdown; in Point Buy, use the +/- buttons.",
+        { fontFamily: FONT_BODY, fontSize: "15px", color: "#b8a074", fontStyle: "italic" },
       )
-      .setOrigin(0.5);
-
-    // D-147 (piece 3): the method is party-wide, so it's read once from
-    // whichever build a loaded party's first slot used — every slot in a
-    // save made through this scene shares the same method, since it can
-    // only ever be changed via the one party-wide toggle below.
-    this.abilityScoreMethod = this.loadedParty?.[0]?.abilityScoreMethod === "pointBuy" ? "pointBuy" : "standardArray";
+      .setOrigin(0.5)
+      .setDepth(1);
 
     // KI-098 item 13 (companion roster, Phase 1): campaign mode's party is
     // slot 1 (the player-built hero) plus the roster's 3 active companions
-    // in slots 2-4 — never for Free Play/a plain "Create Party" run, and
-    // never over an actually-loaded save (that party was already built by
-    // hand and saved; a loaded save always wins). Seeding here defends
-    // against reaching this scene without going through CampaignSelectScene
-    // first (e.g. Load Game), and guarantees the roster is settled before
-    // slot-building below ever reads it — no async gap.
+    // in slots 2-4 — never for Free Play/a plain "Create Party" run.
+    // Seeding here defends against reaching this scene without going
+    // through CampaignSelectScene first (e.g. Load Game), and guarantees
+    // the roster is settled before slot-building below ever reads it — no
+    // async gap.
+    //
+    // D-201: this metadata (which slot maps to which companion) now runs
+    // regardless of `loadedParty` — it's needed for `identityLocked`/
+    // `gearLocked` below and for Start Battle's roster write-back
+    // (`this.companionIdForSlot`), NOT just for supplying build VALUES. A
+    // loaded save's own values still win (`loadedBuild` below prefers
+    // `this.loadedParty` over `companionBuildsForSlots`) — this only fixes
+    // a reloaded campaign party (from `LoadGameScene`) losing its
+    // companion lock/gear-pool/point-buy behavior entirely. `roster`'s own
+    // `seedStartingCompanions` call is idempotent (no-ops once the roster
+    // is no longer default), so re-running it on every campaign visit,
+    // loaded or not, is safe.
     const companionBuildsForSlots: (CharacterBuild | undefined)[] = [];
-    if (this.campaignId && !this.loadedParty) {
+    this.companionIdForSlot = [];
+    if (this.campaignId) {
+      // Party Creation Overhaul Plan 2.3: read the pool snapshot from the
+      // SAME roster load the companion prefill below already needs — no
+      // second `localStorage` read.
+      const roster = loadCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY);
+      this.partyInventorySnapshot = getPartyInventory(roster);
+
+      // Party Creation Overhaul Plan 3.1: prefer a persisted build (this
+      // playthrough's own edited gear/spells/level-plan/name) over the
+      // static catalogue whenever one exists — falls back to the catalogue
+      // build for a companion never yet used in a party this playthrough.
+      companionBuildsForSlots[0] = getPcBuild(roster);
       // D-18x (KI-098 item 13, "unlock mission must include them"):
       // `UnlockMissionPartyScene` already resolved the exact 3 companions
       // for slots 2-4 (the unlock target plus the player's own 2 free
@@ -436,41 +648,79 @@ export class CharacterCreationScene extends Phaser.Scene {
       // target companion.
       if (this.requiredCompanionIds && this.requiredCompanionIds.length > 0) {
         this.requiredCompanionIds.forEach((id, i) => {
-          companionBuildsForSlots[i + 1] = getCompanionDefinition(id).build;
+          companionBuildsForSlots[i + 1] = getCompanionBuild(roster, id) ?? getCompanionDefinition(id).build;
+          this.companionIdForSlot[i + 1] = id;
         });
       } else {
-        const roster = seedStartingCompanions(
-          loadCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY),
-          RandomService.seeded(),
-        );
-        saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, roster);
-        roster.activeIds.forEach((id, i) => {
-          companionBuildsForSlots[i + 1] = getCompanionDefinition(id).build;
+        const seededRoster = seedStartingCompanions(roster, RandomService.seeded());
+        saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, seededRoster);
+        seededRoster.activeIds.forEach((id, i) => {
+          companionBuildsForSlots[i + 1] = getCompanionBuild(seededRoster, id) ?? getCompanionDefinition(id).build;
+          this.companionIdForSlot[i + 1] = id;
         });
       }
     }
 
+    // Party Creation Overhaul Plan 3.4: once this campaign has been fully
+    // cleared at least once, companions get their ability-score lock lifted
+    // (class/race stay fixed to their identity — only stats become
+    // customizable). Computed once outside the loop since `this.campaignId`
+    // is fixed for the scene's lifetime; `false` for Free Play/no campaign.
+    const campaignCompleted = this.campaignId
+      ? isCampaignCompleted(loadCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY), this.campaignId)
+      : false;
+
     for (let slot = 0; slot < MAX_PARTY_SIZE; slot++) {
       const loadedBuild = this.loadedParty?.[slot] ?? companionBuildsForSlots[slot];
+      // D-201: no longer gated on `!this.loadedParty` — a reloaded campaign
+      // party (`loadedParty` AND `campaignId` both set, via Load Game) must
+      // lock exactly like a fresh campaign entry. Harmless for a loaded
+      // classic/Free Play party: `companionBuildsForSlots` stays empty
+      // there since the block above only populates it `if (this.campaignId)`.
+      const identityLocked = companionBuildsForSlots[slot] !== undefined;
+      // Party Creation Overhaul Plan 3.2: a returning PC (slot 0) has its
+      // identity locked just like a companion, but its gear/spells/
+      // level-plan/name must stay editable — only a companion's gear is
+      // ever locked to D-194's fixed economy kit.
+      const gearLocked = identityLocked && slot !== 0;
+      // Party Creation Overhaul Plan 3.4: a companion's (never the PC's —
+      // 3.4 doesn't apply to slot 0) ability-score lock lifts once this
+      // campaign has been fully cleared once.
+      const abilityScoreLocked = identityLocked && !(slot !== 0 && campaignCompleted);
+      // Party Creation Overhaul Plan 3.1: the companion's TRUE authored
+      // baseline kit always comes from the static catalogue, never from a
+      // persisted build (which may already be a difficulty-trimmed copy
+      // from a previous visit) — otherwise D-194's difficulty-scaling
+      // economy would double-apply against an already-trimmed kit.
+      const companionId = this.companionIdForSlot[slot];
+      const catalogueGearIds = companionId ? getCompanionDefinition(companionId).build.startingGearIds : undefined;
       this.slots.push(
         loadedBuild
-          ? this.slotStateFromBuild(loadedBuild, !this.loadedParty && companionBuildsForSlots[slot] !== undefined)
+          ? this.slotStateFromBuild(loadedBuild, identityLocked, gearLocked, catalogueGearIds, abilityScoreLocked)
           : {
               identityLocked: false,
+              gearLocked: false,
+              abilityScoreLocked: false,
               name: CHARACTER_NAME_POOL[slot % CHARACTER_NAME_POOL.length],
               classIndex: 0,
               raceIndex: 0,
               allocator: new StandardArrayAllocator(),
+              abilityScoreMethod: "standardArray",
               // D-129: default to 1 human, the rest AI-controlled — Kevin's
               // own request, so a fresh party is playtest-ready without
               // manually toggling three slots every time. Loading a saved
               // party (`slotStateFromBuild`, below) still uses whatever
               // control mix was actually saved, unaffected by this default.
               controlledBy: slot === 0 ? "human" : "ai",
-              startingGearIndex: 0,
+              gearIndices: {},
               subclassIndex: 0,
               startingLevel: 1,
-              levelUpPlan: emptyLevelUpPlan(),
+              // Party Creation Overhaul Plan 5.1 (D-198): an AI-controlled
+              // slot starts on "auto" mode (the hard-rule-only-legal mode
+              // for AI — the `cadenceHandle` toggle stays disabled/forced to
+              // it, Plan 6.4) instead of "fresh" — matches the default
+              // `controlledBy` set above.
+              levelUpPlan: emptyLevelUpPlan(slot === 0 ? "fresh" : "auto"),
               spellPicks: {},
             },
       );
@@ -526,44 +776,48 @@ export class CharacterCreationScene extends Phaser.Scene {
   private buildSlotUi(width: number, slot: number): SlotWidgets {
     const x = columnCenterX(width, slot);
     const allObjects: Phaser.GameObjects.GameObject[] = [];
-    const interactiveButtons: Phaser.GameObjects.Rectangle[] = [];
+    const interactiveButtons: OrnateButtonHandle[] = [];
 
-    // Spans the actual content range (Hero-N label at ~y121 through the new
-    // Spells row at ~y710), verified by adding up every row's height
-    // and gap below (bounding-box math, no browser available here — same
-    // discipline as D-046/D-055/D-059's HUD layout fixes). Grew by 40px in
-    // Phase 11.3 (D-075) for the race row, another 40px in Phase 13.11
-    // (D-096) for the Gear row, another 40px in Phase 14.2 (D-099) for the
-    // Subclass row, another 40px in D-129 for the Starting Level row,
-    // another 40px in D-133 for the Plan Levels row, and another 40px in
-    // D-135 for the Spells row — top edge (y105) held fixed every time, so
-    // the whole column grows downward, not into the title/subtitle above
-    // (every row below this column, from `buildBottomControls` down,
-    // shifted +40px to match).
-    const background = this.add
-      .rectangle(x, 430, COLUMN_WIDTH, 650, 0x1a1a26)
-      .setStrokeStyle(1, 0x2a2a3a)
-      .setDepth(0);
+    // Party Creation Overhaul Plan 8: the column backdrop is now a real
+    // parchment panel (`drawParchmentPanel`, depth 5) instead of a flat dark
+    // rectangle — every button below defaults to depth 10, so it naturally
+    // renders on top with no extra work. Top edge stays fixed at y105 (the
+    // KI-083 convention every prior row addition preserved); height grew to
+    // 680 (was 650) and centerY to 445 (was 430) to keep pace with the
+    // taller ornate rows below (see `gearY`/`subclassY`/etc.).
+    const background = drawParchmentPanel(this, x, 445, COLUMN_WIDTH, 680, 5);
     allObjects.push(background);
 
     // Phase 11.4 (D-077): the old plain "Hero N" label became a clickable
     // Human/AI toggle in the SAME spot, so no other row on this slot moves.
-    const controlButton = this.add
-      .rectangle(x, 130, COLUMN_WIDTH - 20, 26, 0x24242e)
-      .setStrokeStyle(1, 0x3a3a4a)
-      .setInteractive({ useHandCursor: true });
-    const controlLabel = this.add
-      .text(x, 130, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#8a8aa0" })
-      .setOrigin(0.5);
-    controlButton.on("pointerover", () => controlButton.setFillStyle(0x2e2e3a));
-    controlButton.on("pointerout", () => controlButton.setFillStyle(0x24242e));
-    controlButton.on("pointerdown", () => {
-      const s = this.slots[slot];
-      s.controlledBy = s.controlledBy === "human" ? "ai" : "human";
-      this.refreshAll();
-    });
-    allObjects.push(controlButton, controlLabel);
-    interactiveButtons.push(controlButton);
+    // Party Creation Overhaul Plan 8: height 26 -> 32 (ornate buttons need
+    // more room than a bare rectangle).
+    const controlHandle = createOrnateButton(
+      this,
+      x,
+      130,
+      COLUMN_WIDTH - 20,
+      32,
+      "",
+      () => {
+        const s = this.slots[slot];
+        s.controlledBy = s.controlledBy === "human" ? "ai" : "human";
+        // Party Creation Overhaul Plan 5.1 (D-198): the hard rule — an
+        // AI-controlled hero's level-up mode is always "auto" (the
+        // `cadenceHandle` pill, Plan 6.4, stays disabled/forced to it too).
+        // Forced here too, not just at slot creation, so toggling Human ->
+        // AI on an already-built hero can't leave it on Prompted/Fresh with
+        // nobody there to answer it. Toggling back to
+        // Human leaves the mode as "auto" rather than reverting it — the
+        // player can freely repick via the `cadenceHandle` pill if they
+        // want prompts back.
+        if (s.controlledBy === "ai") s.levelUpPlan = { ...s.levelUpPlan, mode: "auto" };
+        this.refreshAll();
+      },
+      { variant: "tab" },
+    );
+    allObjects.push(controlHandle.container);
+    interactiveButtons.push(controlHandle);
 
     // D-147 (piece 2): a real DOM `<input>` (this project's second use of one
     // — see `CoopLobbyScene`'s join-code field, KI-062, for the first and
@@ -573,6 +827,9 @@ export class CharacterCreationScene extends Phaser.Scene {
     // `s.name` live and re-runs `refreshAll` (for duplicate/blank-name
     // validation) but never writes back INTO the input itself, so the
     // player's cursor position/selection is never disturbed mid-edit.
+    // Party Creation Overhaul Plan 8: cosmetic-only colors so the field sits
+    // on the new parchment backdrop instead of the old dark panel — no
+    // behavior change.
     const nameInput = this.add
       .dom(
         x,
@@ -581,13 +838,14 @@ export class CharacterCreationScene extends Phaser.Scene {
       .createFromHTML(
         `<input type="text" maxlength="24" placeholder="Hero Name" style="
           width: ${COLUMN_WIDTH - 20}px; height: 34px; font-size: 16px;
-          font-family: system-ui, Arial, sans-serif; font-weight: bold;
-          text-align: center; background: #2a2a3a; color: #e8e8f0;
-          border: 1px solid #4a4a5a; border-radius: 4px; outline: none;
+          font-family: 'EB Garamond', Georgia, 'Times New Roman', serif; font-weight: bold;
+          text-align: center; background: #e8d8ae; color: #2a1a10;
+          border: 1px solid #5a3a20; border-radius: 4px; outline: none;
           box-sizing: border-box;
         " />`,
       )
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(10);
     const nameNode = nameInput.node.querySelector("input") as HTMLInputElement;
     nameNode.value = this.slots[slot].name;
     nameNode.addEventListener("input", () => {
@@ -595,184 +853,265 @@ export class CharacterCreationScene extends Phaser.Scene {
       this.refreshAll();
     });
     nameNode.addEventListener("keydown", (e: KeyboardEvent) => e.stopPropagation());
+    // Party Creation Overhaul Plan 1.1: a click landing on a real DOM
+    // `<input>` doesn't reach the dropdown's own full-canvas Phaser catcher
+    // rectangle (DOM elements sit outside Phaser's pointer pipeline) — close
+    // explicitly on focus so a stray dropdown never gets left open/orphaned.
+    nameNode.addEventListener("focus", () => this.closeDropdown());
 
-    const classButton = this.add
-      .rectangle(x, 200, COLUMN_WIDTH - 20, 26, 0x222a2e)
-      .setStrokeStyle(1, 0x3a4a4a)
-      .setInteractive({ useHandCursor: true });
-    const classLabel = this.add
-      .text(x, 200, "", { fontFamily: "monospace", fontSize: "13px", color: "#8aa0c0" })
-      .setOrigin(0.5);
-    classButton.on("pointerover", () => classButton.setFillStyle(0x2a3a3a));
-    classButton.on("pointerout", () => classButton.setFillStyle(0x222a2e));
-    classButton.on("pointerdown", () => {
-      const s = this.slots[slot];
-      if (s.identityLocked) return;
-      this.openChoicePicker(
-        "Choose a Class",
-        CREATABLE_CLASS_IDS.map((id, i) => ({
-          label: getClassDefinition(id).name,
-          // D-147 (piece 4): a one-sentence "what does this class play
-          // like" preview, shown right on the picker so the player doesn't
-          // have to leave Character Creation to find out.
-          desc: getClassDefinition(id).previewSummary,
-          highlighted: i === s.classIndex,
-          onPick: () => {
-            s.classIndex = i;
-            // D-133: a different class has an entirely different choice ladder —
-            // a stale plan would be meaningless at best, wrong at worst.
-            s.levelUpPlan = emptyLevelUpPlan();
-            // D-135: same reasoning — a different class has an entirely different
-            // spell list, so a stale manual pick would be meaningless too.
-            s.spellPicks = {};
-          },
-        })),
-      );
-    });
-
-    const raceButton = this.add
-      .rectangle(x, 233, COLUMN_WIDTH - 20, 26, 0x2a2622)
-      .setStrokeStyle(1, 0x4a4436)
-      .setInteractive({ useHandCursor: true });
-    const raceLabel = this.add
-      .text(x, 233, "", { fontFamily: "monospace", fontSize: "13px", color: "#c0a880" })
-      .setOrigin(0.5);
-    raceButton.on("pointerover", () => raceButton.setFillStyle(0x352f28));
-    raceButton.on("pointerout", () => raceButton.setFillStyle(0x2a2622));
-    raceButton.on("pointerdown", () => {
-      const s = this.slots[slot];
-      if (s.identityLocked) return;
-      // D-147 (piece 5): each option's desc shows what's actually real
-      // (speed, flavor traits) — deliberately no invented ability-score
-      // bonus. This project's spell-prep economy (D-134) already committed
-      // to real SRD 5.2.1, which moved ability-score increases from Race to
-      // Background — no race grants one there either, so nothing is
-      // missing here, and the picker's title says so plainly.
-      this.openChoicePicker(
-        "Choose a Race — SRD 5.2.1 ties ability-score increases to Background, not Race, so none are missing below.",
-        RACE_IDS.map((id, i) => {
-          const race = getRaceDefinition(id);
-          return {
-            label: race.name,
-            desc: `Speed: ${race.speedTiles} tiles/turn · ${race.traits.map((t) => t.name).join(", ")}`,
-            highlighted: i === s.raceIndex,
+    const classHandle = createOrnateButton(
+      this,
+      x,
+      200,
+      COLUMN_WIDTH - 20,
+      32,
+      "",
+      () => {
+        const s = this.slots[slot];
+        if (s.identityLocked) return;
+        this.openChoicePicker(
+          "Choose a Class",
+          CREATABLE_CLASS_IDS.map((id, i) => ({
+            label: getClassDefinition(id).name,
+            // D-147 (piece 4): a one-sentence "what does this class play
+            // like" preview, shown right on the picker so the player doesn't
+            // have to leave Character Creation to find out.
+            desc: getClassDefinition(id).previewSummary,
+            highlighted: i === s.classIndex,
             onPick: () => {
-              s.raceIndex = i;
+              s.classIndex = i;
+              // D-133: a different class has an entirely different choice ladder —
+              // a stale plan would be meaningless at best, wrong at worst.
+              s.levelUpPlan = emptyLevelUpPlan();
+              // D-135: same reasoning — a different class has an entirely different
+              // spell list, so a stale manual pick would be meaningless too.
+              s.spellPicks = {};
+              // D-193: gear picks are NOT reset on class change — every slot's
+              // pool is class-independent (no class gating on any item).
             },
-          };
-        }),
-      );
-    });
+          })),
+        );
+      },
+      { variant: "tab" },
+    );
 
-    const abilityScoreLabels = {} as Record<AbilityScoreId, Phaser.GameObjects.Text>;
+    const raceHandle = createOrnateButton(
+      this,
+      x,
+      233,
+      COLUMN_WIDTH - 20,
+      32,
+      "",
+      () => {
+        const s = this.slots[slot];
+        if (s.identityLocked) return;
+        // D-147 (piece 5): each option's desc shows what's actually real
+        // (speed, flavor traits) — deliberately no invented ability-score
+        // bonus. This project's spell-prep economy (D-134) already committed
+        // to real SRD 5.2.1, which moved ability-score increases from Race to
+        // Background — no race grants one there either, so nothing is
+        // missing here, and the picker's title says so plainly.
+        this.openChoicePicker(
+          "Choose a Race — SRD 5.2.1 ties ability-score increases to Background, not Race, so none are missing below.",
+          RACE_IDS.map((id, i) => {
+            const race = getRaceDefinition(id);
+            return {
+              label: race.name,
+              desc: `Speed: ${race.speedTiles} tiles/turn · ${race.traits.map((t) => t.name).join(", ")}`,
+              highlighted: i === s.raceIndex,
+              onPick: () => {
+                s.raceIndex = i;
+              },
+            };
+          }),
+        );
+      },
+      { variant: "tab" },
+    );
+
+    // Playtest fix (Party Creation Overhaul, Plan 0): Point Buy's
+    // "Points Left" readout used to be concatenated onto the STR row's own
+    // label text, pushing STR itself off the edge of the button. It now
+    // gets its own slim, dedicated line above the ability-score block —
+    // always present (so nothing else needs to shift when the method
+    // toggles), just left blank in Standard Array mode. `abilityRowsTop`
+    // shifts down slightly (270 -> 292) to make room; every row below it
+    // (`gearY`/`subclassY`/`levelY`/`planY`/`spellsY`) is already computed
+    // relative to `abilityRowsTop`, so they cascade automatically.
+    // Party Creation Overhaul Plan 8: dark ink color for the new parchment
+    // backdrop (was a dim green on near-black).
+    const pointsLeftY = 258;
+    const pointsLeftLabel = this.add
+      .text(x, pointsLeftY, "", { fontFamily: FONT_BODY, fontSize: "11px", color: "#2f4a34" })
+      .setOrigin(0.5)
+      .setDepth(10);
+
+    // Party Creation Overhaul Plan 1.2: this hero's own Standard Array/Point
+    // Buy toggle — was one scene-wide button (`buildTeamLevelControl`'s old
+    // "leftX" half) before this. A dedicated slim row rather than sharing
+    // `pointsLeftLabel`'s row — Plan 0.4 already fixed exactly this class of
+    // bug once (two labels sharing one row pushing each other off). Own row
+    // pushes `abilityRowsTop` down another 292 -> 300, same cascade as the
+    // 270 -> 292 shift above.
+    const abilityMethodHandle = createOrnateButton(
+      this,
+      x,
+      280,
+      140,
+      20,
+      "",
+      () => {
+        const s = this.slots[slot];
+        s.abilityScoreMethod = s.abilityScoreMethod === "standardArray" ? "pointBuy" : "standardArray";
+        s.allocator = s.abilityScoreMethod === "pointBuy" ? new PointBuyAllocator() : new StandardArrayAllocator();
+        this.closeDropdown();
+        this.refreshAll();
+      },
+      { variant: "tool" },
+    );
+    allObjects.push(abilityMethodHandle.container);
+    interactiveButtons.push(abilityMethodHandle);
+
+    // Party Creation Overhaul Plan 8: `createOrnateButton` owns its label
+    // internally, so Standard Array's dropdown-trigger row and Point Buy's
+    // value readout can no longer share one Text object riding on the
+    // shared row position — `pointBuyValueLabels` is Point Buy's own copy.
+    const standardArrayHandles = {} as Record<AbilityScoreId, OrnateButtonHandle>;
+    const pointBuyValueLabels = {} as Record<AbilityScoreId, Phaser.GameObjects.Text>;
     // D-147 (piece 3): kept OUT of `interactiveButtons` — their interactivity
     // is managed by `refreshAbilityScoreControls` (which also has to weigh
-    // the party-wide method), not the generic active/inactive-slot toggle.
-    const standardArrayRowButtons: Phaser.GameObjects.Rectangle[] = [];
-    const pointBuyButtons: Phaser.GameObjects.Rectangle[] = [];
-    const abilityRowsTop = 270;
-    const abilityRowHeight = 30;
+    // this hero's own method, Plan 1.2), not the generic active/inactive-slot
+    // toggle.
+    const standardArrayRowButtons: OrnateButtonHandle[] = [];
+    const pointBuyButtons: OrnateButtonHandle[] = [];
+    const abilityRowsTop = 300;
+    // Party Creation Overhaul Plan 8: 30 -> 34 (ornate rows need more room).
+    const abilityRowHeight = 34;
     ABILITY_SCORE_IDS.forEach((ability, row) => {
       const y = abilityRowsTop + row * abilityRowHeight;
 
-      // Standard Array mode: the whole row is one cycle button (unchanged since Phase 11.1).
-      const rowButton = this.add
-        .rectangle(x, y, COLUMN_WIDTH - 20, 24, 0x22222e)
-        .setStrokeStyle(1, 0x32324a)
-        .setInteractive({ useHandCursor: true });
-      const label = this.add
-        .text(x, y, "", { fontFamily: "monospace", fontSize: "13px", color: "#c8c8d8" })
-        .setOrigin(0.5);
-      rowButton.on("pointerover", () => rowButton.setFillStyle(0x2a2a3a));
-      rowButton.on("pointerout", () => rowButton.setFillStyle(0x22222e));
-      rowButton.on("pointerdown", () => {
-        if (this.abilityScoreMethod !== "standardArray") return;
-        (this.slots[slot].allocator as StandardArrayAllocator).cycle(ability);
-        this.refreshAll();
-      });
+      // Standard Array mode: the whole row is one button that opens a
+      // per-value dropdown (Party Creation Overhaul Plan 1.1 — was a
+      // click-to-cycle button before this). Height 24 -> 28 (Plan 8).
+      const rowHandle = createOrnateButton(
+        this,
+        x,
+        y,
+        COLUMN_WIDTH - 20,
+        28,
+        "",
+        () => {
+          if (this.slots[slot].abilityScoreLocked) return;
+          if (this.slots[slot].abilityScoreMethod !== "standardArray") return;
+          this.openAbilityDropdown(slot, ability, x, y);
+        },
+        { variant: "tab" },
+      );
 
-      // D-147 (piece 3): Point Buy mode — a +/- stepper layered at the same
-      // row position (higher depth so it visually and input-wise sits above
-      // `rowButton`), shown/interactive only while the method is "pointBuy"
-      // (`refreshAbilityScoreControls` toggles both sets' visibility and
-      // interactivity together, so only one set is ever clickable). `label`
-      // above is shared by both modes — the score/modifier text it shows is
-      // computed identically either way (see `refreshSlot`).
-      const minusButton = this.add
-        .rectangle(x - 100, y, 26, 22, 0x2a2a3a)
-        .setStrokeStyle(1, 0x4a4a5a)
-        .setDepth(1)
-        .setInteractive({ useHandCursor: true });
-      const minusLabel = this.add
-        .text(x - 100, y, "-", { fontFamily: "monospace", fontSize: "16px", color: "#e8e8f0", fontStyle: "bold" })
+      // D-147 (piece 3): Point Buy mode — a +/- stepper at the same row
+      // position, shown/interactive only while this hero's own method is
+      // "pointBuy" (`refreshAbilityScoreControls` toggles both sets'
+      // visibility and interactivity together, so only one set is ever
+      // clickable/visible — stacking order between them doesn't matter).
+      // `pointBuyValueLabels` shows the score/modifier text, computed
+      // identically to Standard Array's own label either way (see
+      // `refreshSlot`). Size 26x22 -> 30x28 (Plan 8).
+      const minusHandle = createOrnateButton(
+        this,
+        x - 100,
+        y,
+        30,
+        28,
+        "−",
+        () => {
+          if (this.slots[slot].abilityScoreLocked) return;
+          if (this.slots[slot].abilityScoreMethod !== "pointBuy") return;
+          (this.slots[slot].allocator as PointBuyAllocator).decrease(ability);
+          this.refreshAll();
+        },
+        { variant: "secondary", fontSize: 16 },
+      );
+
+      const plusHandle = createOrnateButton(
+        this,
+        x + 100,
+        y,
+        30,
+        28,
+        "+",
+        () => {
+          if (this.slots[slot].abilityScoreLocked) return;
+          if (this.slots[slot].abilityScoreMethod !== "pointBuy") return;
+          (this.slots[slot].allocator as PointBuyAllocator).increase(ability);
+          this.refreshAll();
+        },
+        { variant: "secondary", fontSize: 16 },
+      );
+
+      const valueLabel = this.add
+        .text(x, y, "", { fontFamily: FONT_BODY, fontSize: "13px", color: "#2a1a10" })
         .setOrigin(0.5)
-        .setDepth(2);
-      minusButton.on("pointerover", () => minusButton.setFillStyle(0x3a3a4a));
-      minusButton.on("pointerout", () => minusButton.setFillStyle(0x2a2a3a));
-      minusButton.on("pointerdown", () => {
-        if (this.abilityScoreMethod !== "pointBuy") return;
-        (this.slots[slot].allocator as PointBuyAllocator).decrease(ability);
-        this.refreshAll();
-      });
+        .setDepth(10);
 
-      const plusButton = this.add
-        .rectangle(x + 100, y, 26, 22, 0x2a2a3a)
-        .setStrokeStyle(1, 0x4a4a5a)
-        .setDepth(1)
-        .setInteractive({ useHandCursor: true });
-      const plusLabel = this.add
-        .text(x + 100, y, "+", { fontFamily: "monospace", fontSize: "16px", color: "#e8e8f0", fontStyle: "bold" })
-        .setOrigin(0.5)
-        .setDepth(2);
-      plusButton.on("pointerover", () => plusButton.setFillStyle(0x3a3a4a));
-      plusButton.on("pointerout", () => plusButton.setFillStyle(0x2a2a3a));
-      plusButton.on("pointerdown", () => {
-        if (this.abilityScoreMethod !== "pointBuy") return;
-        (this.slots[slot].allocator as PointBuyAllocator).increase(ability);
-        this.refreshAll();
-      });
-
-      abilityScoreLabels[ability] = label;
-      standardArrayRowButtons.push(rowButton);
-      pointBuyButtons.push(minusButton, plusButton);
-      allObjects.push(rowButton, label, minusButton, minusLabel, plusButton, plusLabel);
+      standardArrayHandles[ability] = rowHandle;
+      pointBuyValueLabels[ability] = valueLabel;
+      standardArrayRowButtons.push(rowHandle);
+      pointBuyButtons.push(minusHandle, plusHandle);
+      allObjects.push(rowHandle.container, minusHandle.container, plusHandle.container, valueLabel);
     });
 
     // Phase 13.11 (D-096): a free starting-gear pick, cycling "None" plus
     // every common/uncommon catalogue item. D-178: now the first row below
     // ability scores — sits where the removed "signature action" row used
-    // to (same `+15` gap off `abilityRowsTop`), since every class's basic
-    // attack is a fixed part of its own identity now, not a creation-time
-    // pick — everything below this row cascades off `gearY` unchanged.
-    const gearY = abilityRowsTop + ABILITY_SCORE_IDS.length * abilityRowHeight + 15;
-    const gearButton = this.add
-      .rectangle(x, gearY, COLUMN_WIDTH - 20, 26, 0x22282a)
-      .setStrokeStyle(1, 0x3a4a4c)
-      .setInteractive({ useHandCursor: true });
-    const gearLabel = this.add
-      .text(x, gearY, "", { fontFamily: "monospace", fontSize: "13px", color: "#a8c8c0" })
-      .setOrigin(0.5);
-    gearButton.on("pointerover", () => gearButton.setFillStyle(0x2a3436));
-    gearButton.on("pointerout", () => gearButton.setFillStyle(0x22282a));
-    gearButton.on("pointerdown", () => {
-      const s = this.slots[slot];
-      this.openChoicePicker("Choose Starting Gear", [
-        {
-          label: "None",
-          highlighted: s.startingGearIndex === 0,
-          onPick: () => {
-            s.startingGearIndex = 0;
-          },
-        },
-        ...STARTING_GEAR_IDS.map((id, i) => ({
-          label: getEquipmentDefinition(id).name,
-          highlighted: s.startingGearIndex === i + 1,
-          onPick: () => {
-            s.startingGearIndex = i + 1;
-          },
-        })),
-      ]);
-    });
+    // to, since every class's basic attack is a fixed part of its own
+    // identity now, not a creation-time pick — everything below this row
+    // cascades off `gearY` unchanged. Party Creation Overhaul Plan 8: the
+    // "+15"/"+40" gaps below grew slightly (see each row's own comment) to
+    // match the taller ornate rows.
+    const gearY = abilityRowsTop + ABILITY_SCORE_IDS.length * abilityRowHeight + 20;
+    // Party Creation Overhaul Plan 2.3: split this row into Gear (left half)
+    // and Pool (right half) instead of adding a new row — this scene's
+    // layout is self-documented as fragile (KI-083), and everything below
+    // (`subclassY = gearY + 44`, etc.) cascades off `gearY` unchanged;
+    // inserting a whole new row would mean re-deriving every one of those
+    // constants. `rowGap` mirrors the small gaps used elsewhere in this file
+    // between same-row controls.
+    const rowGap = 6;
+    const halfWidth = (COLUMN_WIDTH - 20 - rowGap) / 2;
+    const gearHandle = createOrnateButton(
+      this,
+      x - halfWidth / 2 - rowGap / 2,
+      gearY,
+      halfWidth,
+      32,
+      "",
+      () => {
+        // D-194: a campaign companion's gear is fixed (difficulty-scaled,
+        // never player-edited) — same guard style Class/Race already use.
+        // Party Creation Overhaul Plan 3.2: checks `gearLocked`, not
+        // `identityLocked` — a returning PC has identity locked but gear
+        // stays editable, unlike a companion (see `SlotState.gearLocked`).
+        if (this.slots[slot].gearLocked) return;
+        this.openGearPicker(slot);
+      },
+      { variant: "tab" },
+    );
+    // Party Creation Overhaul Plan 2.3: NOT gated by `gearLocked` — a
+    // companion draws from the pool too, that's the entire point (their
+    // fixed catalogue/difficulty kit and the pool are two separate gear
+    // sources). Hidden entirely outside campaign mode below (no
+    // `campaignId`, no roster/pool concept at all).
+    const poolHandle = createOrnateButton(
+      this,
+      x + halfWidth / 2 + rowGap / 2,
+      gearY,
+      halfWidth,
+      32,
+      "",
+      () => this.openPoolPicker(slot),
+      { variant: "tab" },
+    );
+    if (!this.campaignId || this.partyInventorySnapshot.length === 0) poolHandle.container.setVisible(false);
 
     // Phase 14.2 (D-099): a subclass-picker row. Only actually cycles
     // anything for a level-1-choice class with 2+ modeled subclasses today
@@ -781,85 +1120,110 @@ export class CharacterCreationScene extends Phaser.Scene {
     // pattern the other cycle buttons already use (their behavior doesn't
     // depend on any OTHER slot's state either). A later-choice class's
     // subclass is still picked in battle, via BattleScene's own overlay.
-    const subclassY = gearY + 40;
-    const subclassButton = this.add
-      .rectangle(x, subclassY, COLUMN_WIDTH - 20, 26, 0x2a2438)
-      .setStrokeStyle(1, 0x4a3a5a)
-      .setInteractive({ useHandCursor: true });
-    const subclassLabel = this.add
-      .text(x, subclassY, "", { fontFamily: "monospace", fontSize: "13px", color: "#c8a8e0" })
-      .setOrigin(0.5);
-    subclassButton.on("pointerover", () => subclassButton.setFillStyle(0x342a44));
-    subclassButton.on("pointerout", () => subclassButton.setFillStyle(0x2a2438));
-    subclassButton.on("pointerdown", () => {
-      const s = this.slots[slot];
-      const classId = CREATABLE_CLASS_IDS[s.classIndex];
-      const options = subclassesForClass(classId);
-      if (getClassDefinition(classId).subclassChoiceLevel !== 1 || options.length < 2) return;
-      this.openChoicePicker(
-        "Choose a Subclass",
-        options.map((opt, i) => ({
-          label: opt.name,
-          highlighted: i === s.subclassIndex,
-          onPick: () => {
-            s.subclassIndex = i;
-          },
-        })),
-      );
-    });
+    const subclassY = gearY + 44;
+    const subclassHandle = createOrnateButton(
+      this,
+      x,
+      subclassY,
+      COLUMN_WIDTH - 20,
+      32,
+      "",
+      () => {
+        const s = this.slots[slot];
+        const classId = CREATABLE_CLASS_IDS[s.classIndex];
+        const options = subclassesForClass(classId);
+        if (getClassDefinition(classId).subclassChoiceLevel !== 1 || options.length < 2) return;
+        this.openChoicePicker(
+          "Choose a Subclass",
+          options.map((opt, i) => ({
+            label: opt.name,
+            highlighted: i === s.subclassIndex,
+            onPick: () => {
+              s.subclassIndex = i;
+            },
+          })),
+        );
+      },
+      { variant: "tab" },
+    );
 
     const statsLabel = this.add
-      .text(x, subclassY + 45, "", {
-        fontFamily: "monospace",
+      .text(x, subclassY + 48, "", {
+        fontFamily: FONT_BODY,
         fontSize: "13px",
-        color: "#9be0b4",
+        color: "#2a1a10",
         align: "center",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(10);
 
     // D-129: a pre-battle "Starting Level" control — cycles 1-20, wrapping,
     // same interaction shape as every other cycle button in this column.
     // Kevin asked for this specifically to stop every playtest from having
     // to grind a party up from level 1; see the Team Level control in
     // `buildBottomControls` for setting every slot at once instead.
-    const levelY = subclassY + 85;
-    const levelButton = this.add
-      .rectangle(x, levelY, COLUMN_WIDTH - 20, 26, 0x28241c)
-      .setStrokeStyle(1, 0x4a4030)
-      .setInteractive({ useHandCursor: true });
-    const levelLabel = this.add
-      .text(x, levelY, "", { fontFamily: "monospace", fontSize: "13px", color: "#e0c890" })
-      .setOrigin(0.5);
-    levelButton.on("pointerover", () => levelButton.setFillStyle(0x342e22));
-    levelButton.on("pointerout", () => levelButton.setFillStyle(0x28241c));
-    levelButton.on("pointerdown", () => {
-      const s = this.slots[slot];
-      const levels: number[] = [];
-      for (let n = 1; n <= MAX_CLASS_LEVEL; n++) levels.push(n);
-      this.openChoicePicker(
-        "Choose Starting Level",
-        levels.map((n) => ({
-          label: `${n}`,
-          highlighted: n === s.startingLevel,
-          onPick: () => (s.startingLevel = n),
-        })),
-      );
-    });
+    const levelY = subclassY + 88;
+    const levelHandle = createOrnateButton(
+      this,
+      x,
+      levelY,
+      COLUMN_WIDTH - 20,
+      32,
+      "",
+      () => {
+        const s = this.slots[slot];
+        const levels: number[] = [];
+        for (let n = 1; n <= MAX_CLASS_LEVEL; n++) levels.push(n);
+        this.openChoicePicker(
+          "Choose Starting Level",
+          levels.map((n) => ({
+            label: `${n}`,
+            highlighted: n === s.startingLevel,
+            onPick: () => (s.startingLevel = n),
+          })),
+        );
+      },
+      { variant: "tab" },
+    );
 
     // D-133: the level-by-level Character Creation planner — opens a
     // full-screen wizard (see `openLevelPlanner`) letting the player pick
     // every future ASI/subclass/spell-pick choice for this hero in advance.
-    const planY = levelY + 40;
-    const planButton = this.add
-      .rectangle(x, planY, COLUMN_WIDTH - 20, 26, 0x2c2020)
-      .setStrokeStyle(1, 0x5a3a3a)
-      .setInteractive({ useHandCursor: true });
-    const planLabel = this.add
-      .text(x, planY, "", { fontFamily: "monospace", fontSize: "13px", color: "#e0a0a0" })
-      .setOrigin(0.5);
-    planButton.on("pointerover", () => planButton.setFillStyle(0x362828));
-    planButton.on("pointerout", () => planButton.setFillStyle(0x2c2020));
-    planButton.on("pointerdown", () => this.openLevelPlanner(slot));
+    // Party Creation Overhaul Plan 6.4: split into two half-width buttons
+    // (same technique D-197 used for Gear|Pool, `rowGap`/`halfWidth` above)
+    // instead of a new row — "Plan Levels" (which plan) and a cadence
+    // toggle (how it's applied, D-133's old Auto/Prompted/Fresh choice,
+    // decoupled from the wizard entirely).
+    const planY = levelY + 44;
+    const planHandle = createOrnateButton(
+      this,
+      x - halfWidth / 2 - rowGap / 2,
+      planY,
+      halfWidth,
+      32,
+      "",
+      () => this.openLevelPlanner(slot),
+      { variant: "tab" },
+    );
+    const cadenceHandle = createOrnateButton(
+      this,
+      x + halfWidth / 2 + rowGap / 2,
+      planY,
+      halfWidth,
+      32,
+      "",
+      () => {
+        const s = this.slots[slot];
+        // Party Creation Overhaul Plan 5.1 (D-198): the hard rule — an
+        // AI-controlled hero's mode is always "auto." `setDisabled` below
+        // already blocks the click, this is a defensive no-op backstop.
+        if (s.controlledBy === "ai") return;
+        const next: Record<LevelUpPlanMode, LevelUpPlanMode> = { auto: "prompt", prompt: "fresh", fresh: "auto" };
+        s.levelUpPlan.mode = next[s.levelUpPlan.mode];
+        this.refreshAll();
+      },
+      { variant: "tab" },
+    );
 
     // D-135: the starting spell-selection wizard — opens a full-screen
     // picker (see `openSpellPicker`) letting the player choose this hero's
@@ -868,62 +1232,64 @@ export class CharacterCreationScene extends Phaser.Scene {
     // no-op for a class with no real picks to make (see
     // `spellPickStepsForClass`'s own doc comment for why Paladin/Ranger, in
     // particular, land here despite having a real spell-slot economy).
-    const spellsY = planY + 40;
-    const spellsButton = this.add
-      .rectangle(x, spellsY, COLUMN_WIDTH - 20, 26, 0x202c2c)
-      .setStrokeStyle(1, 0x3a5a5a)
-      .setInteractive({ useHandCursor: true });
-    const spellsLabel = this.add
-      .text(x, spellsY, "", { fontFamily: "monospace", fontSize: "13px", color: "#a0e0e0" })
-      .setOrigin(0.5);
-    spellsButton.on("pointerover", () => spellsButton.setFillStyle(0x283838));
-    spellsButton.on("pointerout", () => spellsButton.setFillStyle(0x202c2c));
-    spellsButton.on("pointerdown", () => this.openSpellPicker(slot));
+    const spellsY = planY + 44;
+    const spellsHandle = createOrnateButton(
+      this,
+      x,
+      spellsY,
+      COLUMN_WIDTH - 20,
+      32,
+      "",
+      () => this.openSpellPicker(slot),
+      { variant: "tab" },
+    );
 
     allObjects.push(
       nameInput,
-      classButton,
-      classLabel,
-      raceButton,
-      raceLabel,
-      gearButton,
-      gearLabel,
-      subclassButton,
-      subclassLabel,
+      classHandle.container,
+      raceHandle.container,
+      gearHandle.container,
+      poolHandle.container,
+      subclassHandle.container,
       statsLabel,
-      levelButton,
-      levelLabel,
-      planButton,
-      planLabel,
-      spellsButton,
-      spellsLabel,
-      ...Object.values(abilityScoreLabels),
+      levelHandle.container,
+      planHandle.container,
+      cadenceHandle.container,
+      spellsHandle.container,
+      pointsLeftLabel,
     );
     interactiveButtons.push(
-      classButton,
-      raceButton,
-      gearButton,
-      subclassButton,
-      levelButton,
-      planButton,
-      spellsButton,
+      classHandle,
+      raceHandle,
+      gearHandle,
+      poolHandle,
+      subclassHandle,
+      levelHandle,
+      planHandle,
+      cadenceHandle,
+      spellsHandle,
     );
 
     return {
-      controlLabel,
+      controlHandle,
       nameInput,
       nameInputNode: nameNode,
-      classLabel,
-      raceLabel,
-      abilityScoreLabels,
+      classHandle,
+      raceHandle,
+      abilityMethodHandle,
+      standardArrayHandles,
+      pointBuyValueLabels,
       standardArrayRowButtons,
       pointBuyButtons,
-      gearLabel,
-      subclassLabel,
+      gearHandle,
+      poolHandle,
+      subclassHandle,
       statsLabel,
-      levelLabel,
-      planLabel,
-      spellsLabel,
+      levelHandle,
+      planHandle,
+      cadenceHandle,
+      spellsHandle,
+      pointsLeftLabel,
       allObjects,
       interactiveButtons,
     };
@@ -938,119 +1304,101 @@ export class CharacterCreationScene extends Phaser.Scene {
   // discipline as the race-row +40 shift and the 720->900->1000 canvas
   // bumps; GAME_HEIGHT (1080) has ample room to spare either way.
   private buildBottomControls(width: number): void {
-    this.buildPartyWideAbilityControls(width, 810);
-    const y = 860;
+    // Party Creation Overhaul Plan 8: shifted +30 (810->840/860->890) to
+    // keep pace with the taller ornate column above.
+    this.buildTeamLevelControl(width, 840);
+    const y = 890;
     const leftX = width / 2 - 150;
     const rightX = width / 2 + 150;
 
-    this.partySizeButton = this.add
-      .rectangle(leftX, y, 280, 40, 0x2a2a3a)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    this.partySizeLabel = this.add
-      .text(leftX, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e8e8f0" })
-      .setOrigin(0.5);
-    this.partySizeButton.on("pointerover", () => this.partySizeButton.setFillStyle(0x3a3a4a));
-    this.partySizeButton.on("pointerout", () => this.partySizeButton.setFillStyle(0x2a2a3a));
-    this.partySizeButton.on("pointerdown", () => {
-      // KI-098 item 13 (companion roster, Phase 1): campaign mode's party
-      // size is fixed at 4 (PC + 3 active companions) — see the `create()`
-      // note by `this.partySize = MAX_PARTY_SIZE`.
-      if (this.campaignId) return;
-      const sizes: number[] = [];
-      for (let n = MIN_PARTY_SIZE; n <= MAX_PARTY_SIZE; n++) sizes.push(n);
-      this.openChoicePicker(
-        "Choose Party Size",
-        sizes.map((n) => ({
-          label: `${n}`,
-          highlighted: n === this.partySize,
-          onPick: () => (this.partySize = n),
-        })),
-      );
-    });
-    if (this.campaignId) {
-      this.partySizeButton.disableInteractive();
-      this.partySizeButton.setAlpha(0.6);
-    }
+    this.partySizeHandle = createOrnateButton(
+      this,
+      leftX,
+      y,
+      280,
+      44,
+      "",
+      () => {
+        // KI-098 item 13 (companion roster, Phase 1): campaign mode's party
+        // size is fixed at 4 (PC + 3 active companions) — see the `create()`
+        // note by `this.partySize = MAX_PARTY_SIZE`.
+        if (this.campaignId) return;
+        const sizes: number[] = [];
+        for (let n = MIN_PARTY_SIZE; n <= MAX_PARTY_SIZE; n++) sizes.push(n);
+        this.openChoicePicker(
+          "Choose Party Size",
+          sizes.map((n) => ({
+            label: `${n}`,
+            highlighted: n === this.partySize,
+            onPick: () => (this.partySize = n),
+          })),
+        );
+      },
+      { variant: "secondary" },
+    );
+    // Party Creation Overhaul Plan 3.6: hidden entirely in campaign mode
+    // (was disabled-and-grayed with a "(fixed for campaigns)" label) — party
+    // size has no meaning to show once it's permanently fixed.
+    if (this.campaignId) this.partySizeHandle.container.setVisible(false);
 
-    this.difficultyButton = this.add
-      .rectangle(rightX, y, 280, 40, 0x2a2a3a)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    this.difficultyLabel = this.add
-      .text(rightX, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e8e8f0" })
-      .setOrigin(0.5);
-    this.difficultyButton.on("pointerover", () => this.difficultyButton.setFillStyle(0x3a3a4a));
-    this.difficultyButton.on("pointerout", () => this.difficultyButton.setFillStyle(0x2a2a3a));
-    this.difficultyButton.on("pointerdown", () => {
-      this.openChoicePicker(
-        "Choose Difficulty",
-        DIFFICULTY_IDS.map((id) => ({
-          label: getDifficultyDefinition(id).name,
-          desc: difficultyChoiceDescription(id),
-          highlighted: id === this.difficultyId,
-          onPick: () => (this.difficultyId = id),
-        })),
-      );
-    });
+    this.difficultyHandle = createOrnateButton(
+      this,
+      rightX,
+      y,
+      280,
+      44,
+      "",
+      () => {
+        this.openChoicePicker(
+          "Choose Difficulty",
+          DIFFICULTY_IDS.map((id) => ({
+            label: getDifficultyDefinition(id).name,
+            desc: difficultyChoiceDescription(id),
+            highlighted: id === this.difficultyId,
+            onPick: () => (this.difficultyId = id),
+          })),
+        );
+      },
+      { variant: "secondary" },
+    );
+    // Party Creation Overhaul Plan 3.5: hidden in campaign mode —
+    // `CampaignSelectScene` now owns this choice, pre-seeding it in via
+    // `init()`'s `difficultyId`.
+    if (this.campaignId) this.difficultyHandle.container.setVisible(false);
   }
 
   /**
-   * D-147 (piece 3): two party-wide controls sharing one row, left/right
-   * split like the party-size/difficulty row just below — this scene's
-   * column already sits close to `GAME_HEIGHT`'s headroom (see KI-083), so
-   * a NEW control reuses an existing row's vertical space rather than
-   * adding one. Left: the Ability Score Method toggle (Standard Array /
-   * Point Buy), which resets every slot's allocator to a FRESH instance of
-   * the newly chosen kind. Right: D-129's pre-existing "set every slot's
-   * Starting Level at once" control, unchanged in behavior, just relocated
-   * from its own single centered button into this row's right half.
+   * D-129's "set every slot's Starting Level at once" control. Party
+   * Creation Overhaul Plan 1.2: this row used to be split left/right with
+   * the party-wide Ability Score Method toggle — that toggle is now a
+   * per-hero pill inside each column instead (`abilityMethodHandle`), so
+   * this control is alone on its row again, centered.
    */
-  private buildPartyWideAbilityControls(width: number, y: number): void {
-    const leftX = width / 2 - 150;
-    const rightX = width / 2 + 150;
-
-    this.abilityScoreMethodButton = this.add
-      .rectangle(leftX, y, 280, 40, 0x28241c)
-      .setStrokeStyle(1, 0x4a4030)
-      .setInteractive({ useHandCursor: true });
-    this.abilityScoreMethodLabel = this.add
-      .text(leftX, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "15px", color: "#e0c890" })
-      .setOrigin(0.5);
-    this.abilityScoreMethodButton.on("pointerover", () => this.abilityScoreMethodButton.setFillStyle(0x342e22));
-    this.abilityScoreMethodButton.on("pointerout", () => this.abilityScoreMethodButton.setFillStyle(0x28241c));
-    this.abilityScoreMethodButton.on("pointerdown", () => {
-      this.abilityScoreMethod = this.abilityScoreMethod === "standardArray" ? "pointBuy" : "standardArray";
-      this.slots.forEach((s) => {
-        s.allocator = this.abilityScoreMethod === "pointBuy" ? new PointBuyAllocator() : new StandardArrayAllocator();
-      });
-      this.refreshAll();
-    });
-
-    this.teamLevelButton = this.add
-      .rectangle(rightX, y, 280, 40, 0x28241c)
-      .setStrokeStyle(1, 0x4a4030)
-      .setInteractive({ useHandCursor: true });
-    this.teamLevelLabel = this.add
-      .text(rightX, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e0c890" })
-      .setOrigin(0.5);
-    this.teamLevelButton.on("pointerover", () => this.teamLevelButton.setFillStyle(0x342e22));
-    this.teamLevelButton.on("pointerout", () => this.teamLevelButton.setFillStyle(0x28241c));
-    this.teamLevelButton.on("pointerdown", () => {
-      const levels: number[] = [];
-      for (let n = 1; n <= MAX_CLASS_LEVEL; n++) levels.push(n);
-      this.openChoicePicker(
-        "Choose Team Level (all heroes)",
-        levels.map((n) => ({
-          label: `${n}`,
-          highlighted: n === this.teamLevelValue,
-          onPick: () => {
-            this.teamLevelValue = n;
-            this.slots.forEach((s) => (s.startingLevel = n));
-          },
-        })),
-      );
-    });
+  private buildTeamLevelControl(width: number, y: number): void {
+    this.teamLevelHandle = createOrnateButton(
+      this,
+      width / 2,
+      y,
+      280,
+      44,
+      "",
+      () => {
+        const levels: number[] = [];
+        for (let n = 1; n <= MAX_CLASS_LEVEL; n++) levels.push(n);
+        this.openChoicePicker(
+          "Choose Team Level (all heroes)",
+          levels.map((n) => ({
+            label: `${n}`,
+            highlighted: n === this.teamLevelValue,
+            onPick: () => {
+              this.teamLevelValue = n;
+              this.slots.forEach((s) => (s.startingLevel = n));
+            },
+          })),
+        );
+      },
+      { variant: "secondary" },
+    );
   }
 
   // Phase 9 (D-083): Start Battle moves to the left half of the row,
@@ -1064,88 +1412,126 @@ export class CharacterCreationScene extends Phaser.Scene {
     const leftX = width / 2 - 150;
     const rightX = width / 2 + 150;
 
-    this.startButton = this.add
-      .rectangle(leftX, 910, 260, 50, 0x4caf72)
-      .setInteractive({ useHandCursor: true });
-    this.add
-      .text(leftX, 910, "Start Battle", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "20px",
-        color: "#0e0e14",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
-    this.startButton.on("pointerdown", () => {
-      if (!this.partyValid) return;
-      const builds = this.buildsFromSlots();
-      if (this.loadedSlotId) {
-        this.saveFile = updateSaveSlot(this.saveFile, this.loadedSlotId, {
-          party: builds,
-          partySize: this.partySize,
+    // Party Creation Overhaul Plan 8: `OrnateButtonHandle` has no direct
+    // green-fill equivalent for "valid, ready to click" — `refreshAll`
+    // drives this with `setDisabled` alone (see there), relying on the
+    // "primary" variant's own larger/brighter styling plus the disabled
+    // state's dim wood-panel look to carry the same read.
+    this.startHandle = createOrnateButton(
+      this,
+      leftX,
+      940,
+      260,
+      54,
+      "Start Battle",
+      () => {
+        if (!this.partyValid) return;
+        // D-202: a plain session that actually starts a battle is done
+        // being "resumed" — clear the draft so the next Build Party visit
+        // starts fresh instead of resurrecting a party already in play. A
+        // campaign/Free-Play/Load-Game battle start leaves any OTHER
+        // plain draft (from a previous, unrelated session) untouched.
+        if (this.isPlainEntry()) lastPlainDraft = undefined;
+        const builds = this.buildsFromSlots();
+        // Party Creation Overhaul Plan 3.1: Start Battle is the real commit
+        // point ("resolution at mission start," matching Plan 2.3's own
+        // framing) — persist the PC's and every active companion's
+        // just-edited build so it's still there on the next chapter visit.
+        if (this.campaignId) {
+          let roster = loadCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY);
+          roster = setPcBuild(roster, builds[0]);
+          for (let slot = 1; slot < builds.length; slot++) {
+            const companionId = this.companionIdForSlot[slot];
+            if (companionId) roster = setCompanionBuild(roster, companionId, builds[slot]);
+          }
+          // Party Creation Overhaul Plan 2.3: "mission start" is the pool's
+          // own commit point too — every hero's `startingGearIds` above
+          // already carries any pool item they drew (see `buildsFromSlots`),
+          // so all that's left is pool bookkeeping: the whole pool resolves
+          // here (claimed items are already baked into the builds just
+          // persisted above; unclaimed items silently return to their
+          // origin, needing no write of their own — see
+          // `resolvePartyInventory`'s own doc comment).
+          roster = resolvePartyInventory(roster);
+          saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, roster);
+        }
+        if (this.loadedSlotId) {
+          this.saveFile = updateSaveSlot(this.saveFile, this.loadedSlotId, {
+            party: builds,
+            partySize: this.partySize,
+            difficultyId: this.difficultyId,
+            // D-201: keep a Load-Game-originated slot's campaign linkage
+            // (or lack of one) accurate — undefined for a classic/Free
+            // Play party, same as everywhere else campaignId is forwarded.
+            campaignId: this.campaignId,
+            chapterIndex: this.chapterIndex,
+            updatedAt: Date.now(),
+          });
+          saveSaveFile(window.localStorage, SAVE_STORAGE_KEY, this.saveFile);
+          this.pushLoadedSlotToCloud();
+        }
+        // Party size isn't sent separately: BattleScene derives it from
+        // heroDefinitions.length, which is always the true count.
+        // D-152: `originalParty`/`loadedSlotId` are forwarded ONLY so the new
+        // in-battle pause menu's "Save Party" has a real `CharacterBuild[]` to
+        // save — `HeroDefinition` (what `buildRoster()` sends) has already
+        // discarded race id by this point, so there is no way back to a
+        // `CharacterBuild` from it. Not used for anything else.
+        this.scene.start("BattleScene", {
+          heroDefinitions: this.buildRoster(),
           difficultyId: this.difficultyId,
-          updatedAt: Date.now(),
+          campaignId: this.campaignId,
+          chapterIndex: this.chapterIndex,
+          freePlayMapId: this.freePlayMapId,
+          freePlayWaves: this.freePlayWaves,
+          customMapData: this.customMapData,
+          testMode: this.testMode,
+          originalParty: builds,
+          loadedSlotId: this.loadedSlotId,
         });
-        saveSaveFile(window.localStorage, SAVE_STORAGE_KEY, this.saveFile);
-        this.pushLoadedSlotToCloud();
-      }
-      // Party size isn't sent separately: BattleScene derives it from
-      // heroDefinitions.length, which is always the true count.
-      // D-152: `originalParty`/`loadedSlotId` are forwarded ONLY so the new
-      // in-battle pause menu's "Save Party" has a real `CharacterBuild[]` to
-      // save — `HeroDefinition` (what `buildRoster()` sends) has already
-      // discarded race id by this point, so there is no way back to a
-      // `CharacterBuild` from it. Not used for anything else.
-      this.scene.start("BattleScene", {
-        heroDefinitions: this.buildRoster(),
-        difficultyId: this.difficultyId,
-        campaignId: this.campaignId,
-        chapterIndex: this.chapterIndex,
-        freePlayMapId: this.freePlayMapId,
-        freePlayWaves: this.freePlayWaves,
-        customMapData: this.customMapData,
-        testMode: this.testMode,
-        originalParty: builds,
-        loadedSlotId: this.loadedSlotId,
-      });
-    });
+      },
+      { variant: "primary" },
+    );
 
-    this.savePartyButton = this.add
-      .rectangle(rightX, 910, 260, 50, 0x2a2a3a)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    this.savePartyLabel = this.add
-      .text(rightX, 910, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "16px",
-        color: "#e8e8f0",
-      })
-      .setOrigin(0.5);
-    this.savePartyButton.on("pointerover", () => {
-      if (this.savePartyButton.input?.enabled) this.savePartyButton.setFillStyle(0x3a3a4a);
+    this.savePartyHandle = createOrnateButton(this, rightX, 940, 260, 54, "", () => this.onSaveParty(), {
+      variant: "secondary",
     });
-    this.savePartyButton.on("pointerout", () => this.savePartyButton.setFillStyle(0x2a2a3a));
-    this.savePartyButton.on("pointerdown", () => this.onSaveParty());
 
     this.saveStatusLabel = this.add
-      .text(rightX, 960, "", { fontFamily: "monospace", fontSize: "13px", color: "#8a8aa0" })
-      .setOrigin(0.5);
+      .text(rightX, 990, "", { fontFamily: FONT_BODY, fontSize: "13px", color: "#b8a074" })
+      .setOrigin(0.5)
+      .setDepth(1);
+
+    // Party Creation Overhaul Plan 3.7: hidden in campaign mode — Plan 3.1
+    // now persists a campaign party's build automatically at Start Battle,
+    // so the generic Free-Play-only save-slot flow has nothing to do here.
+    if (this.campaignId) {
+      this.savePartyHandle.container.setVisible(false);
+      this.saveStatusLabel.setVisible(false);
+    }
 
     this.statusText = this.add
-      .text(width / 2, 990, "", {
-        fontFamily: "monospace",
+      .text(width / 2, 1020, "", {
+        fontFamily: FONT_BODY,
         fontSize: "13px",
-        color: "#d0a0a0",
+        color: "#c86a5a",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(1);
   }
 
   /**
    * Save the current build to a new slot, or update the already-loaded one
    * (Phase 9, D-083). Gated by `refreshAll`'s own enable/disable of
-   * `savePartyButton` (invalid party, or a new save at `MAX_SAVE_SLOTS`) —
-   * re-checked here too since a disabled Rectangle can still be clicked.
+   * `savePartyHandle` (invalid party, or a new save at `MAX_SAVE_SLOTS`) —
+   * re-checked here too since a disabled button's own guard is layered on
+   * top of, not a substitute for, this method's own check.
    */
   private onSaveParty(): void {
+    // Party Creation Overhaul Plan 3.7: defense-in-depth matching the Party
+    // Size button's own click-guard-plus-hide pattern — the button itself
+    // is hidden in campaign mode, this guards any other future call path.
+    if (this.campaignId) return;
     if (!this.partyValid) return;
     // D-152: shared with the in-battle pause menu's "Save Party" — same
     // create-or-update decision, one tested place (`SaveSystem.
@@ -1195,7 +1581,39 @@ export class CharacterCreationScene extends Phaser.Scene {
     // (or a stray click) shouldn't discard in-progress choices; Cancel/Back
     // inside the overlay itself is the way out of it.
     if (this.levelPlanOverlay.length > 0) return;
+    // D-202: capture the draft `init()` will resume on the next plain
+    // entry — a loaded classic party is fair game too (no lock to leak),
+    // a campaign/Free-Play/custom-map session is not (would otherwise let
+    // a locked companion resurface as freely editable next time).
+    if (this.isPlainEntry()) lastPlainDraft = this.buildsFromSlots();
     this.scene.start("MainMenuScene");
+  }
+
+  /**
+   * D-193: reconstruct all 10 gear-slot indices from a saved build's
+   * `startingGearIds`. If a build predates Plan 2 (no `startingGearIds` at
+   * all, only the legacy single `startingEquipmentId`), fold that single
+   * pick into its own matching slot instance — same "a ring defaults to
+   * ring1" rule `Hero`'s own constructor fallback uses, so a legacy build
+   * now round-trips fully through this 10-slot UI with nothing dropped
+   * (unlike the earlier 3-row design, every slot has a real row here).
+   */
+  private gearIndicesFromBuild(build: CharacterBuild): Partial<Record<GearSlotId, number>> {
+    const gearIds: Partial<Record<GearSlotId, string>> = { ...build.startingGearIds };
+    if (!build.startingGearIds && build.startingEquipmentId) {
+      const item = getEquipmentDefinition(build.startingEquipmentId);
+      const slotId: GearSlotId = item.slot === "ring" ? "ring1" : item.slot;
+      gearIds[slotId] = build.startingEquipmentId;
+    }
+
+    const indices: Partial<Record<GearSlotId, number>> = {};
+    for (const slotId of GEAR_SLOT_IDS) {
+      const id = gearIds[slotId];
+      if (!id) continue;
+      const index = startingGearIdsForSlotType(gearSlotType(slotId)).indexOf(id) + 1;
+      if (index > 0) indices[slotId] = index;
+    }
+    return indices;
   }
 
   /**
@@ -1205,9 +1623,17 @@ export class CharacterCreationScene extends Phaser.Scene {
    * to index 0 via `Math.max(0, ...)` — same defensive spirit as the rest of
    * this scene.
    */
-  private slotStateFromBuild(build: CharacterBuild, identityLocked = false): SlotState {
+  private slotStateFromBuild(
+    build: CharacterBuild,
+    identityLocked = false,
+    gearLocked = identityLocked,
+    catalogueGearIds?: Partial<Record<GearSlotId, string>>,
+    abilityScoreLocked = identityLocked,
+  ): SlotState {
     return {
       identityLocked,
+      gearLocked,
+      abilityScoreLocked,
       name: build.name,
       classIndex: Math.max(0, CREATABLE_CLASS_IDS.indexOf(build.classId)),
       raceIndex: Math.max(0, RACE_IDS.indexOf(build.raceId)),
@@ -1215,24 +1641,75 @@ export class CharacterCreationScene extends Phaser.Scene {
         build.abilityScoreMethod === "pointBuy"
           ? pointBuyAllocatorFromScores(build.abilityScores)
           : allocatorFromScores(build.abilityScores),
+      abilityScoreMethod: build.abilityScoreMethod === "pointBuy" ? "pointBuy" : "standardArray",
       controlledBy: build.controlledBy,
-      // Phase 13.11 (D-096): -1 (no starting item, or one the catalogue no
-      // longer has) plus 1 lands on 0 — "None" — the same safe fallback
-      // `Math.max(0, ...)` gives every other indexOf lookup above.
-      startingGearIndex: build.startingEquipmentId ? STARTING_GEAR_IDS.indexOf(build.startingEquipmentId) + 1 : 0,
+      gearIndices: this.gearIndicesFromBuild(build),
+      // D-194: a defensive spread copy (never a bare reference into
+      // companions.ts's shared singleton build) of this companion's
+      // authored "normal" kit — undefined for a non-gear-locked slot, where
+      // gearIndices above is the only source of truth. Party Creation
+      // Overhaul Plan 3.1: sourced from `catalogueGearIds` (the static
+      // catalogue build) when given, NOT from `build.startingGearIds` —
+      // `build` may itself be a persisted, already difficulty-trimmed copy.
+      baselineGearIds: gearLocked ? { ...(catalogueGearIds ?? build.startingGearIds ?? {}) } : undefined,
       // Phase 14.2 (D-099): reconstruct which of the class's subclasses was
       // picked, same safe `Math.max(0, ...)` fallback as everything above —
       // undefined `build.subclassId` (a later-choice class) also lands on 0,
       // harmlessly unused since `subclassIdForNewBuild` ignores it for those.
       subclassIndex: Math.max(0, subclassesForClass(build.classId).findIndex((s) => s.id === build.subclassId)),
       startingLevel: build.startingLevel ?? 1,
-      levelUpPlan: build.levelUpPlan ?? emptyLevelUpPlan(),
+      // Party Creation Overhaul Plan 5.1 (D-198): coerce mode to "auto" for
+      // an AI-controlled build loaded from an older save — defense in depth
+      // alongside `BattleScene.applyClassLevelUps`'s own `controlledBy`
+      // check, so this hard rule can't be bypassed by a save predating it.
+      levelUpPlan:
+        build.controlledBy === "ai"
+          ? { ...(build.levelUpPlan ?? emptyLevelUpPlan()), mode: "auto" }
+          : (build.levelUpPlan ?? emptyLevelUpPlan()),
       spellPicks: {
         leveledSpellIds: build.preparedSpellIds,
         cantripIds: build.knownCantripIds,
         spellbookIds: build.spellbookIds,
       },
     };
+  }
+
+  /** D-193: the inverse of `gearIndicesFromBuild` — all 10 gear-slot indices back into a `startingGearIds` map. */
+  private startingGearIdsFromIndices(s: SlotState): Partial<Record<GearSlotId, string>> {
+    const ids: Partial<Record<GearSlotId, string>> = {};
+    for (const slotId of GEAR_SLOT_IDS) {
+      const index = s.gearIndices[slotId];
+      if (!index) continue;
+      ids[slotId] = startingGearIdsForSlotType(gearSlotType(slotId))[index - 1];
+    }
+    return ids;
+  }
+
+  /**
+   * Party Creation Overhaul Plan 2.3: `slotIndex`'s finished gear-id map,
+   * folding the shared party inventory pool in on top of whatever
+   * `s.gearLocked` would normally produce. A `gearLocked` slot's base kit is
+   * run through `visibleGearForOrigin` (keyed on THIS slot's own companion
+   * id, whoever currently occupies it — not only while they're benched) so
+   * a reactivated companion never shows an item simultaneously claimable by
+   * someone else from the pool. Then, for EVERY slot (locked or not), this
+   * session's own pool picks (`s.poolGearIds`) override the base kit
+   * slot-by-slot — a pool pick always wins.
+   */
+  private resolveGearIdsForSlot(s: SlotState, slotIndex: number): Partial<Record<GearSlotId, string>> {
+    const baseGearIds = s.gearLocked
+      ? visibleGearForOrigin(
+          this.companionIdForSlot[slotIndex] ?? "",
+          companionStartingGearForDifficulty(s.baselineGearIds ?? {}, this.difficultyId),
+          this.partyInventorySnapshot,
+        )
+      : this.startingGearIdsFromIndices(s);
+    const withPool: Partial<Record<GearSlotId, string>> = { ...baseGearIds };
+    for (const [poolSlotId, entryId] of Object.entries(s.poolGearIds ?? {})) {
+      const claimedEntry = this.partyInventorySnapshot.find((e) => e.id === entryId);
+      if (claimedEntry) withPool[poolSlotId as GearSlotId] = claimedEntry.itemId;
+    }
+    return withPool;
   }
 
   /**
@@ -1251,7 +1728,7 @@ export class CharacterCreationScene extends Phaser.Scene {
         classId,
         level: 1,
         abilityScores: s.allocator.scores(),
-        abilityScoreMethod: this.abilityScoreMethod === "pointBuy" ? "pointBuy" : undefined,
+        abilityScoreMethod: s.abilityScoreMethod === "pointBuy" ? "pointBuy" : undefined,
         controlledBy: s.controlledBy,
         // Phase 13.11 (D-096): a level-1-choice class (Cleric/Sorcerer/
         // Warlock) already has a modeled subclass the instant it's created —
@@ -1259,7 +1736,21 @@ export class CharacterCreationScene extends Phaser.Scene {
         // the Subclass row's cycle button (`s.subclassIndex`). Every other
         // class starts undefined (see BattleScene's subclass-choice queue).
         subclassId: subclassIdForNewBuild(classId, s.subclassIndex),
-        startingEquipmentId: s.startingGearIndex > 0 ? STARTING_GEAR_IDS[s.startingGearIndex - 1] : undefined,
+        // D-193: pure new-shape gear from here on — `startingEquipmentId`
+        // (legacy) is intentionally left undefined for every freshly-built
+        // party; it's read-only back-compat, see `gearIndicesFromBuild`.
+        // D-194: a campaign companion (`gearLocked`) never reads
+        // `s.gearIndices` (their Gear button is a no-op, see the guard
+        // above) — their kit is always freshly derived from their
+        // authored baseline + the CURRENT difficulty instead, so a live
+        // Difficulty change updates it immediately. Party Creation Overhaul
+        // Plan 3.2: checks `gearLocked`, not `identityLocked` — a returning
+        // PC has identity locked but keeps its own freely-edited gear.
+        // Plan 2.3: see `resolveGearIdsForSlot` — a `gearLocked` slot's base
+        // kit is stripped of anything currently sitting claimable in the
+        // pool, then this session's own pool picks (`s.poolGearIds`) are
+        // applied on top for every slot, locked or not.
+        startingGearIds: this.resolveGearIdsForSlot(s, i),
         startingLevel: s.startingLevel,
         // D-133: undefined for a "fresh"/never-planned hero — identical to
         // every pre-D-133 build.
@@ -1280,35 +1771,37 @@ export class CharacterCreationScene extends Phaser.Scene {
   /** Dim and disable an inactive (beyond party size) slot, or restore an active one. */
   private setSlotActive(widgets: SlotWidgets, active: boolean): void {
     const alpha = active ? 1 : 0.32;
-    widgets.allObjects.forEach((o) => (o as Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text).setAlpha(alpha));
-    widgets.interactiveButtons.forEach((b) => (active ? b.setInteractive({ useHandCursor: true }) : b.disableInteractive()));
+    widgets.allObjects.forEach((o) => (o as unknown as { setAlpha(v: number): unknown }).setAlpha(alpha));
+    // Party Creation Overhaul Plan 8: was `.setInteractive()`/`.disableInteractive()`
+    // on a raw Rectangle — `OrnateButtonHandle.setDisabled()` does the same
+    // click-block plus its own dimmed-plaque redraw.
+    widgets.interactiveButtons.forEach((b) => b.setDisabled(!active));
     // D-147 (piece 2): the name row is a real HTML `<input>`, not a Phaser
-    // `Rectangle` — `disableInteractive()` above doesn't reach it.
+    // button — `setDisabled()` above doesn't reach it.
     widgets.nameInputNode.disabled = !active;
   }
 
   /**
-   * D-147 (piece 3): shows/enables exactly one of the two ability-score
-   * control sets per slot — Standard Array's cycle-row buttons, or Point
-   * Buy's +/- steppers — matching the current party-wide method. Runs
-   * AFTER `setSlotActive` in `refreshAll` so it has the final say on both
-   * sets' interactivity (an inactive slot beyond `partySize` stays fully
-   * disabled either way).
+   * D-147 (piece 3), per-hero since Party Creation Overhaul Plan 1.2: shows/
+   * enables exactly one of the two ability-score control sets per slot —
+   * Standard Array's dropdown-trigger buttons, or Point Buy's +/- steppers —
+   * matching THIS SLOT's own method. Runs AFTER `setSlotActive` in
+   * `refreshAll` so it has the final say on both sets' interactivity (an
+   * inactive slot beyond `partySize` stays fully disabled either way).
    */
   private refreshAbilityScoreControls(): void {
-    const standardArray = this.abilityScoreMethod === "standardArray";
     this.widgets.forEach((w, slot) => {
+      const standardArray = this.slots[slot].abilityScoreMethod === "standardArray";
       const active = slot < this.partySize;
       w.standardArrayRowButtons.forEach((b) => {
-        b.setVisible(standardArray);
-        if (active && standardArray) b.setInteractive({ useHandCursor: true });
-        else b.disableInteractive();
+        b.container.setVisible(standardArray);
+        b.setDisabled(!(active && standardArray));
       });
       w.pointBuyButtons.forEach((b) => {
-        b.setVisible(!standardArray);
-        if (active && !standardArray) b.setInteractive({ useHandCursor: true });
-        else b.disableInteractive();
+        b.container.setVisible(!standardArray);
+        b.setDisabled(!(active && !standardArray));
       });
+      Object.values(w.pointBuyValueLabels).forEach((t) => (t as Phaser.GameObjects.Text).setVisible(!standardArray));
     });
   }
 
@@ -1319,12 +1812,11 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.widgets.forEach((w, slot) => this.setSlotActive(w, slot < this.partySize));
     this.refreshAbilityScoreControls();
 
-    this.partySizeLabel.setText(this.campaignId ? `Party Size: ${this.partySize} (fixed for campaigns)` : `Party Size: ${this.partySize}`);
-    this.difficultyLabel.setText(`Difficulty: ${getDifficultyDefinition(this.difficultyId).name}`);
-    this.abilityScoreMethodLabel.setText(
-      `Ability Scores: ${this.abilityScoreMethod === "pointBuy" ? "Point Buy" : "Standard Array"}`,
-    );
-    this.teamLevelLabel.setText(`Team Level: ${this.teamLevelValue} (all heroes)`);
+    // Party Creation Overhaul Plan 3.6: unconditional now that the button
+    // itself is hidden (not just disabled) in campaign mode.
+    this.partySizeHandle.setLabel(`Party Size: ${this.partySize}`);
+    this.difficultyHandle.setLabel(`Difficulty: ${getDifficultyDefinition(this.difficultyId).name}`);
+    this.teamLevelHandle.setLabel(`Team Level: ${this.teamLevelValue} (all heroes)`);
 
     const duplicateNames = hasDuplicateNames(builds);
     // D-147 (piece 2): a hero name is now free text, so an empty/whitespace
@@ -1332,18 +1824,42 @@ export class CharacterCreationScene extends Phaser.Scene {
     // unless two heroes are BOTH blank.
     const blankName = builds.some((b) => !b.name.trim());
     const invalidNames = duplicateNames || blankName;
-    const valid = !invalidNames;
+    // Party Creation Overhaul Plan 1.1: a Standard Array slot can now sit
+    // mid-edit with an unset ("—") ability — block Start/Save until every
+    // active hero using Standard Array has all six assigned. Point Buy never
+    // fails this (floor 8 on every stat, always complete by construction).
+    const incompleteSlot = this.slots
+      .slice(0, this.partySize)
+      .findIndex(
+        (s) => s.abilityScoreMethod === "standardArray" && !(s.allocator as StandardArrayAllocator).isComplete(),
+      );
+    // D-194: the PC's (slot 0) gear point-buy budget — checked ONLY in
+    // campaign mode, and ONLY against slot 0 specifically (a companion's
+    // `gearIndices` is reconstructed but never actually spent from, see
+    // `buildsFromSlots`, so it must never factor into this check). Reachable
+    // in practice: raising Difficulty after already spending gear points
+    // shrinks the budget without touching existing picks.
+    const gearPointsOverBudget =
+      !!this.campaignId &&
+      this.gearPointsSpent(this.slots[0]) > getDifficultyDefinition(this.difficultyId).startingGearPoints;
+    const valid = !invalidNames && incompleteSlot === -1 && !gearPointsOverBudget;
     this.partyValid = valid;
 
-    if (valid) {
-      this.startButton.setFillStyle(0x4caf72);
-      this.startButton.setInteractive({ useHandCursor: true });
-      this.statusText.setText("");
-    } else {
-      this.startButton.setFillStyle(0x4a4a4a);
-      this.startButton.disableInteractive();
-      this.statusText.setText(blankName ? "Every hero needs a name." : "Every hero needs a unique name.");
-    }
+    // Party Creation Overhaul Plan 8: `OrnateButtonHandle` has no direct
+    // green/gray fill-swap equivalent — `setDisabled` alone carries the
+    // valid/invalid read (see `buildStartButton`'s own comment).
+    this.startHandle.setDisabled(!valid);
+    this.statusText.setText(
+      valid
+        ? ""
+        : blankName
+          ? "Every hero needs a name."
+          : duplicateNames
+            ? "Every hero needs a unique name."
+            : incompleteSlot !== -1
+              ? `Hero ${incompleteSlot + 1} still has unassigned ability scores (Standard Array).`
+              : "Gear Points over budget — remove some gear or lower the difficulty.",
+    );
 
     this.refreshSaveControls(valid);
   }
@@ -1356,15 +1872,8 @@ export class CharacterCreationScene extends Phaser.Scene {
    */
   private refreshSaveControls(valid: boolean): void {
     const atCap = !this.loadedSlotId && this.saveFile.slots.length >= MAX_SAVE_SLOTS;
-    this.savePartyLabel.setText(this.loadedSlotId ? "Update Saved Party" : "Save New Party");
-
-    if (valid && !atCap) {
-      this.savePartyButton.setInteractive({ useHandCursor: true });
-      this.savePartyButton.setAlpha(1);
-    } else {
-      this.savePartyButton.disableInteractive();
-      this.savePartyButton.setAlpha(0.5);
-    }
+    this.savePartyHandle.setLabel(this.loadedSlotId ? "Update Saved Party" : "Save New Party");
+    this.savePartyHandle.setDisabled(!(valid && !atCap));
 
     const currentSlot = this.loadedSlotId ? getSaveSlot(this.saveFile, this.loadedSlotId) : undefined;
     this.saveStatusLabel.setText(
@@ -1378,61 +1887,123 @@ export class CharacterCreationScene extends Phaser.Scene {
 
   private refreshSlot(slot: number, build: CharacterBuild): void {
     const w = this.widgets[slot];
-    w.controlLabel.setText(
-      `Hero ${slot + 1} · ${build.controlledBy === "ai" ? "AI" : "Human"} (click to toggle)`,
-    );
+    // Party Creation Overhaul Plan 5.2 (D-198): plain gray text with zero
+    // color-coding made the state and its clickability both easy to miss
+    // (Kevin's own playtest note). Reuses `createOrnateButton`'s existing
+    // `setSelected` (gilt border + brighter fill vs. the plain bronze/wood
+    // idle look) as the "AI" state's distinct background, rather than
+    // inventing a new icon/asset this environment can't produce — the same
+    // "reuse an existing component" precedent as every other Plan 5-8 UI
+    // addition in this scene.
+    const isAiControlled = build.controlledBy === "ai";
+    w.controlHandle.setLabel(`Hero ${slot + 1} — ${isAiControlled ? "AI-Controlled" : "Human-Controlled"}`);
+    w.controlHandle.setSelected(isAiControlled);
     // D-147 (piece 2): the name field is a live-typed DOM `<input>`, not a
     // Text label re-rendered from `build.name` — writing to it here would
     // fight the player's own typing/cursor position. Nothing to set.
-    const companionTag = this.slots[slot].identityLocked ? " (Companion)" : "";
-    w.classLabel.setText(`Class: ${getClassDefinition(build.classId).name}${companionTag}`);
-    w.raceLabel.setText(`Race: ${getRaceDefinition(build.raceId).name}`);
+    // Party Creation Overhaul Plan 3.2: excludes slot 0 — a returning PC is
+    // also `identityLocked` now, but is never a "(Companion)". Plan 3.4:
+    // once this campaign's been cleared once, a companion's stats unlock —
+    // the tag says so, since otherwise the only signal is the ability-score
+    // buttons quietly starting to work.
+    const isUnlockedCompanion = slot !== 0 && this.slots[slot].identityLocked && !this.slots[slot].abilityScoreLocked;
+    const companionTag =
+      slot !== 0 && this.slots[slot].identityLocked ? (isUnlockedCompanion ? " (Companion — Stats Unlocked)" : " (Companion)") : "";
+    // Party Creation Overhaul Plan 8: `OrnateButtonHandle.setLabel` already
+    // auto-shrinks to fit the button's fixed width (same 9px floor
+    // `fitLabelToColumnWidth` used) — the old explicit shrink-to-fit calls
+    // for Class/Race/the first ability row/Subclass are no longer needed.
+    w.classHandle.setLabel(`Class: ${getClassDefinition(build.classId).name}${companionTag}`);
+    w.raceHandle.setLabel(`Race: ${getRaceDefinition(build.raceId).name}`);
+    // Party Creation Overhaul Plan 1.2: this hero's own method pill.
+    const method = this.slots[slot].abilityScoreMethod;
+    w.abilityMethodHandle.setLabel(method === "pointBuy" ? "Point Buy" : "Standard Array");
 
-    ABILITY_SCORE_IDS.forEach((ability, i) => {
+    const isStandardArray = method === "standardArray";
+    ABILITY_SCORE_IDS.forEach((ability) => {
       const score = build.abilityScores[ability];
       const mod = modifierFor(build.abilityScores, ability);
       const modText = mod >= 0 ? `+${mod}` : `${mod}`;
-      let text = `${ABILITY_SCORE_NAMES[ability].slice(0, 3).toUpperCase()} ${score} (${modText})`;
-      // D-147 (piece 3): Point Buy's remaining-points readout rides on the
-      // first ability row's own label rather than a new row, so it can't
-      // disturb this scene's already-tight, hardcoded vertical layout (see
-      // KI-083's documented fragility around exactly that).
-      if (i === 0 && this.abilityScoreMethod === "pointBuy") {
-        const allocator = this.slots[slot].allocator as PointBuyAllocator;
-        text += `   Points Left: ${allocator.remainingPoints()}/${POINT_BUY_BUDGET}`;
-      }
-      w.abilityScoreLabels[ability].setText(text);
-      if (i === 0) this.fitLabelToColumnWidth(w.abilityScoreLabels[ability]);
+      const abbrev = ABILITY_SCORE_NAMES[ability].slice(0, 3).toUpperCase();
+      const text = `${abbrev} ${score} (${modText})`;
+      // Party Creation Overhaul Plan 1.1: an unset ("—") Standard Array
+      // ability shows the raw placeholder, not a modifier computed off the
+      // 10-placeholder `allocator.scores()` fills in for preview math.
+      const isUnset =
+        isStandardArray && (this.slots[slot].allocator as StandardArrayAllocator).valueFor(ability) === null;
+      w.standardArrayHandles[ability].setLabel(isUnset ? `${abbrev} —` : text);
+      // Party Creation Overhaul Plan 8: Point Buy's value readout is a plain
+      // Text squeezed between the minus/plus buttons (a narrower slot than
+      // the full column width) — still needs explicit overflow protection,
+      // unlike the button-owned labels above.
+      w.pointBuyValueLabels[ability].setText(text);
+      this.fitLabelToColumnWidth(w.pointBuyValueLabels[ability], 13, 160);
     });
 
-    w.gearLabel.setText(
-      build.startingEquipmentId ? `Gear: ${getEquipmentDefinition(build.startingEquipmentId).name}` : "Gear: None",
+    // Playtest fix (Party Creation Overhaul, Plan 0): now its own row
+    // (see `pointsLeftLabel` in `buildSlotUi`) instead of appended onto the
+    // STR row's own text, which used to push STR itself off the button.
+    w.pointsLeftLabel.setText(
+      method === "pointBuy"
+        ? `Points Left: ${(this.slots[slot].allocator as PointBuyAllocator).remainingPoints()}/${POINT_BUY_BUDGET}`
+        : "",
     );
 
-    w.subclassLabel.setText(this.subclassSummary(build.classId, build.subclassId, this.slots[slot].levelUpPlan));
-    this.fitLabelToColumnWidth(w.subclassLabel);
+    // D-193: summarize every populated slot (skipping "None" ones). A short
+    // list (<=3, the common case) is spelled out by name; more than that
+    // (up to all 10) collapses to a count instead — 10 full item names
+    // would never fit a hero-column button even at the auto-shrink floor.
+    const gearNames = GEAR_SLOT_IDS.map((slotId) => build.startingGearIds?.[slotId])
+      .filter((id): id is string => !!id)
+      .map((id) => getEquipmentDefinition(id).name);
+    w.gearHandle.setLabel(
+      gearNames.length === 0
+        ? "Gear: None"
+        : gearNames.length <= 3
+          ? `Gear: ${gearNames.join(", ")}`
+          : `Gear: ${gearNames.length}/${GEAR_SLOT_IDS.length} equipped`,
+    );
+
+    // Party Creation Overhaul Plan 2.3: how many of this slot's gear slots
+    // are currently drawing from the shared pool this session — the pool
+    // button is already hidden entirely outside campaign mode/an empty pool
+    // (see `buildSlotUi`), so this only ever renders when it's meaningful.
+    const poolCount = Object.values(this.slots[slot].poolGearIds ?? {}).filter((id): id is string => !!id).length;
+    w.poolHandle.setLabel(poolCount === 0 ? "Pool: —" : `Pool: ${poolCount} drawn`);
+
+    w.subclassHandle.setLabel(this.subclassSummary(build.classId, build.subclassId, this.slots[slot].levelUpPlan));
 
     const def = heroDefinitionFromBuild(build);
-    // D-129: the stats preview now reflects the chosen Starting Level, not
-    // always level 1 — `combatStatsForClassLevel` is the same pure function
+    // D-129: the HP preview reflects the chosen Starting Level, not always
+    // level 1 — `combatStatsForClassLevel` is the same pure function
     // `heroDefinitionFromBuild` itself calls, just re-run at `startingLevel`
-    // instead of the build's fixed `level: 1`. Range/Move don't change by
-    // level, so those two still come from `def` unchanged. This preview
-    // does NOT include any Ability Score Improvement a real fast-forward
-    // would apply (see `BattleScene.fastForwardHeroToLevel`) — a deliberate
-    // simplification, since ASI always targets whichever ability is highest
-    // AT THE TIME, something only the actual fast-forward can resolve.
+    // instead of the build's fixed `level: 1`. Move doesn't change by level,
+    // so it still comes from `def` unchanged.
     const leveledStats = combatStatsForClassLevel(build.classId, build.startingLevel ?? 1, build.abilityScores);
-    w.statsLabel.setText(
-      `HP ${leveledStats.maxHealth}  ATK ${leveledStats.attackDamage}\nRange ${def.attackRangeTiles}  Move ${def.movementTiles}`,
-    );
-    w.levelLabel.setText(`Starting Level: ${build.startingLevel ?? 1}`);
+    // Party Creation Overhaul Plan 4: ATK/Range replaced with AC — ATK was a
+    // flat class/ability-mod number that never factored in equipped weapons,
+    // and Range was purely melee-vs-ranged off the class's fixed attack
+    // style, never the real weapon-aware range every other surface in the
+    // game uses. AC folds in equipped gear/subclass/feat bonuses correctly
+    // (`Hero.armorClass`), so it's computed off a real scratch `Hero`
+    // fast-forwarded to this hero's Starting Level under its own level-up
+    // plan — same precedent as `simulateHeroUpToChoice`/the planner UI, so
+    // this preview genuinely reflects ASI-granted feats (e.g. Defense
+    // fighting style) once a plan resolves them, not just level-1 gear.
+    const previewHero = simulateHeroForPlanning(build, this.slots[slot].levelUpPlan, build.startingLevel ?? 1);
+    w.statsLabel.setText(`HP ${leveledStats.maxHealth}  AC ${previewHero.armorClass}\nMove ${def.movementTiles}`);
+    w.levelHandle.setLabel(`Starting Level: ${build.startingLevel ?? 1}`);
 
+    // Party Creation Overhaul Plan 6.4 (D-199): "which plan" (this button)
+    // and "how it's applied" (`cadenceHandle`) are now two independent
+    // controls — "Plan Levels" itself no longer carries mode text.
+    w.planHandle.setLabel("Plan Levels");
     const plan = this.slots[slot].levelUpPlan;
-    const planStatus = plan.mode === "auto" ? "Auto" : plan.mode === "prompt" ? "Prompt" : "Off";
-    w.planLabel.setText(`Plan Levels: ${planStatus}`);
+    const cadenceLabel = plan.mode === "auto" ? "Auto" : plan.mode === "prompt" ? "Prompt" : "Fresh";
+    w.cadenceHandle.setLabel(`Cadence: ${cadenceLabel}`);
+    w.cadenceHandle.setDisabled(isAiControlled);
 
-    w.spellsLabel.setText(this.spellsSummary(slot, build.classId, build.startingLevel ?? 1));
+    w.spellsHandle.setLabel(this.spellsSummary(slot, build.classId, build.startingLevel ?? 1));
   }
 
   /**
@@ -1462,18 +2033,26 @@ export class CharacterCreationScene extends Phaser.Scene {
    * at creation" — it's already plannable ahead of time via the "Plan
    * Levels" wizard (D-133), which this label now says explicitly instead of
    * only naming the in-battle fallback level/option count.
+   *
+   * Playtest fix (Party Creation Overhaul, Plan 0): all three variants used
+   * to run noticeably long (e.g. `Subclass: Circle of the Ashen Veil
+   * (click to change)` or the full `pick via "Plan Levels" below, or in
+   * battle at level N (M options)` sentence) — long enough to still overrun
+   * the row even at `fitLabelToColumnWidth`'s 9px font floor, since that
+   * helper only shrinks a single line, it doesn't wrap or truncate.
+   * Shortened all three so they reliably fit without losing information.
    */
   private subclassSummary(classId: string, subclassId: string | undefined, plan: LevelUpPlan): string {
     const options = subclassesForClass(classId);
     if (subclassId) {
-      const hint = options.length > 1 ? " (click to change)" : "";
+      const hint = options.length > 1 ? " (change)" : "";
       return `Subclass: ${getSubclassDefinition(subclassId).name}${hint}`;
     }
     const classDef = getClassDefinition(classId);
     if (plan.subclassId) {
-      return `Subclass: ${getSubclassDefinition(plan.subclassId).name} (planned via Plan Levels)`;
+      return `Subclass: ${getSubclassDefinition(plan.subclassId).name} (planned)`;
     }
-    return `Subclass: pick via "Plan Levels" below, or in battle at level ${classDef.subclassChoiceLevel} (${options.length} options)`;
+    return `Subclass: Lv ${classDef.subclassChoiceLevel} in battle (${options.length} opts)`;
   }
 
   /**
@@ -1486,13 +2065,31 @@ export class CharacterCreationScene extends Phaser.Scene {
    * width needs, rather than guessing a smaller fixed size that would still
    * break the moment the phrasing changes again.
    *
-   * D-147 (piece 3): also reused for the first ability-score row's label,
-   * which grows a "Points Left: N/27" suffix in Point Buy mode — same
-   * "computed text, fixed-width button" overflow risk, same fix.
+   * D-147 (piece 3): also applied to the Class/Race row labels and the
+   * first ability-score row's label — same "computed text, fixed-width
+   * button" overflow risk, same fix. (Point Buy's "Points Left" readout
+   * used to ride on the STR row's own text here too; Party Creation
+   * Overhaul Plan 0 gave it its own dedicated row instead — see
+   * `pointsLeftLabel` in `buildSlotUi` — since a long enough string could
+   * still overrun even at this helper's 9px font floor.)
+   *
+   * Playtest fix (Party Creation Overhaul, Plan 0): `baseFontSizePx` is now
+   * a parameter — the Race row was reported too small to read at the
+   * original fixed 13px, so it opts into a slightly larger starting size
+   * (still shrinking from there if it would otherwise overflow) instead of
+   * every row being forced to the same base size.
+   *
+   * Party Creation Overhaul Plan 8: `maxWidthPx` is now a parameter too —
+   * every remaining caller is Point Buy's ability-score value readout,
+   * squeezed into the narrower gap between the minus/plus buttons rather
+   * than the full column width the default still assumes.
    */
-  private fitLabelToColumnWidth(label: Phaser.GameObjects.Text): void {
-    const maxWidth = COLUMN_WIDTH - 20 - 8;
-    const baseFontSizePx = 13;
+  private fitLabelToColumnWidth(
+    label: Phaser.GameObjects.Text,
+    baseFontSizePx = 13,
+    maxWidthPx = COLUMN_WIDTH - 20 - 8,
+  ): void {
+    const maxWidth = maxWidthPx;
     const minFontSizePx = 9;
     label.setFontSize(baseFontSizePx);
     let size = baseFontSizePx;
@@ -1500,6 +2097,176 @@ export class CharacterCreationScene extends Phaser.Scene {
       size -= 1;
       label.setFontSize(size);
     }
+  }
+
+  /**
+   * D-194: total point-buy cost of everything currently in `s.gearIndices`
+   * — only meaningful for the campaign PC (a companion never populates
+   * `gearIndices` at all, see the `identityLocked` guard on the Gear
+   * button), but harmless to call for any slot.
+   */
+  private gearPointsSpent(s: SlotState): number {
+    return GEAR_SLOT_IDS.reduce((total, slotId) => {
+      const index = s.gearIndices[slotId];
+      if (!index) return total;
+      const itemId = startingGearIdsForSlotType(gearSlotType(slotId))[index - 1];
+      return total + startingGearPointCost(getEquipmentDefinition(itemId).rarity);
+    }, 0);
+  }
+
+  /**
+   * D-193 (Party Creation Overhaul Plan 2): the real per-slot starting-gear
+   * picker — every one of the 10 gear slots (`GEAR_SLOT_IDS`) independently
+   * pickable, Kevin's explicit call expanding past this item's original
+   * weapon/chest/third-slot-only scope. No slot is class-gated. Deliberately
+   * built on `renderPlanPrompt` directly rather than `openChoicePicker`
+   * (below): that wrapper tears down the whole overlay right after any
+   * option's `onPick()` returns, which would break a picker-inside-a-picker
+   * — the same multi-step-wizard pattern `openLevelPlanner`'s screens
+   * already use.
+   *
+   * D-194: a campaign companion never reaches this method (the Gear
+   * button's own `identityLocked` guard stops it before this call) — the
+   * only slot that can reach it in campaign mode is the PC, so
+   * `this.campaignId` alone is enough to mean "point-buy applies here."
+   * Free Play/manual Create Party is completely unaffected (no cost
+   * labels, nothing omitted, identical to D-193's original behavior).
+   */
+  private openGearPicker(slot: number): void {
+    const s = this.slots[slot];
+    const pointBuy = !!this.campaignId;
+    const title = pointBuy
+      ? `Choose Starting Gear — Gear Points: ${this.gearPointsSpent(s)}/${getDifficultyDefinition(this.difficultyId).startingGearPoints}`
+      : "Choose Starting Gear";
+    this.renderPlanPrompt(title, [
+      ...GEAR_SLOT_IDS.map((slotId) => {
+        const pool = startingGearIdsForSlotType(gearSlotType(slotId));
+        const index = s.gearIndices[slotId] ?? 0;
+        const itemName = index > 0 ? getEquipmentDefinition(pool[index - 1]).name : "None";
+        return {
+          label: `${GEAR_SLOT_LABELS[slotId]}: ${itemName}`,
+          onClick: () => this.openGearItemPicker(slot, slotId, pool),
+        };
+      }),
+      {
+        label: "Done",
+        onClick: () => {
+          this.clearLevelPlanOverlay();
+          this.refreshAll();
+        },
+      },
+    ]);
+  }
+
+  /**
+   * D-193: one slot's item list, reached from `openGearPicker` — picking
+   * (or "None") applies immediately and returns to the 10-row Gear menu.
+   *
+   * D-194: in campaign mode (point-buy — see `openGearPicker`'s own
+   * comment), every item's label gets its point cost appended, and any
+   * item whose cost would net-overspend the PC's budget (accounting for
+   * the points this very slot's own current pick would free up) is
+   * omitted from the list entirely — a swap that overspends never even
+   * appears as an option. "None" is always free and always shown.
+   */
+  private openGearItemPicker(slot: number, slotId: GearSlotId, pool: string[]): void {
+    const s = this.slots[slot];
+    const pointBuy = !!this.campaignId;
+    const budget = pointBuy ? getDifficultyDefinition(this.difficultyId).startingGearPoints : Infinity;
+    const currentIndex = s.gearIndices[slotId] ?? 0;
+    const currentItemId = currentIndex > 0 ? pool[currentIndex - 1] : undefined;
+    const currentCost = currentItemId ? startingGearPointCost(getEquipmentDefinition(currentItemId).rarity) : 0;
+    // Points available for a NEW pick in this slot: the budget minus
+    // everything spent elsewhere (i.e. minus everything spent, plus back
+    // whatever this slot itself currently costs).
+    const availableForThisSlot = budget - this.gearPointsSpent(s) + currentCost;
+    this.renderPlanPrompt(`Choose ${GEAR_SLOT_LABELS[slotId]}`, [
+      {
+        label: "None",
+        highlighted: (s.gearIndices[slotId] ?? 0) === 0,
+        onClick: () => {
+          delete s.gearIndices[slotId];
+          this.openGearPicker(slot);
+        },
+      },
+      ...pool
+        .map((id, i) => ({ id, i, cost: startingGearPointCost(getEquipmentDefinition(id).rarity) }))
+        .filter(({ cost }) => !pointBuy || cost <= availableForThisSlot)
+        .map(({ id, i, cost }) => ({
+          label: pointBuy ? `${getEquipmentDefinition(id).name} (${cost} pt${cost === 1 ? "" : "s"})` : getEquipmentDefinition(id).name,
+          highlighted: (s.gearIndices[slotId] ?? 0) === i + 1,
+          onClick: () => {
+            s.gearIndices[slotId] = i + 1;
+            this.openGearPicker(slot);
+          },
+        })),
+      { label: "◀ Back", onClick: () => this.openGearPicker(slot) },
+    ]);
+  }
+
+  /**
+   * Party Creation Overhaul Plan 2.3: this hero's "draw from the shared
+   * party inventory" menu — one row per gear slot, same two-level shape as
+   * `openGearPicker`/`openGearItemPicker` above, just sourced from
+   * `this.partyInventorySnapshot` instead of the static catalogue. Available
+   * to every active slot regardless of `gearLocked` — a companion's fixed
+   * catalogue kit and the pool are two independent gear sources.
+   */
+  private openPoolPicker(slot: number): void {
+    const claimedElsewhere: Set<string> = new Set(
+      this.slots.flatMap((s2, i2) => (i2 === slot ? [] : Object.values(s2.poolGearIds ?? {}))),
+    );
+    this.renderPlanPrompt("Draw From Party Inventory", [
+      ...GEAR_SLOT_IDS.map((slotId) => {
+        const claimedId = this.slots[slot].poolGearIds?.[slotId];
+        const claimedEntry = claimedId ? this.partyInventorySnapshot.find((e) => e.id === claimedId) : undefined;
+        const label = claimedEntry ? getEquipmentDefinition(claimedEntry.itemId).name : "—";
+        return {
+          label: `${GEAR_SLOT_LABELS[slotId]}: ${label}`,
+          onClick: () => this.openPoolItemPicker(slot, slotId, claimedElsewhere),
+        };
+      }),
+      {
+        label: "Done",
+        onClick: () => {
+          this.clearLevelPlanOverlay();
+          this.refreshAll();
+        },
+      },
+    ]);
+  }
+
+  /**
+   * One slot's pool item list, reached from `openPoolPicker` — picking (or
+   * "None") applies immediately and returns to the 10-row pool menu.
+   * `claimedElsewhere` (every OTHER slot's current pool picks, computed once
+   * by the caller) is excluded so two hero slots can never claim the same
+   * pool entry at once.
+   */
+  private openPoolItemPicker(slot: number, slotId: GearSlotId, claimedElsewhere: Set<string>): void {
+    const s = this.slots[slot];
+    const matching = this.partyInventorySnapshot.filter(
+      (e) => getEquipmentDefinition(e.itemId).slot === gearSlotType(slotId) && !claimedElsewhere.has(e.id),
+    );
+    this.renderPlanPrompt(`Choose ${GEAR_SLOT_LABELS[slotId]} From Pool`, [
+      {
+        label: "None",
+        highlighted: !s.poolGearIds?.[slotId],
+        onClick: () => {
+          if (s.poolGearIds) delete s.poolGearIds[slotId];
+          this.openPoolPicker(slot);
+        },
+      },
+      ...matching.map((e) => ({
+        label: `${getEquipmentDefinition(e.itemId).name} (from ${getCompanionDefinition(e.originCompanionId).name})`,
+        highlighted: s.poolGearIds?.[slotId] === e.id,
+        onClick: () => {
+          s.poolGearIds = { ...s.poolGearIds, [slotId]: e.id };
+          this.openPoolPicker(slot);
+        },
+      })),
+      { label: "◀ Back", onClick: () => this.openPoolPicker(slot) },
+    ]);
   }
 
   /**
@@ -1530,6 +2297,77 @@ export class CharacterCreationScene extends Phaser.Scene {
     ]);
   }
 
+  /** Party Creation Overhaul Plan 1.1: closes whichever ability-score dropdown is currently open, if any. Safe to call when none is open. */
+  private closeDropdown(): void {
+    this.openDropdown?.close();
+    this.openDropdown = null;
+  }
+
+  /**
+   * Party Creation Overhaul Plan 1.1: a small dropdown anchored just below
+   * one Standard Array row, offering the 6 standard values (15/14/13/12/10/8)
+   * plus "—" (unset). No existing `uiTheme.ts` component fits — `
+   * renderChoiceOverlay`/`openChoiceList` are both full-screen centered
+   * modals — so this is scene-local and deliberately simple: always opens
+   * directly below the trigger row (verified against real layout numbers —
+   * even the lowest ability row leaves ample room above `gearY`, so a
+   * flip-to-above branch isn't needed), with one defensive clamp if it would
+   * ever run past the bottom of the viewport.
+   */
+  private openAbilityDropdown(slot: number, ability: AbilityScoreId, anchorX: number, anchorY: number): void {
+    this.closeDropdown();
+
+    const rowHeight = 24;
+    const rowGap = 4;
+    const panelWidth = COLUMN_WIDTH - 20;
+    const values: Array<number | null> = [...STANDARD_ARRAY, null];
+    const panelHeight = values.length * (rowHeight + rowGap) + rowGap + 10;
+
+    const { width: viewportWidth, height: viewportHeight } = getViewport(this);
+    let panelTop = anchorY + 18;
+    if (panelTop + panelHeight > viewportHeight - 20) panelTop = viewportHeight - 20 - panelHeight;
+    const panelCenterY = panelTop + panelHeight / 2;
+
+    const objects: Phaser.GameObjects.GameObject[] = [];
+    // Full-canvas invisible click-away-to-close catcher — same modal-dismiss
+    // pattern `renderChoiceOverlay`'s own `dim` rectangle already uses.
+    const catcher = this.add
+      .rectangle(viewportWidth / 2, viewportHeight / 2, viewportWidth, viewportHeight, 0x000000, 0)
+      .setDepth(79)
+      .setInteractive();
+    catcher.on("pointerdown", () => this.closeDropdown());
+    objects.push(catcher);
+
+    const panel = drawParchmentPanel(this, anchorX, panelCenterY, panelWidth, panelHeight, 80);
+    objects.push(panel);
+
+    const allocator = this.slots[slot].allocator as StandardArrayAllocator;
+    const currentValue = allocator.valueFor(ability);
+    values.forEach((value, i) => {
+      const rowY = panelTop + rowGap + rowHeight / 2 + i * (rowHeight + rowGap);
+      const handle = createOrnateButton(
+        this,
+        anchorX,
+        rowY,
+        panelWidth - 16,
+        rowHeight,
+        value === null ? "—" : `${value}`,
+        () => {
+          allocator.assign(ability, value);
+          this.closeDropdown();
+          this.refreshAll();
+        },
+        { variant: "tool", depth: 81 },
+      );
+      handle.setSelected(value === currentValue);
+      objects.push(handle.container);
+    });
+
+    this.openDropdown = {
+      close: () => objects.forEach((o) => o.destroy()),
+    };
+  }
+
   // ---------------------------------------------------------------------
   // D-133: the level-by-level Character Creation planner. A full-screen
   // wizard overlay — the same button-grid modal shape `BattleScene
@@ -1550,11 +2388,13 @@ export class CharacterCreationScene extends Phaser.Scene {
       subclassId: existing.subclassId,
       asiChoices: { ...existing.asiChoices },
       spellPicks: { ...existing.spellPicks },
+      spellSwaps: { ...existing.spellSwaps },
     };
+    this.planningBlueprintId = undefined;
     const classId = CREATABLE_CLASS_IDS[this.slots[slot].classIndex];
     this.planningSteps = futureChoiceSteps(classId);
     this.planningStepIndex = 0;
-    this.showPlanModeSelect();
+    this.showBlueprintEntryChoice();
   }
 
   private closeLevelPlanner(commit: boolean): void {
@@ -1583,36 +2423,39 @@ export class CharacterCreationScene extends Phaser.Scene {
     }
   }
 
-  private showPlanModeSelect(): void {
-    this.renderPlanPrompt("How should this hero's future level-ups be handled?", [
+  /**
+   * Party Creation Overhaul Plan 6.2 (D-199): the wizard's real first
+   * screen now — Auto/Prompted/Fresh moved OUT to the per-hero `cadenceHandle`
+   * pill (Plan 6.4), decoupled from "which plan" entirely. Three ways in:
+   * a fresh one-off blueprint, a saved one from the library (Edit or Use
+   * As-Is), or today's plain throwaway per-character plan (unchanged).
+   */
+  private showBlueprintEntryChoice(): void {
+    const classId = CREATABLE_CLASS_IDS[this.slots[this.planningSlot as number].classIndex];
+    const className = getClassDefinition(classId).name;
+    this.renderPlanPrompt(`Plan Levels — ${className}`, [
       {
-        label: "Auto-follow a blueprint",
-        desc: "Every choice you've planned next applies silently, in battle — anything you leave unset still prompts live.",
+        label: "Create a New Blueprint",
+        desc: "Build a fresh future level-up plan for this hero, from scratch — you'll be offered a chance to save it to the library at the end.",
         onClick: () => {
-          this.planningDraft.mode = "auto";
+          this.planningDraft = emptyLevelUpPlan(this.planningDraft.mode);
+          this.planningBlueprintId = undefined;
           this.planningStepIndex = 0;
           this.showNextPlanStep();
         },
-        highlighted: this.planningDraft.mode === "auto",
       },
       {
-        label: "Prompted each level",
-        desc: "You'll still get the usual in-battle popup — pre-highlighted with whatever you plan next.",
+        label: "Select a Saved Blueprint",
+        desc: "Reuse or edit a blueprint already saved for this class — global to every save/campaign.",
+        onClick: () => this.showBlueprintPicker(),
+      },
+      {
+        label: "No Blueprint",
+        desc: "Just build/edit this hero's own one-off plan, exactly as before — nothing saved to the library unless you choose to at the end.",
         onClick: () => {
-          this.planningDraft.mode = "prompt";
           this.planningStepIndex = 0;
           this.showNextPlanStep();
         },
-        highlighted: this.planningDraft.mode === "prompt",
-      },
-      {
-        label: "Always choose fresh",
-        desc: "No blueprint at all — every future choice is made unprompted, in battle, exactly as today.",
-        onClick: () => {
-          this.planningDraft = emptyLevelUpPlan("fresh");
-          this.closeLevelPlanner(true);
-        },
-        highlighted: this.planningDraft.mode === "fresh",
       },
       {
         label: "Cancel",
@@ -1620,6 +2463,159 @@ export class CharacterCreationScene extends Phaser.Scene {
         onClick: () => this.closeLevelPlanner(false),
       },
     ]);
+  }
+
+  /** Plan 6.2: lists every blueprint saved for this hero's current class. */
+  private showBlueprintPicker(): void {
+    const classId = CREATABLE_CLASS_IDS[this.slots[this.planningSlot as number].classIndex];
+    const library = loadBlueprintLibrary(window.localStorage, BLUEPRINT_LIBRARY_STORAGE_KEY);
+    const options = blueprintsForClass(library, classId);
+    if (options.length === 0) {
+      this.renderPlanPrompt("Select a Saved Blueprint", [
+        { label: "No blueprints saved for this class yet.", onClick: () => {} },
+        { label: "◀ Back", onClick: () => this.showBlueprintEntryChoice() },
+      ]);
+      return;
+    }
+    this.renderPlanPrompt(
+      "Select a Saved Blueprint",
+      options
+        .map((bp) => ({ label: bp.name, onClick: () => this.showBlueprintSubmenu(bp) }))
+        .concat([{ label: "◀ Back", onClick: () => this.showBlueprintEntryChoice() }]),
+    );
+  }
+
+  /** Plan 6.2: Use As-Is (apply and close immediately) / Edit (load into the wizard) / Delete (two-click confirm, no timer) / Back. */
+  private showBlueprintSubmenu(blueprint: LevelUpBlueprint): void {
+    const armed = this.blueprintDeleteArmedId === blueprint.id;
+    this.renderPlanPrompt(`Blueprint: ${blueprint.name}`, [
+      {
+        label: "Use As-Is",
+        desc: "Apply this blueprint's choices to this hero immediately — skips the wizard entirely.",
+        onClick: () => {
+          this.blueprintDeleteArmedId = null;
+          // Plan 6.4: mode is always this hero's OWN cadence setting, never
+          // the blueprint's own frozen one — see LevelUpPlanSystem.ts's
+          // `LevelUpPlan.mode` doc comment for why.
+          this.planningDraft = { ...blueprint.plan, mode: this.planningDraft.mode };
+          this.closeLevelPlanner(true);
+        },
+      },
+      {
+        label: "Edit",
+        desc: "Load this blueprint into the planner so you can tweak it before applying.",
+        onClick: () => {
+          this.blueprintDeleteArmedId = null;
+          this.planningDraft = {
+            ...blueprint.plan,
+            mode: this.planningDraft.mode,
+            asiChoices: { ...blueprint.plan.asiChoices },
+            spellPicks: { ...blueprint.plan.spellPicks },
+            spellSwaps: { ...blueprint.plan.spellSwaps },
+          };
+          this.planningBlueprintId = blueprint.id;
+          this.planningStepIndex = 0;
+          this.showNextPlanStep();
+        },
+      },
+      {
+        label: armed ? "Confirm Delete?" : "Delete",
+        desc: armed
+          ? "Click again to permanently remove this blueprint from the library."
+          : "Permanently remove this blueprint from the library.",
+        onClick: () => {
+          if (!armed) {
+            this.blueprintDeleteArmedId = blueprint.id;
+            this.showBlueprintSubmenu(blueprint);
+            return;
+          }
+          const library = loadBlueprintLibrary(window.localStorage, BLUEPRINT_LIBRARY_STORAGE_KEY);
+          saveBlueprintLibrary(window.localStorage, BLUEPRINT_LIBRARY_STORAGE_KEY, deleteBlueprint(library, blueprint.id));
+          this.blueprintDeleteArmedId = null;
+          this.showBlueprintPicker();
+        },
+      },
+      {
+        label: "◀ Back",
+        onClick: () => {
+          this.blueprintDeleteArmedId = null;
+          this.showBlueprintPicker();
+        },
+      },
+    ]);
+  }
+
+  /**
+   * Plan 6.3: offered from `showPlanDoneScreen` — saving is always a
+   * distinct extra step, never implied by "Save & Close" (which stays
+   * this-hero-only, unchanged, per the plan's own "applying without saving
+   * stays the default" framing).
+   */
+  private showBlueprintSaveScreen(): void {
+    if (this.planningBlueprintId !== undefined) {
+      const classId = CREATABLE_CLASS_IDS[this.slots[this.planningSlot as number].classIndex];
+      const library = loadBlueprintLibrary(window.localStorage, BLUEPRINT_LIBRARY_STORAGE_KEY);
+      const existing = blueprintsForClass(library, classId).find((bp) => bp.id === this.planningBlueprintId);
+      if (existing) {
+        this.renderPlanPrompt("Save Blueprint", [
+          {
+            label: `Update "${existing.name}"`,
+            desc: "Overwrites this blueprint's saved choices with what you just built.",
+            onClick: () => {
+              const next = upsertBlueprint(library, { ...existing, plan: this.planningDraft });
+              saveBlueprintLibrary(window.localStorage, BLUEPRINT_LIBRARY_STORAGE_KEY, next);
+              this.showPlanDoneScreen();
+            },
+          },
+          {
+            label: "Save as New Blueprint",
+            desc: "Keeps the original blueprint untouched — saves this as a separate one instead.",
+            onClick: () => this.showBlueprintNameEntryScreen(),
+          },
+          { label: "◀ Back", onClick: () => this.showPlanDoneScreen() },
+        ]);
+        return;
+      }
+    }
+    this.showBlueprintNameEntryScreen();
+  }
+
+  /** Plan 6.3: a fresh blueprint's name — reuses the exact hero-name DOM `<input>` technique (`buildSlotUi`), cleaned up automatically by `levelPlanOverlay`'s own next-screen `clearChoiceOverlay`. */
+  private showBlueprintNameEntryScreen(): void {
+    const classId = CREATABLE_CLASS_IDS[this.slots[this.planningSlot as number].classIndex];
+    const className = getClassDefinition(classId).name;
+    let nameNode!: HTMLInputElement;
+    this.renderPlanPrompt("Name This Blueprint", [
+      {
+        label: "Save",
+        onClick: () => {
+          const name = nameNode.value.trim() || `${className} Blueprint`;
+          const library = loadBlueprintLibrary(window.localStorage, BLUEPRINT_LIBRARY_STORAGE_KEY);
+          const id = `blueprint-${Date.now()}-${this.blueprintSaveCounter++}`;
+          const next = upsertBlueprint(library, { id, name, classId, plan: this.planningDraft });
+          saveBlueprintLibrary(window.localStorage, BLUEPRINT_LIBRARY_STORAGE_KEY, next);
+          this.planningBlueprintId = id;
+          this.showPlanDoneScreen();
+        },
+      },
+      { label: "◀ Back", onClick: () => this.showPlanDoneScreen() },
+    ]);
+    const nameInput = this.add
+      .dom(getViewport(this).width / 2, 140)
+      .createFromHTML(
+        `<input type="text" maxlength="40" placeholder="${className} Blueprint" style="
+          width: 320px; height: 34px; font-size: 16px;
+          font-family: 'EB Garamond', Georgia, 'Times New Roman', serif; font-weight: bold;
+          text-align: center; background: #e8d8ae; color: #2a1a10;
+          border: 1px solid #5a3a20; border-radius: 4px; outline: none;
+          box-sizing: border-box;
+        " />`,
+      )
+      .setOrigin(0.5)
+      .setDepth(65);
+    nameNode = nameInput.node.querySelector("input") as HTMLInputElement;
+    nameNode.addEventListener("keydown", (e: KeyboardEvent) => e.stopPropagation());
+    this.levelPlanOverlay.push(nameInput);
   }
 
   private showNextPlanStep(): void {
@@ -1630,6 +2626,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     const step = this.planningSteps[this.planningStepIndex];
     if (step.kind === "subclass") this.showPlanSubclassStep(step);
     else if (step.kind === "asi") this.showPlanAsiStep(step);
+    else if (step.kind === "spellSwap") this.showPlanSpellSwapStep(step);
     else this.showPlanSpellPickStep(step);
   }
 
@@ -1640,7 +2637,7 @@ export class CharacterCreationScene extends Phaser.Scene {
 
   private goBackPlanStep(): void {
     if (this.planningStepIndex === 0) {
-      this.showPlanModeSelect();
+      this.showBlueprintEntryChoice();
       return;
     }
     this.planningStepIndex -= 1;
@@ -1648,8 +2645,13 @@ export class CharacterCreationScene extends Phaser.Scene {
   }
 
   private showPlanDoneScreen(): void {
-    this.renderPlanPrompt("Blueprint complete", [
+    this.renderPlanPrompt("Blueprint Complete", [
       { label: "Save & Close", desc: "Commits every choice made in this session to this hero.", onClick: () => this.closeLevelPlanner(true) },
+      {
+        label: "Save as Blueprint",
+        desc: "Also save these choices to the library, for any future character of this class.",
+        onClick: () => this.showBlueprintSaveScreen(),
+      },
       { label: "◀ Back", onClick: () => this.goBackPlanStep() },
       { label: "Cancel", desc: "Discard this session's edits and keep the previously saved plan.", onClick: () => this.closeLevelPlanner(false) },
     ]);
@@ -1660,9 +2662,16 @@ export class CharacterCreationScene extends Phaser.Scene {
   }
 
   private planSkipChoice(): { label: string; desc: string; onClick: () => void } {
+    // Party Creation Overhaul Plan 5.1 (D-198): an AI-controlled hero never
+    // gets a real in-battle prompt at all (its `cadenceHandle` pill is
+    // locked to "auto", Plan 6.4) — an unset level resolves to a safe
+    // default automatically instead.
+    const isAiControlled = this.planningSlot !== null && this.slots[this.planningSlot].controlledBy === "ai";
     return {
       label: "Skip (decide later)",
-      desc: "Leaves this level unset — you'll be prompted for a real choice when it comes up, regardless of this hero's mode.",
+      desc: isAiControlled
+        ? "Leaves this level unset — it'll resolve to a safe default automatically in battle (AI-controlled heroes never get a real prompt)."
+        : "Leaves this level unset — you'll be prompted for a real choice when it comes up, regardless of this hero's mode.",
       onClick: () => this.advancePlanStep(),
     };
   }
@@ -1893,6 +2902,72 @@ export class CharacterCreationScene extends Phaser.Scene {
     );
   }
 
+  /**
+   * Party Creation Overhaul Plan 6.5 (D-199): a level-up-triggered spell
+   * swap becomes plannable — mirrors `BattleScene.showSpellPrepDropScreen`/
+   * `showSpellPrepLearnScreen`'s exact two-screen drop-then-learn shape,
+   * but writes into `planningDraft.spellSwaps[level]` (an array — a level
+   * can need both a cantrip AND a prepared swap, e.g. Sorcerer) instead of
+   * mutating a live Hero. Uses `simulateHeroUpToChoice` for real
+   * eligibility, same as the ASI/spell-pick steps above.
+   */
+  private showPlanSpellSwapStep(step: LevelUpChoiceStep): void {
+    const kind = step.spellSwapKind as SpellSwapStepKind;
+    const hero = this.simulateHeroUpToChoice(step.level);
+    const current = kind === "cantrips" ? hero.knownCantripIds : hero.preparedSpellIds;
+    const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
+    const existing = this.planningDraft.spellSwaps[step.level]?.find((c) => c.kind === kind);
+    this.renderPlanPrompt(`Level ${step.level} — Replace a ${label}`, [
+      ...current.map((id) => {
+        const spell = getSpell(id);
+        return {
+          label: spell.name,
+          desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
+          onClick: () => this.showPlanSpellSwapLearnStep(step, kind, id),
+          highlighted: existing?.dropId === id,
+        };
+      }),
+      this.planBackChoice(),
+      this.planSkipChoice(),
+    ]);
+  }
+
+  private showPlanSpellSwapLearnStep(step: LevelUpChoiceStep, kind: SpellSwapStepKind, dropId: string): void {
+    const classId = CREATABLE_CLASS_IDS[this.slots[this.planningSlot as number].classIndex];
+    const hero = this.simulateHeroUpToChoice(step.level);
+    const current = kind === "cantrips" ? hero.knownCantripIds : hero.preparedSpellIds;
+    const maxLevel = this.maxCastableSpellLevel(classId, step.level);
+    const pool = (
+      kind === "cantrips" ? eligibleCantripPool(classId) : eligibleLeveledSpellPool(classId).filter((id) => getSpell(id).level <= maxLevel)
+    ).filter((id) => !current.includes(id));
+    if (pool.length === 0) {
+      // Nothing eligible to learn instead — same auto-skip idiom the ASI/
+      // spell-pick steps already use when there's genuinely nothing to pick.
+      this.advancePlanStep();
+      return;
+    }
+    const dropLabel = getSpell(dropId).name;
+    const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
+    const existing = this.planningDraft.spellSwaps[step.level]?.find((c) => c.kind === kind);
+    this.renderPlanPrompt(`Level ${step.level} — Learn a New ${label} (replacing ${dropLabel})`, [
+      ...pool.map((id) => {
+        const spell = getSpell(id);
+        return {
+          label: spell.name,
+          desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
+          onClick: () => {
+            const others = this.planningDraft.spellSwaps[step.level]?.filter((c) => c.kind !== kind) ?? [];
+            const choice: LevelUpSpellSwapChoice = { kind, dropId, learnId: id };
+            this.planningDraft.spellSwaps[step.level] = [...others, choice];
+            this.advancePlanStep();
+          },
+          highlighted: existing?.dropId === dropId && existing.learnId === id,
+        };
+      }),
+      { label: "◀ Back", onClick: () => this.showPlanSpellSwapStep(step) },
+    ]);
+  }
+
   // ---------------------------------------------------------------------
   // D-135: Character Creation's starting spell-selection wizard. Reuses
   // `renderPlanPrompt`/`clearLevelPlanOverlay`/`levelPlanOverlay` above (both
@@ -2085,6 +3160,10 @@ export class CharacterCreationScene extends Phaser.Scene {
     title: string,
     choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }>,
   ): void {
+    // Party Creation Overhaul Plan 1.1: makes "both a dropdown and this
+    // full-screen overlay open at once" impossible by construction, rather
+    // than relying on z-order/depth alone.
+    this.closeDropdown();
     this.setNameInputsVisible(false);
     renderChoiceOverlay(this, this.levelPlanOverlay, title, choices);
   }

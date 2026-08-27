@@ -20,10 +20,52 @@
  * lists.
  */
 
+import type { CharacterBuild } from "./CharacterBuildSystem";
+import type { GearSlotId } from "../data/equipment";
+
+/**
+ * Party Creation Overhaul Plan 2.3: one physical item currently sitting in
+ * the shared party inventory, unequipped from `originCompanionId`'s
+ * `originSlot` and awaiting either a claim by an active hero or an
+ * automatic return to its origin at Start Battle (see
+ * `PartyInventorySystem.ts`). `id` is synthetic (not `itemId`) because two
+ * different companions can hold the same equipment id at once.
+ */
+export interface PartyInventoryEntry {
+  id: string;
+  itemId: string;
+  originCompanionId: string;
+  originSlot: GearSlotId;
+}
+
 export interface CompanionRosterState {
   activeIds: string[];
   benchedIds: string[];
   lostIds: string[];
+  /**
+   * Party Creation Overhaul Plan 3.1: a companion's persisted, mutable build
+   * (gear/spells/level-plan/name) for the current playthrough, keyed by
+   * companion id. An absent entry (or the whole field absent, for a blob
+   * saved before Plan 3) means "never used in a party yet this
+   * playthrough" — callers fall back to the static catalogue build
+   * (`getCompanionDefinition(id).build`).
+   */
+  companionBuilds?: Record<string, CharacterBuild>;
+  /**
+   * Plan 3.1/3.2: the player's own persisted PC build for the current
+   * playthrough. Absent means "no campaign PC committed yet" — Character
+   * Creation's slot 0 stays fully editable until the first Start Battle.
+   */
+  pcBuild?: CharacterBuild;
+  /**
+   * Party Creation Overhaul Plan 2.3: items unequipped from benched
+   * companions via "Unequip All Benched Heroes", awaiting a claim by an
+   * active hero or an automatic return to their origin at Start Battle.
+   * Absent (or empty) means "no items currently pooled" — the default for
+   * every blob saved before Plan 2.3, and the normal steady state whenever
+   * every pooled item has been claimed or resolved.
+   */
+  partyInventory?: PartyInventoryEntry[];
 }
 
 export const DEFAULT_COMPANION_ROSTER_STATE: CompanionRosterState = {
@@ -46,6 +88,49 @@ function isValidIdArray(value: unknown): value is string[] {
 }
 
 /**
+ * Plan 3.1: a plausibility check, not a full schema validator — just enough
+ * to reject junk (wrong type, missing required identity fields) without
+ * hand-maintaining a field-by-field validator that would drift from
+ * `CharacterBuild`'s real (frequently-extended) shape.
+ */
+function isPlausibleCharacterBuild(value: unknown): value is CharacterBuild {
+  if (typeof value !== "object" || value === null) return false;
+  const build = value as Partial<CharacterBuild>;
+  return (
+    typeof build.id === "string" &&
+    typeof build.name === "string" &&
+    typeof build.raceId === "string" &&
+    typeof build.classId === "string"
+  );
+}
+
+function parseCompanionBuilds(value: unknown): Record<string, CharacterBuild> | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>).filter(([, build]) =>
+    isPlausibleCharacterBuild(build),
+  ) as [string, CharacterBuild][];
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+/** Plan 2.3: same plausibility-check spirit as `isPlausibleCharacterBuild` — reject junk, don't hand-maintain a full schema validator. */
+function isPlausiblePartyInventoryEntry(value: unknown): value is PartyInventoryEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Partial<PartyInventoryEntry>;
+  return (
+    typeof entry.id === "string" &&
+    typeof entry.itemId === "string" &&
+    typeof entry.originCompanionId === "string" &&
+    typeof entry.originSlot === "string"
+  );
+}
+
+function parsePartyInventory(value: unknown): PartyInventoryEntry[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const entries = value.filter(isPlausiblePartyInventoryEntry);
+  return entries.length > 0 ? entries : undefined;
+}
+
+/**
  * Read roster state from storage, falling back to the default (nobody
  * recruited) state on missing or corrupt data — same defensiveness as
  * `loadCampaignProgress`/`loadWorldFlags`. A malformed individual list
@@ -61,6 +146,9 @@ export function loadCompanionRoster(storage: CompanionRosterStorage, key: string
       activeIds: isValidIdArray(parsed.activeIds) ? parsed.activeIds : [],
       benchedIds: isValidIdArray(parsed.benchedIds) ? parsed.benchedIds : [],
       lostIds: isValidIdArray(parsed.lostIds) ? parsed.lostIds : [],
+      companionBuilds: parseCompanionBuilds(parsed.companionBuilds),
+      pcBuild: isPlausibleCharacterBuild(parsed.pcBuild) ? parsed.pcBuild : undefined,
+      partyInventory: parsePartyInventory(parsed.partyInventory),
     };
   } catch {
     return DEFAULT_COMPANION_ROSTER_STATE;
@@ -170,8 +258,46 @@ export function activateCompanion(state: CompanionRosterState, companionId: stri
 export function loseCompanion(state: CompanionRosterState, companionId: string): CompanionRosterState {
   if (isCompanionLost(state, companionId)) return state;
   return {
+    ...state,
     activeIds: state.activeIds.filter((id) => id !== companionId),
     benchedIds: state.benchedIds.filter((id) => id !== companionId),
     lostIds: [...state.lostIds, companionId],
   };
+}
+
+/** Plan 3.1: a companion's persisted build, or `undefined` if never used in a party this playthrough. */
+export function getCompanionBuild(state: CompanionRosterState, companionId: string): CharacterBuild | undefined {
+  return state.companionBuilds?.[companionId];
+}
+
+/** Plan 3.1: persist a companion's current build (gear/spells/level-plan/name), overwriting any prior copy. */
+export function setCompanionBuild(
+  state: CompanionRosterState,
+  companionId: string,
+  build: CharacterBuild,
+): CompanionRosterState {
+  return {
+    ...state,
+    companionBuilds: { ...state.companionBuilds, [companionId]: build },
+  };
+}
+
+/** Plan 3.1/3.2: the player's own persisted PC build, or `undefined` if this playthrough's PC hasn't been committed yet. */
+export function getPcBuild(state: CompanionRosterState): CharacterBuild | undefined {
+  return state.pcBuild;
+}
+
+/** Plan 3.1/3.2: persist the player's current PC build, overwriting any prior copy. */
+export function setPcBuild(state: CompanionRosterState, build: CharacterBuild): CompanionRosterState {
+  return { ...state, pcBuild: build };
+}
+
+/** Plan 2.3: every item currently sitting in the shared party inventory. */
+export function getPartyInventory(state: CompanionRosterState): PartyInventoryEntry[] {
+  return state.partyInventory ?? [];
+}
+
+/** Plan 2.3: replace the shared party inventory wholesale. An empty array is stored as `undefined` (matches this field's own "absent = empty" convention). */
+export function setPartyInventory(state: CompanionRosterState, entries: PartyInventoryEntry[]): CompanionRosterState {
+  return { ...state, partyInventory: entries.length > 0 ? entries : undefined };
 }

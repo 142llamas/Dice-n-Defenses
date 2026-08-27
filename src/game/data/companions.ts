@@ -84,7 +84,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["str", "con", "dex", "wis", "cha", "int"]).scores(),
       controlledBy: "human",
-      startingEquipmentId: "iron-buckler",
+      startingGearIds: { weapon: "longsword", chest: "chain-shirt", shield: "shield" },
     },
   },
   {
@@ -100,7 +100,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["wis", "con", "dex", "cha", "int", "str"]).scores(),
       controlledBy: "human",
-      startingEquipmentId: "travelers-cloak",
+      startingGearIds: { weapon: "quarterstaff", chest: "hide-armor", amulet: "druidic-totem" },
     },
   },
   {
@@ -116,7 +116,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["int", "con", "dex", "wis", "cha", "str"]).scores(),
       controlledBy: "human",
-      startingEquipmentId: "circlet-of-focus",
+      startingGearIds: { weapon: "dagger", chest: "padded-armor", amulet: "arcane-focus" },
     },
   },
 
@@ -135,7 +135,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["str", "cha", "con", "wis", "dex", "int"]).scores(),
       controlledBy: "human",
-      startingEquipmentId: "amulet-of-fury",
+      startingGearIds: { weapon: "warhammer", chest: "chain-mail", shield: "shield" },
     },
   },
   {
@@ -152,7 +152,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       abilityScores: new StandardArrayAllocator(["cha", "con", "dex", "wis", "int", "str"]).scores(),
       controlledBy: "human",
       subclassId: subclassIdForNewBuild("warlock"),
-      startingEquipmentId: "amulet-of-warding",
+      startingGearIds: { weapon: "dagger", chest: "leather-armor", amulet: "component-pouch" },
     },
   },
   {
@@ -168,7 +168,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["dex", "wis", "con", "str", "cha", "int"]).scores(),
       controlledBy: "human",
-      startingEquipmentId: "boots-of-striding",
+      startingGearIds: { weapon: "longbow", chest: "leather-armor" },
     },
   },
 
@@ -189,7 +189,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["str", "con", "dex", "wis", "cha", "int"]).scores(),
       controlledBy: "human",
-      startingEquipmentId: "chainmail-vest",
+      startingGearIds: { weapon: "greataxe", chest: "hide-armor" },
     },
   },
   {
@@ -205,7 +205,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["cha", "dex", "con", "wis", "int", "str"]).scores(),
       controlledBy: "human",
-      startingEquipmentId: "whetstone-band",
+      startingGearIds: { weapon: "rapier", chest: "leather-armor", amulet: "component-pouch" },
     },
   },
   {
@@ -222,7 +222,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       abilityScores: new StandardArrayAllocator(["wis", "con", "str", "dex", "cha", "int"]).scores(),
       controlledBy: "human",
       subclassId: subclassIdForNewBuild("cleric"),
-      startingEquipmentId: "leather-cap",
+      startingGearIds: { weapon: "mace", chest: "chain-shirt", amulet: "holy-symbol" },
     },
   },
   {
@@ -238,7 +238,9 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["dex", "wis", "con", "str", "cha", "int"]).scores(),
       controlledBy: "human",
-      startingEquipmentId: "boots-of-the-brawler",
+      // D-193: no chest armor — Monk's `Hero.armorClass` only applies its
+      // favorable unarmored formula when the chest slot is empty.
+      startingGearIds: { weapon: "quarterstaff" },
     },
   },
   {
@@ -254,7 +256,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["dex", "con", "wis", "int", "cha", "str"]).scores(),
       controlledBy: "human",
-      startingEquipmentId: "swift-greaves",
+      startingGearIds: { weapon: "shortsword", chest: "leather-armor" },
     },
   },
   {
@@ -271,7 +273,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       abilityScores: new StandardArrayAllocator(["cha", "con", "dex", "wis", "int", "str"]).scores(),
       controlledBy: "human",
       subclassId: subclassIdForNewBuild("sorcerer"),
-      startingEquipmentId: "band-of-vigor",
+      startingGearIds: { weapon: "dagger", chest: "padded-armor", amulet: "arcane-focus" },
     },
   },
 ];

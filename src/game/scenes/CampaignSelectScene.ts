@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { CAMPAIGN_PROGRESS_STORAGE_KEY, COMPANION_ROSTER_STORAGE_KEY } from "../config";
+import { CAMPAIGN_PROGRESS_STORAGE_KEY, COMPANION_ROSTER_STORAGE_KEY, WORLD_FLAG_STORAGE_KEY } from "../config";
 import {
   CAMPAIGNS,
   PROLOGUE_CAMPAIGN_ID,
@@ -13,16 +13,24 @@ import {
 import { getEnemyDefinition } from "../data/enemies";
 import {
   loadCampaignProgress,
+  saveCampaignProgress,
   isCampaignCompleted,
   areCampaignsCompleted,
   getHighestCompletedChapter,
+  DEFAULT_CAMPAIGN_PROGRESS,
   type CampaignProgress,
 } from "../systems/CampaignProgressSystem";
-import { loadCompanionRoster, saveCompanionRoster } from "../systems/CompanionRosterSystem";
+import {
+  loadCompanionRoster,
+  saveCompanionRoster,
+  DEFAULT_COMPANION_ROSTER_STATE,
+} from "../systems/CompanionRosterSystem";
+import { saveWorldFlags, DEFAULT_WORLD_FLAG_STATE } from "../systems/WorldFlagSystem";
 import { seedStartingCompanions } from "../systems/CompanionSeedSystem";
 import { resolveUnlockMissionCompanion } from "../systems/UnlockMissionSystem";
 import { RandomService } from "../systems/RandomService";
-import { getViewport, onViewportResize } from "./uiTheme";
+import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
+import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
 
 /**
  * CampaignSelectScene — Phase 11.8 (D-071): lists the boss-themed campaigns
@@ -43,6 +51,14 @@ import { getViewport, onViewportResize } from "./uiTheme";
  */
 export class CampaignSelectScene extends Phaser.Scene {
   private layoutRoot?: Phaser.GameObjects.Container;
+  /** Party Creation Overhaul Plan 3.5: this campaign run's difficulty, chosen here now instead of in Character Creation. */
+  private selectedDifficultyId: DifficultyId = "normal";
+  /** D-16x-style shared full-screen list-picker overlay (`openChoiceList`). */
+  private choiceOverlay: Phaser.GameObjects.GameObject[] = [];
+  /** Plan 3 (new, additive): "Reset Campaign Progress" needs a real button reference to flip its label for the two-click confirm. */
+  private resetButton?: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text };
+  private resetArmed = false;
+  private resetArmTimer?: Phaser.Time.TimerEvent;
 
   constructor() {
     super("CampaignSelectScene");
@@ -67,6 +83,7 @@ export class CampaignSelectScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.removeAllListeners();
       this.input.keyboard?.removeAllListeners();
+      this.resetArmTimer?.remove();
     });
     onViewportResize(this, () => this.rebuildLayout());
   }
@@ -93,7 +110,11 @@ export class CampaignSelectScene extends Phaser.Scene {
     this.layoutRoot.add([back.rect, back.label]);
 
     const companions = this.buildButton(width - 110, 40, 180, 44, "Companions", 0x2a2a3a, () =>
-      this.scene.start("CompanionRosterScene"),
+      // Party Creation Overhaul Plan 2.3: forwards the currently-selected
+      // difficulty so "Unequip All Benched Heroes" can compute each
+      // companion's actual currently-equipped kit
+      // (`companionStartingGearForDifficulty`) rather than assuming one.
+      this.scene.start("CompanionRosterScene", { difficultyId: this.selectedDifficultyId }),
     );
     this.layoutRoot.add([companions.rect, companions.label]);
 
@@ -112,7 +133,97 @@ export class CampaignSelectScene extends Phaser.Scene {
         .setOrigin(0.5),
     );
 
+    this.buildControlRow(width);
     this.buildCampaignCards(width);
+  }
+
+  /**
+   * Party Creation Overhaul Plan 3.5/Plan 3 (new): a compact control row
+   * between the intro text and the campaign card list — this campaign run's
+   * Difficulty (moved here from Character Creation, which used to be the
+   * only place it could be set, with no `campaignId` guard at all) on the
+   * left, and the new "Reset Campaign Progress" clean-slate action on the
+   * right.
+   */
+  private buildControlRow(width: number): void {
+    const y = 136;
+
+    const difficultyButton = this.add
+      .rectangle(width / 2 - 170, y, 300, 36, 0x2a2a3a)
+      .setStrokeStyle(1, 0x4a4a5a)
+      .setInteractive({ useHandCursor: true });
+    const difficultyLabel = this.add
+      .text(width / 2 - 170, y, `Difficulty: ${getDifficultyDefinition(this.selectedDifficultyId).name}`, {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "14px",
+        color: "#e8e8f0",
+      })
+      .setOrigin(0.5);
+    difficultyButton.on("pointerover", () => difficultyButton.setFillStyle(0x3a3a4a));
+    difficultyButton.on("pointerout", () => difficultyButton.setFillStyle(0x2a2a3a));
+    difficultyButton.on("pointerdown", () => {
+      openChoiceList(
+        this,
+        this.choiceOverlay,
+        "Choose Difficulty",
+        DIFFICULTY_IDS.map((id) => ({
+          label: getDifficultyDefinition(id).name,
+          desc: difficultyChoiceDescription(id),
+          highlighted: id === this.selectedDifficultyId,
+          onPick: () => (this.selectedDifficultyId = id),
+        })),
+        () => {
+          difficultyLabel.setText(`Difficulty: ${getDifficultyDefinition(this.selectedDifficultyId).name}`);
+        },
+      );
+    });
+    this.layoutRoot?.add([difficultyButton, difficultyLabel]);
+
+    this.resetArmed = false;
+    this.resetArmTimer?.remove();
+    const resetRect = this.add
+      .rectangle(width / 2 + 170, y, 300, 36, 0x3a2424)
+      .setStrokeStyle(1, 0x5a3a3a)
+      .setInteractive({ useHandCursor: true });
+    const resetLabel = this.add
+      .text(width / 2 + 170, y, "Reset Campaign Progress", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "13px",
+        color: "#e8b8b8",
+      })
+      .setOrigin(0.5);
+    this.resetButton = { rect: resetRect, label: resetLabel };
+    resetRect.on("pointerdown", () => this.onResetButtonClicked());
+    this.layoutRoot?.add([resetRect, resetLabel]);
+  }
+
+  /**
+   * Plan 3 (new, additive): wipes the shared companion roster/persisted
+   * builds, campaign progress, and world flags back to their defaults — a
+   * real "start a brand-new playthrough" option now that all three stay one
+   * shared blob across every region (see D-NNN's Track A writeup). Explicitly
+   * does NOT touch `SaveSystem`'s Free Play save slots — unrelated state,
+   * same boundary D-194 already established. Two-click confirm: the first
+   * click just arms it (label flips, reverts after a few seconds if
+   * unconfirmed); the second click within that window actually resets.
+   */
+  private onResetButtonClicked(): void {
+    if (!this.resetArmed) {
+      this.resetArmed = true;
+      this.resetButton?.label.setText("Click again to confirm — wipes ALL campaign progress");
+      this.resetArmTimer?.remove();
+      this.resetArmTimer = this.time.delayedCall(4000, () => {
+        this.resetArmed = false;
+        this.resetButton?.label.setText("Reset Campaign Progress");
+      });
+      return;
+    }
+    this.resetArmed = false;
+    this.resetArmTimer?.remove();
+    saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, DEFAULT_COMPANION_ROSTER_STATE);
+    saveCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY, DEFAULT_CAMPAIGN_PROGRESS);
+    saveWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY, DEFAULT_WORLD_FLAG_STATE);
+    this.rebuildLayout();
   }
 
   private leave(): void {
@@ -161,7 +272,9 @@ export class CampaignSelectScene extends Phaser.Scene {
     const cardWidth = width - 160;
     const cardHeight = 104;
     const gap = 16;
-    const startY = 172;
+    // Party Creation Overhaul Plan 3.5/Plan 3: 172 -> 202, room for the new
+    // Difficulty/Reset control row (`buildControlRow`) above the card list.
+    const startY = 202;
 
     CAMPAIGNS.forEach((campaign, i) => {
       const y = startY + i * (cardHeight + gap);
@@ -275,9 +388,17 @@ export class CampaignSelectScene extends Phaser.Scene {
   private selectCampaign(campaign: CampaignDefinition, chapterIndex: number): void {
     const roster = loadCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY);
     if (resolveUnlockMissionCompanion(campaign.id, chapterIndex, roster)) {
-      this.scene.start("UnlockMissionPartyScene", { campaignId: campaign.id, chapterIndex });
+      this.scene.start("UnlockMissionPartyScene", {
+        campaignId: campaign.id,
+        chapterIndex,
+        difficultyId: this.selectedDifficultyId,
+      });
       return;
     }
-    this.scene.start("CharacterCreationScene", { campaignId: campaign.id, chapterIndex });
+    this.scene.start("CharacterCreationScene", {
+      campaignId: campaign.id,
+      chapterIndex,
+      difficultyId: this.selectedDifficultyId,
+    });
   }
 }

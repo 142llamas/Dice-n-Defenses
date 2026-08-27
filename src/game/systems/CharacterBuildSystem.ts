@@ -12,6 +12,7 @@ import { subclassesForClass } from "../data/subclasses";
 import { attackStyleForClass, combatStatsForClassLevel } from "./CharacterSystem";
 import { CREATABLE_CLASS_IDS, CHARACTER_NAME_POOL } from "../data/characterCreation";
 import type { LevelUpPlan } from "./LevelUpPlanSystem";
+import type { GearSlotId } from "../data/equipment";
 
 // Re-exported for existing callers/tests — this function now lives in
 // CharacterSystem.ts (Phase 13.3, D-089) alongside the rest of the pure
@@ -26,11 +27,14 @@ export { attackStyleForClass };
  * Pure logic only — no Phaser. Two jobs:
  *
  * 1. `StandardArrayAllocator` lets a player assign the SRD standard array
- *    (15/14/13/12/10/8) across the six ability scores by repeatedly
- *    "cycling" one ability forward — an adjacent swap with whichever
- *    ability currently holds the next slot. This guarantees the assigned
- *    scores are ALWAYS exactly the standard array (a permutation), so a
- *    UI button never needs to validate "did the total change" — it can't.
+ *    (15/14/13/12/10/8) across the six ability scores directly, one ability
+ *    at a time (Party Creation Overhaul Plan 1.1's `assign()`) — picking a
+ *    value already claimed by another ability swaps the two abilities'
+ *    values instead of rejecting the pick, and an ability can sit unset
+ *    ("—", `null`) mid-edit. This still guarantees every ASSIGNED score is
+ *    exactly one of the standard array's six values (never invented), but
+ *    unlike the old cycle-only model, the allocator can be genuinely
+ *    incomplete — see `isComplete()`.
  *
  * 2. `heroDefinitionFromBuild` turns a finished `CharacterBuild` (name,
  *    race, class, ability scores) into the existing `HeroDefinition` shape
@@ -76,33 +80,59 @@ export interface AbilityScoreAllocator {
 }
 
 export class StandardArrayAllocator implements AbilityScoreAllocator {
-  private order: AbilityScoreId[];
+  private assignments: Partial<Record<AbilityScoreId, number>>;
 
   constructor(initialOrder: AbilityScoreId[] = ABILITY_SCORE_IDS) {
-    this.order = [...initialOrder];
+    this.assignments = {};
+    initialOrder.forEach((ability, i) => {
+      this.assignments[ability] = STANDARD_ARRAY[i];
+    });
   }
 
-  /** The current assignment: each ability mapped to its standard-array value. */
+  /**
+   * The current assignment. An unset ability (Party Creation Overhaul,
+   * Plan 1.1's "—" dropdown option) reads as 10 (neutral, no modifier) here
+   * purely so preview math (scratch-Hero HP/AC, etc.) never sees
+   * `undefined` mid-edit — this never reaches Save/Start, which are gated
+   * on `isComplete()` until every ability is really assigned.
+   */
   scores(): AbilityScores {
     const result = {} as AbilityScores;
-    this.order.forEach((ability, i) => {
-      result[ability] = STANDARD_ARRAY[i];
+    ABILITY_SCORE_IDS.forEach((ability) => {
+      result[ability] = this.assignments[ability] ?? 10;
     });
     return result;
   }
 
+  /** The raw assigned value, or null if this ability is unset ("—"). */
+  valueFor(ability: AbilityScoreId): number | null {
+    return this.assignments[ability] ?? null;
+  }
+
+  /** True once every ability has a real assigned value (no "—" left). */
+  isComplete(): boolean {
+    return ABILITY_SCORE_IDS.every((ability) => this.assignments[ability] !== undefined);
+  }
+
   /**
-   * Advance `ability` to the next standard-array slot, swapping with
-   * whichever ability currently holds it. Six calls on the same ability
-   * return the allocator to its starting assignment. Repeatedly cycling
-   * DIFFERENT abilities can reach any permutation (adjacent-swap sort).
+   * Party Creation Overhaul Plan 1.1: assign `value` directly to `ability`.
+   * `value === null` clears it to "—" (unset). Otherwise, if another
+   * ability already holds `value`, the two swap — Kevin's exact spec
+   * (picking a value already claimed elsewhere trades the two abilities'
+   * values rather than rejecting the pick).
    */
-  cycle(ability: AbilityScoreId): void {
-    const i = this.order.indexOf(ability);
-    const j = (i + 1) % this.order.length;
-    const tmp = this.order[i];
-    this.order[i] = this.order[j];
-    this.order[j] = tmp;
+  assign(ability: AbilityScoreId, value: number | null): void {
+    if (value === null) {
+      delete this.assignments[ability];
+      return;
+    }
+    const holder = ABILITY_SCORE_IDS.find((id) => id !== ability && this.assignments[id] === value);
+    const previous = this.assignments[ability];
+    if (holder) {
+      if (previous === undefined) delete this.assignments[holder];
+      else this.assignments[holder] = previous;
+    }
+    this.assignments[ability] = value;
   }
 }
 
@@ -233,8 +263,22 @@ export interface CharacterBuild {
    * class now, so this is a real player choice, not an auto-pick).
    */
   subclassId?: string;
-  /** Phase 13.11 (D-096): one common/uncommon item picked at creation, or undefined for "None". */
+  /**
+   * @deprecated Phase 13.11 (D-096)'s original single-item pick — kept ONLY
+   * so a pre-Plan-2 `SaveSystem` save still type-checks and can be migrated
+   * on read (see `CharacterCreationScene.slotStateFromBuild`). Every build
+   * created after Plan 2 (D-193) uses `startingGearIds` below instead.
+   */
   startingEquipmentId?: string;
+  /**
+   * D-193 (Party Creation Overhaul Plan 2): the real per-slot starting
+   * loadout — one optional pick per gear slot (`GearSlotId`; "None" means
+   * absent for that key). Every slot's pool is open to every class (no
+   * class gating — matches `EquipmentDefinition` having no class-
+   * restriction field anywhere). Replaces the old single-item
+   * `startingEquipmentId` pick.
+   */
+  startingGearIds?: Partial<Record<GearSlotId, string>>;
   /**
    * D-129: a pre-battle class level to fast-forward to before wave 1, set at
    * party-setup time (individually per hero, or all at once via the team
@@ -326,7 +370,11 @@ export function heroDefinitionFromBuild(build: CharacterBuild): HeroDefinition {
     // Phase 13.11 (D-096): a level-1-choice class's subclass, if any; a
     // later-choice class stays undefined until BattleScene assigns one.
     subclassId: build.subclassId,
+    // D-193: startingEquipmentId is legacy-only now (undefined on any build
+    // created post-Plan-2) — both are passed through unconditionally so
+    // Hero's constructor can fold a legacy pick in alongside real slot picks.
     startingEquipmentId: build.startingEquipmentId,
+    startingGearIds: build.startingGearIds,
     // Phase 17 (D-108): the class-rider portion of attackDamage (e.g. a
     // future by-level bonus-damage table), kept SEPARATE from the base+
     // ability-modifier portion so a real equipped weapon can replace just

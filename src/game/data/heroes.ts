@@ -1,5 +1,6 @@
 import type { AbilityScores } from "./abilityScores";
 import type { LevelUpPlan } from "../systems/LevelUpPlanSystem";
+import type { GearSlotId } from "./equipment";
 
 /**
  * Hero definitions — the shape a playable hero must have, and the shared
@@ -70,13 +71,22 @@ export interface HeroDefinition {
    */
   subclassId?: string;
   /**
-   * Phase 13.11 (D-096): one common/uncommon equipment item chosen at
-   * character creation (see `CharacterCreationScene`'s Gear row), granted
-   * for free into the matching gear slot before the first battle — closer
-   * to a real 5e starting-equipment package than starting every hero
-   * bare-handed. Absent for any build that picked "None".
+   * @deprecated Phase 13.11 (D-096)'s original single-item pick. Kept ONLY
+   * as a legacy fallback for a pre-Plan-2 save's build (see
+   * `CharacterBuild.startingEquipmentId`) — `Hero`'s constructor folds it
+   * in alongside `startingGearIds` below for any slot the latter didn't
+   * already claim. Every build created after Plan 2 (D-193) leaves this
+   * undefined.
    */
   startingEquipmentId?: string;
+  /**
+   * D-193 (Party Creation Overhaul Plan 2): the real per-slot starting
+   * loadout chosen at character creation (see `CharacterCreationScene`'s
+   * Gear row) — weapon + chest armor + a class-appropriate third slot,
+   * each optional. Granted for free into the matching gear slots before
+   * the first battle. Absent/empty-for-a-slot means "None" for that slot.
+   */
+  startingGearIds?: Partial<Record<GearSlotId, string>>;
   /**
    * Phase 17 (D-108): the class-rider portion of a D&D-built hero's
    * `attackDamage` (e.g. a future by-level bonus-damage table), kept

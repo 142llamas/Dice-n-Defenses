@@ -3,6 +3,8 @@ import { COMPANION_ROSTER_STORAGE_KEY } from "../config";
 import { COMPANIONS, getCompanionDefinition, type CompanionDefinition } from "../data/companions";
 import { getCampaignDefinition } from "../data/campaigns";
 import { getClassDefinition } from "../data/classes";
+import { companionStartingGearForDifficulty } from "../data/characterCreation";
+import { type DifficultyId } from "../data/difficulty";
 import {
   loadCompanionRoster,
   saveCompanionRoster,
@@ -11,8 +13,10 @@ import {
   isCompanionLost,
   benchCompanion,
   activateCompanion,
+  getPartyInventory,
   type CompanionRosterState,
 } from "../systems/CompanionRosterSystem";
+import { unequipAllBenchedGear } from "../systems/PartyInventorySystem";
 import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
 
 /**
@@ -28,9 +32,27 @@ export class CompanionRosterScene extends Phaser.Scene {
   private layoutRoot?: Phaser.GameObjects.Container;
   private overlay: Phaser.GameObjects.GameObject[] = [];
   private roster: CompanionRosterState = { activeIds: [], benchedIds: [], lostIds: [] };
+  /**
+   * Party Creation Overhaul Plan 2.3: this campaign run's Difficulty,
+   * forwarded from `CampaignSelectScene`'s own `selectedDifficultyId`
+   * (same plumbing shape as `difficultyId` already forwarded to Character
+   * Creation) — needed to compute a benched companion's CURRENTLY-equipped
+   * kit via `companionStartingGearForDifficulty` before pooling it, so
+   * "Unequip All Benched Heroes" never pools a chest/shield item a stricter
+   * difficulty was already trimming away. Defaults to "normal" for any
+   * direct navigation path that doesn't pass one.
+   */
+  private difficultyId: DifficultyId = "normal";
+  private unequipArmed = false;
+  private unequipArmTimer?: Phaser.Time.TimerEvent;
+  private unequipButton?: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text };
 
   constructor() {
     super("CompanionRosterScene");
+  }
+
+  init(data: { difficultyId?: DifficultyId }): void {
+    this.difficultyId = data.difficultyId ?? "normal";
   }
 
   create(): void {
@@ -86,7 +108,75 @@ export class CompanionRosterScene extends Phaser.Scene {
         .setOrigin(0.5),
     );
 
+    this.buildPartyInventoryRow(width);
     this.buildCompanionCards(width);
+  }
+
+  /**
+   * Party Creation Overhaul Plan 2.3: a small control row between the
+   * instructions text and the card grid (`buildCompanionCards`'s own
+   * `startY=160` leaves the same kind of slack `CampaignSelectScene
+   * .buildControlRow` already uses at its own `y=136`) — "Unequip All
+   * Benched Heroes" moves every benched companion's current kit into the
+   * shared pool, and a small label shows how many items are sitting there.
+   * Reuses this scene's own plain `buildButton` (Rectangle+Text), not
+   * `createOrnateButton` — this scene has never adopted the D-123 ornate
+   * theme (D-191/Plan 8 was scoped to `CharacterCreationScene` only), and a
+   * single ornate button here would look like a half-finished migration
+   * rather than a deliberate one.
+   */
+  private buildPartyInventoryRow(width: number): void {
+    const y = 124;
+
+    this.unequipArmed = false;
+    this.unequipArmTimer?.remove();
+    this.unequipButton = this.buildButton(width / 2 - 150, y, 300, 34, "Unequip All Benched Heroes", 0x2a2a3a, () =>
+      this.onUnequipAllClicked(),
+    );
+    this.layoutRoot?.add([this.unequipButton.rect, this.unequipButton.label]);
+
+    const itemCount = getPartyInventory(this.roster).length;
+    const countLabel = this.add
+      .text(width / 2 + 20, y, `Party Inventory: ${itemCount} item${itemCount === 1 ? "" : "s"}`, {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "13px",
+        color: "#8a8aa0",
+      })
+      .setOrigin(0, 0.5);
+    this.layoutRoot?.add(countLabel);
+  }
+
+  /**
+   * Party Creation Overhaul Plan 2.3: moves every benched companion's
+   * currently-equipped kit into the shared pool — same two-click-confirm
+   * pattern as `CampaignSelectScene.onResetButtonClicked` (D-195), since
+   * this is a roster-wide bulk action, not something to fire on a single
+   * accidental click. Commits (and saves) immediately on confirm — unlike
+   * the ephemeral per-hero pool PICKS `CharacterCreationScene` will stage,
+   * this isn't scoped to one mission's setup.
+   */
+  private onUnequipAllClicked(): void {
+    if (!this.unequipArmed) {
+      this.unequipArmed = true;
+      this.unequipButton?.label.setText("Click again to confirm");
+      this.unequipArmTimer?.remove();
+      this.unequipArmTimer = this.time.delayedCall(4000, () => {
+        this.unequipArmed = false;
+        this.unequipButton?.label.setText("Unequip All Benched Heroes");
+      });
+      return;
+    }
+    this.unequipArmed = false;
+    this.unequipArmTimer?.remove();
+    let counter = 0;
+    const next = unequipAllBenchedGear(
+      this.roster,
+      this.roster.benchedIds,
+      (companionId) =>
+        companionStartingGearForDifficulty(getCompanionDefinition(companionId).build.startingGearIds ?? {}, this.difficultyId),
+      () => `pool-${Date.now()}-${counter++}`,
+    );
+    this.save(next);
   }
 
   private buildButton(

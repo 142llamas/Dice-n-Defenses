@@ -37,39 +37,58 @@ describe("StandardArrayAllocator", () => {
     expect(scores.cha).toBe(8);
   });
 
-  it("cycling one ability swaps it with whatever holds the next slot", () => {
+  it("assigning a free value to an ability just sets it, leaving its old holder unset", () => {
     const allocator = new StandardArrayAllocator();
-    allocator.cycle("str"); // str (slot 0) swaps with dex (slot 1)
-    const scores = allocator.scores();
-    expect(scores.str).toBe(14);
-    expect(scores.dex).toBe(15);
+    allocator.assign("str", 15); // str already holds 15 — no-op change
+    expect(allocator.scores().str).toBe(15);
   });
 
-  it("always assigns exactly the standard array, however many times it's cycled", () => {
+  it("assigning a value already held by a DIFFERENT ability swaps the two abilities' values (Plan 1.1's exact spec)", () => {
+    const allocator = new StandardArrayAllocator(); // str 15 / dex 14 / con 13 / int 12 / wis 10 / cha 8
+    allocator.assign("con", 15); // con takes str's 15; str takes con's old 13
+    expect(allocator.scores().con).toBe(15);
+    expect(allocator.scores().str).toBe(13);
+  });
+
+  it("assigning null clears an ability to unset (\"—\")", () => {
+    const allocator = new StandardArrayAllocator();
+    allocator.assign("str", null);
+    expect(allocator.valueFor("str")).toBeNull();
+    expect(allocator.isComplete()).toBe(false);
+  });
+
+  it("assigning a claimed value to an ability whose OWN value was unset leaves the value's old holder unset", () => {
+    const allocator = new StandardArrayAllocator();
+    allocator.assign("str", null); // str is now unset
+    allocator.assign("str", 14); // str claims dex's 14
+    expect(allocator.scores().str).toBe(14);
+    expect(allocator.valueFor("dex")).toBeNull();
+  });
+
+  it("isComplete() is false with any ability unset, true once every ability has a value again", () => {
+    const allocator = new StandardArrayAllocator();
+    expect(allocator.isComplete()).toBe(true);
+    allocator.assign("wis", null);
+    expect(allocator.isComplete()).toBe(false);
+    allocator.assign("wis", 10);
+    expect(allocator.isComplete()).toBe(true);
+  });
+
+  it("always assigns only real standard-array values, however many times reassigned", () => {
     const allocator = new StandardArrayAllocator();
     for (let i = 0; i < 25; i++) {
-      allocator.cycle(ABILITY_SCORE_IDS[i % ABILITY_SCORE_IDS.length]);
+      const ability = ABILITY_SCORE_IDS[i % ABILITY_SCORE_IDS.length];
+      allocator.assign(ability, STANDARD_ARRAY[i % STANDARD_ARRAY.length]);
       expect(sortedValues(allocator.scores())).toEqual([...STANDARD_ARRAY].sort((a, b) => a - b));
     }
-  });
-
-  it("cycling the SAME ability six times (once per slot) returns ITS OWN value to the start", () => {
-    // Each cycle swaps the ability one slot forward, so it visits every slot
-    // once over six cycles and wraps back to its starting value — the other
-    // five abilities end up rotated by one slot among themselves, which is
-    // fine (still a valid permutation of the standard array either way).
-    const allocator = new StandardArrayAllocator();
-    const startingStrValue = allocator.scores().str;
-    for (let i = 0; i < 6; i++) allocator.cycle("str");
-    expect(allocator.scores().str).toBe(startingStrValue);
   });
 });
 
 describe("allocatorFromScores (Phase 9, D-083)", () => {
-  it("round-trips a cycled allocator's scores back to an equivalent allocator", () => {
+  it("round-trips a reassigned allocator's scores back to an equivalent allocator", () => {
     const original = new StandardArrayAllocator();
-    original.cycle("str");
-    original.cycle("wis");
+    original.assign("con", 15);
+    original.assign("wis", 12);
     const scores = original.scores();
     const rebuilt = allocatorFromScores(scores);
     expect(rebuilt.scores()).toEqual(scores);
@@ -299,11 +318,19 @@ describe("heroDefinitionFromBuild — subclassId/startingEquipmentId (Phase 13.1
     expect(heroDefinitionFromBuild(build({ subclassId: "champion" })).subclassId).toBe("champion");
   });
 
-  it("passes a build's startingEquipmentId straight through, absent means undefined", () => {
+  it("passes a build's LEGACY startingEquipmentId straight through, absent means undefined (D-193 back-compat)", () => {
     expect(heroDefinitionFromBuild(build()).startingEquipmentId).toBeUndefined();
     expect(heroDefinitionFromBuild(build({ startingEquipmentId: "iron-buckler" })).startingEquipmentId).toBe(
       "iron-buckler",
     );
+  });
+});
+
+describe("heroDefinitionFromBuild — startingGearIds (D-193, Party Creation Overhaul Plan 2)", () => {
+  it("passes a build's multi-slot startingGearIds straight through, absent means undefined", () => {
+    expect(heroDefinitionFromBuild(build()).startingGearIds).toBeUndefined();
+    const gearIds = { weapon: "longsword", chest: "chain-shirt", shield: "shield" };
+    expect(heroDefinitionFromBuild(build({ startingGearIds: gearIds })).startingGearIds).toEqual(gearIds);
   });
 });
 

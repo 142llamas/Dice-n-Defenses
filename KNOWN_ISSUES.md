@@ -2,14 +2,23 @@
 
 ## Open bugs (confirmed by Kevin, not yet fixed)
 
-None currently — the two bugs Kevin confirmed 2026-08-21 (waypoint pinning,
-Main Menu title/corner-control overlap) were fixed by D-149; see KI-101
-below for their own re-confirmation checklist. The two bugs Kevin confirmed
-2026-08-22 (Main Menu corner controls overlapping the frame border, and
-Character Creation's Start/Back buttons rendering off-screen entirely after
-"New Game") were fixed by D-159 — a revert of D-157's `Scale.RESIZE`
-cutover back to `Scale.FIT`; see KI-109 below for what broke and why. The 8
-items Kevin reported 2026-08-24 were investigated and fixed (or, for the
+None currently — the hero-name-field bug below moved to "Still need
+Kevin's playtest confirmation" as KI-152: still no repro was ever
+obtained, but D-202 fixed the one concrete defect static reading DID find
+(typed names/picks silently discarded on a Back-to-Main-Menu-then-return
+round trip), at Kevin's own explicit go-ahead to fix it without a repro.
+If it turns out this wasn't what he originally saw, re-open this section
+with a fresh repro next time it happens.
+
+None of the previously-tracked "Open bugs" remain — the two bugs Kevin
+confirmed 2026-08-21 (waypoint pinning, Main Menu title/corner-control
+overlap) were fixed by D-149; see KI-101 below for their own
+re-confirmation checklist. The two bugs Kevin confirmed 2026-08-22 (Main
+Menu corner controls overlapping the frame border, and Character
+Creation's Start/Back buttons rendering off-screen entirely after "New
+Game") were fixed by D-159 — a revert of D-157's `Scale.RESIZE` cutover
+back to `Scale.FIT`; see KI-109 below for what broke and why. The 8 items
+Kevin reported 2026-08-24 were investigated and fixed (or, for the
 horizontal-squish bug, mitigated on a best-effort basis — see KI-113) by
 D-160 through D-164; see those KI entries below for their own
 re-confirmation checklists, ordered newest first.
@@ -19,6 +28,455 @@ re-confirmation checklists, ordered newest first.
 Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
+
+### KI-152 — D-202: Character Creation resumes a "plain" draft across Back-and-return
+No repro was ever obtained for the original hero-name report — this fixes
+the one concrete defect static reading found, on Kevin's own explicit
+go-ahead to proceed without a repro. **If this doesn't match what you
+originally saw, say so and we'll go back to needing a real repro.**
+- From Main Menu, "Build Party" (or "New Game") into Character Creation.
+  Type a distinctive name into one hero's name field, change their
+  class/race, pick some gear. Click "Back (Esc)" to Main Menu.
+- Click "Build Party" again — confirm the hero you edited still shows
+  your typed name, chosen class/race, and gear pick (not reset to the
+  default `CHARACTER_NAME_POOL` name/Fighter/Human/no-gear state).
+- Confirm this ALSO works from "New Game" (both buttons share one entry
+  point, by design — see D-190/D-202).
+- Now actually click "Start Battle" from a resumed draft, then return to
+  Main Menu (win, lose, or Exit to Main Menu) and click "Build Party"
+  again — confirm THIS time it resets to fresh defaults (the draft should
+  be cleared once a battle actually starts, not resurrected indefinitely).
+- Confirm campaign entry (CampaignSelectScene → Character Creation) and
+  Load Game both still work exactly as before — neither should be
+  affected by this change (both already skip the new "plain entry" path).
+- Refresh the browser tab entirely, then Build Party — confirm it starts
+  fresh (the draft is memory-only, never written to `localStorage`, so a
+  real page reload always clears it).
+
+### KI-151 — D-201: Load Game now restores a campaign party's lock/point-buy/party-size
+Two separate save paths exist (`CharacterCreationScene`'s pre-battle Save
+Party, hidden in campaign mode; `BattleScene`'s in-battle pause-menu Save
+Party/Save & Exit, NOT hidden) — this fix only matters for the second one.
+- Start (or continue) a campaign run. Mid-battle, open the pause menu and
+  click "Save Party" (or "Save & Exit"). Note the slot name.
+- From Main Menu → Load Game, load that slot. Confirm Character Creation
+  now shows: party size locked to 4 (no party-size picker), Difficulty
+  hidden, companions 2-4 shown with their identity locked (can't change
+  class/race, "(Companion)" tag visible) same as a fresh campaign entry,
+  and point-buy active for ability scores (not Standard Array free-pick).
+- Confirm the loaded party's own edited gear/name/etc. for each slot still
+  shows correctly (a loaded save's own values should still win over the
+  roster's separately-stored ones).
+- Click "Start Battle" from that loaded slot — confirm no error, and that
+  the battle proceeds normally (this exercises the new roster write-back
+  path for a slot whose `companionIdForSlot` metadata wasn't computed
+  before this fix).
+- Confirm a NON-campaign (classic/Free Play) saved party still loads
+  exactly as before this fix — fully free-pick, no lock, no point-buy,
+  no campaign UI hidden.
+
+### KI-150 — D-200: Party Creation Overhaul Plan 7, the level-progression reference screen
+Closes the entire Party Creation Overhaul roadmap. Two separate screens
+changed — a rewritten Compendium view and a brand-new Character Sheet tab —
+neither can be visually verified in this environment.
+- Main Menu → Compendium → Classes → pick any class. Confirm the detail
+  panel now shows a "Lv N" header for every level that has something new
+  (not every one of 1-20 — sparse levels are skipped), each with its
+  feature(s) listed below it exactly as before (name, `[inert]` tag,
+  hover tooltip for the description).
+- Pick a caster class (e.g. Wizard, Sorcerer, Paladin) and confirm each
+  relevant level ALSO shows a condensed line like
+  `Slots: 2/0/0 · Cantrips: 3 · Prepared: 4` (Wizard additionally gets
+  `Spellbook: N`). Confirm the numbers only grow level-over-level, never
+  shrink, and Prev/Next paging still works across the now-longer list.
+- Confirm Compendium's Subclasses tab looks completely unchanged (still a
+  flat per-subclass feature list, no new caster-summary rows there).
+- Start a battle, open a hero's Character Sheet (any hero with a real
+  class), confirm a new fourth tab "Progression" appears alongside
+  Stats/Spellbook/Hotkeys.
+- On the Progression tab, confirm all 20 levels are listed, each on its
+  own single line (level number, feature name(s), subclass feature
+  name(s) in parentheses if any, and a caster summary if applicable).
+  Confirm rows for levels ABOVE the hero's current level look visibly
+  dimmed/faded compared to rows at or below it.
+- Hover a row and confirm a tooltip appears with the full feature
+  description text (concatenated if both a class and subclass feature
+  land on that level).
+- Open the Character Sheet for the "classic" fixed-roster hero (if one is
+  in the party) and confirm the Progression tab shows an explanatory
+  message instead of a table, with no error.
+- Switch away from the Progression tab and back (or to another tab and
+  back) a few times — confirm no leftover/duplicated rows from a previous
+  render (the tab should fully clear before re-rendering).
+
+### KI-149 — D-199: Party Creation Overhaul Plan 6, the level-up blueprint library
+The largest, most interaction-heavy UI addition on the whole roadmap — a
+new 3-way entry screen, a picker/submenu with two-click delete, a
+name-entry save screen, a new per-hero cadence pill, and a whole new
+plannable step kind (spell swaps) threaded through the existing wizard.
+Genuinely can't be spot-checked on one screen; needs a full walkthrough.
+- Click "Plan Levels" for any hero — confirm the new first screen shows
+  "Create a New Blueprint" / "Select a Saved Blueprint" / "No Blueprint" /
+  "Cancel" (not the old Auto/Prompted/Fresh mode screen).
+- Confirm the "Plan Levels" button is now HALF-WIDTH, sharing its row
+  with a new cadence pill reading "Cadence: Auto/Prompt/Fresh" — click the
+  pill and confirm it cycles Auto → Prompt → Fresh → Auto with no wizard
+  involved. Toggle the hero to AI-Controlled and confirm the cadence pill
+  visibly disables (and stays showing "Auto").
+- "Create a New Blueprint" → build a plan (pick a subclass/ASI/spell
+  pick) → "Blueprint Complete" screen → "Save as Blueprint" → name it →
+  confirm it saves without error and you land back on "Blueprint Complete".
+  Then "Save & Close" and confirm the hero's own plan applied.
+- Reopen "Plan Levels" → "Select a Saved Blueprint" → confirm the
+  blueprint you just saved appears, named correctly, only for heroes of
+  the SAME class. Click it → confirm "Use As-Is" / "Edit" / "Delete" /
+  Back all show. "Use As-Is" should apply and close immediately with no
+  further wizard screens.
+- Pick "Edit" on a saved blueprint → confirm the wizard opens pre-seeded
+  with that blueprint's choices (existing picks show highlighted) → reach
+  the Done screen → "Save as Blueprint" → confirm it now offers
+  `Update "<name>"` vs. "Save as New Blueprint", and that Update actually
+  overwrites (re-open the picker afterward, confirm no duplicate).
+- On a saved blueprint's submenu, click "Delete" once (confirm it
+  relabels to "Confirm Delete?") then click it again — confirm the
+  blueprint is gone from the picker, and that clicking Delete once then
+  navigating away (Back) does NOT delete it.
+- For a caster class (e.g. Sorcerer), confirm new "Replace a Cantrip"/
+  "Replace a Prepared Spell" steps appear in the wizard at multiple
+  levels, each offering the usual Skip/Back — this is a LOT more steps
+  than before D-199, confirm it doesn't feel broken/excessive, just
+  longer (Skip is the fast path).
+- Start a battle with a caster hero whose blueprint fully planned a
+  level-up spell swap (both cantrip AND prepared, if the class needs
+  both) and cadence "Auto" — confirm the swap happens silently (check the
+  hero's spell list before/after leveling, no popup). Then try a hero
+  with only a PARTIAL swap plan (e.g. only the cantrip half) still on
+  "Auto" — confirm NEITHER half auto-applies (all-or-nothing) and no
+  popup appears either (auto mode always skips silently when not fully
+  covered). Then try "Prompt" mode with a planned swap — confirm the live
+  in-battle swap popup pre-highlights the planned drop/learn choice.
+- Confirm a Human-controlled hero with no blueprint at all still works
+  exactly as before D-199 (real in-battle popups for ASI/subclass/spell
+  picks; the recurring swap prompt shows up unprompted, unhighlighted).
+- Confirm Free Play / a fresh "Create Party" flow (no `campaignId`) still
+  works — the blueprint library is global, not campaign-scoped, so it
+  should show the SAME saved blueprints there too.
+
+### KI-148 — D-198: Party Creation Overhaul Plan 5, AI-hero level-up defaults + Human/AI toggle clarity
+An AI-controlled hero's level-up mode is now locked to "Auto" (Plan Levels'
+mode screen only offers Auto for an AI slot) and it never sees a real
+in-battle level-up popup — an unresolved choice with no blueprint entry
+gets a simple invented default instead (class's primary ability +2, first
+modeled subclass, first eligible spell pick). The Human/AI toggle button
+also has a new look (gilt border/brighter fill for the AI state vs. plain
+for Human, plus clearer "Hero N — AI-Controlled"/"Human-Controlled" text).
+- In Character Creation (any mode), toggle a hero to AI-Controlled and
+  confirm the button visually changes (distinct highlighted look, not just
+  different text) — then click Plan Levels for that hero and confirm the
+  mode-select screen shows ONLY "Auto-follow a blueprint" and "Cancel" (no
+  Prompted/Fresh options).
+- Toggle that same hero back to Human-Controlled and confirm Plan Levels'
+  mode screen now shows all three options again (Auto/Prompted/Fresh).
+- Set an AI-controlled hero's Starting Level above 1 (or let one reach a
+  real ASI/subclass/spell-pick level mid-battle) with NO blueprint built
+  for it — confirm no popup ever appears for that hero, the battle log
+  still shows "reaches level N!", and the hero visibly gained something
+  (an ability score bump, a subclass, a new spell) rather than nothing.
+- Confirm a Human-controlled hero's level-up behavior is completely
+  unchanged — still gets the usual real popups when its plan doesn't cover
+  a level, exactly as before this session.
+- In a coop battle, confirm a "remote" (partner-controlled) hero is treated
+  like a human for this purpose — it should still get real popups (asked to
+  the player who owns it), never the AI fallback.
+
+### KI-147 — D-197: Party Creation Overhaul Plan 2.3, shared party inventory pool
+An XCOM2-style shared gear pool between a campaign's active and benched
+companions — "Unequip All Benched Heroes" (Companions screen) moves a
+benched companion's kit into a shared pool; any active hero (companion or
+PC) can draw from it via the new "Pool" button in Character Creation;
+resolution happens at Start Battle. Genuinely multi-step, can't be
+spot-checked on one screen.
+- On the Companions screen, bench a companion who has gear (e.g. their
+  authored weapon/chest/focus), click "Unequip All Benched Heroes" (first
+  click arms it, second click within ~4s confirms) — confirm the "Party
+  Inventory: N items" label updates and the confirm reverts safely if you
+  wait out the window instead.
+- In Character Creation (campaign mode), confirm every active hero's row
+  now shows a "Pool" button next to Gear, and clicking it lists that
+  hero's 10 gear slots with an item drawable from the pool for a matching
+  slot type; confirm the item's origin companion's name shows in its
+  label, and that an item already claimed by another active slot this
+  session does NOT appear as an option there too.
+- Confirm the benched companion whose gear you pooled no longer shows that
+  item if you reactivate them into the active party before Start Battle
+  (their own Gear/stats preview should reflect the item's absence, not
+  show it as if still equipped).
+- Start a battle with at least one pool item claimed and at least one left
+  unclaimed — confirm the claimed item shows correctly on the hero who
+  drew it once the battle starts; then back out to Campaign Select,
+  re-open Companions, and confirm the unclaimed item silently returned to
+  its original owner (visible again on their card/kit) and the pool count
+  dropped to zero.
+- Confirm Free Play/manual Create Party shows no Pool button anywhere
+  (no `campaignId`, no roster/pool concept) — unaffected by this session.
+- Confirm "Reset Campaign Progress" (Campaign Select) also empties the
+  party inventory along with everything else it already wipes.
+
+### KI-146 — D-196: Party Creation Overhaul Plan 4, hero stat preview shows AC instead of ATK/Range
+The `HP {n}  ATK {n}\nRange {n}  Move {n}` stats line under each hero
+column in Character Creation now reads `HP {n}  AC {n}\nMove {n}`. Pure UI
+wiring, headless-verified only (typecheck/tests/build all pass).
+- Confirm the two-line stats text under each hero column reads `HP {n}  AC
+  {n}` on the first line and `Move {n}` on the second, for both a fresh
+  Free Play party and a campaign party.
+- Confirm the AC number changes when you change equipped gear (Gear
+  button) or Starting Level, and roughly matches what the in-battle
+  Character Sheet/HUD shows for that same hero once the battle starts (a
+  companion or PC with a Defense-fighting-style feat picked via a Level
+  Plan should show the +1 AC once Starting Level reaches that ASI's level).
+- Confirm no layout overflow/collision — this is a plain two-line Text
+  label (not a fixed-width button), so it's lower-risk than the
+  overlay-overflow bugs KI-140/KI-141 already covered, but still worth a
+  glance since it sits directly under the Subclass row.
+
+### KI-145 — D-195: Party Creation Overhaul Plan 3 (ALL of it, including 3.4), campaign party/character persistence + Reset Campaign Progress
+The biggest structural item in the overhaul doc — persisted builds across
+chapters, a real PC identity lock, a post-completion companion stat unlock,
+a relocated Difficulty picker, and a new destructive "Reset Campaign
+Progress" action all in one session. Needs a real multi-chapter playtest,
+not just a single-screen check.
+- Start a campaign fresh (or use Reset Campaign Progress first, see below),
+  build a PC and edit a companion's spells/level-plan, click Start Battle,
+  then back out to Campaign Select and re-enter the SAME campaign's next
+  chapter — confirm the PC's Class/Race/ability-scores are now locked
+  (identity frozen) but name/gear/spells/level-plan are still freely
+  editable; confirm the companion still shows the spell/level-plan edits
+  made in the previous chapter, and that gear is still correctly
+  difficulty-scaled (not doubly-trimmed) on this second visit.
+- Confirm a companion's Standard Array dropdown and Point Buy +/- steppers
+  are now genuinely inert (previously only Class/Race/Gear were locked —
+  ability scores were an open gap).
+- On Campaign Select, confirm a new Difficulty control appears above the
+  campaign card list, and that picking a difficulty there is what actually
+  reaches Character Creation/Start Battle (Character Creation's own
+  Difficulty button should no longer be visible in campaign mode).
+- Confirm the Party Size button and "Save New Party"/"Update Saved Party"
+  button are now fully GONE (not just grayed out) in campaign-mode
+  Character Creation; confirm Free Play and manual "Create Party" show all
+  three of these controls completely unaffected.
+- Try the new "Reset Campaign Progress" button (Campaign Select, next to
+  "Companions") — confirm the first click just arms it (label changes,
+  nothing happens yet) and a few seconds of inaction reverts it safely;
+  confirm the second click actually wipes companion roster/progress/world
+  flags (a fresh campaign select should show no completions, no recruited
+  companions, Sorrel Thane's fate reset) while a Free Play save slot made
+  earlier is completely untouched.
+- Plan 3.4: fully clear a campaign at least once (finish its last chapter),
+  then start a NEW party for that same campaign (or revisit an earlier
+  chapter) — confirm an active companion's Standard Array dropdown/Point
+  Buy steppers are now clickable and actually change their stats, while
+  their Class/Race stay fixed and their label reads
+  "(Companion — Stats Unlocked)" instead of plain "(Companion)". Confirm a
+  DIFFERENT, never-completed campaign's companions stay fully locked. This
+  one can't be spot-checked quickly — it requires actually beating a
+  campaign first, so it's likely the last thing to get real confirmation.
+- Known, pre-existing, not something this session touched: a campaign
+  party saved and reloaded via Load Game still loses the companion-lock/
+  persisted-build behavior entirely (same gap D-194 already flagged, not
+  fixed here either).
+
+### KI-144 — D-194: campaign-mode gear economy (fixed difficulty-scaled companion kits + PC point-buy)
+A new economic system layered directly on top of KI-143's still-unconfirmed
+gear picker — both need checking together, and this one specifically needs
+"does the balance feel right," not just "does it work."
+- Enter Character Creation from the CAMPAIGN flow (not Free Play/manual
+  Create Party) — confirm the 3 companion slots' Gear buttons are now
+  inert (clicking does nothing), while the PC's (slot 1) Gear button still
+  opens the picker normally.
+- Confirm the PC's Gear picker title now reads "Gear Points: X/Y" and
+  updates live as items are picked/removed; confirm this reads as clearly
+  DIFFERENT from the ability-score Point Buy system's own "Points Left"
+  readout elsewhere on the same screen, not confusingly similar.
+- Try to overspend the PC's gear budget — confirm an unaffordable item
+  never even appears in a slot's item list (not shown-but-disabled,
+  genuinely absent), and that swapping an already-picked item for a
+  cheaper one correctly frees up points for other slots.
+- Pick gear on Normal, then switch Difficulty to Nightmare (or any harder
+  tier) via the Difficulty button — confirm Start/Save become blocked with
+  a "Gear Points over budget" message if the now-smaller budget is
+  exceeded, and confirm switching back to a lower difficulty (or removing
+  gear) clears the block.
+- Confirm each companion's displayed kit changes when Difficulty changes —
+  full kit on Easy/Normal, chest armor dropped on Hard, chest+shield both
+  dropped on Nightmare (weapon and a caster's spellcasting-focus/holy-
+  symbol item should NEVER disappear, at any difficulty).
+- Confirm Free Play and manual "Create Party" are completely unaffected —
+  every hero (no such thing as a "companion" there) still freely picks
+  any item for any slot at no cost, exactly like before this session's
+  D-194 change.
+- Play a full campaign battle with a PC/companions built this way —
+  confirm their actual in-battle AC/attack-damage numbers reflect what
+  was picked/derived, and give feedback on whether the point-buy budget
+  numbers (12/9/6/4) and companion-kit trimming feel right, too generous,
+  or too stingy — these are explicitly first-pass/untuned.
+- Known pre-existing quirk, not something to report as a new bug: a
+  campaign party saved and reloaded via Load Game currently loses the
+  companion-lock/point-buy behavior entirely (re-enters with full
+  free-pick) — flagged in D-194, not fixed there.
+
+### KI-143 — D-193: Party Creation Overhaul Plan 2 (2.1 + 2.2), real multi-slot (all 10) starting gear + real per-companion kits
+Both a data-model change (a hero's starting gear is now a real 10-slot
+loadout, not one flat pick) and new nested-picker UI — needs both a
+"does it look right" and a "does it work right" check. (2.1 shipped as a
+3-slot picker first, then Kevin asked for full coverage in the same
+session — what's below reflects the FINAL 10-slot design, not the interim
+one.)
+- Click the "Gear" button for any hero — confirm it opens a 10-row menu
+  (Weapon, Shield, Head, Chest, Legs, Back, Ring 1, Ring 2, Amulet,
+  Footwear) instead of the old flat list, each row showing "None" until
+  picked. Confirm the menu is readable/doesn't overflow the screen with
+  all 10 rows present.
+- Pick an item for several different slots in a row — confirm each pick
+  applies immediately (no "Save" step needed) and the menu returns to the
+  10-row summary after each one, showing the new selection.
+- Click "◀ Back" from inside an item list — confirm it returns to the
+  10-row menu WITHOUT changing that slot's existing pick.
+- Switch a hero's class after picking gear — confirm EVERY gear pick is
+  now preserved (no slot resets on class change anymore, unlike the
+  interim 3-slot design).
+- Confirm every class can pick from every slot's full item list — no
+  class gating on Shield or Amulet specifically (a Fighter CAN pick a
+  spellcasting-focus amulet, a Wizard CAN pick a shield — unusual but not
+  blocked, matching how no item in this game is class-restricted).
+- Confirm the Gear button's own label lists picks by name once 3 or fewer
+  slots are filled (e.g. "Gear: Longsword, Chain Shirt, Shield"), collapses
+  to a count once more than 3 are filled (e.g. "Gear: 6/10 equipped"), and
+  reads "Gear: None" when every slot is empty.
+- Start a battle with a hero carrying real starting gear across several
+  slots — confirm their AC and attack-damage numbers in battle actually
+  reflect everything equipped (check the Character Sheet/status-line AC
+  readout against what was picked).
+- Open a companion's build in Campaign party creation (any of the 12) —
+  confirm they now show a real class-appropriate weapon/armor/third-slot
+  kit instead of the old generic flavor item, and that Mira Quill (Monk)
+  specifically shows NO chest armor. Their other 7 slots start empty by
+  design (fillable later via the in-battle Shop) — confirm that reads as
+  intentional, not broken.
+- Load an OLD saved party (if one exists from before this session) —
+  confirm its hero(es) still show correctly-equipped gear rather than
+  losing their pick, even though the save predates this change's data
+  format (a read-time migration, not a version bump).
+
+### KI-142 — D-192: Party Creation Overhaul Plan 1, ability-score assignment UX
+Brand-new UI (a dropdown widget) and a data-model change (per-hero method,
+a Standard Array slot that can sit mid-edit with an unset ability) landing
+right after Plan 8's full reskin — this is both a "does it look right" and
+a "does it work right" check.
+- Click a Standard Array ability row — confirm a small dropdown opens
+  directly below it, listing 15/14/13/12/10/8 plus "—", with the currently
+  assigned value visibly highlighted (gold outline).
+- Pick a value already assigned to a DIFFERENT ability on the same hero —
+  confirm the two abilities' values actually swap (not just overwrite),
+  matching Kevin's exact spec.
+- Pick "—" for an ability — confirm its row shows "—" (not a stale number),
+  and that Start Battle/Save Party become disabled with a message naming
+  that specific hero ("Hero N still has unassigned ability scores").
+  Re-assign it a value and confirm the button re-enables.
+- Click elsewhere on the screen (a different button, another hero's name
+  field) while the dropdown is open — confirm it closes cleanly rather than
+  staying open/orphaned.
+- Confirm the dropdown never runs off the bottom or side of the screen for
+  any of the 4 hero columns, especially the rightmost one and the lowest
+  ability row (CHA).
+- Each hero column should now have its OWN small "Standard Array"/"Point
+  Buy" pill (between "Points Left" and the ability-score block) instead of
+  one shared button at the bottom of the screen — confirm one hero can use
+  Standard Array while another uses Point Buy at the same time, and that
+  toggling one hero's pill doesn't affect any other hero.
+- Confirm the new pill row doesn't crowd "Points Left" above it or the STR
+  row below it — this is the specific bug class (two labels/controls
+  sharing one row) Plan 0.4 already fixed once in this scene.
+- Point Buy itself should look and behave completely unchanged (Kevin's
+  explicit request — verify nothing regressed there).
+
+### KI-141 — D-191: Party Creation Overhaul Plan 8, the D-123 ornate/parchment theme applied to Character Creation
+The largest single-scene visual reskin in the project so far — every
+control in `CharacterCreationScene.ts` changed from a plain rectangle to a
+real ornate button, and every row spacing/button size number changed to
+give the taller ornate chrome room. No data/logic changed; this is a "does
+it look and fit right" check, not a "does it work right" check.
+- General first look: confirm the whole screen reads as a matching parchment
+  page (same wood/frame backdrop, parchment column panels, carved-plaque
+  buttons with real hover/click feedback) — the same fantasy look Compendium/
+  Bestiary/Main Menu already have, not a mismatched leftover plain screen.
+- Check every hero column top-to-bottom for cramped/overlapping rows,
+  especially the top stack (Human/AI toggle → Name field → Class → Race —
+  these got tighter gaps than the rows below them) and the very bottom of
+  the column (Plan Levels/Spells rows close to the Party Size/Difficulty
+  row below).
+- **Specifically check the bottom of the screen** — Start Battle/Save Party,
+  the save-status line, and the validation message below them — against the
+  screen's outer frame. This is the one number flagged during planning as
+  most likely too tight (~19px of clearance was the best static estimate,
+  no way to confirm without a browser).
+- Click Start Battle with an invalid party (e.g. a blank hero name) vs. a
+  valid one — confirm the difference between "ready to click" and "blocked"
+  reads clearly. This used to be a green/gray fill swap; it's now driven by
+  the button's own disabled state alone (no direct equivalent exists on the
+  shared button component) — flag it if the valid/invalid states look too
+  similar.
+- Toggle a hero's ability-score method between Standard Array and Point Buy
+  a few times — confirm the value text in each ability row switches cleanly
+  (no leftover stale text from the other mode, no overlap between the
+  dropdown-trigger button and the minus/plus steppers). Note: the method
+  toggle itself moved from one shared party-wide button to a per-hero pill
+  in D-192/Plan 1 — see **KI-142** for that control's own checklist.
+- Confirm the 4 name `<input>` fields still keep typed text/focus correctly
+  moving between hero columns and after opening/closing a picker overlay
+  (unrelated to Plan 8's own change, but worth re-confirming since the
+  fields' cosmetic colors changed to sit on the new parchment background).
+- Confirm Class/Race/Gear/Subclass/Starting Level/Plan Levels/Spells picker
+  overlays still open correctly from every button (these overlays
+  themselves are unchanged — still the older plain-style picker — only the
+  buttons that OPEN them changed).
+- See `PARTY_CREATION_OVERHAUL_PLAN.md` for the rest of the larger,
+  not-yet-built systems work (Plans 1-3/6-7) this same overhaul covers.
+
+### KI-140 — D-190: Party Creation Overhaul Plan 0, bug-fix pass
+- Open Character Creation, pick a class with a long `previewSummary` (e.g.
+  Fighter) in the Class picker overlay — confirm the description text no
+  longer runs into the next row of options; every choice's box should now
+  be exactly as tall as its own wrapped text needs, not a fixed height.
+- Look at any hero column's Class/Race row labels — confirm neither
+  overruns its button/collides with the label above or below it, same as
+  the Subclass row already didn't.
+- Look at a hero's Subclass row for a few different classes (especially a
+  later-choice class like Fighter/Wizard, and a level-1-choice class with
+  a long subclass name like Druid's "Circle of the Ashen Veil") — confirm
+  the text reads cleanly inside the row (shortened wording: e.g. "Lv 3 in
+  battle (2 opts)" instead of the old full sentence).
+- Look at the Race row specifically — confirm it's noticeably easier to
+  read than before (larger starting font, 13px → 15px).
+- Switch Ability Scores to Point Buy — confirm "Points Left: N/27" now
+  shows on its OWN line above the ability-score block, and that STR (and
+  every other ability row) stays fully visible and correctly positioned,
+  no longer pushed off-screen. Switch back to Standard Array — confirm
+  that line goes blank rather than showing stale text.
+- General pass: with the ability-score block shifted down slightly to make
+  room for the new "Points Left" row, confirm nothing below it (Gear,
+  Subclass, Starting Level, Plan Levels, Spells rows, and the bottom
+  Party Size/Difficulty/Start Battle controls) got pushed into overlap or
+  off-screen — this touched shared vertical-layout math (see D-190).
+- **Not fixed this session, still open**: hero name fields reportedly
+  moving/losing typed text across option screens — see the "Open bugs"
+  section above. If it recurs, note the exact click sequence right before
+  it happens.
+- See `PARTY_CREATION_OVERHAUL_PLAN.md` for the rest of the larger,
+  not-yet-built systems work (stat-assignment UX, multi-slot starting
+  gear, party inventory, campaign persistence, AC display, AI-hero
+  defaults, level-up blueprints w/ spell-pick planning, a level-
+  progression reference screen, and the D-123 theme pass) this same
+  playtest raised.
 
 ### KI-139 — D-189: companion dialogue writing pass + real mechanical weight for branch choices (KI-098 item 13's last two open items, CAMPAIGN_STORY_DESIGN.md §9)
 - Clear any region's Chapter 1 for the first time — confirm a real

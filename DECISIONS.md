@@ -10033,11 +10033,1218 @@ This closes **both** of CAMPAIGN_STORY_DESIGN.md §9's remaining "still
 open" items — the design doc's own §2-§9 arc is now fully closed, no
 open items remain.
 
+### D-190 — Party & Character Creation overhaul: roadmap plan, and "Plan 0"'s bug-fix pass (`PARTY_CREATION_OVERHAUL_PLAN.md`)
+
+Kevin's first real playtest pass of Character Creation and campaign party
+creation surfaced a large batch of notes. Asked how to structure the work,
+he picked independent mini-plans with bug fixes first. Researched via a
+dedicated Explore agent reading the real current code before any plan was
+written, plus 3 `AskUserQuestion` rounds resolving genuine scope forks
+directly with Kevin (party-inventory semantics — an XCOM2-style stage/
+resolve-at-mission-start model; ability-score UX — keep Point Buy's
+existing +/- system, give Standard Array a new per-stat dropdown with
+swap-on-conflict; blueprint scope — a global library across all saves).
+
+**`PARTY_CREATION_OVERHAUL_PLAN.md`** (new) is the resulting roadmap — 8
+independent mini-plans, Kevin's own raw notes preserved verbatim at the
+bottom. Two corrections Kevin made once he saw the first draft, folded
+into the doc before any further work: the spell-prep economy's per-level
+depth (already real, D-134/135/136) belongs inside the level-up blueprint
+system (Plan 6) for caster classes, not left as a separate, harder-to-find
+in-battle-only flow — **this reverses D-136's own "permanently out of
+scope for planner integration" call**, with Kevin's explicit approval
+given directly when asked; and the Character Creation visual restyle onto
+the D-123 ornate/parchment theme (skipped since D-133 flagged it as "a
+separate future task") should NOT be deferred all the way to a future
+real-artwork pass, since it's a reusable, already-proven component library
+unrelated to actual character art — it's sequenced as its own Plan 8,
+positioned right after Plan 0, before Plans 1-3/6 build new UI on top of
+the current plain style.
+
+**This session also shipped Plan 0** (the bug-fix pass), the same session
+the plan was written, since the fixes were cheap and already scoped in
+detail during planning:
+- `uiTheme.ts`'s `renderChoiceOverlay` (the shared picker overlay every
+  Class/Race/Gear/Subclass button opens) used to size every choice's box
+  to a fixed constant height — a long `desc` (e.g. a class's
+  `previewSummary`) could wrap to far more lines than that constant
+  assumed and run into the next row. It now measures each choice's real
+  wrapped height first (via throwaway probe `Text` objects, destroyed
+  immediately after) and sizes each ROW to its own tallest item. Desc font
+  bumped 10px → 12px for readability at the same time (safe now that row
+  height is no longer a fixed constant).
+- `CharacterCreationScene.ts`'s Class/Race row labels never got the same
+  `fitLabelToColumnWidth` overflow protection the Subclass row already
+  had — both now call it. `fitLabelToColumnWidth` itself gained an
+  optional `baseFontSizePx` parameter (default 13) so the Race row can
+  start from a larger 15px instead of every row being forced to the same
+  base size — the Race row's own text was reported too small to read even
+  where it wasn't overflowing.
+- `subclassSummary()`'s three text variants were shortened (e.g. the full
+  `pick via "Plan Levels" below, or in battle at level N (M options)`
+  sentence collapses to `Lv N in battle (M opts)`) — long enough, in the
+  worst case (a long subclass name plus the "(click to change)" hint), to
+  still overrun the row even at `fitLabelToColumnWidth`'s 9px font floor,
+  since that helper only shrinks a single line, it doesn't wrap or
+  truncate. Shortening was the lower-risk fix versus adding multi-line
+  wrapping to a scene with a self-documented "already-tight, hardcoded
+  vertical layout" (KI-083).
+- Point Buy's "Points Left: N/27" readout no longer rides on the STR row's
+  own label text (the exact cause of STR getting pushed off-screen) — it's
+  now a dedicated, always-present (blank in Standard Array mode) row above
+  the ability-score block. `abilityRowsTop` shifted 270 → 292 to make
+  room; every row below it (`gearY`/`subclassY`/`levelY`/`planY`/
+  `spellsY`) is already computed relative to `abilityRowsTop`, so all of
+  them cascaded automatically — confirmed against `buildBottomControls`'s
+  fixed y=810/860 rows that ~105px of vertical slack still remains below
+  the lowest per-column row, comfortably clear.
+- **Not fixed this session, deliberately**: the reported hero-name-field
+  "drift" bug. Static reading found no live position bug (`Scale.FIT`
+  makes `repositionLayout()`'s viewport-shift math a no-op today, per
+  D-159) but a plausible DATA-reset cause instead (`create()` reseeds
+  every slot from `CHARACTER_NAME_POOL` on any navigation path that isn't
+  Load Game/a companion prefill) — genuinely different from what Kevin
+  described. Needs a fresh repro before a fix is attempted; it's possible
+  the overlay-overflow bugs above were themselves what looked like "names
+  moving."
+
+Tests: unchanged at **1482** (all UI-layer changes, no new pure-logic
+surface — matches this project's standing convention that
+`CharacterCreationScene`/`uiTheme.ts` aren't unit-tested). Typecheck
+clean, all 1482 tests pass, production build succeeds (142 modules,
+unchanged — no new source file), `npm run dev` serves HTTP 200. No browser
+available in this environment — every fix here needs Kevin's own look;
+see **KI-140**.
+
+### D-191 — Party Creation Overhaul Plan 8: the D-123 ornate/parchment theme applied to Character Creation
+
+Kevin's own steer from the D-190 session: do this right after Plan 0,
+before Plans 1-3/6 build brand-new UI (a Standard Array dropdown, a party
+inventory panel, a blueprint picker) in the same scene, so that new UI gets
+built once, already in the right style. Planned via `EnterPlanMode` (a
+full read of the 2134-line scene, `uiTheme.ts`'s exported surface, and the
+two real precedent conversions, `CompendiumScene.ts`/`MainMenuScene.ts`,
+then a Plan-agent design pass) before any code was written, given the
+scene's size and its self-documented "already-tight, hardcoded vertical
+layout" (KI-083).
+
+- **Every hand-rolled `add.rectangle()+add.text()` control in
+  `CharacterCreationScene.ts` is now a `createOrnateButton`** (Human/AI
+  toggle, Class/Race/Gear/Subclass/Starting Level/Plan Levels/Spells
+  pickers, both ability-score control sets, Party Size/Difficulty/Ability
+  Score Method/Team Level, Start Battle/Save Party) — the flat
+  `setBackgroundColor` background is now `drawScreenBackdrop`, and each
+  hero column's plain dark rectangle is now `drawParchmentPanel`. The
+  title/subtitle match `CompendiumScene`'s own recipe (`FONT_DISPLAY`/
+  `FONT_BODY`). Deliberately no `spawnAmbientMotes` — this is a dense,
+  click-heavy data-entry screen, the same category `CompendiumScene`
+  reasoned motes out of.
+- **Zero data/logic changes** — every `onPick`/`onClick` handler body,
+  every computed string, every validation check in `refreshAll` is
+  unchanged; only how it's drawn and how the refresh functions talk to the
+  new widgets changed. `SlotWidgets`' label fields became
+  `OrnateButtonHandle`s (`.setLabel()` replaces `.setText()`, and its
+  internal auto-shrink — same 9px floor — made 4 of the scene's own
+  `fitLabelToColumnWidth` call sites redundant, since deleted); `Standard
+  Array`'s cycle-row and Point Buy's value readout can no longer share one
+  Text object riding on the same row position now that a button owns its
+  label internally, so Point Buy's ability-score value became its own
+  small `pointBuyValueLabels` Text (the one remaining
+  `fitLabelToColumnWidth` caller, now with a new optional `maxWidthPx`
+  parameter sized to its narrower slot between the minus/plus buttons).
+  `setSlotActive`/`refreshAbilityScoreControls`'s `Rectangle`-specific
+  `.setInteractive()`/`.disableInteractive()` calls became
+  `OrnateButtonHandle.setDisabled()`.
+- **Start Battle's valid/invalid green/gray fill swap has no direct
+  `OrnateButtonHandle` equivalent** (only `setSelected`/`setDisabled`
+  exist) — deliberately drives it with `setDisabled` alone, on a
+  `variant: "primary"` button, rather than repurposing `setSelected`
+  (which means "the currently active choice" everywhere else in this
+  codebase) for a new, non-precedented "ready to submit" meaning.
+- **Column rows grew taller** to give ornate buttons real border/padding
+  room a bare rectangle didn't need: single-row buttons 26→32px, the
+  ability-score cycle row 24→28px (row spacing 30→34px), Point Buy's
+  minus/plus 26×22→30×28px; every row below the ability-score block
+  cascades off those new numbers automatically (`gearY`/`subclassY`/
+  `levelY`/`planY`/`spellsY`, same "compute relative to `abilityRowsTop`"
+  convention D-190/Plan 0 already established), and the bottom controls/
+  Start-Save row shifted down +30px net to match. Flagged honestly: the
+  bottom-edge clearance against `drawScreenBackdrop`'s frame is real but
+  tight (~19px) — the single number most likely to need a follow-up tweak
+  once Kevin can see it — see **KI-141**.
+- Explicitly out of scope: `renderChoiceOverlay`/`openChoiceList`/
+  `clearChoiceOverlay` in `uiTheme.ts` (shared code, also used by
+  not-yet-converted scenes — Map Builder, Settings, Free Play) — only this
+  scene's own trigger buttons that open those overlays were converted, not
+  the overlays' internal rendering. The Level Planner/Spell Picker wizard
+  state machines are untouched.
+- Tests: unchanged at **1482** (presentation-only, matches this project's
+  standing convention that `scenes/*.ts` aren't unit-tested). Typecheck
+  clean, all 1482 tests pass, production build succeeds (142 modules,
+  unchanged — no new source file), `npm run dev` serves HTTP 200. No
+  browser available in this environment — this is the largest single-scene
+  visual reskin in the project so far and genuinely needs Kevin's own
+  playtest pass before being called fully done; see **KI-141**.
+- **This closes Plan 8** of `PARTY_CREATION_OVERHAUL_PLAN.md` — Plans 1-3/
+  6-7 remain, independent of each other except the documented Plan 2/3
+  sequencing note.
+
+### D-192 — Party Creation Overhaul Plan 1: ability-score assignment UX (per-value dropdown + per-hero method)
+
+Kevin: "Let's build plan 1 now." Two sub-items, both from his exact steer in
+`PARTY_CREATION_OVERHAUL_PLAN.md`: keep Point Buy's +/- system entirely
+unchanged; only Standard Array needed a new control, and the Standard-Array-
+vs-Point-Buy method choice needed to move from one scene-wide button to a
+small per-hero control ("don't need a huge button for it"). Went through
+`EnterPlanMode` before any code was written — a background Explore agent
+verified the real current code (constructor signatures, all call sites,
+existing tests) first, then a Plan agent stress-tested the resulting design
+(dropdown depth/placement, DOM-input focus edge case, per-hero pill layout
+budget, validity-message precedence) before the plan was finalized.
+
+- **`StandardArrayAllocator` (`CharacterBuildSystem.ts`) rewritten
+  internally** — `order: AbilityScoreId[]` (an adjacent-swap permutation)
+  became `assignments: Partial<Record<AbilityScoreId, number>>`, with a new
+  `assign(ability, value | null)` method: picking a value already held by a
+  DIFFERENT ability swaps the two abilities' values (Kevin's exact spec);
+  `null` clears an ability to unset ("—"). New `valueFor()`/`isComplete()`
+  read the raw state. `cycle()` is deleted. **Constructor signature is
+  unchanged** (`order: AbilityScoreId[] = ABILITY_SCORE_IDS`) specifically
+  so the 12 `StandardArrayAllocator(...)` call sites in `data/companions.ts`
+  and `allocatorFromScores`'s reconstruction logic needed zero edits.
+- **New compact anchored dropdown** (`openAbilityDropdown`, scene-local —
+  no existing `uiTheme.ts` component fit; `renderChoiceOverlay`/
+  `openChoiceList` are both full-screen centered modals). Opens directly
+  below the clicked ability row, offering the 6 standard values + "—",
+  using `createOrnateButton`'s smallest ("tool") variant and
+  `drawParchmentPanel` for backing — both already existed but were unused
+  elsewhere. Closes on: a full-canvas click-away catcher (same pattern
+  `renderChoiceOverlay`'s own dim rectangle uses), a `focus` listener on
+  every hero-name `<input>` (a DOM element sits outside Phaser's own pointer
+  pipeline, so the catcher alone can't see a click landing there), and one
+  explicit call at the top of `renderPlanPrompt` (makes "both the dropdown
+  and the full-screen overlay open at once" impossible by construction).
+- **Ability-score method (`abilityScoreMethod`) moved from one scene-wide
+  field to `SlotState`, per hero.** The old single party-wide toggle button
+  is gone; each hero column now has its own small pill (`abilityMethodHandle`,
+  140×20px, "tool" variant) on its own dedicated row between "Points Left"
+  and the ability-score block — NOT sharing "Points Left"'s row, since that
+  exact "two labels sharing one row push each other off" bug is what Plan
+  0.4 already fixed once in this scene. `abilityRowsTop` shifted 292→300 to
+  make room, cascading automatically to every row below it (`gearY`/
+  `subclassY`/etc.), same mechanism the 270→292 shift used.
+  `slotStateFromBuild`/`buildsFromSlots` already round-tripped
+  `CharacterBuild.abilityScoreMethod` per-build (it was already a per-build
+  field, `CharacterBuildSystem.ts:224`) — only the scene's own rendering/
+  gating logic needed to catch up to per-slot.
+- **New validity gate**: a Standard Array slot can now sit mid-edit with an
+  unset ability — Start Battle/Save Party are blocked until every active
+  hero using Standard Array has all six assigned (`isComplete()`), named
+  per-hero in the status line (`` `Hero ${n} still has unassigned ability
+  scores (Standard Array).` ``), as a third precedence tier below the
+  existing blank-name/duplicate-name messages. Point Buy never fails this
+  check (floor 8 on every stat, always complete by construction).
+- Explicitly out of scope: Point Buy's own controls (Kevin's steer);
+  `identityLocked` not yet guarding companion ability-score handlers — a
+  known, separate gap already tracked as Plan 3.3.
+- Tests: **1485** (+3 — the `StandardArrayAllocator` test suite was
+  rewritten against `assign()`'s real swap/unset semantics, not a
+  find-replace of the old `cycle()` tests; `allocatorFromScores`'s own
+  tests are untouched, confirming the constructor/reconstruction path
+  really did stay opaque to the internal rewrite). Typecheck clean, all
+  1485 tests pass, production build succeeds (142 modules, unchanged),
+  `npm run dev` serves HTTP 200. No browser available in this
+  environment — the dropdown's exact on-screen placement, the new pill
+  row's spacing, and the "—" label rendering all need Kevin's own
+  playtest pass; see **KI-142**.
+- **This closes Plan 1** of `PARTY_CREATION_OVERHAUL_PLAN.md`.
+
+### D-193 — Party Creation Overhaul Plan 2 (2.1 + 2.2): real multi-slot starting gear + real per-companion kits
+
+Kevin: "Now do plan 2." Went through `EnterPlanMode` — an Explore agent
+first mapped the real current code (`equipment.ts`'s slot types, `Hero`'s
+gear/AC math, `CharacterBuild`'s single-item field, `companions.ts`'s
+generic pool, `CompanionRosterSystem`'s lack of any equipment field,
+`SaveSystem`'s real `localStorage` persistence path), then a Plan agent
+swept for every other call site of the old field and stress-tested the
+migration design, before the plan was finalized.
+
+**Scope: 2.1 + 2.2 only. 2.3 (party inventory) is explicitly deferred**,
+per the plan doc's own sequencing note — it has no meaningful persistence
+target until Plan 3.1 (campaign cross-mission persistence, a large,
+separate, still-NOT-STARTED item) exists; `CompanionRosterSystem` today
+persists only `{activeIds, benchedIds, lostIds}`, nothing per-hero-gear to
+plug a shared pool into. Building `PartyInventorySystem` now would be dead
+code with no real UI hook — this project's standing "no scaffolding for a
+system that doesn't exist yet" rule (see `feedback_no_dead_scaffolding` in
+memory). 2.3 is picked up alongside Plan 3.1 in a future session.
+
+- **`CharacterBuild.startingEquipmentId`/`HeroDefinition.startingEquipmentId`
+  → `startingGearIds?: Partial<Record<GearSlotId, string>>`.** The old
+  single-item field is kept on both interfaces, marked `@deprecated`, purely
+  as a read-time fallback for a pre-Plan-2 `SaveSystem` save (`isCharacterBuild`
+  doesn't validate the gear field at all, so old JSON passes through
+  untouched) — **no `CURRENT_SAVE_VERSION` bump**, since that would wipe
+  every existing save (`loadSaveFile`'s blanket version-mismatch check).
+  `Hero`'s constructor merges both fields (new-shape first, legacy fallback
+  folded in only for a slot `startingGearIds` didn't already claim), then
+  loops assigning `equippedItems` — the exact same one-line-per-item logic
+  as before, just over up to 3 entries instead of 1. `Hero.armorClass`
+  needed **zero changes** — it already generically sums gear bonuses across
+  every `GEAR_SLOT_ID`.
+**Mid-session scope revision**: 2.1 originally shipped as a 3-slot picker
+(Weapon/Armor/a class-appropriate Shield-or-Focus third slot, matching the
+plan doc's own minimum-scope wording). Kevin then asked directly — "what
+about the difference between helm and body and arms and legs? what about
+rings or amulets? what about miscellaneous items that don't fit any of
+those?" — and, given the choice, picked **full expansion: every one of the
+10 real gear slots (`GEAR_SLOT_IDS`) becomes an independent free pick at
+creation**, not just 3. Confirmed there's no genuine "misc" bucket — every
+catalogue item already resolves to exactly one of the 9 `GearSlotType`s.
+This revised the same still-unplayed 2.1 work in place (amending this
+entry, not opening a new `D-NNN`) rather than leaving stale documentation
+describing a 3-slot design the code no longer has.
+
+- **`CharacterBuild.startingEquipmentId`/`HeroDefinition.startingEquipmentId`
+  → `startingGearIds?: Partial<Record<GearSlotId, string>>`.** The old
+  single-item field is kept on both interfaces, marked `@deprecated`, purely
+  as a read-time fallback for a pre-Plan-2 `SaveSystem` save (`isCharacterBuild`
+  doesn't validate the gear field at all, so old JSON passes through
+  untouched) — **no `CURRENT_SAVE_VERSION` bump**, since that would wipe
+  every existing save (`loadSaveFile`'s blanket version-mismatch check).
+  `Hero`'s constructor merges both fields (new-shape first, legacy fallback
+  folded in only for a slot `startingGearIds` didn't already claim), then
+  loops assigning `equippedItems` — the exact same one-line-per-item logic
+  as before, just over up to 10 entries instead of 1. `Hero.armorClass`
+  needed **zero changes** — it already generically sums gear bonuses across
+  every `GEAR_SLOT_ID`.
+- **No class gating on any slot — including the amulet slot.** 4 new
+  common-rarity spellcasting-focus items (`holy-symbol`, `arcane-focus`,
+  `druidic-totem`, `component-pouch`, `equipment.ts`) reuse the existing
+  `"amulet"` slot (already a generic misc-trinket slot — bracers/wands/
+  gauntlets already live there, not just literal amulets) rather than a
+  new `GearSlotType` — zero blast radius on `GEAR_SLOT_IDS`/attunement/any
+  slot-enumerating UI. With the full 10-slot expansion, the earlier
+  per-class "shield vs. focus" bucketing (`thirdGearSlotForClass`) became
+  unnecessary and was deleted — every class now sees every slot's full
+  pool (any hero CAN pick a shield AND an amulet, or a martial class can
+  pick a focus item as their amulet; matches `EquipmentDefinition` having
+  no class-restriction field anywhere in this game already). Every slot's
+  picker always includes "None" — nothing is force-equipped (Kevin's
+  standing "no silent choice defaults" rule). `startingGearIdsForSlotType(slot)`
+  replaces the old flat `STARTING_GEAR_IDS`, reusing the pre-existing
+  (previously unused) `equipmentForSlotType` helper plus the same
+  common/uncommon rarity filter as before; row labels reuse the existing
+  `GEAR_SLOT_LABELS` map rather than inventing new title strings.
+- **`CharacterCreationScene`'s Gear row is now a real 10-row menu**
+  (`openGearPicker`/`openGearItemPicker`, one row per `GEAR_SLOT_IDS`
+  entry) built on `renderPlanPrompt` directly, NOT nested `openChoicePicker`
+  calls — that wrapper tears down the whole overlay right after any
+  option's `onPick()` returns, which would break a picker-inside-a-picker.
+  Same multi-step-wizard pattern the Level Planner's own screens already
+  use. The Gear button's own column position is unchanged — no `gearY`/
+  `subclassY`/panel-height layout surgery needed. `SlotState`'s 3 named
+  index fields collapsed to one generic `gearIndices: Partial<Record<GearSlotId,
+  number>>` map — cleaner than 10 named fields, and no longer needs a
+  class-change reset (no slot depends on class anymore). The Gear button's
+  own label collapses to a `"N/10 equipped"` count once more than 3 slots
+  are filled — 10 full item names would never fit a hero-column button
+  even at the existing auto-shrink floor.
+- **12 companions (`data/companions.ts`) got real, authored starting
+  kits** — weapon + chest armor + class-appropriate third slot (their
+  OTHER 7 slots start empty, same as any player-built hero, fillable
+  later via the in-battle Shop), using real `weapons.ts`/`armor.ts` items
+  instead of the old generic flavor-item pool. Monk (Mira Quill)
+  deliberately gets NO chest armor: `Hero.armorClass` only applies its
+  favorable unarmored formula when the chest slot is empty, so equipping
+  any chest armor would strictly downgrade a Monk's AC. Barbarian/Rogue/
+  Ranger skip the shield third slot (doesn't fit their real playstyle)
+  even though the picker allows one.
+- Migration is tested at the behaviorally meaningful boundary — a legacy
+  `startingEquipmentId`-only build still passes through
+  `heroDefinitionFromBuild` and still lands in the right `Hero.equippedItems`
+  slot (both already-existing tests kept, relabeled as back-compat
+  regression coverage). At the scene-UI layer, the full 10-slot expansion
+  actually CLOSED the one documented gap the earlier 3-row design had: a
+  legacy ring pick now has a real matching row (Ring 1) to land in, where
+  before it had no equivalent among only 3 rows.
+- Tests: **1491** (+6 net over the pre-session 1485 — `thirdGearSlotForClass`'s
+  now-obsolete tests were removed, `startingGearIdsForSlotType` coverage
+  extended to all 9 slot TYPES, and a new "fills all 10 real gear slots at
+  once" test added in `equipment.test.ts`). Typecheck clean, all 1491
+  tests pass, production build succeeds. No browser available in this
+  environment — the new 10-row Gear-picker UI and every in-game AC/attack-
+  damage number this change affects need Kevin's own browser pass; see
+  **KI-143**.
+- **This closes 2.1/2.2 of Plan 2** in `PARTY_CREATION_OVERHAUL_PLAN.md`;
+  2.3 stays NOT STARTED, sequenced with Plan 3.1.
+
+### D-194 — Campaign-mode gear economy: fixed difficulty-scaled companion kits + PC point-buy
+
+Kevin, immediately after seeing D-193's all-10-slot free-pick design:
+companions in campaign mode shouldn't be freely editable at all — their
+kit should be fixed, scaled down on harder difficulty, while always
+keeping what makes their class function (a weapon, and a caster's
+spellcasting focus/holy symbol/etc.); the PC should still choose, but
+through a real economy — proposed a point-buy system himself (items cost
+points, difficulty sets the budget). Free Play/manual Create Party is
+explicitly untouched — D-193's free-pick-everything stays exactly as
+shipped there; this is scoped to campaign mode (`this.campaignId`) only.
+
+Given its own new decision number even though it directly modifies code
+from moments earlier in the same session: unlike the 3→10-slot revision
+folded into D-193 (a scope-width tweak on the same mechanic), this is a
+genuinely new economic system — worth its own entry in this file's
+history. Went through `EnterPlanMode` again: two Explore passes (difficulty/
+economy scaling conventions; class-implement requirements and the exact
+gear-picker code to adapt) followed by a Plan-agent stress-test of the
+design before any code was written — caught 2 real issues before
+implementation (see below).
+
+- **`DifficultyDefinition` (`data/difficulty.ts`) gains two more flat
+  per-tier numbers**, matching the pre-existing `shortRestCharges`/
+  `longRestCharges` "hand-picked integer, not a multiplier" convention
+  (confirmed: no gold/gear difficulty-scaling precedent existed anywhere
+  else in the codebase — `EconomySystem`'s `STARTING_GOLD` is a flat,
+  non-scaled constant):
+  - `startingGearPoints` — the PC's point-buy budget: **easy 12, normal 9,
+    hard 6, nightmare 4**.
+  - `companionDiscretionaryGearSlots` — how many of a companion's
+    discretionary slots (chest, then shield, in that priority order)
+    survive: **easy 2, normal 2, hard 1, nightmare 0**. Normal preserves
+    D-193 Plan 2.2's full authored kit unchanged — no regression.
+  - Both explicitly flagged first-pass/adjustable, same standing every
+    other number on this file already has.
+- **Item point cost derives from `rarity`, NOT `EquipmentDefinition.cost`**
+  (`startingGearPointCost`, `data/characterCreation.ts`: common=1,
+  uncommon=2 — the only values that matter, the starting pool is
+  common/uncommon-only). Confirmed `cost` is actively coupled to the
+  gold-shop/enchant system (`ENCHANT_COST_BONUS` mutates it at synthesis
+  time) — unsafe to double-purpose as a second currency sharing one number
+  line with gold prices.
+- **Companions: fixed kit, recomputed live from their authored baseline.**
+  `companionStartingGearForDifficulty(baselineGearIds, difficultyId)`
+  (`data/characterCreation.ts`) always keeps `weapon` and `amulet` (a
+  caster's implement — present in the baseline only for a caster
+  companion, since D-193 Plan 2.2 only authored one for casters); keeps
+  `chest` then `shield` up to `companionDiscretionaryGearSlots` of them.
+  Pure, data-in/data-out. `SlotState` gains `baselineGearIds` (D-193 Plan
+  2.2's authored "normal" kit, snapshotted via a **defensive spread copy**
+  — not a bare reference into `companions.ts`'s shared singleton build,
+  per the stress-test's own finding that a later `delete` on it, the same
+  pattern `gearIndices` editing already uses, would otherwise corrupt the
+  companion definition for every future session). `buildsFromSlots()`
+  recomputes an `identityLocked` slot's kit fresh from `baselineGearIds` +
+  the CURRENT `this.difficultyId` on every call — a companion's kit
+  updates live if Difficulty changes after slots were first seeded, never
+  baked in once. The Gear button gets the identical `if (s.identityLocked)
+  return;` guard Class/Race already use — a companion's Gear button is
+  now a silent no-op, its existing label logic still shows the (now
+  difficulty-derived) kit read-only.
+- **The PC: point-buy, spent across all 10 slots freely.** `openGearPicker`
+  bakes `"Gear Points: spent/budget"` into the picker's own title (a plain
+  string — confirmed `renderChoiceOverlay`'s title already wraps/measures
+  dynamically, safe at this length, no new UI primitive needed) —
+  deliberately called "Gear Points," not "Points," since Point Buy's own
+  ability-score system already displays an unrelated "Points Left: X/Y"
+  on the same screen (a real naming collision the stress-test flagged).
+  `openGearItemPicker` appends each item's cost to its label and OMITS any
+  item whose cost would net-overspend the budget (accounting for the
+  points swapping OUT this slot's own current pick would free up) — a
+  losing swap never appears as an option in the first place. Outside
+  campaign mode, both methods are 100% unchanged from D-193 (no cost
+  labels, nothing omitted).
+- **New Start/Save validity gate, confirmed load-bearing (not
+  defensive-only).** The stress-test disproved my own initial assumption
+  that a budget-overage state was unreachable: the Difficulty button has
+  no gating and can be clicked in any order relative to Gear — raising
+  difficulty AFTER spending gear points shrinks the budget without
+  touching existing picks, so `remaining` can go negative on the very
+  next refresh. `refreshAll` now blocks Start/Save with a named message
+  ("Gear Points over budget...") as a 4th precedence tier below blank/
+  duplicate name and incomplete Standard Array, checked ONLY against
+  slot 0 (the PC) — a companion's own `gearIndices` is reconstructed by
+  `slotStateFromBuild` but never actually spent from, so it must never
+  factor into this check.
+- **Known, pre-existing, NOT a regression this decision introduces:**
+  Load Game re-entry never forwards `campaignId` (`LoadGameScene.ts`,
+  `SaveSlot` has no such field) — a campaign party saved and reloaded via
+  Load Game currently re-enters Character Creation with full free-pick,
+  no companion lock, no point-buy. Flagging for Kevin's awareness, not
+  fixing here (out of this decision's scope).
+- Tests: **1502** (+11 — `startingGearPointCost`/`companionStartingGearForDifficulty`
+  coverage in `characterCreationData.test.ts`, including a purity check
+  that the baseline map is never mutated; a new describe block in
+  `tests/difficulty.test.ts` for the two new fields). Typecheck clean, all
+  1502 tests pass, production build succeeds. No browser available in
+  this environment — the point-buy UI's actual feel, the companion-lock
+  behavior, and whether these first-pass budget numbers feel right in
+  play all need Kevin's own playtest pass; see **KI-144**.
+
+### D-195 — Party Creation Overhaul Plan 3: campaign party/character persistence + a new "Reset Campaign Progress" action
+
+Plan 3 — the roadmap's own "biggest structural item": campaigns had no
+cross-chapter continuity at all. Closed the ENTIRE plan (3.3, 3.1, 3.2, 3.5,
+3.6, 3.7, and — picked up immediately after, same session, Kevin: "Let's
+just build it now" — 3.4) in one session, in the doc's own suggested build
+order. Went through `EnterPlanMode`: two Explore passes (roster/save
+persistence architecture; `CharacterCreationScene`'s `identityLocked`
+mechanics and campaign-only UI guards) followed by a Plan-agent design pass
+before any code was written for 3.3-3.7/the Reset action; 3.4 (below) was
+small enough to design and ship directly afterward, in the same session,
+once its own dependency (3.1's persisted builds) already existed.
+
+**A real architecture question surfaced mid-design, resolved with Kevin
+directly (twice) via `AskUserQuestion` — the most important thing for a
+future session to know before touching this area again:**
+`CompanionRosterSystem`/`CampaignProgressSystem`/`WorldFlagSystem` are all
+single global localStorage blobs, shared across every one of the 7
+`CampaignDefinition` entries (Prologue, 6 regions, capstone). First read as
+an isolation bug worth fixing per-`campaignId` — Kevin initially asked for
+that (the bigger option, matching his usual "build it right" preference).
+Reading `CAMPAIGN_STORY_DESIGN.md` and the actual mechanics then surfaced a
+hard conflict: the 7 entries are regions of **one continuous playthrough**,
+not independent saves — the capstone gate (D-188's `areCampaignsCompleted`)
+reads all 6 regions' progress from one blob; Pool B companions are meant to
+carry from the region they're recruited in into every other region
+("recruit as you go," `CAMPAIGN_STORY_DESIGN.md` §6); and Sorrel Thane's
+fate in Drowning Vale deliberately changes Saltmere's Chapter 1 encounter
+(D-185) via a direct cross-region flag read. Per-region key-scoping would
+have broken all three. **Resolved (Kevin's final call, informed by this
+conflict): keep all three systems exactly as globally-shared as they work
+today ("Track A") — the persisted builds below live in that same shared
+blob, no new storage key, no migration utility — plus build a real "Reset
+Campaign Progress" action so Kevin still gets a genuine clean-slate option
+for starting a brand-new playthrough, without breaking the shared
+cross-region mechanics.** Anyone re-reading Plan 3's "per-campaign
+isolation" language later should NOT reintroduce per-`campaignId` key
+scoping — this note is the record of why that was rejected.
+
+- **3.3 — companion ability scores are now actually locked.** The Standard
+  Array dropdown handler and both Point Buy stepper handlers
+  (`CharacterCreationScene.ts`) were missing the `if (s.identityLocked)
+  return;` guard Class/Race/Gear already had — a companion's stats were
+  freely editable in campaign mode despite Kevin's explicit rule. Fixed;
+  shipped first since 3.2 depends on it (a locked PC must not be able to
+  edit ability scores through the same unguarded controls).
+- **3.1 — persisted companion/PC builds.** `CompanionRosterState` gains two
+  optional fields, `companionBuilds?: Record<string, CharacterBuild>` and
+  `pcBuild?: CharacterBuild` (`CompanionRosterSystem.ts`), with new pure
+  accessors/mutators (`getCompanionBuild`/`setCompanionBuild`/`getPcBuild`/
+  `setPcBuild`) and defensive parsing (a malformed entry is dropped, not
+  fatal). **No migration/version bump** — same optional-field convention
+  `startingGearIds`/`startingEquipmentId` already established; an old blob
+  simply parses with both fields `undefined`, which is exactly the correct
+  "nobody has a persisted build yet" state (proven by a dedicated test).
+  Also fixed a latent bug found while touching this file: `loseCompanion`
+  built its return value as a 3-field object literal instead of `{...state,
+  ...}` — harmless before this decision (there was nothing else to lose),
+  but would have silently dropped `companionBuilds`/`pcBuild` the moment a
+  companion died. **Write path**: `CharacterCreationScene`'s Start Battle
+  handler now persists the PC's and every active companion's just-built
+  `CharacterBuild` at the click (Kevin's own "resolution at mission start"
+  framing from Plan 2.3, not gated on victory). **Read path**: the `create()`
+  companion-prefill block now prefers a persisted build over
+  `getCompanionDefinition(id).build`'s static catalogue entry when one
+  exists. **Must-fix correctness note**: a companion's `baselineGearIds`
+  (the input to D-194's difficulty-scaling economy) is now always sourced
+  from the STATIC catalogue build, never from a persisted copy — a persisted
+  build's `startingGearIds` may itself already be a difficulty-trimmed
+  result from a previous visit, and reusing it as the new "baseline" would
+  double-apply the trim on every later visit. `CompanionRosterScene` needed
+  no changes — confirmed there's genuinely one shared roster across the
+  whole playthrough (consistent with Track A), so a per-campaign "view
+  roster" entry point would have no consistent meaning to attach.
+- **3.2 — PC identity lock, once a persisted build exists.** Reusing
+  `identityLocked` unmodified for slot 0 would have also frozen the PC's
+  gear onto D-194's fixed companion economy — wrong, since gear/spells/
+  level-plan/name must stay editable for a returning PC. `SlotState` gains
+  a second field, `gearLocked: boolean`, decoupled from `identityLocked`
+  (companion: both true together, unchanged net behavior; returning PC:
+  identity locked, gear unlocked; fresh PC/Free Play: both false).
+  `slotStateFromBuild` gains two new optional parameters (`gearLocked`,
+  defaulting to match `identityLocked` so the existing companion call site
+  needed no changes; `catalogueGearIds`, feeding the 3.1 correctness note
+  above). The Gear button guard, `baselineGearIds` assignment, and
+  `buildsFromSlots`'s gear branch all now check `gearLocked`, not
+  `identityLocked`. Also fixed a label bug this change would otherwise have
+  introduced: the `" (Companion)"` tag was keyed on `identityLocked` alone,
+  which would have mislabeled a locked returning PC — now excludes slot 0
+  explicitly.
+- **3.4 — post-completion companion stat unlock.** Once `this.campaignId`
+  has been fully cleared at least once (`isCampaignCompleted`, D-188's
+  existing query — no new tracking needed), a companion's ability-score
+  lock lifts; class/race stay fixed to their identity. `SlotState` gains a
+  THIRD lock field, `abilityScoreLocked: boolean` — `identityLocked` alone
+  could no longer answer "is this slot's ability score editable" once a
+  companion could have identity locked but stats unlocked. Equal to
+  `identityLocked` for a returning PC (3.4 doesn't touch the PC — Kevin's
+  plan text says "companions" specifically) and for a companion whose
+  campaign isn't yet completed; false only for a companion once
+  `isCampaignCompleted` is true. The Standard Array dropdown and both Point
+  Buy stepper handlers (3.3's own guards) now check `abilityScoreLocked`
+  instead of `identityLocked`. `slotStateFromBuild` gains a 5th optional
+  parameter, defaulting to match `identityLocked` (so the one existing call
+  site needed no change). The `" (Companion)"` label tag now reads
+  "(Companion — Stats Unlocked)" once earned, rather than leaving the only
+  signal to be the ability-score buttons quietly starting to work.
+  **Adaptation from the plan doc's literal text, worth flagging**: the plan
+  said "on a FRESH playthrough of that same campaign" — under Track A
+  (shared state across the whole game, no per-campaign isolation, decided
+  earlier in this same decision) there is no separate "fresh playthrough"
+  state distinct from "replaying this campaign," so the unlock is keyed
+  purely on `isCampaignCompleted(campaignId)` and applies from that point
+  forward on every subsequent visit, not gated to some special replay mode.
+  Interacts cleanly with "Reset Campaign Progress" (above): a reset also
+  clears `completedIds`, so a companion's stat-unlock reverts to locked
+  right along with everything else — no special-casing needed, it falls
+  out of reusing the same query both features already share.
+- **New — "Reset Campaign Progress"** (`CampaignSelectScene.ts`, additive,
+  not one of the plan doc's original Plan 3 sub-items — the direct
+  corollary of the Track A resolution above). A small button next to the
+  existing "Companions" button; two-click confirm (this project has no
+  existing modal-confirm pattern — `LoadGameScene`'s Delete is a single
+  immediate click, but wiping an entire playthrough is more consequential
+  than one save slot) — first click arms it and reverts after 4 seconds if
+  unconfirmed, second click within that window wipes `CompanionRosterSystem`
+  (covers `companionBuilds`/`pcBuild` too, same blob), `CampaignProgressSystem`,
+  and `WorldFlagSystem` (covers Sorrel Thane's fate flag too — `SorrelFateSystem`
+  reads/writes through this same storage, no separate key of its own) back
+  to their own default-state constants. Explicitly does NOT touch
+  `SaveSystem`/`SAVE_STORAGE_KEY` — Free Play saves are unrelated to
+  campaign state, same boundary D-194 already established.
+- **3.5 — Difficulty picker moves to `CampaignSelectScene`.** New control
+  row between the intro text and the campaign card list (card list's own
+  `startY` shifted 172→202 to make room), mirroring
+  `FreePlayScene.buildDifficultySection`'s exact pattern (local
+  `selectedDifficultyId` field, plain button + `openChoiceList`). Both
+  `scene.start()` calls in `selectCampaign()`, plus `UnlockMissionPartyScene`'s
+  own forwarding `init()`/`scene.start()` calls, now carry `difficultyId`
+  through to Character Creation. Character Creation's own Difficulty button
+  is now hidden (not just unguarded-but-present) when `campaignId` is set.
+- **3.6 — Party Size button now hidden, not just disabled**, in campaign
+  mode (was disabled-and-grayed with a "(fixed for campaigns)" label suffix
+  — the suffix is gone too, since there's nothing left to read it from).
+- **3.7 — "Save New Party"/"Update Saved Party" now hidden** in campaign
+  mode (Plan 3.1 makes campaign party state persist automatically, so the
+  generic Free-Play-only save-slot flow is redundant there); `onSaveParty()`
+  also gained a `campaignId` early-return as defense-in-depth, matching the
+  Party Size button's own click-guard-plus-hide pattern.
+- Tests: **1511** (+9 — new `CompanionRosterSystem` describe block covering
+  `getCompanionBuild`/`setCompanionBuild`/`getPcBuild`/`setPcBuild`
+  round-trips, independence between companion/PC builds, defensive-parsing
+  of a malformed entry, and the "pre-Plan-3 blob loads both as undefined"
+  case that proves no explicit migration was needed; plus a regression test
+  for the `loseCompanion` field-drop fix; 3.4 added no new tests of its
+  own — scene-level orchestration only, same "no dedicated test" precedent
+  the rest of this scene's guard logic already follows). Typecheck clean,
+  all 1511 tests pass, production build succeeds (142 modules, unchanged).
+  No browser available in this environment — the relocated Difficulty/Reset
+  control row's actual layout, the two-click confirm's feel, the full
+  chapter-to-chapter persistence flow (edit → Start Battle → revisit →
+  confirm PC locked but gear/spells/plan still editable, companions show
+  prior edits), and 3.4's stat-unlock (can't be verified without actually
+  completing a campaign first) all need Kevin's own playtest pass; see
+  **KI-145**.
+
+### D-196 — Party Creation Overhaul Plan 4: hero stat preview shows AC instead of ATK/Range
+
+`CharacterCreationScene.refreshSlot`'s per-hero stats line read
+`HP {n}  ATK {n}\nRange {n}  Move {n}`. Both of the removed stats were
+already known-dead by the time this shipped: `ATK` was a flat class/
+ability-mod number from `combatStatsForClassLevel` that never factored in
+an equipped weapon, and `Range` was purely `melee → 1 : ranged → 3` off the
+class's fixed `basicAttackStyle`, never the real weapon-aware
+`Hero.attackRangeTiles` every other surface in the game actually uses.
+Kevin's own framing (2026-08-26 playtest notes): "Attack means nothing now
+that we've switched to actual DnD character sheet based stats... AC should
+replace those 2 useless stats."
+
+- New line: `HP {n}  AC {n}\nMove {n}` — three real stats, no dead fourth
+  column forced to keep the 2x2 shape.
+- AC is computed off a real scratch `Hero`, not a new formula —
+  `LevelUpPlanSystem.simulateHeroForPlanning(build, slot.levelUpPlan,
+  build.startingLevel ?? 1)` (already exported, already used by the
+  planner UI's own preview steps) builds a throwaway `Hero` from the
+  in-progress `CharacterBuild` draft and fast-forwards it through that
+  hero's own level-up plan up to the chosen Starting Level, then
+  `Hero.armorClass` is read straight off it. This is the same precedent
+  `simulateHeroUpToChoice` already established elsewhere in this file, just
+  reused instead of duplicated — the preview genuinely reflects equipped
+  gear (once Plan 2's real gear picker feeds it), subclass AC bonuses, and
+  ASI-granted feats like the Defense fighting style, not just a level-1
+  guess. At Starting Level 1 with a plan whose trigger levels haven't been
+  reached yet, this is a no-op fast-forward — behaviorally identical to
+  reading `Hero.armorClass` off a level-1 `Hero`.
+- Sequenced after Plan 2 per the roadmap's own note (real multi-slot
+  starting gear already shipped as D-193/D-194), so this AC number reflects
+  actual equipped weapon/armor, not a bare unarmored base.
+- No data/system changes — pure UI wiring in `CharacterCreationScene.ts`
+  (`refreshSlot`), reusing `simulateHeroForPlanning`
+  (`LevelUpPlanSystem.ts`, already exported and already fully tested) and
+  the already-tested `Hero.armorClass` getter. No new tests needed; all
+  1511 existing tests still pass. Typecheck clean, production build
+  succeeds (142 modules, unchanged). No browser available in this
+  environment — Kevin's own pass should confirm the stats line reads
+  correctly and the AC number matches what the in-battle HUD shows for the
+  same hero once built.
+
+### D-197 — Party Creation Overhaul Plan 2.3: an XCOM2-style shared party inventory pool
+
+Kevin: "Let's do 2.3 now." His own spec (2026-08-26 playtest notes):
+benched companions' gear should be reachable by the active party — "Unequip
+all bench heroes" moves it into a shared pool, any active hero can equip
+from it during party setup, and at mission start a claimed item becomes
+permanently the claimer's while an unclaimed one silently returns to
+whoever it came from. No item is ever lost or duplicated. Deferred since
+the plan doc was written, pending Plan 3 (campaign persistence) — now
+shipped (D-195) — since a companion's equipped gear needs to actually
+persist between missions before "unequip and redistribute it" means
+anything.
+
+Went through `EnterPlanMode`: two Explore passes (roster/persistence
+architecture and the D-194 fixed-companion-kit system; `CompanionRosterScene`'s
+UI and the existing confirm-with-timeout pattern) followed by a Plan-agent
+design pass. The Plan agent's own draft had a real correctness gap, caught
+during review before any code was written (see "Key correctness fix"
+below) — worth recording here since it's the kind of mistake a future
+session could reintroduce if this area gets touched again without reading
+this writeup first.
+
+**Data model** (`CompanionRosterSystem.ts`): `CompanionRosterState` gains
+`partyInventory?: PartyInventoryEntry[]`, each entry
+`{ id, itemId, originCompanionId, originSlot }` — a synthetic `id` is
+needed because two different companions can hold the same equipment id at
+once, and `originSlot` is needed to know which slot to auto-return an item
+to. Same optional-field, defensive-parsing, no-migration-needed convention
+`companionBuilds`/`pcBuild` already established (D-195) —
+`DEFAULT_COMPANION_ROSTER_STATE` needed no change, so "Reset Campaign
+Progress" already wipes the pool for free.
+
+**New pure system, `src/game/systems/PartyInventorySystem.ts`**:
+- `unequipAllBenchedGear(state, benchedIds, fullKitFor, nextEntryId)` —
+  moves every benched companion's currently-equipped kit into the pool.
+  Idempotent (skips a (companion, slot) pair already pooled), so repeat
+  clicks never duplicate entries.
+- `visibleGearForOrigin(companionId, fullKit, partyInventory)` — a
+  companion's kit with any slot currently sitting UNCLAIMED in the pool
+  stripped out. **Key correctness fix**: this must be applied to EVERY
+  gear-locked slot's own gear computation unconditionally, keyed on
+  whichever companion currently occupies that slot — not only "while
+  they're benched," and not skippable as a supposed no-op for an active
+  slot. The real failure case the Plan agent's first draft missed and then
+  talked itself out of: companion A is benched, their weapon gets pooled;
+  Kevin reactivates A before Start Battle; without this filter, A's own
+  slot would still show the weapon as equipped (unaware it left the pool)
+  at the exact moment another active hero could independently claim that
+  same weapon from the pool — two heroes carrying the identical item into
+  battle. Always wrapping a gear-locked slot's base kit in this function
+  closes it for free (a companion never pooled has no matching entries, so
+  it's a harmless no-op for them).
+- `resolvePartyInventory(state)` — the Start Battle commit point: the
+  ENTIRE pool resolves here, not just entries touched this session. A
+  claimed entry's item is already baked into the claiming hero's own build
+  (`CharacterCreationScene`'s own override, below); an unclaimed entry's
+  "return to origin" needs no write of its own, since a companion's kit is
+  a derived view (`visibleGearForOrigin`) that re-includes a slot the
+  instant nothing in the pool still claims it. Either way, the pool empties.
+- `dropPoolEntriesForLostCompanion(state, companionId)` — wired into the
+  one existing `loseCompanion` call site (`BattleScene.ts`, Sorrel Thane's
+  fate arc, D-185): a permanently-lost companion's still-unclaimed pool
+  entries are deleted outright rather than orphaned.
+- 14 new tests in `tests/partyInventorySystem.test.ts`, 8 more added to
+  `tests/companionRosterSystem.test.ts` for the new field's round-trip/
+  defensive-parsing/Reset-wipe coverage.
+
+**`CharacterCreationScene.ts`**: `SlotState` gains `poolGearIds?: Partial<Record<GearSlotId, string>>`
+(pool entry id per gear slot) — ephemeral scene-local staging exactly like
+the existing `gearIndices`, not persisted until Start Battle. The roster
+load already happening for companion prefill is hoisted one level (now
+runs whenever `campaignId` is set, not only when `!loadedParty`) so
+`this.partyInventorySnapshot` is available with no second `localStorage`
+read. The Gear button's row is split into two half-width buttons (Gear |
+Pool) rather than adding a new row — this scene's layout is
+self-documented as fragile (KI-083) and everything below `gearY` cascades
+off it unchanged, so inserting a row would mean re-deriving every
+constant below it. The new Pool button opens a two-level picker
+(`openPoolPicker`/`openPoolItemPicker`) reusing the exact same shape as
+`openGearPicker`/`openGearItemPicker`, sourced from the pool instead of
+the static catalogue, with a "claimed elsewhere" guard preventing two
+hero slots from claiming the same entry. Available to every active slot
+including a `gearLocked` companion — that's the entire point — and hidden
+entirely outside campaign mode or when the pool is empty. New
+`resolveGearIdsForSlot` helper (used by `buildsFromSlots`) applies the
+correctness fix above, then layers this session's own pool picks on top
+as the final override for every slot. The Start Battle handler calls
+`resolvePartyInventory` right after its existing `setPcBuild`/
+`setCompanionBuild` persistence loop.
+
+**`CompanionRosterScene.ts`**: a new "Unequip All Benched Heroes" button,
+reusing `CampaignSelectScene.onResetButtonClicked`'s exact two-click,
+4-second-revert confirm pattern (D-195) — commits and saves immediately on
+confirm, unlike the ephemeral per-hero pool picks staged in Character
+Creation, since this is a roster-wide action outside any one mission's
+setup. A small "Party Inventory: N items" label sits beside it. Uses this
+scene's own existing plain `buildButton` (Rectangle+Text), not
+`createOrnateButton` — this scene has never adopted the D-123 ornate
+theme (D-191/Plan 8 was scoped to `CharacterCreationScene` only), and one
+ornate button on an otherwise fully-plain screen would read as a
+half-finished migration rather than a deliberate one; extending the theme
+here is a separate, explicitly out-of-scope follow-up. `CampaignSelectScene`
+now forwards `difficultyId` to `CompanionRosterScene` (mirroring the same
+plumbing already forwarded to Character Creation) so unequip-all computes
+a companion's ACTUAL currently-equipped kit via
+`companionStartingGearForDifficulty` — hardcoding "normal" instead would
+have let a Nightmare-difficulty companion's already-trimmed chest/shield
+get pooled and handed to someone else, even though that companion never
+actually had it equipped this campaign.
+
+**Explicit assumption, cheap to revisit**: drawing a pooled item costs
+nothing in the PC's Gear Points budget (D-194) — pooled items are
+transfers of already-owned gear, not new purchases.
+
+- Tests: **1533** (+22 — 14 new in `partyInventorySystem.test.ts`, 8 more
+  in `companionRosterSystem.test.ts`). Typecheck clean, all 1533 tests
+  pass, production build succeeds (143 modules, +1 for the new system
+  file). No browser available in this environment — this is a genuinely
+  multi-step flow (bench someone, unequip all, reactivate them, draw their
+  own item back from the pool, start a battle, confirm an unclaimed
+  item's owner has it again next visit) that can't be spot-checked on one
+  screen — see **KI-147**.
+
+### D-198 — Party Creation Overhaul Plan 5: AI-hero level-up defaults + Human/AI toggle clarity
+
+Kevin: "Plan 5 next." His own playtest complaint (2026-08-26 notes): "Should
+have an option for the AI to pick level-up choices for you (this should be
+the default for any characters that are AI controlled). The click-to-toggle
+human or AI controlled button is not very clear at first of what it does."
+
+**Confirmed the actual bug first**: `BattleScene.applyClassLevelUps` (the
+in-battle level-up path) and `buildHeroes`'s pre-battle Starting-Level
+fast-forward path both queue a real choice popup (`needsAsi`/
+`needsSubclass`/`needsSpellPick`/`needsSpellSwap`, or the pending-fast-
+forward equivalents) purely off `plan?.mode === "auto"` plus whether an
+explicit plan entry resolved it — neither path has ever checked
+`hero.controlledBy` at all. An AI-controlled hero with no blueprint (which
+is every AI hero today, since Plan 6's blueprint library doesn't exist yet)
+gets exactly the popup Kevin described, with the AI having no way to answer
+it — the human player is forced to make the choice FOR a hero they didn't
+ask to manage.
+
+**5.2 — Human/AI toggle redesign, shipped first (small, no dependencies)**:
+`CharacterCreationScene.refreshSlot` now calls the existing
+`OrnateButtonHandle.setSelected(isAiControlled)` (already built for D-123/
+Plan 8's `createOrnateButton`, previously unused on this one button) so the
+AI state gets a visually distinct gilt-border/brighter-fill look instead of
+a same-as-everything-else plain gray label — reusing an existing component
+instead of a new icon/asset (this environment still has no image-generation
+tool). Label text is now `Hero N — AI-Controlled` / `Hero N — Human-
+Controlled` (dropped the old "(click to toggle)" hint — an ornate tab-
+styled button already reads as clickable by its own shape/hover/press
+feedback).
+
+**5.1 — AI-controlled heroes never see a level-up popup, full stop.**
+Asked Kevin directly on the plan doc's own open fork ("hard rule, or just a
+smarter starting default the player can still override") — **hard rule**,
+confirmed. `SlotState.levelUpPlan.mode` is now forced to `"auto"` wherever
+`controlledBy` becomes/is `"ai"`: a fresh AI-default slot (`create()`), the
+Human→AI toggle handler, a loaded build whose `controlledBy` is `"ai"`
+(`slotStateFromBuild`, defensive coercion for a save predating this
+decision), and the Plan Levels wizard's mode-select screen
+(`showPlanModeSelect`) now only offers "Auto-follow a blueprint" (plus
+Cancel) for an AI-controlled slot — Prompted/Fresh aren't shown at all,
+not shown-then-silently-overridden.
+
+Locking the mode alone isn't sufficient, though: `resolveAsiForLevel`/
+`resolveSubclassForClass`/`resolveSpellPickForRequest` (D-16x's own design)
+never invent a choice — an "auto" hero with no EXPLICIT plan entry for a
+level still comes back unresolved, which is exactly what still fed the
+needs-queues regardless of mode. **Real fix**: `BattleScene.
+applyClassLevelUps` and `buildHeroes`'s fast-forward loop both now check
+`hero.controlledBy === "ai"` directly (not just `plan?.mode`) as a second,
+independent backstop — when a choice comes back unresolved AND the hero is
+AI-controlled, it's handed to a new fallback resolver instead of ever
+reaching a queue. Checking `controlledBy` directly (not only trusting
+`plan.mode`) means this can't be bypassed by an older save or a coop
+control-mode edge case, even though the UI-layer changes above should
+already guarantee `mode` is `"auto"` for every AI hero going forward.
+
+**New fallback resolvers, `LevelUpPlanSystem.ts`** (`autoResolveAsiForLevel`,
+`autoResolveSubclassForClass`, `autoResolveSpellPickForRequest`) — a
+deliberate, narrow, Kevin-confirmed EXCEPTION to D-16x's "never invent a
+choice, all blueprints must be player-made" rule, not a reversal of it.
+Asked directly: invent a simple default (this hero's class's primary
+ability +2, falling back to its spellcasting ability then any non-maxed
+ability if the primary is capped; its first modeled subclass; the first
+eligible spell for a mastery/signature/arcanum pick) vs. silently skip and
+leave the hero permanently without that ASI/subclass/spell until a real
+blueprint exists (Plan 6) — Kevin picked **invent a simple default**, so an
+AI companion is never permanently stunted just because nobody built it a
+blueprint yet. D-16x's rule stands unchanged for every human/remote-
+controlled hero — an unresolved choice for one of those still queues a real
+popup exactly as before; this exception is scoped to `controlledBy ===
+"ai"` only, both in the UI layer above and in these three functions' own
+callers. The level-up-adjacent recurring spell SWAP trigger (D-136, not a
+one-time gate) already had a silent-skip "auto" branch — extended the same
+`isAiControlled` backstop there for symmetry (an AI hero on a plan that
+somehow isn't `"auto"` still skips silently rather than queuing a swap
+prompt nobody would answer).
+
+- `src/game/systems/LevelUpPlanSystem.ts`: `autoResolveAsiForLevel`,
+  `autoResolveSubclassForClass`, `autoResolveSpellPickForRequest`.
+- `src/game/scenes/BattleScene.ts`: `applyClassLevelUps`'s four choice
+  blocks and the spell-swap check gain the `isAiControlled` branch;
+  `buildHeroes`'s fast-forward loop gains the same branch.
+- `src/game/scenes/CharacterCreationScene.ts`: fresh-slot default
+  (`levelUpPlan: emptyLevelUpPlan(slot === 0 ? "fresh" : "auto")`), the
+  Human/AI toggle handler, `slotStateFromBuild`'s defensive coercion,
+  `showPlanModeSelect`'s AI-only branch, `planSkipChoice`'s AI-aware
+  description text, and `refreshSlot`'s toggle-button restyle.
+- Tests: **1540** (+7, all new in `tests/levelUpPlanSystem.test.ts`
+  covering the three fallback resolvers directly, including the
+  ability-score-cap fallback chain and a classic-fixed-roster no-op case).
+  Typecheck clean, all 1540 pass, production build succeeds (143 modules,
+  unchanged — no new files). No browser available in this environment —
+  needs Kevin's own playtest pass; see **KI-148**.
+
+### D-199 — Party Creation Overhaul Plan 6: the level-up blueprint library
+
+Kevin: "Plan 6 now." His own ask: save a "Plan Levels" session as a named,
+reusable blueprint — usable by any future character of that class, in any
+save or campaign, forever — plus his own explicit correction reversing
+D-136's "permanently out of scope" call: fold level-up-triggered spell
+swaps into blueprint planning too (the separate Long-Rest full-relist
+mechanic stays real-time-only, untouched). Went through `EnterPlanMode`:
+three Explore passes in parallel (storage/persistence architecture,
+the wizard's existing state machine + DOM-input pattern, the spell-swap
+mechanics + D-136's actual reasoning) before any code was written.
+
+**Two design questions the plan doc left explicitly open, resolved from
+research, not assumed:**
+
+1. **Storage.** Contrary to the plan doc's own uncertainty ("check
+   `SaveSystem.ts`'s actual backend before deciding"), Firebase IS live
+   for real player data today (`CloudSaveSync.ts` for save slots,
+   `MapSharingSync.ts` for public shared maps) — but `CompanionRosterSystem`/
+   `CampaignProgressSystem`/`WorldFlagSystem`, the three existing "global
+   across every save/campaign" systems, all stay **local-only**, no cloud
+   sync file exists for any of them. A blueprint library matches THAT
+   precedent, not Saves/Maps — it's a personal preset list, not a publicly
+   shareable thing. **Decision: local-only**, `fantasy-td:blueprint-library`
+   (`config.ts`), mirroring `CompanionRosterSystem.ts`'s exact
+   `{getItem,setItem}`/defensive-parse/`DEFAULT_*_STATE` shape. Cloud sync
+   is a cheap, separable follow-up if ever wanted, not scaffolded now.
+2. **The Auto/Prompted/Fresh cadence setting.** The plan doc asked for a
+   "first design pass" here, not a pre-decided answer. Decoupled entirely
+   from "which blueprint": `LevelUpPlan.mode` is now vestigial the moment
+   a plan is saved as a library blueprint (applying a blueprint ALWAYS
+   overwrites `mode` with the target hero's own current cadence, never
+   reads the blueprint's frozen one back) — the authoritative cadence
+   moved to a new per-hero `cadenceHandle` pill next to "Plan Levels",
+   click-cycling Auto/Prompted/Fresh, locked to Auto (disabled) for an
+   AI-controlled hero (same hard rule as D-198). This removed D-133's old
+   mode-select screen from the wizard entirely — the wizard now opens
+   straight into the new blueprint entry choice below.
+
+**6.1 — Data model/storage**: new `src/game/systems/BlueprintLibrarySystem.ts`
+(pure, no Phaser) — `LevelUpBlueprint { id, name, classId, plan: LevelUpPlan }`,
+`BlueprintLibraryState { blueprints: LevelUpBlueprint[] }`,
+`loadBlueprintLibrary`/`saveBlueprintLibrary` (copy `CompanionRosterSystem`'s
+shape exactly), `blueprintsForClass`, `upsertBlueprint` (add-or-overwrite by
+id, one op), `deleteBlueprint`. Id generation stays at the call site
+(`CharacterCreationScene`), matching `CompanionRosterScene.onUnequipAllClicked`'s
+existing `` `blueprint-${Date.now()}-${counter++}` `` idiom.
+
+**6.4 — Cadence decoupled from the wizard**: `CharacterCreationScene`'s old
+single "Plan Levels" button split into two half-width buttons — same
+technique D-197 used for Gear|Pool (`rowGap`/`halfWidth`, reused verbatim,
+not reinvented) — "Plan Levels" (which plan) and the new `cadenceHandle`
+pill (how it's applied). `showPlanModeSelect` is gone; `openLevelPlanner`
+now opens straight into `showBlueprintEntryChoice` (6.2, below).
+
+**6.2 — Three-way entry screen**: `showBlueprintEntryChoice` — **Create a
+New Blueprint** (fresh `emptyLevelUpPlan`, keeps the hero's current
+cadence), **Select a Saved Blueprint** (`showBlueprintPicker`, filtered to
+this hero's current class via `blueprintsForClass` → `showBlueprintSubmenu`:
+**Use As-Is** applies and closes immediately, no wizard steps shown;
+**Edit** loads the blueprint into the SAME wizard machinery as "Create
+New," pre-seeded; **Delete** is a two-click arm/confirm within the same
+overlay screen — re-renders with the button relabeled "Confirm Delete?",
+no timer needed since the overlay already re-renders per click), and **No
+Blueprint** (today's exact throwaway per-character flow, unchanged —
+`planningDraft` stays seeded from the hero's own current plan, preserving
+the pre-Plan-6 "reopen and keep editing" behavior). Not in the plan doc's
+own 6.1-6.5 list but added as a small, necessary scope addition: **Delete**
+— a library nobody can prune becomes clutter, and it was cheap to add
+alongside the submenu already being built.
+
+**6.3 — Saving a blueprint**: `showPlanDoneScreen` gains a "Save as
+Blueprint" choice (always offered, regardless of entry path, alongside
+the unchanged this-hero-only "Save & Close" — keeps "applying without
+saving" the default, per the plan's own framing) → `showBlueprintSaveScreen`
+(Update the source blueprint in place vs. Save as New, when editing an
+existing one) → `showBlueprintNameEntryScreen`, a DOM `<input>` built with
+the EXACT same technique `buildSlotUi`'s hero-name field already
+establishes (value read as a JS property, `keydown` stops propagation),
+cleaned up automatically by `levelPlanOverlay`'s own next-screen
+`clearChoiceOverlay` rather than needing separate lifecycle code.
+
+**6.5 — Level-up-triggered spell swaps become plannable**: real scope
+reduction found during research — `spellSwapStepsForClass`'s **full-relist**
+variant (`preparedSwapIsFullRelist`) is Long-Rest-only by design (D-136);
+every level-up-triggered swap is ALWAYS the simpler "replace exactly one"
+drop-then-learn flow, so this decision never needed to model full-relist
+at all. `LevelUpPlan` gains `spellSwaps: Partial<Record<number,
+LevelUpSpellSwapChoice[]>>` (an array per level — one level can need BOTH
+a cantrip AND a prepared swap, e.g. Sorcerer); `LevelUpChoiceStepKind`
+gains `"spellSwap"`; `futureChoiceSteps` walks levels 2-20 calling
+`spellSwapStepsForClass(classId, level, "levelUp")` and pushes a step per
+kind found — this can add MANY steps for a caster (a swap opportunity
+recurs almost every level), the existing per-step "Skip (decide later)"
+choice is the intended escape hatch, same as ASI. New pure resolver
+`resolveSpellSwapStepsForLevel(hero, level, plan)`: **all-or-nothing** —
+if ANY of a level's needed kinds lacks a valid plan entry (missing, a
+stale `dropId` no longer known, or a `learnId` no longer eligible),
+NOTHING is applied, avoiding a partially-resolved level leaving a live
+popup re-asking for a swap that already happened. Wired into both
+`fastForwardHero` (silently applies when planned, no-ops otherwise —
+matches the exact pre-D-199 baseline when no plan exists) and
+`BattleScene.applyClassLevelUps`'s existing spell-swap check (`autoMode &&
+resolveSpellSwapStepsForLevel(...)`, same call shape as the three checks
+above it — deliberately did NOT extend this to fire a popup on a partial
+"auto"-mode plan, preserving swaps' original "auto always skips silently
+unless fully covered" behavior rather than making it behave like ASI's
+stricter "auto with no entry still prompts" rule). The live in-battle
+drop/learn screens (`showSpellPrepDropScreen`/`showSpellPrepLearnScreen`)
+now pre-highlight a planned choice in "Prompted" mode, same `highlighted`
+precedent `showAsiPathChoice` already established for ASI/subclass/
+spell-pick screens. The Character Creation wizard gets its own
+`showPlanSpellSwapStep`/`showPlanSpellSwapLearnStep` mirroring
+`BattleScene`'s two-screen shape but writing into
+`planningDraft.spellSwaps[level]` via `simulateHeroUpToChoice` for real
+eligibility, same precedent every other step already uses.
+
+**Explicit assumption, cheap to revisit**: no browser available in this
+environment to verify ANY of this — the largest, most interaction-heavy UI
+addition on the whole roadmap (a new 3-way entry screen, a picker/submenu,
+a name-entry save screen, a new per-hero pill, a whole new step kind
+threaded through the existing wizard). Needs a dedicated browser pass from
+Kevin before being called fully done, same caveat D-191/Plan 8 carried for
+a similarly large, unverifiable UI change — see **KI-149**.
+
+- Tests: **1561** (+21 — 11 new in `tests/blueprintLibrarySystem.test.ts`,
+  10 more added to `tests/levelUpPlanSystem.test.ts` for
+  `resolveSpellSwapStepsForLevel`/`futureChoiceSteps`'s new `"spellSwap"`
+  steps/`fastForwardHero`'s swap integration). Typecheck clean, all 1561
+  pass, production build succeeds (144 modules, +1 for the new system
+  file).
+- `src/game/systems/BlueprintLibrarySystem.ts` (new) — the whole library.
+- `src/game/config.ts` — `BLUEPRINT_LIBRARY_STORAGE_KEY`.
+- `src/game/systems/LevelUpPlanSystem.ts` — `LevelUpSpellSwapChoice`,
+  `LevelUpPlan.spellSwaps`, `resolveSpellSwapStepsForLevel`,
+  `futureChoiceSteps`'s new loop, `fastForwardHero`'s new call.
+- `src/game/scenes/BattleScene.ts` — `applyClassLevelUps`'s spell-swap
+  check, `showSpellPrepDropScreen`/`showSpellPrepLearnScreen`'s new
+  `plannedSpellSwapChoice` pre-highlighting.
+- `src/game/scenes/CharacterCreationScene.ts` — the whole blueprint entry/
+  picker/submenu/save flow, the split `planHandle`/`cadenceHandle` row,
+  `showPlanSpellSwapStep`/`showPlanSpellSwapLearnStep`.
+- `tests/blueprintLibrarySystem.test.ts` (new, 11 tests).
+- `tests/levelUpPlanSystem.test.ts` — 10 new tests.
+
 - **LOCKED:** "Stronghold Integrity" is the shared loss resource; "Breach Damage"
   is what escaping enemies remove from it; "Tile" is the logical distance unit.
 - **LOCKED:** Local single-player core loop before any Firebase or multiplayer.
 - **OPEN:** Final game title must be original with no D&D branding (working title
   "Fantasy Tower Defense" is temporary).
+
+### D-200 — Party Creation Overhaul Plan 7: the level-progression reference screen
+
+Kevin: "Plan 7 now." The last remaining item on `PARTY_CREATION_OVERHAUL_
+PLAN.md`'s roadmap — a level-by-level reference so a player can see what a
+class/subclass gets at every level 1-20: feature names (including ASI
+levels), and for casters, spell slots/cantrips known/prepared count. This
+closes the entire Party Creation Overhaul epic (Plans 0-8 all DONE now).
+
+Went through `EnterPlanMode`: three Explore agents in parallel first
+(`CompendiumScene`'s class/subclass detail rendering, `CharacterSheetScene`'s
+tab architecture, and the `SpellcastingSystem`/`SpellPreparationSystem`
+per-level tables), then a Plan agent validated the design against the real
+code before any implementation — caught two real mistakes in the initial
+design: `getSubclassDefinition` throws on an unknown id (and on
+`undefined`), so a subclass-less hero must never call it directly; and the
+originally-proposed "achieved vs not" text colors (`createOrnateButton`'s
+dark-wood-panel button-plaque colors) would be nearly invisible against
+`CharacterSheetScene`'s light parchment panel — corrected to the existing
+ink color (`#2a1a10`) plus `.setAlpha(0.55)` for not-yet-reached rows, the
+same dimming convention `CampaignSelectScene` already uses for locked cards.
+
+**No new game-balance numbers or systems** — this is pure assembly over
+already-tested data. New pure function `classProgressionTable(classId,
+subclassId?)` in new file `src/game/systems/ClassProgressionSystem.ts`
+(distinct from the unrelated pre-existing `ProgressionSystem.ts`, which is
+wave-clear level-up cadence) loops levels 1-20 and combines: `classDef.
+features`/`subclassDef.features` filtered per level, plus (for casters)
+`spellSlotsForClassAtLevel`/`cantripsKnownForClassAtLevel`/
+`preparedSpellCountForClassAtLevel`/`wizardSpellbookSizeAtLevel` (wizard
+only) from the existing spellcasting/spell-prep systems — no new tables,
+no new balance decisions.
+
+**Two surfaces, per the plan doc's own 7.1/7.2 split:**
+- **`CompendiumScene.renderClassDetail`** (Main-Menu-reachable, no "my
+  hero" context) now renders a real per-level grouped table — an
+  `isGroupHeader` "Lv N" row per level (skipped entirely if that level has
+  nothing new, to avoid 20 bare headers for a class with sparse features),
+  its class features as before, plus one condensed caster-summary row
+  (`Slots: 2/0/0 · Cantrips: 3 · Prepared: 4[, Spellbook: 6]`) when
+  applicable. Reuses the existing `DetailRow`/`renderRowList` pagination
+  engine unchanged — it already handles arbitrary-length row lists.
+  `renderSubclassesDetail` stays byte-for-byte unchanged: spell-slot
+  progression is a class-level fact, not a per-subclass one, so exploding
+  it per-subclass-per-level would be noisy and duplicative for no benefit.
+- **`CharacterSheetScene`** (in-battle, always has a live `Hero` with a
+  real current level) gets a new fourth tab, "Progression" — one compact
+  row per level 1-20 (fits the existing 840px parchment panel with no new
+  pagination needed), combining class AND subclass features (a hero
+  always has both, unlike Compendium's class-only browse), dimmed via
+  `.setAlpha(0.55)` for `level > hero.level`, with a hover tooltip
+  (`attachHoverTooltip`, already used elsewhere in this scene) revealing
+  the full feature description text. A hero with no `classId` (the old
+  "classic" fixed-roster hero) gets an explanatory line instead of a
+  table. `addStatLine`'s return type changed from `void` to
+  `Phaser.GameObjects.Text` (every existing call site already ignored the
+  return value) so the new tab can grab a handle for `.setAlpha`/tooltip
+  attachment.
+
+**Explicit assumption, cheap to revisit**: no browser available in this
+environment — needs Kevin's own pass for both the rewritten Compendium
+class-detail layout and the new Character Sheet tab, same standing
+limitation as every other visual change in this project. See **KI-150**.
+
+- Tests: **1570** (+9, new `tests/classProgressionSystem.test.ts`).
+  Typecheck clean, all 1570 pass, production build succeeds (145 modules,
+  +1 for the new system file).
+- `src/game/systems/ClassProgressionSystem.ts` (new) — `classProgressionTable`.
+- `src/game/scenes/CompendiumScene.ts` — `renderClassDetail` rewritten,
+  new `casterSummaryText`/`trimTrailingZeros` module-level helpers.
+- `src/game/scenes/CharacterSheetScene.ts` — `SheetTab`/`TAB_DEFS` gain
+  `"progression"`, `renderTab`'s dispatch, new `renderProgressionTab`/
+  `progressionRowText`/`progressionRowTooltip`, `addStatLine`'s new
+  return type.
+- `tests/classProgressionSystem.test.ts` (new, 9 tests).
+
+### D-201 — Load Game now forwards a campaign party's campaignId/chapterIndex
+
+Kevin: "let's fix both here and now," picking a `KNOWN_ISSUES.md` bug over a
+fresh feature. Flagged (but explicitly not fixed) in D-195: a campaign
+party saved and reloaded via `LoadGameScene` re-entered Character Creation
+fully free-pick — no companion lock, no point-buy, wrong party size.
+Research found the bug is very much live today, not just a legacy-data
+edge case: `CharacterCreationScene`'s own pre-battle "Save Party" IS hidden
+in campaign mode (Plan 3.7), but `BattleScene`'s in-battle pause-menu "Save
+Party"/"Save & Exit" is NOT — `canSaveParty()` only checks `originalParty
+!== undefined`, so pausing mid-campaign-battle and saving is the one live
+path that produces a campaign-linked `SaveSlot`.
+
+**Bigger than "forward one field."** `SaveSlot` gained `campaignId?:
+string`/`chapterIndex?: number` (optional, defensive-parsed like every
+other D-195-era field — no version bump), written by `BattleScene.
+saveParty()` and by `CharacterCreationScene`'s own Start-Battle re-save,
+and forwarded by `LoadGameScene.loadSlot()`. That alone would only fix
+point-buy/party-size/difficulty-visibility (all keyed directly on
+`this.campaignId` truthiness). The companion identity/gear lock and Start
+Battle's roster write-back needed a second fix: `create()`'s
+companion-prefill block (`companionBuildsForSlots`/`this.
+companionIdForSlot`) only ever ran `if (!this.loadedParty)` — so even
+after forwarding `campaignId`, a reloaded campaign party still couldn't
+lock, because the metadata linking "slot N" to "companion X" was never
+computed. Fixed by hoisting that metadata computation to run whenever
+`this.campaignId` is set, REGARDLESS of `loadedParty` — a loaded save's
+own build VALUES still win (`loadedBuild = this.loadedParty?.[slot] ??
+companionBuildsForSlots[slot]`, unchanged), only the "which slot is which
+companion" bookkeeping now also runs for the reload case.
+`identityLocked`'s formula dropped its `!this.loadedParty &&` guard
+accordingly (now just `companionBuildsForSlots[slot] !== undefined`,
+which stays `false` at every slot for a non-campaign load exactly as
+before, since that block only populates outside `if (this.campaignId)`
+at all). Confirmed safe: `seedStartingCompanions` is documented idempotent
+("no-ops unless the roster is still fully default"), so re-running it on
+every campaign visit (loaded or not) is harmless; the newly-reachable
+`gearLocked` branch of `resolveGearIdsForSlot` was checked against D-197's
+"Key correctness fix" writeup first, per this project's own standing
+instruction — it already keys off `this.companionIdForSlot[slotIndex]`,
+which this fix now correctly populates for the reload case too.
+
+Tests: **1575** (+5, new `describe` block in `tests/saveSystem.test.ts`
+covering `campaignId`/`chapterIndex` on `createSaveSlot`/`updateSaveSlot`/
+`saveOrUpdatePartySlot`/round-trip/defensive-parse-rejection).
+`CharacterCreationScene`/`LoadGameScene`/`BattleScene` stay untested per
+this project's standing convention. Typecheck clean, all 1575 pass,
+production build succeeds (145 modules, unchanged — no new source file).
+No browser available in this environment — see **KI-151**.
+
+- `src/game/systems/SaveSystem.ts` — `SaveSlot`/`NewSaveSlotInput`/
+  `SaveSlotUpdate`/`SavePartyInput` gain `campaignId?`/`chapterIndex?`;
+  `isSaveSlot` validates them defensively; `saveOrUpdatePartySlot` passes
+  them through on both the create and update path.
+- `src/game/scenes/BattleScene.ts` — `saveParty()` now records them.
+- `src/game/scenes/CharacterCreationScene.ts` — Start Battle's own
+  `updateSaveSlot` call now records them too; the companion-prefill block
+  and `identityLocked`'s formula (see above).
+- `src/game/scenes/LoadGameScene.ts` — `loadSlot()` forwards them.
+- `tests/saveSystem.test.ts` — 5 new tests.
+
+### D-202 — Character Creation now resumes a "plain" draft across Back-and-return
+
+The other `KNOWN_ISSUES.md` bug picked up the same session (Plan 0.6, open
+since D-190). No repro was ever obtained from Kevin — the earlier
+investigation only established that `create()` unconditionally re-seeds
+every slot from `CHARACTER_NAME_POOL` on any navigation path that isn't
+Load Game/a campaign-companion prefill, silently discarding a typed name
+(or any other in-progress pick) on a Back-to-Main-Menu-then-return round
+trip. Asked Kevin directly whether to (a) fix that concrete defect on the
+hypothesis it's the real bug, even without a confirmed repro, or (b) hold
+off for a repro — **he chose (a).**
+
+This reverses part of D-190's own "Build Party and New Game are
+deliberately identical, always fresh" reasoning — flagged explicitly as
+that reversal before building, not silently.
+
+**Design, chosen to reuse existing machinery rather than invent a new
+snapshot mechanism**: `SlotState.allocator` holds a real class instance
+(`StandardArrayAllocator`/`PointBuyAllocator`) with methods, so a naive
+deep-clone of `this.slots` would silently lose them. Instead, a new
+module-level `lastPlainDraft: CharacterBuild[] | undefined` (module-level,
+not a class field, because the scene instance itself is torn down and
+rebuilt by `scene.start()`) stores the output of the ALREADY-existing
+`buildsFromSlots()` — the exact same serialization `SaveSystem`/the
+roster already trust — and `init()` feeds it back in as `this.loadedParty`
+on the next "plain" entry (no campaign, no Free Play/custom map — new
+`isPlainEntry()` helper), reusing the Load-Game-established `loadedParty`
+→ `slotStateFromBuild` reconstruction path verbatim. No new SlotState
+snapshot/restore logic needed. Lost on a real page reload (never touches
+`localStorage`) — a same-session convenience, not a save.
+
+Captured in `leaveToMainMenu()` (the only existing "leave without
+starting a battle" path today), gated on `isPlainEntry()` so a locked
+campaign party never leaks into the free-pick draft. Cleared the instant
+a plain session's own Start Battle actually fires, so a later Build Party
+visit starts fresh instead of resurrecting an already-in-play party — a
+campaign/Free-Play/Load-Game battle start leaves any OTHER unrelated
+plain draft untouched. "New Game" and "Build Party" still share one
+undistinguished entry point (D-190's original call, unchanged) — both
+equally resume the same draft.
+
+Tests: unchanged at **1575** (`CharacterCreationScene` isn't unit-tested,
+same standing convention as every other change to this file). Typecheck
+clean, all 1575 pass, production build succeeds (145 modules, unchanged).
+No browser available in this environment, and this fix is explicitly
+UNCONFIRMED against Kevin's actual original report — see **KI-152**.
+
+- `src/game/scenes/CharacterCreationScene.ts` — module-level
+  `lastPlainDraft`, `isPlainEntry()`, `init()`'s new resume check,
+  `leaveToMainMenu()`'s capture, Start Battle's clear.
+
 - **OPEN items resolved:** "Hero collision" — living heroes block enemy routes
   (D-033). "Dice visibility" — deterministic for the MVP/vertical slice (D-030);
   **superseded by D-086 (Phase 13.1)**, which brings real d20 attack rolls

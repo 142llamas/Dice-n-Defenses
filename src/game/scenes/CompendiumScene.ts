@@ -9,6 +9,7 @@ import { WEAPON_MASTERIES, WEAPON_PROPERTY_LABELS } from "../data/weapons";
 import { POTION_DEFINITIONS, POTION_ORDER } from "../data/potions";
 import { STATUS_EFFECTS, STATUS_EFFECT_ORDER } from "../data/statusEffects";
 import { STRUCTURE_DEFINITIONS, type StructureDefinition } from "../data/structures";
+import { classProgressionTable, type ProgressionLevelEntry } from "../systems/ClassProgressionSystem";
 import { ABILITY_SCORE_NAMES } from "../data/abilityScores";
 import { SKILLS, SKILL_ORDER } from "../data/skills";
 import { PORTRAIT_MANIFEST } from "../data/portraitManifest";
@@ -153,6 +154,23 @@ interface DetailRow {
 
 /** D-165: fixed line height for `renderRowList`'s paginated rows — page size is derived from this against the panel's actual available height, not a per-category constant, since every category now shares the same renderer. */
 const ROW_HEIGHT = 24;
+
+/** D-200: one condensed caster-progression line for `renderClassDetail`'s per-level table. */
+function casterSummaryText(entry: ProgressionLevelEntry): string {
+  const parts: string[] = [];
+  const slots = trimTrailingZeros(entry.spellSlots);
+  if (slots.length > 0) parts.push(`Slots: ${slots.join("/")}`);
+  if (entry.cantripsKnown > 0) parts.push(`Cantrips: ${entry.cantripsKnown}`);
+  if (entry.preparedCount > 0) parts.push(`Prepared: ${entry.preparedCount}`);
+  if (entry.spellbookSize !== undefined) parts.push(`Spellbook: ${entry.spellbookSize}`);
+  return parts.join(" · ");
+}
+
+function trimTrailingZeros(nums: number[]): number[] {
+  let end = nums.length;
+  while (end > 0 && nums[end - 1] === 0) end--;
+  return nums.slice(0, end);
+}
 
 /**
  * Detail panel bounds — a bound-tome reading pane every category renders
@@ -574,6 +592,14 @@ export class CompendiumScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * D-200 (Party Creation Overhaul Plan 7): a real 1-20 level table, not
+   * just a flat feature list — combines `cls.features` with
+   * `ClassProgressionSystem`'s spell-slot/cantrip/prepared/spellbook data
+   * for casters. `renderSubclassesDetail` stays a flat per-subclass feature
+   * list (unchanged) since spell progression is a class-level fact, not a
+   * per-subclass one.
+   */
   private renderClassDetail(): void {
     const cls = getClassDefinition(this.classId);
     const saves = cls.savingThrowProficiencies.map((a) => ABILITY_SCORE_NAMES[a]).join("/");
@@ -582,10 +608,18 @@ export class CompendiumScene extends Phaser.Scene {
       : "";
     const header = `${cls.name} — d${cls.hitDie} hit die · ${ABILITY_SCORE_NAMES[cls.primaryAbility]} primary · saves: ${saves}${castLine}`;
 
-    const rows: DetailRow[] = cls.features.map((f) => ({
-      text: `Lv${f.level}  ${f.name}${f.mechanicallyActive ? "" : "  [inert]"}`,
-      tooltip: f.description,
-    }));
+    const rows: DetailRow[] = [];
+    for (const entry of classProgressionTable(this.classId)) {
+      const featureRows: DetailRow[] = entry.classFeatures.map((f) => ({
+        text: `  ${f.name}${f.mechanicallyActive ? "" : "  [inert]"}`,
+        tooltip: f.description,
+      }));
+      const casterText = entry.isCaster ? casterSummaryText(entry) : "";
+      if (featureRows.length === 0 && !casterText) continue; // skip levels with nothing new
+      rows.push({ text: `Lv ${entry.level}`, isGroupHeader: true });
+      rows.push(...featureRows);
+      if (casterText) rows.push({ text: `  ${casterText}` });
+    }
     this.renderRowList(header, getViewport(this).width - PANEL_LEFT * 2, rows);
   }
 

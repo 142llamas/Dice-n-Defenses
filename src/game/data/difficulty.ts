@@ -19,6 +19,13 @@
  * A battle reached with no explicit difficulty (e.g. Co-op) always resolves
  * to `"normal"` (see `BattleScene`'s `difficultyId` default), so it always
  * gets this tier's Rest budget too.
+ *
+ * D-194: two more per-tier numbers, CAMPAIGN MODE ONLY (never read by Free
+ * Play/manual Create Party, which stays fully free-pick per D-193) —
+ * `startingGearPoints` (the PC's starting-gear point-buy budget) and
+ * `companionDiscretionaryGearSlots` (how many of a campaign companion's
+ * non-essential gear slots survive at this tier). Same first-pass/untuned
+ * standing as every other number on this file.
  */
 
 export type DifficultyId = "easy" | "normal" | "hard" | "nightmare";
@@ -34,6 +41,10 @@ export interface DifficultyDefinition {
   shortRestCharges: number;
   /** Phase 13.4 (D-088): per-run Long Rest charges — a much smaller pool, per D-086. */
   longRestCharges: number;
+  /** D-194: campaign mode only — the PC's starting-gear point-buy budget (see `startingGearPointCost`, `data/characterCreation.ts`). */
+  startingGearPoints: number;
+  /** D-194: campaign mode only — how many of a companion's discretionary gear slots (chest, then shield) survive at this tier; weapon and a caster's implement always survive regardless. See `companionStartingGearForDifficulty`. */
+  companionDiscretionaryGearSlots: number;
 }
 
 export const DIFFICULTY_IDS: DifficultyId[] = ["easy", "normal", "hard", "nightmare"];
@@ -46,6 +57,8 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     enemyHpMultiplier: 0.85,
     shortRestCharges: 4,
     longRestCharges: 2,
+    startingGearPoints: 12,
+    companionDiscretionaryGearSlots: 2,
   },
   normal: {
     id: "normal",
@@ -54,6 +67,8 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     enemyHpMultiplier: 1,
     shortRestCharges: 3,
     longRestCharges: 1,
+    startingGearPoints: 9,
+    companionDiscretionaryGearSlots: 2,
   },
   hard: {
     id: "hard",
@@ -62,6 +77,8 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     enemyHpMultiplier: 1.15,
     shortRestCharges: 2,
     longRestCharges: 1,
+    startingGearPoints: 6,
+    companionDiscretionaryGearSlots: 1,
   },
   nightmare: {
     id: "nightmare",
@@ -70,6 +87,8 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     enemyHpMultiplier: 1.35,
     shortRestCharges: 1,
     longRestCharges: 0,
+    startingGearPoints: 4,
+    companionDiscretionaryGearSlots: 0,
   },
 };
 

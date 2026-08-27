@@ -12,6 +12,7 @@ import {
   UNLOCK_MISSION_FLEX_SLOTS,
 } from "../systems/UnlockMissionSystem";
 import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
+import type { DifficultyId } from "../data/difficulty";
 
 /**
  * UnlockMissionPartyScene — Kevin's own rule (KI-098 item 13, following
@@ -32,6 +33,8 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
   private overlay: Phaser.GameObjects.GameObject[] = [];
   private campaignId = "";
   private chapterIndex?: number;
+  /** Party Creation Overhaul Plan 3.5: forwarded unchanged from `CampaignSelectScene` into `CharacterCreationScene`. */
+  private difficultyId?: DifficultyId;
   private roster: CompanionRosterState = { activeIds: [], benchedIds: [], lostIds: [] };
   private target?: CompanionDefinition;
   private flexIds: (string | undefined)[] = new Array(UNLOCK_MISSION_FLEX_SLOTS).fill(undefined);
@@ -40,9 +43,10 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
     super("UnlockMissionPartyScene");
   }
 
-  init(data?: { campaignId?: string; chapterIndex?: number }): void {
+  init(data?: { campaignId?: string; chapterIndex?: number; difficultyId?: DifficultyId }): void {
     this.campaignId = data?.campaignId ?? "";
     this.chapterIndex = data?.chapterIndex;
+    this.difficultyId = data?.difficultyId;
   }
 
   create(): void {
@@ -64,7 +68,11 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
     // strand the player on a broken screen if that assumption somehow fails
     // (a stale link, a corrupted save). Falls back to the normal flow.
     if (!this.target) {
-      this.scene.start("CharacterCreationScene", { campaignId: this.campaignId, chapterIndex: this.chapterIndex });
+      this.scene.start("CharacterCreationScene", {
+        campaignId: this.campaignId,
+        chapterIndex: this.chapterIndex,
+        difficultyId: this.difficultyId,
+      });
       return;
     }
     this.flexIds = defaultFlexPicks(this.roster, this.target.id);
@@ -252,6 +260,7 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
           campaignId: this.campaignId,
           chapterIndex: this.chapterIndex,
           requiredCompanionIds: [target.id, ...(this.flexIds as string[])],
+          difficultyId: this.difficultyId,
         });
       },
     );

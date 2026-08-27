@@ -69,11 +69,16 @@ import {
   resolveAsiForLevel,
   resolveSubclassForClass,
   resolveSpellPickForRequest,
+  resolveSpellSwapStepsForLevel,
+  autoResolveAsiForLevel,
+  autoResolveSubclassForClass,
+  autoResolveSpellPickForRequest,
   spellPickTriggerLevel,
   levelUpDeltaSummary,
   type LevelUpPlan,
   type LevelUpStatSnapshot,
   type LevelUpChoiceStep,
+  type LevelUpSpellSwapChoice,
 } from "../systems/LevelUpPlanSystem";
 import {
   spellSwapStepsForClass,
@@ -114,6 +119,7 @@ import {
   DEFAULT_COMPANION_ROSTER_STATE,
   type CompanionRosterState,
 } from "../systems/CompanionRosterSystem";
+import { dropPoolEntriesForLostCompanion } from "../systems/PartyInventorySystem";
 import {
   recordSorrelChoice,
   resolveSorrelFate,
@@ -1293,6 +1299,10 @@ export class BattleScene extends Phaser.Scene {
     saveWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY, this.worldFlags);
     if (fate === "lost") {
       this.companionRoster = loseCompanion(this.companionRoster, "sorrel-thane");
+      // Party Creation Overhaul Plan 2.3: a permanently-lost companion's
+      // still-unclaimed pool entries are deleted outright, not orphaned —
+      // see `dropPoolEntriesForLostCompanion`'s own doc comment.
+      this.companionRoster = dropPoolEntriesForLostCompanion(this.companionRoster, "sorrel-thane");
       saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, this.companionRoster);
     }
     this.logCombat(SORREL_FATE_FLAVOR_TEXT[fate]);
@@ -1635,8 +1645,19 @@ export class BattleScene extends Phaser.Scene {
         // D-16x: whatever the fast-forward couldn't resolve from an
         // explicit plan entry gets queued, not silently defaulted — see
         // `presentPendingFastForwardChoices`, fired once from `create()`.
+        // D-198 (Party Creation Overhaul Plan 5.1): the same hard-rule
+        // exception as `applyClassLevelUps` — an AI-controlled hero has
+        // nobody present to answer a pre-battle popup either, so an
+        // unresolved step falls back to `autoResolve*` instead of ever
+        // reaching the pending-fast-forward queues.
         for (const step of this.fastForwardHeroToLevel(hero, def.startingLevel)) {
-          if (step.kind === "asi") this.pendingFastForwardAsi.push({ hero, level: step.level });
+          if (hero.controlledBy === "ai") {
+            if (step.kind === "asi") autoResolveAsiForLevel(hero);
+            else if (step.kind === "subclass" && hero.classId) autoResolveSubclassForClass(hero, hero.classId);
+            else if (step.kind === "spellPick") {
+              autoResolveSpellPickForRequest(hero, { hero, kind: step.spellPickKind!, tier: step.tier });
+            }
+          } else if (step.kind === "asi") this.pendingFastForwardAsi.push({ hero, level: step.level });
           else if (step.kind === "subclass") this.pendingFastForwardSubclass.push(hero);
           else this.pendingFastForwardSpellPicks.push({ hero, kind: step.spellPickKind!, tier: step.tier });
         }
@@ -3114,14 +3135,28 @@ export class BattleScene extends Phaser.Scene {
         // entry for this level still gets queued exactly like a
         // "prompt"/"fresh"/unset hero would, instead of a silently invented
         // default (see D-16x in DECISIONS.md and LevelUpPlanSystem.ts).
+        // D-198 (Party Creation Overhaul Plan 5.1): the ONE exception —
+        // `hero.controlledBy === "ai"` never queues a real choice popup,
+        // full stop, regardless of what `plan`/`plan.mode` say (Character
+        // Creation now forces an AI-controlled slot's mode to "auto" as a
+        // hard rule, but this checks `controlledBy` directly too, as a
+        // defense-in-depth backstop for an older save or a mid-battle
+        // control-mode edge case). An explicit plan entry still wins when
+        // one exists; only the leftover unresolved case falls back to
+        // `autoResolve*` instead of ever reaching `needsAsi`/`needsSubclass`/
+        // `needsSpellPick`/`needsSpellSwap`.
         const plan = this.heroLevelUpPlans.get(hero.id);
         const autoMode = plan?.mode === "auto";
+        const isAiControlled = hero.controlledBy === "ai";
         let hasChoice = false;
         if (hero.classId) {
           const classDef = getClassDefinition(hero.classId);
           if (asiFeatureGrantedAtLevel(classDef, hero.level)) {
             hasChoice = true;
-            if (!(autoMode && resolveAsiForLevel(hero, hero.level, plan))) needsAsi.push({ hero, level: hero.level });
+            if (!(autoMode && resolveAsiForLevel(hero, hero.level, plan))) {
+              if (isAiControlled) autoResolveAsiForLevel(hero);
+              else needsAsi.push({ hero, level: hero.level });
+            }
           }
           if (
             !hero.subclassId &&
@@ -3129,35 +3164,56 @@ export class BattleScene extends Phaser.Scene {
             subclassesForClass(hero.classId).length > 0
           ) {
             hasChoice = true;
-            if (!(autoMode && resolveSubclassForClass(hero, hero.classId, plan))) needsSubclass.push(hero);
+            if (!(autoMode && resolveSubclassForClass(hero, hero.classId, plan))) {
+              if (isAiControlled) autoResolveSubclassForClass(hero, hero.classId);
+              else needsSubclass.push(hero);
+            }
           }
           if (hero.needsSpellMasteryPick()) {
             hasChoice = true;
             const request: SpellPickRequest = { hero, kind: "mastery" };
-            if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) needsSpellPick.push(request);
+            if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) {
+              if (isAiControlled) autoResolveSpellPickForRequest(hero, request);
+              else needsSpellPick.push(request);
+            }
           } else if (hero.needsSignatureSpellsPick()) {
             hasChoice = true;
             const request: SpellPickRequest = { hero, kind: "signature" };
-            if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) needsSpellPick.push(request);
+            if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) {
+              if (isAiControlled) autoResolveSpellPickForRequest(hero, request);
+              else needsSpellPick.push(request);
+            }
           } else {
             const tier = arcanumTiers.find((t) => hero.needsMysticArcanumPick(t));
             if (tier !== undefined) {
               hasChoice = true;
               const request: SpellPickRequest = { hero, kind: "arcanum", tier };
-              if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) needsSpellPick.push(request);
+              if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) {
+                if (isAiControlled) autoResolveSpellPickForRequest(hero, request);
+                else needsSpellPick.push(request);
+              }
             }
           }
           // D-136: a level-up is ALSO the trigger for Sorcerer/Bard/Warlock's
           // replace-one prepared-spell swap, and for every cantrip-having
           // class but Wizard's replace-one cantrip swap. Unlike the three
-          // checks above, this recurs at EVERY level-up for a caster's whole
-          // career, not a one-time unlock — there's no plannable slot for it
-          // (see D-136 for why), so "auto" mode just skips it silently
-          // (equivalent to "keep current selection") instead of resolving a
-          // plan entry that doesn't exist for this trigger.
+          // checks above, this recurred at EVERY level-up for a caster's
+          // whole career with no plannable slot for it (D-136's original
+          // reasoning) — D-199 (Party Creation Overhaul Plan 6.5) reverses
+          // that narrowly, per Kevin's own correction: a level-up-triggered
+          // swap is now plannable (the separate Long-Rest full-relist
+          // mechanic stays exactly as D-136 left it, untouched). "auto" mode
+          // now attempts `resolveSpellSwapStepsForLevel` first — an explicit,
+          // FULLY-covering plan entry (both kinds, if the level needs both)
+          // resolves silently; anything less falls through to the same
+          // "skip silently" (auto/AI) or real popup (otherwise) behavior as
+          // before this decision. D-198: an AI hero skips silently too, even
+          // if its plan somehow isn't "auto" — same backstop as the three
+          // checks above.
           if (spellSwapStepsForClass(hero.classId, hero.level, "levelUp").length > 0) {
             hasChoice = true;
-            if (!autoMode) needsSpellSwap.push(hero);
+            const explicitlyResolved = autoMode && resolveSpellSwapStepsForLevel(hero, hero.level, plan);
+            if (!explicitlyResolved && !autoMode && !isAiControlled) needsSpellSwap.push(hero);
           }
         }
         if (!hasChoice) plainHeroes.push(hero);
@@ -3458,6 +3514,12 @@ export class BattleScene extends Phaser.Scene {
       builds: this.originalParty,
       partySize: this.heroDefinitions.length,
       difficultyId: this.difficultyId,
+      // D-201: only the in-battle pause menu can produce a campaign-linked
+      // save slot at all (CharacterCreationScene's own pre-battle Save
+      // Party is hidden in campaign mode) — record it so Load Game can
+      // restore campaign context instead of re-entering as free-pick.
+      campaignId: this.campaignId ?? undefined,
+      chapterIndex: this.campaignId ? this.chapterIndex : undefined,
       now: Date.now(),
     });
     if (!result) return null;
@@ -8653,15 +8715,33 @@ export class BattleScene extends Phaser.Scene {
    * pool minus what's already known. Nothing is committed until the Learn
    * screen's own click, so "◀ Back" from there is a free undo.
    */
+  /**
+   * D-199 (Party Creation Overhaul Plan 6.5): this hero's planned drop/learn
+   * choice for `kind` at its CURRENT level, if this is a level-up swap
+   * (Long Rest swaps have no blueprint concept — `LevelUpPlan.spellSwaps`
+   * is level-up-only by design) and a plan actually covers it. Used only
+   * for pre-highlighting, same "highlighted" precedent `showAsiPathChoice`
+   * already established for ASI/subclass/spell-pick screens in "Prompted"
+   * mode — never auto-applies anything here (`applyClassLevelUps`'s own
+   * `resolveSpellSwapStepsForLevel` call already handles silent "auto"
+   * resolution before this screen is ever shown).
+   */
+  private plannedSpellSwapChoice(hero: Hero, kind: SpellSwapStepKind): LevelUpSpellSwapChoice | undefined {
+    if (this.spellPrepTrigger !== "levelUp") return undefined;
+    return this.heroLevelUpPlans.get(hero.id)?.spellSwaps[hero.level]?.find((c) => c.kind === kind);
+  }
+
   private showSpellPrepDropScreen(hero: Hero, kind: SpellSwapStepKind): void {
     const current = this.spellPrepCurrent(hero, kind);
     const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
-    const choices: Array<{ label: string; desc?: string; onClick: () => void }> = current.map((id) => {
+    const planned = this.plannedSpellSwapChoice(hero, kind);
+    const choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }> = current.map((id) => {
       const spell = getSpell(id);
       return {
         label: spell.name,
         desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
         onClick: () => this.showSpellPrepLearnScreen(hero, kind, id),
+        highlighted: planned?.dropId === id,
       };
     });
     choices.push({
@@ -8684,8 +8764,10 @@ export class BattleScene extends Phaser.Scene {
     }
     const dropLabel = getSpell(dropId).name;
     const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
+    const planned = this.plannedSpellSwapChoice(hero, kind);
+    const plannedLearnId = planned?.dropId === dropId ? planned.learnId : undefined;
 
-    const choices: Array<{ label: string; desc?: string; onClick: () => void }> = pool.map((id) => {
+    const choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }> = pool.map((id) => {
       const spell = getSpell(id);
       return {
         label: spell.name,
@@ -8697,6 +8779,7 @@ export class BattleScene extends Phaser.Scene {
           this.logCombat(`${hero.name} swaps ${dropLabel} for ${spell.name}`);
           this.advanceSpellPrepStep(hero);
         },
+        highlighted: plannedLearnId === id,
       };
     });
     choices.push({ label: "◀ Back", onClick: () => this.showSpellPrepDropScreen(hero, kind) });

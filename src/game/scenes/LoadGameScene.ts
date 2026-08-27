@@ -269,10 +269,16 @@ export class LoadGameScene extends Phaser.Scene {
   }
 
   private loadSlot(slot: SaveSlot): void {
+    // D-201: forward a campaign-linked slot's campaignId/chapterIndex too —
+    // without this, a saved campaign party re-entered Character Creation
+    // as fully free-pick (no companion lock, no point-buy, wrong party
+    // size). Both are simply undefined for a classic/Free Play slot.
     this.scene.start("CharacterCreationScene", {
       loadedSlotId: slot.id,
       loadedParty: slot.party,
       difficultyId: slot.difficultyId,
+      campaignId: slot.campaignId,
+      chapterIndex: slot.chapterIndex,
     });
   }
 

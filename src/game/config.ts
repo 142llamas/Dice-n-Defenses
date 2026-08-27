@@ -74,6 +74,12 @@ export const WORLD_FLAG_STORAGE_KEY = "fantasy-td:world-flags";
 // systems/CompanionRosterSystem.ts) — same local-only storage treatment, its
 // own key for the same reason. Not yet written by any scene.
 export const COMPANION_ROSTER_STORAGE_KEY = "fantasy-td:companion-roster";
+// Party Creation Overhaul Plan 6.1: the level-up blueprint library (see
+// systems/BlueprintLibrarySystem.ts) — a named, reusable LevelUpPlan per
+// class, global across every save/campaign, same local-only treatment as
+// the above (no cloud sync — see D-199's own writeup for why this differs
+// from CloudSaveSync/MapSharingSync's Firestore-backed systems).
+export const BLUEPRINT_LIBRARY_STORAGE_KEY = "fantasy-td:blueprint-library";
 
 // A small, readable colour palette for placeholder art (all original, no IP).
 export const COLORS = {

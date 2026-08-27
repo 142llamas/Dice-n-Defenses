@@ -32,6 +32,18 @@ export interface SaveSlot {
   party: CharacterBuild[];
   partySize: number;
   difficultyId: DifficultyId;
+  /**
+   * D-201: set only when this party was saved from an active campaign run
+   * (the in-battle pause menu's "Save Party"/"Save & Exit", the only path
+   * that can produce a campaign-linked slot — `CharacterCreationScene`'s
+   * own pre-battle Save Party is hidden in campaign mode, Plan 3.7).
+   * Absent for a classic/Free Play save. `LoadGameScene` forwards both back
+   * to `CharacterCreationScene` so a reloaded campaign party regains its
+   * companion lock/point-buy/party-size instead of re-entering as a fully
+   * free-pick party.
+   */
+  campaignId?: string;
+  chapterIndex?: number;
 }
 
 export interface SaveFile {
@@ -92,7 +104,9 @@ function isSaveSlot(value: unknown): value is SaveSlot {
     DIFFICULTY_IDS.includes(v.difficultyId as DifficultyId) &&
     Array.isArray(v.party) &&
     v.party.length > 0 &&
-    v.party.every(isCharacterBuild)
+    v.party.every(isCharacterBuild) &&
+    (v.campaignId === undefined || typeof v.campaignId === "string") &&
+    (v.chapterIndex === undefined || typeof v.chapterIndex === "number")
   );
 }
 
@@ -134,6 +148,8 @@ export interface NewSaveSlotInput {
   party: CharacterBuild[];
   partySize: number;
   difficultyId: DifficultyId;
+  campaignId?: string;
+  chapterIndex?: number;
 }
 
 /** Appends a new slot. Caller is responsible for enforcing `MAX_SAVE_SLOTS` before calling. */
@@ -147,6 +163,8 @@ export interface SaveSlotUpdate {
   partySize: number;
   difficultyId: DifficultyId;
   updatedAt: number;
+  campaignId?: string;
+  chapterIndex?: number;
 }
 
 /**
@@ -178,6 +196,8 @@ export interface SavePartyInput {
   builds: CharacterBuild[];
   partySize: number;
   difficultyId: DifficultyId;
+  campaignId?: string;
+  chapterIndex?: number;
   /** Caller-supplied timestamp (e.g. `Date.now()`) — kept out of this pure function so it stays deterministically testable. */
   now: number;
 }
@@ -203,6 +223,8 @@ export function saveOrUpdatePartySlot(file: SaveFile, input: SavePartyInput): Sa
       party: input.builds,
       partySize: input.partySize,
       difficultyId: input.difficultyId,
+      campaignId: input.campaignId,
+      chapterIndex: input.chapterIndex,
       updatedAt: input.now,
     });
     const slot = getSaveSlot(updated, input.loadedSlotId);
@@ -219,6 +241,8 @@ export function saveOrUpdatePartySlot(file: SaveFile, input: SavePartyInput): Sa
     party: input.builds,
     partySize: input.partySize,
     difficultyId: input.difficultyId,
+    campaignId: input.campaignId,
+    chapterIndex: input.chapterIndex,
   });
   return { file: created, slotId: id, slotName: name, createdNew: true };
 }

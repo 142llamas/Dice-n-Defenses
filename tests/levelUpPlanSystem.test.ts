@@ -1,13 +1,20 @@
 import { describe, it, expect } from "vitest";
 import { Hero } from "../src/game/entities/Hero";
 import { heroDefinitionFromBuild, type CharacterBuild } from "../src/game/systems/CharacterBuildSystem";
+import { subclassesForClass } from "../src/game/data/subclasses";
+import { getSpell } from "../src/game/data/spells";
+import { eligibleCantripPool, eligibleLeveledSpellPool, maxCastableSpellLevel } from "../src/game/systems/SpellPreparationSystem";
 import {
+  autoResolveAsiForLevel,
+  autoResolveSpellPickForRequest,
+  autoResolveSubclassForClass,
   emptyLevelUpPlan,
   fastForwardHero,
   futureChoiceSteps,
   levelUpDeltaSummary,
   resolveAsiForLevel,
   resolveSpellPickForRequest,
+  resolveSpellSwapStepsForLevel,
   resolveSubclassForClass,
   simulateHeroForPlanning,
   type LevelUpPlan,
@@ -153,6 +160,101 @@ describe("resolveSpellPickForRequest (D-133)", () => {
   });
 });
 
+describe("resolveSpellSwapStepsForLevel (D-199, Party Creation Overhaul Plan 6.5)", () => {
+  function sorcererAtLevel(level: number): Hero {
+    const hero = heroFromBuild({ classId: "sorcerer" });
+    fastForwardHero(hero, level, undefined);
+    return hero;
+  }
+
+  function plannedSwaps(hero: Hero, level: number): LevelUpPlan {
+    const dropCantrip = hero.knownCantripIds[0];
+    const learnCantrip = eligibleCantripPool("sorcerer").find((id) => !hero.knownCantripIds.includes(id))!;
+    const dropPrepared = hero.preparedSpellIds[0];
+    const maxLevel = maxCastableSpellLevel("sorcerer", level);
+    const learnPrepared = eligibleLeveledSpellPool("sorcerer").find(
+      (id) => !hero.preparedSpellIds.includes(id) && getSpell(id).level <= maxLevel,
+    )!;
+    return {
+      ...emptyLevelUpPlan("auto"),
+      spellSwaps: {
+        [level]: [
+          { kind: "cantrips", dropId: dropCantrip, learnId: learnCantrip },
+          { kind: "prepared", dropId: dropPrepared, learnId: learnPrepared },
+        ],
+      },
+    };
+  }
+
+  it("with no plan, resolves nothing — returns false, no mutation", () => {
+    const hero = sorcererAtLevel(2);
+    const beforeCantrips = [...hero.knownCantripIds];
+    const beforePrepared = [...hero.preparedSpellIds];
+    expect(resolveSpellSwapStepsForLevel(hero, 2, undefined)).toBe(false);
+    expect([...hero.knownCantripIds]).toEqual(beforeCantrips);
+    expect([...hero.preparedSpellIds]).toEqual(beforePrepared);
+  });
+
+  it("resolves a fully-planned swap (both kinds) atomically", () => {
+    const hero = sorcererAtLevel(2);
+    const plan = plannedSwaps(hero, 2);
+    const [cantripChoice, preparedChoice] = plan.spellSwaps[2]!;
+    expect(resolveSpellSwapStepsForLevel(hero, 2, plan)).toBe(true);
+    expect(hero.knownCantripIds).toContain(cantripChoice.learnId);
+    expect(hero.knownCantripIds).not.toContain(cantripChoice.dropId);
+    expect(hero.preparedSpellIds).toContain(preparedChoice.learnId);
+    expect(hero.preparedSpellIds).not.toContain(preparedChoice.dropId);
+  });
+
+  it("a partial plan (only one of the two needed kinds) resolves nothing — atomic all-or-nothing", () => {
+    const hero = sorcererAtLevel(2);
+    const beforeCantrips = [...hero.knownCantripIds];
+    const beforePrepared = [...hero.preparedSpellIds];
+    const full = plannedSwaps(hero, 2);
+    const cantripOnly: LevelUpPlan = { ...full, spellSwaps: { 2: [full.spellSwaps[2]![0]] } };
+    expect(resolveSpellSwapStepsForLevel(hero, 2, cantripOnly)).toBe(false);
+    expect([...hero.knownCantripIds]).toEqual(beforeCantrips);
+    expect([...hero.preparedSpellIds]).toEqual(beforePrepared);
+  });
+
+  it("a stale dropId (no longer known) resolves nothing rather than crashing", () => {
+    const hero = sorcererAtLevel(2);
+    const full = plannedSwaps(hero, 2);
+    const stale: LevelUpPlan = {
+      ...full,
+      spellSwaps: { 2: [{ kind: "cantrips", dropId: "not-a-known-cantrip", learnId: full.spellSwaps[2]![0].learnId }, full.spellSwaps[2]![1]] },
+    };
+    expect(resolveSpellSwapStepsForLevel(hero, 2, stale)).toBe(false);
+  });
+
+  it("no swap opportunity at this level/class resolves true with no mutation (Fighter, a non-caster)", () => {
+    const hero = heroFromBuild(); // Fighter
+    hero.levelUpClass();
+    expect(resolveSpellSwapStepsForLevel(hero, 2, undefined)).toBe(true);
+  });
+
+  it("fastForwardHero silently applies a planned swap along the way", () => {
+    const scratch = heroFromBuild({ classId: "sorcerer" });
+    fastForwardHero(scratch, 2, undefined);
+    const plan = plannedSwaps(scratch, 2);
+    const [cantripChoice, preparedChoice] = plan.spellSwaps[2]!;
+
+    const hero = heroFromBuild({ classId: "sorcerer" });
+    fastForwardHero(hero, 2, plan);
+    expect(hero.knownCantripIds).toContain(cantripChoice.learnId);
+    expect(hero.preparedSpellIds).toContain(preparedChoice.learnId);
+  });
+
+  it("fastForwardHero leaves an unplanned swap untouched — matches the baseline before D-199", () => {
+    const hero = heroFromBuild({ classId: "sorcerer" });
+    const before = new Hero(heroDefinitionFromBuild(build({ classId: "sorcerer" })), { x: 0, y: 0 });
+    fastForwardHero(hero, 5, undefined);
+    fastForwardHero(before, 5, undefined);
+    expect([...hero.knownCantripIds]).toEqual([...before.knownCantripIds]);
+    expect([...hero.preparedSpellIds]).toEqual([...before.preparedSpellIds]);
+  });
+});
+
 describe("fastForwardHero / simulateHeroForPlanning (D-133)", () => {
   it("with no plan, resolves nothing silently — every ASI/subclass trigger comes back unresolved, hero stats unchanged", () => {
     const hero = heroFromBuild(); // Fighter, str 15
@@ -217,6 +319,89 @@ describe("futureChoiceSteps (D-133)", () => {
     const steps = futureChoiceSteps("fighter");
     const levels = steps.map((s) => s.level);
     expect(levels).toEqual([...levels].sort((a, b) => a - b));
+  });
+
+  it("includes both cantrip and prepared spellSwap steps for Sorcerer at level 2 (D-199)", () => {
+    const kinds = futureChoiceSteps("sorcerer")
+      .filter((s) => s.kind === "spellSwap" && s.level === 2)
+      .map((s) => s.spellSwapKind)
+      .sort();
+    expect(kinds).toEqual(["cantrips", "prepared"]);
+  });
+
+  it("has no spellSwap steps for Wizard — its swap cadence is Long-Rest-only (D-199)", () => {
+    expect(futureChoiceSteps("wizard").some((s) => s.kind === "spellSwap")).toBe(false);
+  });
+
+  it("has only cantrip spellSwap steps for Cleric — its PREPARED list is a full relist, Long-Rest-only (D-199)", () => {
+    const kinds = futureChoiceSteps("cleric")
+      .filter((s) => s.kind === "spellSwap" && s.level === 2)
+      .map((s) => s.spellSwapKind);
+    expect(kinds).toEqual(["cantrips"]);
+  });
+});
+
+describe("autoResolveAsiForLevel/autoResolveSubclassForClass/autoResolveSpellPickForRequest (D-198)", () => {
+  // Party Creation Overhaul Plan 5.1: an AI-controlled hero has nobody
+  // present to answer a level-up prompt — Kevin confirmed directly (asked
+  // via the same "should the game ever invent a choice" question D-16x
+  // settled the other way for player-made blueprints) that THIS specific
+  // case is the deliberate exception: an AI hero with no explicit plan
+  // entry gets a simple invented default instead of being left unresolved
+  // forever. Scoped only to `hero.controlledBy === "ai"` callers
+  // (`BattleScene.applyClassLevelUps`/`buildHeroes`) — these functions
+  // themselves don't check `controlledBy`, so exercise them directly.
+
+  it("autoResolveAsiForLevel raises the class's primary ability by 2", () => {
+    const hero = heroFromBuild(); // Fighter, primaryAbility "str", str 15
+    autoResolveAsiForLevel(hero);
+    expect(hero.abilityScoreValue("str")).toBe(17);
+  });
+
+  it("autoResolveAsiForLevel falls back to the next non-maxed ability once the primary is capped", () => {
+    const hero = heroFromBuild(); // Fighter, str 15
+    for (let i = 0; i < 3; i++) hero.improveAbilityScore("str", 2); // 15 -> 20 (capped)
+    autoResolveAsiForLevel(hero);
+    expect(hero.abilityScoreValue("str")).toBe(20); // unchanged — already maxed
+    expect(hero.abilityScoreValue("dex")).toBe(16); // 14 -> 16, the next candidate in ability order
+  });
+
+  it("autoResolveAsiForLevel is a no-op for a hero with no classId (the classic fixed roster)", () => {
+    const hero = new Hero(
+      { id: "x", name: "Classic", movementTiles: 6, maxHealth: 10, attackDamage: 3, attackRangeTiles: 1, attackBonus: 4, baseArmorClass: 10 },
+      { x: 0, y: 0 },
+    );
+    expect(() => autoResolveAsiForLevel(hero)).not.toThrow();
+  });
+
+  it("autoResolveSubclassForClass grants this class's first modeled subclass", () => {
+    const hero = heroFromBuild();
+    autoResolveSubclassForClass(hero, "fighter");
+    expect(hero.subclassId).toBe(subclassesForClass("fighter")[0].id);
+  });
+
+  it("autoResolveSpellPickForRequest (mastery) grants the first eligible spell", () => {
+    const hero = new Hero(heroDefinitionFromBuild(build({ classId: "wizard" })), { x: 0, y: 0 });
+    fastForwardHero(hero, 18, undefined);
+    expect(hero.needsSpellMasteryPick()).toBe(true);
+    autoResolveSpellPickForRequest(hero, { hero, kind: "mastery" });
+    expect(hero.needsSpellMasteryPick()).toBe(false);
+  });
+
+  it("autoResolveSpellPickForRequest (signature) grants the first two eligible spells", () => {
+    const hero = new Hero(heroDefinitionFromBuild(build({ classId: "wizard" })), { x: 0, y: 0 });
+    fastForwardHero(hero, 20, undefined);
+    expect(hero.needsSignatureSpellsPick()).toBe(true);
+    autoResolveSpellPickForRequest(hero, { hero, kind: "signature" });
+    expect(hero.needsSignatureSpellsPick()).toBe(false);
+  });
+
+  it("autoResolveSpellPickForRequest (arcanum) grants the first eligible spell for that tier", () => {
+    const hero = new Hero(heroDefinitionFromBuild(build({ classId: "warlock" })), { x: 0, y: 0 });
+    fastForwardHero(hero, 11, undefined);
+    expect(hero.needsMysticArcanumPick(6)).toBe(true);
+    autoResolveSpellPickForRequest(hero, { hero, kind: "arcanum", tier: 6 });
+    expect(hero.needsMysticArcanumPick(6)).toBe(false);
   });
 });
 

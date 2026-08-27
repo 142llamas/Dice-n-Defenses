@@ -438,52 +438,95 @@ export function renderChoiceOverlay(scene: Phaser.Scene, overlay: Phaser.GameObj
   const hasDesc = choices.some((c) => c.desc);
   const usableWidth = viewportWidth - 80;
   const width = Math.min(220, Math.max(120, Math.floor(usableWidth / Math.min(choices.length, 6)) - 14));
-  const height = hasDesc ? 82 : 44;
+  const minHeight = hasDesc ? 82 : 44;
   const spacing = width + 14;
   const maxPerRow = Math.max(1, Math.floor(usableWidth / spacing));
-  const rowSpacing = height + 14;
-  const rowStartY = 170 + rowSpacing / 2;
+  const rowGap = 14;
+  const topPad = 10;
+  const nameDescGap = 6;
 
-  choices.forEach((choice, i) => {
-    const row = Math.floor(i / maxPerRow);
-    const col = i % maxPerRow;
-    const itemsInRow = Math.min(maxPerRow, choices.length - row * maxPerRow);
-    const rowStartX = viewportWidth / 2 - ((itemsInRow - 1) * spacing) / 2;
-    const x = rowStartX + col * spacing;
-    const y = rowStartY + row * rowSpacing;
-    const btn = scene.add
-      .rectangle(x, y, width, height, 0x3a5a8a)
-      .setInteractive({ useHandCursor: true })
-      .setDepth(61);
-    if (choice.highlighted) btn.setStrokeStyle(3, 0xf0c040);
-    const name = scene.add
-      .text(x, y - (choice.desc ? 18 : 0), choice.highlighted ? `★ ${choice.label}` : choice.label, {
+  // Playtest fix (Party Creation Overhaul, Plan 0): the old fixed `height`
+  // constant assumed every `desc` fit in ~2 lines — a long one (e.g. a
+  // class's `previewSummary`) wraps to far more and used to run into the
+  // next row. Measure each choice's real wrapped height first (via
+  // throwaway probe Text objects, destroyed immediately after), then size
+  // each ROW to its own tallest item instead of a shared constant.
+  const rowHeights: number[] = [];
+  for (let i = 0; i < choices.length; i += maxPerRow) {
+    const rowChoices = choices.slice(i, i + maxPerRow);
+    const tallest = rowChoices.reduce((max, choice) => {
+      const nameProbe = scene.add.text(0, 0, choice.label, {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "13px",
-        color: choice.highlighted ? "#ffe58a" : "#e8e8f0",
         fontStyle: "bold",
         align: "center",
         wordWrap: { width: width - 14 },
-      })
-      .setOrigin(0.5)
-      .setDepth(62);
-    overlay.push(btn, name);
-    if (choice.desc) {
-      const desc = scene.add
-        .text(x, y + 16, choice.desc, {
+      });
+      let contentHeight = nameProbe.height;
+      nameProbe.destroy();
+      if (choice.desc) {
+        const descProbe = scene.add.text(0, 0, choice.desc, {
           fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "10px",
-          color: "#c8c8d8",
+          fontSize: "12px",
+          align: "center",
+          wordWrap: { width: width - 14 },
+        });
+        contentHeight += nameDescGap + descProbe.height;
+        descProbe.destroy();
+      }
+      return Math.max(max, contentHeight + topPad * 2);
+    }, minHeight);
+    rowHeights.push(tallest);
+  }
+
+  let rowTop = 170;
+  let choiceIndex = 0;
+  rowHeights.forEach((rowHeight) => {
+    const rowChoices = choices.slice(choiceIndex, choiceIndex + maxPerRow);
+    const itemsInRow = rowChoices.length;
+    const rowStartX = viewportWidth / 2 - ((itemsInRow - 1) * spacing) / 2;
+    const boxTop = rowTop;
+    const boxCenterY = boxTop + rowHeight / 2;
+
+    rowChoices.forEach((choice, col) => {
+      const x = rowStartX + col * spacing;
+      const btn = scene.add
+        .rectangle(x, boxCenterY, width, rowHeight, 0x3a5a8a)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(61);
+      if (choice.highlighted) btn.setStrokeStyle(3, 0xf0c040);
+      const name = scene.add
+        .text(x, boxTop + topPad, choice.highlighted ? `★ ${choice.label}` : choice.label, {
+          fontFamily: "system-ui, Arial, sans-serif",
+          fontSize: "13px",
+          color: choice.highlighted ? "#ffe58a" : "#e8e8f0",
+          fontStyle: "bold",
           align: "center",
           wordWrap: { width: width - 14 },
         })
-        .setOrigin(0.5)
+        .setOrigin(0.5, 0)
         .setDepth(62);
-      overlay.push(desc);
-    }
-    btn.on("pointerover", () => btn.setFillStyle(0x4a6a9a));
-    btn.on("pointerout", () => btn.setFillStyle(0x3a5a8a));
-    btn.on("pointerdown", () => choice.onClick());
+      overlay.push(btn, name);
+      if (choice.desc) {
+        const desc = scene.add
+          .text(x, boxTop + topPad + name.height + nameDescGap, choice.desc, {
+            fontFamily: "system-ui, Arial, sans-serif",
+            fontSize: "12px",
+            color: "#c8c8d8",
+            align: "center",
+            wordWrap: { width: width - 14 },
+          })
+          .setOrigin(0.5, 0)
+          .setDepth(62);
+        overlay.push(desc);
+      }
+      btn.on("pointerover", () => btn.setFillStyle(0x4a6a9a));
+      btn.on("pointerout", () => btn.setFillStyle(0x3a5a8a));
+      btn.on("pointerdown", () => choice.onClick());
+    });
+
+    rowTop += rowHeight + rowGap;
+    choiceIndex += maxPerRow;
   });
 }
 

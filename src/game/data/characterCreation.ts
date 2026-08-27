@@ -18,12 +18,23 @@
  * per-race action list — every race uses the full six-race pool from
  * `data/races.ts` directly.
  *
- * Phase 13.11 (D-096): `STARTING_GEAR_IDS` is the pool a created hero may
- * pick ONE item from at creation, granted for free (see
- * `CharacterBuildSystem.heroDefinitionFromBuild`) — deliberately just the
- * twelve common/uncommon items from Phase 11.5, not the five rare-and-up
- * items Phase 13.9 added (a free legendary chest piece at level 1 would be
- * a real balance problem, not a starting package).
+ * Phase 13.11 (D-096) originally gave a created hero ONE free gear pick from
+ * a flat common/uncommon pool. Party Creation Overhaul Plan 2 (D-193)
+ * replaced that with `startingGearIdsForSlotType` below: a real loadout
+ * covering all 10 gear slots (Kevin's explicit call, expanding past this
+ * plan item's original weapon/chest/third-slot-only scope), still
+ * restricted to common/uncommon rarity for the same "no free rare-and-up
+ * gear at level 1" reason as before. No slot is class-gated — every class
+ * sees every slot's full pool (matches `EquipmentDefinition` having no
+ * class-restriction field anywhere in this game).
+ *
+ * D-194: that free-pick-everything model is CAMPAIGN-MODE-ONLY as of this
+ * decision — Free Play/manual Create Party keeps it unchanged, but a real
+ * campaign run now gives companions a FIXED kit (`companionStartingGearForDifficulty`,
+ * scaled by difficulty, never player-edited) and gives the PC a point-buy
+ * budget instead (`startingGearPointCost`, spent via `CharacterCreationScene
+ * .openGearPicker`/`openGearItemPicker`) — see `DifficultyDefinition
+ * .startingGearPoints`/`.companionDiscretionaryGearSlots`, `data/difficulty.ts`.
  *
  * Phase 13.7 (D-092): in BATTLE, every caster gets its FULL real known-spell
  * list — `knownSpellIdsForClass` lists EVERY mechanically-active spell for a
@@ -48,7 +59,8 @@
  * left for a future session, not an oversight.
  */
 
-import { EQUIPMENT_ORDER, getEquipmentDefinition } from "./equipment";
+import { equipmentForSlotType, type GearSlotType, type GearSlotId, type EquipmentRarity } from "./equipment";
+import { getDifficultyDefinition, type DifficultyId } from "./difficulty";
 
 export const CHARACTER_NAME_POOL: string[] = [
   "Kael",
@@ -66,14 +78,67 @@ export const CHARACTER_NAME_POOL: string[] = [
 ];
 
 /**
- * Phase 13.11 (D-096): the starting-gear pool a created hero can pick one
- * item from (see this file's module comment) — every catalogue item at
- * common or uncommon rarity, in catalogue order.
+ * Every catalogue item of a given slot type at common/uncommon rarity, in
+ * catalogue order — the pool a starting-gear picker offers for that slot.
+ * Used for all 10 gear slots (`GEAR_SLOT_IDS`), each independently pickable
+ * at character creation — see `CharacterCreationScene.openGearPicker`.
  */
-export const STARTING_GEAR_IDS: string[] = EQUIPMENT_ORDER.filter((id) => {
-  const rarity = getEquipmentDefinition(id).rarity;
-  return rarity === "common" || rarity === "uncommon";
-});
+export function startingGearIdsForSlotType(slot: GearSlotType): string[] {
+  return equipmentForSlotType(slot)
+    .filter((def) => def.rarity === "common" || def.rarity === "uncommon")
+    .map((def) => def.id);
+}
+
+/**
+ * D-194: a starting-gear item's point-buy cost, for the campaign PC's
+ * gear budget (`DifficultyDefinition.startingGearPoints`,
+ * `CharacterCreationScene.openGearPicker`). Only common/uncommon values
+ * matter — the starting pool never contains anything rarer.
+ */
+export function startingGearPointCost(rarity: EquipmentRarity): number {
+  switch (rarity) {
+    case "common":
+      return 1;
+    case "uncommon":
+      return 2;
+    case "rare":
+      return 4;
+    case "veryRare":
+      return 8;
+    case "legendary":
+      return 16;
+  }
+}
+
+/**
+ * D-194: a campaign companion's fixed starting kit at a given difficulty,
+ * derived from their authored "normal" baseline (`CharacterBuild
+ * .startingGearIds`, D-193 Plan 2.2) — never player-editable in campaign
+ * mode (see `CharacterCreationScene`'s Gear button `identityLocked` guard).
+ * `weapon` and `amulet` (a caster's spellcasting focus/holy symbol/etc. —
+ * only ever authored for a caster companion) always survive, since they're
+ * what makes the companion's class actually function; `chest` then
+ * `shield` are discretionary and get trimmed on harder difficulty, up to
+ * `companionDiscretionaryGearSlots` of them surviving.
+ */
+export function companionStartingGearForDifficulty(
+  baselineGearIds: Partial<Record<GearSlotId, string>>,
+  difficultyId: DifficultyId,
+): Partial<Record<GearSlotId, string>> {
+  const kept: Partial<Record<GearSlotId, string>> = {};
+  if (baselineGearIds.weapon) kept.weapon = baselineGearIds.weapon;
+  if (baselineGearIds.amulet) kept.amulet = baselineGearIds.amulet;
+
+  let discretionaryBudget = getDifficultyDefinition(difficultyId).companionDiscretionaryGearSlots;
+  for (const slotId of ["chest", "shield"] as const) {
+    if (discretionaryBudget <= 0) break;
+    if (baselineGearIds[slotId]) {
+      kept[slotId] = baselineGearIds[slotId];
+      discretionaryBudget -= 1;
+    }
+  }
+  return kept;
+}
 
 /** Every class a created character can currently pick, in cycle order. */
 export const CREATABLE_CLASS_IDS: string[] = [

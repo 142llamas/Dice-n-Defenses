@@ -661,14 +661,23 @@ export class Hero implements Combatant {
     // assigned before this line runs) — start at full effective HP, not one
     // level's worth short of it.
     this.health = def.maxHealth + this.subclassHpPerLevelBonus;
-    // Phase 13.11 (D-096): a free starting-gear pick from character
-    // creation, if any — placed straight into its matching slot instance
-    // (a ring defaults to the first ring slot; nothing else contends for it
-    // this early). See CharacterCreationScene's Gear row.
+    // D-193 (Party Creation Overhaul Plan 2): the real per-slot starting
+    // loadout from character creation, if any — each entry placed straight
+    // into its matching slot instance (a ring defaults to the first ring
+    // slot; nothing else contends for it this early). See
+    // CharacterCreationScene's Gear row.
+    const startingGear: Partial<Record<GearSlotId, string>> = { ...def.startingGearIds };
+    // Legacy fallback: a pre-Plan-2 save's single `startingEquipmentId`
+    // pick, folded in only for a slot `startingGearIds` didn't already
+    // claim (see HeroDefinition's own comment on both fields).
     if (def.startingEquipmentId) {
       const item = getEquipmentDefinition(def.startingEquipmentId);
       const slotId: GearSlotId = item.slot === "ring" ? "ring1" : item.slot;
-      this.equippedItems[slotId] = def.startingEquipmentId;
+      if (!startingGear[slotId]) startingGear[slotId] = def.startingEquipmentId;
+    }
+    for (const slotId of GEAR_SLOT_IDS) {
+      const itemId = startingGear[slotId];
+      if (itemId) this.equippedItems[slotId] = itemId;
     }
     if (this.classId && this.abilityScores) {
       const classDef = getClassDefinition(this.classId);

@@ -60,6 +60,32 @@ describe("difficulty tiers — Rest-charge budget (Phase 13.4, D-088)", () => {
   });
 });
 
+describe("difficulty tiers — campaign gear economy (D-194)", () => {
+  it("gives every tier a non-negative gear-points budget and discretionary-slot count", () => {
+    for (const id of DIFFICULTY_IDS) {
+      const tier = getDifficultyDefinition(id);
+      expect(tier.startingGearPoints).toBeGreaterThanOrEqual(0);
+      expect(tier.companionDiscretionaryGearSlots).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("gives a harder tier no MORE gear points or discretionary slots than an easier one", () => {
+    const easy = getDifficultyDefinition("easy");
+    const normal = getDifficultyDefinition("normal");
+    const hard = getDifficultyDefinition("hard");
+    const nightmare = getDifficultyDefinition("nightmare");
+    expect(normal.startingGearPoints).toBeLessThanOrEqual(easy.startingGearPoints);
+    expect(hard.startingGearPoints).toBeLessThanOrEqual(normal.startingGearPoints);
+    expect(nightmare.startingGearPoints).toBeLessThanOrEqual(hard.startingGearPoints);
+    expect(hard.companionDiscretionaryGearSlots).toBeLessThanOrEqual(normal.companionDiscretionaryGearSlots);
+    expect(nightmare.companionDiscretionaryGearSlots).toBeLessThanOrEqual(hard.companionDiscretionaryGearSlots);
+  });
+
+  it("keeps Normal's companion discretionary-slot count at 2 — the full authored kit, no regression from D-193 Plan 2.2", () => {
+    expect(getDifficultyDefinition("normal").companionDiscretionaryGearSlots).toBe(2);
+  });
+});
+
 describe("partySizeScalingFactor", () => {
   it("returns exactly 1x at the balanced party size (4)", () => {
     expect(partySizeScalingFactor(BALANCED_PARTY_SIZE)).toBe(1);

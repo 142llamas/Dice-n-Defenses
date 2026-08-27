@@ -448,6 +448,53 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     attackDamage: 2,
     assetKey: "equipment-amulet-of-fury",
   },
+  // Party Creation Overhaul Plan 2 (D-193): four basic spellcasting foci,
+  // part of the amulet slot's own starting-gear pool (any hero may pick
+  // one, same as any other amulet — no class gating). Reuses the
+  // pre-existing "amulet" slot (already a generic misc-trinket slot for
+  // bracers/wands/gauntlets, not literally amulet-shaped) rather than
+  // adding a new slot type — zero blast radius on GEAR_SLOT_IDS/
+  // attunement/slot-enumerating UI.
+  "holy-symbol": {
+    id: "holy-symbol",
+    name: "Holy Symbol",
+    description: "+1 AC. A cleric's channel for divine magic.",
+    cost: 6,
+    slot: "amulet",
+    rarity: "common",
+    armorClass: 1,
+    assetKey: "equipment-holy-symbol",
+  },
+  "arcane-focus": {
+    id: "arcane-focus",
+    name: "Arcane Focus",
+    description: "+1 basic-attack damage. A wizard or sorcerer's channel for arcane magic.",
+    cost: 6,
+    slot: "amulet",
+    rarity: "common",
+    attackDamage: 1,
+    assetKey: "equipment-arcane-focus",
+  },
+  "druidic-totem": {
+    id: "druidic-totem",
+    name: "Druidic Totem",
+    description: "+1 AC. A druid's channel for primal magic.",
+    cost: 6,
+    slot: "amulet",
+    rarity: "common",
+    armorClass: 1,
+    assetKey: "equipment-druidic-totem",
+  },
+  "component-pouch": {
+    id: "component-pouch",
+    name: "Component Pouch",
+    description: "+1 basic-attack damage. A warlock or bard's spellcasting component kit.",
+    cost: 6,
+    slot: "amulet",
+    rarity: "common",
+    attackDamage: 1,
+    assetKey: "equipment-component-pouch",
+  },
   "boots-of-striding": {
     id: "boots-of-striding",
     name: "Boots of Striding",
@@ -573,6 +620,10 @@ export const EQUIPMENT_ORDER: string[] = [
   "amulet-of-warding",
   "amulet-of-fury",
   "amulet-of-withering",
+  "holy-symbol",
+  "arcane-focus",
+  "druidic-totem",
+  "component-pouch",
   "boots-of-striding",
   "boots-of-the-brawler",
   ...WEAPON_ORDER,

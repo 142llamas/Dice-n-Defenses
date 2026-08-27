@@ -2,210 +2,223 @@
 
 ## Version and phase
 
-- **Version:** 0.2.0-dev, unchanged. This session built the writing/
-  mechanical-weight pass `CAMPAIGN_STORY_DESIGN.md` §9 had flagged as its
-  last two open items: real dialogue for all 6 Pool B companions, and real
-  mechanical weight for the Finish/Spare and Sorrel Redeemed/Marked branch
-  choices. Kevin's own direct ask: "build a first pass at the dialogue and
-  branching story lines now." Asked which of §9's two remaining items this
-  covered, Kevin picked **both, full scope**.
-- **Date:** August 26, 2026 (continuing the same standing-instruction
+- **Version:** 0.2.0-dev, unchanged. The Party Creation Overhaul roadmap
+  closed last session (D-200). This session picked two items from
+  `KNOWN_ISSUES.md` at Kevin's own request ("let's fix both here and
+  now"): **D-201** (Load Game doesn't restore a campaign party's
+  lock/point-buy/party-size) and **D-202** (Character Creation loses typed
+  state on a Back-and-return round trip).
+- **Date:** August 27, 2026 (continuing the same standing-instruction
   session as every previous handoff since it was set).
-- Tests: 1466 → **1482**. Typecheck, all 1482 tests, and the production
-  build (**142 modules**, +1 for the new `companionDialogue.ts` file) all
-  pass. `npm run dev` serves HTTP 200.
+- Tests: **1575** (+5 from the handoff-before-last's 1570 — new
+  `campaignId`/`chapterIndex` coverage in `tests/saveSystem.test.ts` for
+  D-201; D-202 touches only the untested `CharacterCreationScene.ts`, so
+  it added none). Typecheck clean, all 1575 tests pass, the production
+  build (145 modules, unchanged — no new source file this session)
+  succeeds.
 
 ## What happened
 
-### D-189 — Companion dialogue writing pass + real mechanical weight for branch choices
+### Picking the next task
 
-Researched before any code was written: 3 parallel Explore agents
-(dialogue-box/chapter-intro-outro plumbing; every existing branch-choice
-mechanism and its current mechanical weight; the companion/campaign data
-model) plus a Plan agent, all cross-checked against the real current code —
-every file:line reference in the resulting plan was verified directly
-before it was trusted.
+With the Party Creation Overhaul roadmap fully closed, Kevin asked what
+was left in `KNOWN_ISSUES.md` worth fixing. Two real candidates existed:
+Load Game's campaignId gap (D-195's own flagged-but-deferred bug) and the
+hero-name-drift bug (Plan 0.6, open since D-190, blocked on a repro that
+never came). Recommended the Load Game fix as the one with a genuinely
+understood root cause and no repro dependency; flagged the hero-name bug
+as blocked pending Kevin's own click-sequence repro. Kevin said "let's fix
+both here and now" — proceeded on the Load Game fix directly, and used
+`AskUserQuestion` on the hero-name bug specifically because fixing it
+without a repro meant reversing a deliberate prior design decision
+(D-190's "Build Party and New Game are always fresh"); Kevin chose to fix
+the concrete defect anyway rather than wait.
 
-**Key discovery**: the presentation layer for both parts of this task
-already existed, fully wired, with zero content. `ChapterDefinition.
-introText`/`outroText` have been declared since D-177 and were already
-read by `BattleScene.showChapterIntroIfAny`/`showChapterOutroIfAny` — but
-not a single one of the 24 region chapters (6 regions × 4) had ever set
-either field. Companion recruitment (`maybeUnlockHomeRegionCompanion`)
-ended in a flat `logCombat` line, no dialogue beat at all. This made the
-build almost entirely additive: new data plus a few small, precedented
-BattleScene methods, no new rendering systems.
+### D-201 — Load Game now forwards a campaign party's campaignId/chapterIndex
 
-**The writing pass** (real first-draft prose, not placeholder text —
-Kevin isn't a writer by his own description, explicitly "punch-up-able
-rough material"):
-- New `data/companionDialogue.ts`: `COMPANION_RECRUITMENT_DIALOGUE` (an
-  arrival beat per Pool B companion, shown via the new
-  `showCompanionRecruitmentIfAny`, replacing the old flat combat-log line)
-  and `COMPANION_MIRROR_REACTION_DIALOGUE` (a "homecoming beat" — that
-  companion's own reaction to their region's Ch4 mirror boss falling,
-  shown via the new `showMirrorBossReactionIfAny`). Two entries (Fenna
-  Duskwater/Saltmere, Isolde Varnhall/Frostbound) use a `{ ashen, hollow }`
-  variant-pair shape instead of one fixed sequence, picked by the player's
-  accumulated mercy-vs-expedience pattern.
-- All 24 region chapters in `data/campaigns.ts` now have real `introText`/
-  `outroText`.
-- `BattleScene.ts`'s victory chain is now: `showChapterOutroIfAny →
-  showMirrorBossReactionIfAny → showCompanionRecruitmentIfAny →
-  showNamelessThroneEndingIfAny → showEndScreen`. Both new methods reuse
-  `this.chapterDialogue`, already covered by `inputLocked()`.
+Two parallel Explore agents researched the save/load data flow and the
+`CharacterCreationScene` companion-lock mechanism before any code was
+written. Found the bug is live today, not just a legacy-save edge case:
+`CharacterCreationScene`'s own pre-battle "Save Party" IS hidden in
+campaign mode (Plan 3.7), but `BattleScene`'s in-battle pause-menu "Save
+Party"/"Save & Exit" is NOT (`canSaveParty()` only checks `originalParty
+!== undefined`) — so pausing mid-campaign-battle and saving is the one
+live path that produces a campaign-linked `SaveSlot`, and Load Game always
+dropped that context on reload.
 
-**The mechanical-weight pass** (deliberately bounded — reuses only proven
-mechanisms, no changes to level-up/ASI/subclass selection, no new
-branch-choice chains for the other 5 companions):
-- Sparing any of the 5 home minibosses now grants an immediate
-  `SPARE_MERCY_GOLD_REWARD` (20 gold flat) in `showSparableKillChoice`'s
-  `spare` callback.
-- Sorrel's Redeemed outcome grants a real reward
-  (`SORREL_REDEEMED_REWARD_EQUIPMENT_ID = "staff-of-healing"`) via a new
-  shared `grantEquipmentOrSellForGold(itemId, sourceLabel)` —
-  `grantRegionBonusEquipment` was refactored into a thin wrapper around it
-  rather than duplicating the equip-or-sell logic. Marked grants a real but
-  smaller `SORREL_MARKED_GOLD_REWARD` (25 gold). Closes the D-185
-  addendum's own "Redeemed/Marked flavor-only" gap.
-- `NamelessThroneSystem`'s existing ashen/hollow tally (previously
-  capstone-only) was extracted into a new exported, pure
-  `computeMercyTally`/`mercyTallyLeansHollow` — a byte-for-byte-behavior-
-  preserving refactor (`resolveThroneVariant`'s own tie-break-to-Ashen rule
-  is unchanged) — so the new dialogue-tone reactivity reads the exact same
-  signal the capstone ending already does.
+**Bigger than "forward one field."** Forwarding `campaignId` alone would
+only fix point-buy/party-size/difficulty-visibility (all keyed directly
+off `this.campaignId` truthiness). The companion identity/gear lock and
+Start Battle's roster write-back needed a second fix: the metadata linking
+"slot N" to "companion X" (`this.companionIdForSlot`) was only ever
+computed `if (!this.loadedParty)`, so even with `campaignId` forwarded, a
+reloaded campaign party still couldn't lock. Fixed by hoisting that
+metadata computation to run whenever `this.campaignId` is set regardless
+of `loadedParty` — a loaded save's own build VALUES still win
+unconditionally, only the slot↔companion bookkeeping now also runs for the
+reload case. Checked D-197's "Key correctness fix" writeup before touching
+the newly-reachable `resolveGearIdsForSlot` gear-locked branch, per this
+project's own standing instruction — it already keys off
+`this.companionIdForSlot[slotIndex]`, which this fix now correctly
+populates for the reload case too.
 
-**Tests**: new `tests/companionDialogue.test.ts` (structural/reference
-checks — every Pool B id present in both dialogue maps, no Pool A id in
-either, `speakerName` matches the real companion name, exactly Fenna/
-Isolde use the tone-reactive shape). `tests/namelessThroneSystem.test.ts`
-gained `mercyTallyLeansHollow` coverage plus a cross-check against
-`resolveThroneVariant` proving the extraction didn't change behavior.
-`tests/returningMinibossSystem.test.ts`/`tests/sorrelFateSystem.test.ts`
-gained reward-constant sanity checks. `tests/campaigns.test.ts` gained a
-"every region chapter has real intro/outroText" assertion.
+See `DECISIONS.md` D-201 for the complete writeup.
 
-This closes **both** of `CAMPAIGN_STORY_DESIGN.md` §9's remaining "still
-open" items — that design doc's entire §2-§9 arc is now fully closed, no
-open items remain in it except §8's own already-flagged "exact bonus pool
-numeric budgets" (a separate, much smaller balance-tuning item).
+### D-202 — Character Creation now resumes a "plain" draft across Back-and-return
+
+No repro was ever obtained. Fixed the one concrete defect the D-190
+investigation actually found: `create()` unconditionally re-seeds every
+slot from `CHARACTER_NAME_POOL` on any navigation path that isn't Load
+Game/a campaign-companion prefill, silently discarding a typed name (or
+any other in-progress pick). This reverses part of D-190's own "Build
+Party and New Game are deliberately identical, always fresh" reasoning —
+Kevin confirmed that trade explicitly via `AskUserQuestion` before it was
+built.
+
+**Design reuses existing machinery rather than inventing a new snapshot
+mechanism.** `SlotState.allocator` holds a real class instance
+(`StandardArrayAllocator`/`PointBuyAllocator`) with methods, so a naive
+deep-clone of `this.slots` would silently lose them. Instead, a new
+module-level `lastPlainDraft: CharacterBuild[] | undefined` stores the
+output of the already-existing `buildsFromSlots()`, and `init()` feeds it
+back in as `this.loadedParty` on the next "plain" entry (no campaign, no
+Free Play/custom map), reusing the Load-Game-established `loadedParty` →
+`slotStateFromBuild` reconstruction path verbatim — no new SlotState
+snapshot/restore logic. Lost on a real page reload (never touches
+`localStorage`) — a same-session convenience, not a save. Captured in
+`leaveToMainMenu()` (the only existing "leave without starting a battle"
+path), gated so a locked campaign party never leaks into the free-pick
+draft; cleared the instant a plain session's own Start Battle fires, so a
+later Build Party visit starts fresh rather than resurrecting an
+already-in-play party.
+
+See `DECISIONS.md` D-202 for the complete writeup — including the
+explicit flag that this is unconfirmed against what Kevin actually
+originally saw.
 
 ## Important files
 
-- `src/game/data/companionDialogue.ts` — new: `COMPANION_RECRUITMENT_
-  DIALOGUE`, `COMPANION_MIRROR_REACTION_DIALOGUE`.
-- `src/game/data/campaigns.ts` — `introText`/`outroText` filled in on all
-  24 region `ChapterDefinition` literals.
-- `src/game/systems/NamelessThroneSystem.ts` — new `computeMercyTally`,
-  `mercyTallyLeansHollow`; `resolveThroneVariant` now calls the former.
-- `src/game/systems/ReturningMinibossSystem.ts` — new
-  `SPARE_MERCY_GOLD_REWARD`.
-- `src/game/systems/SorrelFateSystem.ts` — new
-  `SORREL_REDEEMED_REWARD_EQUIPMENT_ID`, `SORREL_MARKED_GOLD_REWARD`.
-- `src/game/scenes/BattleScene.ts` — new `pendingCompanionRecruitment`
-  field; new `showCompanionRecruitmentIfAny`, `showMirrorBossReactionIfAny`,
-  `grantEquipmentOrSellForGold`, `grantSorrelRedeemedReward` methods;
-  `maybeUnlockHomeRegionCompanion`, `resolveSorrelFateIfAny`,
-  `showSparableKillChoice`'s `spare` callback, and the victory-phase chain
-  all updated.
-- `tests/companionDialogue.test.ts` — new.
-- `tests/namelessThroneSystem.test.ts`, `tests/returningMinibossSystem.
-  test.ts`, `tests/sorrelFateSystem.test.ts`, `tests/campaigns.test.ts` —
-  updated.
+- `src/game/systems/SaveSystem.ts` — `SaveSlot`/`NewSaveSlotInput`/
+  `SaveSlotUpdate`/`SavePartyInput` gain `campaignId?`/`chapterIndex?`;
+  `isSaveSlot` validates them defensively; `saveOrUpdatePartySlot` passes
+  them through.
+- `src/game/scenes/BattleScene.ts` — `saveParty()` now records
+  `campaignId`/`chapterIndex`.
+- `src/game/scenes/LoadGameScene.ts` — `loadSlot()` forwards them.
+- `src/game/scenes/CharacterCreationScene.ts` — D-201: Start Battle's own
+  `updateSaveSlot` call records them too; the companion-prefill block
+  (`companionBuildsForSlots`/`this.companionIdForSlot`) now runs whenever
+  `campaignId` is set, not only `!loadedParty`; `identityLocked`'s formula
+  dropped its `!this.loadedParty` guard. D-202: module-level
+  `lastPlainDraft`, new `isPlainEntry()`, `init()`'s resume check,
+  `leaveToMainMenu()`'s capture, Start Battle's clear.
+- `tests/saveSystem.test.ts` — 5 new tests (D-201; a new `describe` block).
+- `DECISIONS.md` — D-201, D-202.
+- `KNOWN_ISSUES.md` — KI-151, KI-152; the old "Open bugs" hero-name entry
+  moved into KI-152 under "Still need Kevin's playtest confirmation."
+- `CHANGELOG.md` — one new `[Unreleased]` section.
+- `PROJECT_STATUS.md` — new top section.
+- `PARTY_CREATION_OVERHAUL_PLAN.md` — Plan 0/0.6 flipped to DONE, closing
+  that plan's own last open item (unrelated to the main roadmap, which was
+  already fully closed last session).
 
 ## Commands verified
 
 - `npm run typecheck` — clean.
-- `npm test -- --run` — **1482/1482** passing (1466 at session start).
-- `npm run build` — production build succeeds, **142 modules** (141 → 142,
-  +1 for the new `companionDialogue.ts` file).
-- `npm run dev` — serves HTTP 200.
+- `npm test -- --run` — **1575/1575** passing.
+- `npm run build` — production build succeeds, **145 modules**
+  (unchanged — no new source file either session).
 
 ## Manual tests completed
 
-None — no browser available in this environment. This is brand-new
-dialogue content and reward wiring spanning all 6 regions — see **KI-139**
-in `KNOWN_ISSUES.md` for the full checklist Kevin should confirm (arrival
-beats, Ch4 reaction beats including the ashen/hollow tone split on Fenna/
-Isolde, the spare-mercy gold line, Sorrel's Redeemed/Marked rewards).
+None — no browser available in this environment. See **KI-151**/**KI-152**
+for the full checklists. KI-152 in particular is explicitly unconfirmed
+against Kevin's ORIGINAL report — if his next playtest shows this wasn't
+the bug he meant, treat the hero-name issue as still open and get a real
+repro before touching it again.
 
 ## Known issues
 
-- **KI-139** (this session) needs Kevin's playtest confirmation.
-- **KI-138** (D-188, The Nameless Throne capstone) is still unconfirmed —
-  this is now the single biggest unplayed build in the item-13 epic,
-  predating this session.
-- **KI-136**/**KI-137** (D-186/D-187) and **KI-129** through **KI-135** are
-  unchanged and still need their own confirmation too, if that hasn't
-  happened yet.
-- Every other KI-1xx item from prior sessions is unchanged. **KI-113**
-  (D-162's horizontal-squish mitigation) is still explicitly unconfirmed.
+- **KI-152** (D-202, this session) — unconfirmed both in-browser AND
+  against Kevin's original report. Highest-priority item to re-check.
+- **KI-151** (D-201, this session) needs Kevin's playtest confirmation —
+  full checklist in `KNOWN_ISSUES.md`.
+- **KI-150** (D-200), **KI-149** (D-199), **KI-148** (D-198), **KI-147**
+  (D-197), **KI-146** (D-196), **KI-145** (D-195), **KI-144** (D-194),
+  **KI-143** (D-193), **KI-142** (D-192), **KI-141** (D-191) all remain
+  unconfirmed from prior sessions — three separate screen groups now:
+  Character Creation/Companions (KI-141 through KI-149), Compendium/
+  Character Sheet (KI-150), and this session's Load Game/Character
+  Creation changes (KI-151/KI-152).
+- Every pre-existing "Still need Kevin's playtest confirmation" item
+  (KI-090 through KI-140) is unchanged.
 
 ## Deferred items
 
-- **`CAMPAIGN_STORY_DESIGN.md`'s design/build arc is now fully closed** —
-  every item across §2 through §9 is either built or an explicitly
-  documented scope cut. The only thing left in that doc at all is §8's own
-  already-flagged "exact bonus-choice pool numeric budgets per region" —
-  a balance-tuning pass, not new scope, and not picked up this session.
-- All the writing/wiring in this session is genuinely first-pass —
-  dialogue tone, chapter narration, and reward amounts are all reasonable
-  first guesses, not tuned or playtested. Flag directly if any of it reads
-  wrong once actually played, same as every other new-content session.
+- Nothing new deferred this session — both picked bugs were fixed in full
+  (not partially scoped down).
 
 ## Next chat instructions
 
-1. **The item-13 epic (the whole overworld campaign) now has TWO large
-   unplayed builds stacked up**: this session's D-189 and the prior
-   session's D-188 (the capstone). If Kevin has playtest time, confirming
-   these — especially the capstone, since it's the bigger/riskier of the
-   two — should come before more new content in this area.
-2. **If Kevin wants more work with no playtest time available**: per
-   `feedback_pick_browser_independent_work_when_no_playtest_time` in
-   memory, prefer headless-verifiable work. `CAMPAIGN_STORY_DESIGN.md`
-   itself has nothing meaningfully open left except the §8 numeric-budget
-   tuning pass (small). Check `KNOWN_ISSUES.md` for any other open,
-   verifiable-without-browser item, or ask Kevin directly what's next —
-   the last several sessions have all been item-13 continuations; there
-   may be other parts of the game he'd rather return to now that this
-   design doc's own arc is closed.
-3. Keep verifying claims against the actual current code before building —
-   this session's own research caught that the design doc's original
-   "starting trio already in the party" framing for Hollis/Fenna/Isolde
-   doesn't match the shipped recruitment mechanic (all 6 Pool B companions
-   recruit identically, on their own home region's Ch1 clear) — the
-   existing `hook` text already accounted for this correctly, but it's
-   worth remembering if more companion-facing content gets built later.
+1. **Kevin's own browser pass first**, if he's had a chance to play — see
+   "Known issues" above for the three unconfirmed groups. KI-152 (the
+   hero-name fix) is the most important one to re-check specifically
+   against his ORIGINAL complaint, since no repro was ever obtained for it.
+2. **If KI-152 turns out to be the wrong fix** (Kevin's actual bug still
+   reproduces, or this introduced a new problem): don't just pile on
+   another guess. Get the exact click sequence this time, per the
+   standing instruction in the old KI-152/Plan 0.6 writeups.
+3. With both picked-up bugs fixed and the Party Creation Overhaul roadmap
+   already closed, there's no pre-set next task — check with Kevin.
+4. If a new engagement starts, give it its own `D-NNN`/`KI-NNN` (next
+   available: **D-203**/**KI-153**).
+5. **Do not reintroduce per-`campaignId` key-scoping** for
+   `CompanionRosterSystem`/`CampaignProgressSystem`/`WorldFlagSystem` (or
+   `companionBuilds`/`pcBuild`/`partyInventory`/`BlueprintLibrarySystem`)
+   without re-reading D-195's full writeup first — unrelated to D-201's
+   `SaveSlot.campaignId`, which is a completely different field on a
+   completely different system (SaveSystem vs. the roster).
+6. **If touching `CharacterCreationScene`'s companion-prefill block or
+   `identityLocked` again**: D-201 hoisted the `companionBuildsForSlots`/
+   `companionIdForSlot` computation out of `if (!this.loadedParty)` — this
+   was deliberate and needed for a reloaded campaign party to lock
+   correctly. Don't re-add that guard without re-reading D-201's writeup.
+7. **If touching `PartyInventorySystem.ts` or the gear-locked branch of
+   `resolveGearIdsForSlot`**, re-read D-197's "Key correctness fix"
+   writeup first (still applies, now reachable from one more entry point
+   thanks to D-201).
+8. **If touching Character Creation's entry/navigation again**: D-202
+   added `lastPlainDraft` (module-level, session-only) and `isPlainEntry()`
+   — a "plain" entry (no campaign, no Free Play/custom map) now resumes
+   the last draft. Don't assume "Build Party"/"New Game" always start
+   from `CHARACTER_NAME_POOL` defaults; check `lastPlainDraft` first if
+   debugging an unexpected pre-filled slot.
 
 ## Suggested git steps (not run here; use GitHub Desktop)
 
-This session touched: `src/game/data/companionDialogue.ts` (new),
-`src/game/data/campaigns.ts`, `src/game/systems/NamelessThroneSystem.ts`,
-`src/game/systems/ReturningMinibossSystem.ts`,
-`src/game/systems/SorrelFateSystem.ts`, `src/game/scenes/BattleScene.ts`,
-`tests/companionDialogue.test.ts` (new), `tests/namelessThroneSystem.
-test.ts`, `tests/returningMinibossSystem.test.ts`, `tests/
-sorrelFateSystem.test.ts`, `tests/campaigns.test.ts`, plus doc updates
-(`DECISIONS.md`, `KNOWN_ISSUES.md`, `CHANGELOG.md`, `PROJECT_STATUS.md`,
-`CAMPAIGN_STORY_DESIGN.md`, `CONTENT_SOURCES.md`, this file). No
-Firebase-relevant change this session.
+This session touched: `src/game/systems/SaveSystem.ts`,
+`src/game/scenes/BattleScene.ts`, `src/game/scenes/LoadGameScene.ts`,
+`src/game/scenes/CharacterCreationScene.ts`, `tests/saveSystem.test.ts`,
+`DECISIONS.md`, `KNOWN_ISSUES.md`, `CHANGELOG.md`, `PROJECT_STATUS.md`,
+`PARTY_CREATION_OVERHAUL_PLAN.md`, this file. No Firebase-relevant change.
 
 ## Handoff package contents
 
-- [x] Source files: see "Important files" above
+- [x] Source files (see "Important files" above)
 - [x] package.json / package-lock.json (unchanged)
 - [x] README.md (unchanged)
-- [x] DECISIONS.md (updated — D-189 appended)
-- [x] KNOWN_ISSUES.md (updated — KI-139 added)
-- [x] CHANGELOG.md (updated — new Unreleased section)
-- [x] CONTENT_SOURCES.md (updated — new row for the dialogue content)
+- [x] DECISIONS.md (updated — D-201, D-202 appended)
+- [x] KNOWN_ISSUES.md (updated — KI-151, KI-152 added; old hero-name
+      "Open bugs" entry retired into KI-152)
+- [x] CHANGELOG.md (updated — new Unreleased section for D-201/D-202)
+- [x] CONTENT_SOURCES.md (unchanged — no new original content this session)
 - [x] ASSET_PLAN.md (unchanged)
 - [x] SOURCE_OF_TRUTH.md (unchanged)
 - [x] FIREBASE_SETUP.md (unchanged)
 - [x] PHASE_12_MULTIPLAYER_FEASIBILITY.md (unchanged)
-- [x] CAMPAIGN_STORY_DESIGN.md (updated — §9 addendum, both remaining
-      open items resolved)
-- [x] PROJECT_STATUS.md (updated — new section added at the top)
+- [x] CAMPAIGN_STORY_DESIGN.md (unchanged)
+- [x] PARTY_CREATION_OVERHAUL_PLAN.md (updated — Plan 0/0.6 flipped to DONE)
+- [x] PROJECT_STATUS.md (updated — new D-201/D-202 section on top)
 - [x] PHASE_HANDOFF.md (this file, fully rewritten)
-- [x] Tests: 1466 → 1482
+- [x] Tests: **1575** (was 1570 last handoff, +5)
 - [x] No node_modules, dist, secrets, or service-account credentials
