@@ -12112,6 +12112,21 @@ New Y values: Team Level 840→878, Party Size/Difficulty 890→928, Start
 Battle/Save Party 940→978, save-status line 990→1018, validation text
 1020→1040.
 
+**Second amendment, same session: Kevin deployed and confirmed the Team
+Level/Standard Array/Background-gap/message fixes all landed correctly —
+but `fixDomContainerAlignment` had NO visible effect on the hero-name
+fields.** They render in exactly the same wrong spot as before the fix.
+This is now the SECOND consecutive miss on this specific bug (first the
+runtime-desync guess, now the DOM-container-margin fix, both plausible,
+both wrong or incomplete in some way that pure source-reading didn't
+surface). Rather than propose a third mechanism blind, added a temporary
+on-screen diagnostic (`CharacterCreationScene.create()`, tagged "D-211 TEMP
+DIAGNOSTIC" — search for it to remove once resolved) that dumps the real
+`getBoundingClientRect()` numbers for the canvas, `domContainer`, and the
+first name `<input>` node, plus `domContainer`'s actual `margin`/`transform`
+style values, as visible on-screen text. This needs one more screenshot
+from Kevin to read the real numbers instead of continuing to theorize.
+
 Tests: **1643** (unchanged). Typecheck clean, all 1643 pass, production
 build succeeds (**152 modules**, unchanged). Still unverified in a browser —
 flag if the bottom of this screen reads as cramped against the frame.
@@ -12122,7 +12137,9 @@ flag if the bottom of this screen reads as cramped against the frame.
   `scale.refresh()`/`fixDomContainerAlignment()`/`onViewportResize()` calls,
   `abilityMethodHandle`'s `y` (280 -> 300), `pointsLeftY` (302 -> 324),
   `bgRowGap` (6 -> 10), the unspent-background status message,
-  `buildBottomControls`'/`buildStartButton`'s Y-coordinate shifts.
+  `buildBottomControls`'/`buildStartButton`'s Y-coordinate shifts, the new
+  "D-211 TEMP DIAGNOSTIC" on-screen debug text at the end of `create()`
+  (remove once the name-field bug is actually found and fixed).
 - `src/game/scenes/CoopLobbyScene.ts` — the same three `create()` calls.
 - `DECISIONS.md` — this entry.
 - `KNOWN_ISSUES.md` — KI-161 (new).

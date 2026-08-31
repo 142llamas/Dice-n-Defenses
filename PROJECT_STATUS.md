@@ -1,10 +1,12 @@
 # Project Status
 
-## Character Creation spacing fixes + name-field mitigation — DONE this session (D-211)
+## Character Creation spacing fixes — DONE this session; name-field bug STILL OPEN (D-211)
 
-From a Kevin screenshot of "Build Your Party": three provable spacing/text
-fixes, plus one unconfirmed mitigation for the recurring "hero name fields
-render out of place" report.
+From a Kevin screenshot of "Build Your Party": four spacing/text fixes,
+confirmed working after deploy. The recurring "hero name fields render out
+of place" report is NOT fixed yet — two attempts this session, both
+confirmed unsuccessful; a diagnostic is now in place waiting on real
+numbers from Kevin's browser.
 
 - Fixed a real overlap: the Standard Array/Point Buy pill's top edge sat
   12px inside the Background/Ability-Bonus row above it (D-206 added that
@@ -14,23 +16,24 @@ render out of place" report.
   reading as a stray vertical line between the two labels.
 - Clarified the "unspent Background ability bonus" validation message to
   name the actual control ("the button next to Background").
-- **Root-caused for real**: the hero-name fields' mispositioning is a
-  static bug (Kevin confirmed it doesn't drift, ruling out an earlier
-  desync guess), traced directly in Phaser's own `ScaleManager.js` source —
-  its DOM-container-alignment logic only works when Phaser itself centers
-  the canvas, and this project centers via an external CSS flexbox
-  instead, so the DOM container never tracked the real canvas position.
-  Fixed with a new `fixDomContainerAlignment()` helper (`uiTheme.ts`),
-  applied to both `CharacterCreationScene` and `CoopLobbyScene` (this
-  project's only two DOM-element scenes). Real mechanism, not a guess —
-  still needs Kevin's own look to confirm the pixel-perfect result; see
-  `KNOWN_ISSUES.md` KI-161.
-- **Second, unrelated bug found and fixed the same session**: the "Team
-  Level" bar fully covered the per-column "Save Character/Load Character"
-  row beneath it (a proven 30px overlap, broken since D-206) — confirmed
-  via a Kevin screenshot of the deployed site. Fixed by shifting the whole
-  shared bottom control block down, unevenly, to protect the validation
-  text's clearance above the screen's outer frame.
+- **Second, unrelated bug found and fixed the same session, CONFIRMED
+  working**: the "Team Level" bar fully covered the per-column "Save
+  Character/Load Character" row beneath it (a proven 30px overlap, broken
+  since D-206) — confirmed via a Kevin screenshot of the deployed site.
+  Fixed by shifting the whole shared bottom control block down, unevenly,
+  to protect the validation text's clearance above the screen's outer
+  frame. Kevin deployed and confirmed this fix, plus the Standard Array/
+  Background-gap/validation-message fixes above, all landed correctly.
+- **Hero-name-field positioning: STILL BROKEN after two attempts.** A
+  source-verified theory (Phaser's `ScaleManager.js` DOM-container margin
+  logic doesn't work with this project's external-CSS-flexbox centering)
+  produced `fixDomContainerAlignment()` (`uiTheme.ts`) — deployed, and
+  Kevin confirmed it had no visible effect. Rather than guess a third
+  mechanism, added a temporary on-screen diagnostic
+  (`CharacterCreationScene.ts`, tagged "D-211 TEMP DIAGNOSTIC") that dumps
+  the real measured canvas/DOM-container/input positions on-screen —
+  waiting on one more screenshot from Kevin with those numbers visible.
+  See `KNOWN_ISSUES.md` KI-161.
 
 Tests: **1643** (unchanged — presentation-only). Typecheck clean, all 1643
 pass, production build succeeds (**152 modules**, unchanged — no new

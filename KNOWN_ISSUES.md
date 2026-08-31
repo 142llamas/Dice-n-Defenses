@@ -45,33 +45,28 @@ screenshot of "Build Your Party" — **(headless-verified, not yet played)**.
   validation message now reads "Hero N still needs to pick an Ability Bonus
   (the button next to Background)" instead of the old, less actionable
   "still has an unspent Background ability bonus."
-- **The big one**: check where the 4 hero-name fields actually render.
-  Kevin's screenshot showed them floating up near the subtitle text at the
-  top of the screen instead of inside their own column, between the
-  Human/AI toggle and the Class button — the same "names are way out of
-  place" bug from an old playtest note, never fixed by any session before
-  this one. Kevin also confirmed this is a STATIC bug (the fields start in
-  the wrong spot immediately, not something that drifts over time), which
-  led to actually reading Phaser's own source (`ScaleManager.js`,
-  `CreateDOMContainer.js`) instead of guessing: Phaser keeps its DOM
-  element container aligned with the canvas by copying the canvas's own
-  CSS margin onto it, which only works if Phaser itself centered the
-  canvas (`autoCenter: CENTER_BOTH` etc.) — this project uses
-  `autoCenter: NO_CENTER` plus an external CSS flexbox instead (a
-  deliberate, working fix for a real double-centering bug hit before), so
-  that margin is always empty and the DOM container never tracks the
-  canvas's real position. Fixed with a new `fixDomContainerAlignment()`
-  helper (`uiTheme.ts`) that measures both elements' actual on-screen
-  position directly and corrects the DOM container's margin to match —
-  applied to both `CharacterCreationScene` and `CoopLobbyScene` (this
-  project's only two DOM-element scenes). This is a real, source-verified
-  mechanism, not a guess, but the pixel-perfect result still hasn't been
-  seen in a browser. Confirm the 4 hero-name fields now render INSIDE their
-  own column, in the gap between the Human/AI toggle and Class button — if
-  they're still wrong, note exactly where they land relative to their
-  column (e.g. "shifted right by about one column's width," "still at the
-  very top") since that detail would point at what's still off in the
-  margin math.
+- **STILL BROKEN, confirmed by Kevin on the real deployed site**: the 4
+  hero-name fields render in the same wrong spot (floating up near the
+  subtitle text, not inside their column) as before this session's fix —
+  the "names are way out of place" bug from an old playtest note. Two
+  theories have now been tried and both missed: a runtime desync
+  (disproven — Kevin confirmed the fields start wrong immediately, no
+  drift), then a DOM-container-margin fix based on reading Phaser's own
+  `ScaleManager.js` source (`fixDomContainerAlignment()` in `uiTheme.ts`,
+  applied to both `CharacterCreationScene` and `CoopLobbyScene`) — that
+  mechanism is real (verified in Phaser's source) but had NO visible effect
+  on the actual bug, meaning either the fix has its own error or the true
+  cause is something else the source-reading didn't surface. Rather than
+  guess a third mechanism, a **temporary on-screen diagnostic** was added
+  (search `CharacterCreationScene.ts` for "D-211 TEMP DIAGNOSTIC") — a
+  small magenta text line at the very bottom of the screen dumping the
+  real measured position of the canvas, the DOM container, and the first
+  name `<input>`, plus the DOM container's actual `margin`/`transform` CSS
+  values. **Kevin: please screenshot "Build Your Party" once more,
+  including that bottom line of text (may be small — zoom in if needed, or
+  paste the exact text) — the next fix attempt needs those real numbers
+  instead of more guessing.** Once the bug is actually fixed and confirmed,
+  remove that diagnostic text (it's not meant to ship).
 - While there, also check `CoopLobbyScene`'s join-code field (create/join a
   co-op session) — same fix applied there, same "should position correctly"
   gap KI-062 already listed but never confirmed either way.

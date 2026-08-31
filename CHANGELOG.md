@@ -16,28 +16,30 @@ Fixed:
 - The "unspent Background ability bonus" validation message now names the
   actual control to click ("the button next to Background").
 
-Fixed, root-caused via Phaser's own source:
-- The 4 hero-name `<input>` fields (and `CoopLobbyScene`'s join-code field)
-  rendered near the top of the screen instead of inside their own column —
-  a real, static positioning bug, not a runtime desync (Kevin corrected an
-  earlier wrong guess: "the name plates don't drift, they just start in
-  that position"). Root cause, found in Phaser's own `ScaleManager.js`:
-  Phaser keeps its DOM element container aligned with the canvas by
-  copying the canvas's CSS margin onto it, which only works when Phaser
-  itself centers the canvas — this project centers via an external CSS
-  flexbox instead (`autoCenter: NO_CENTER`), so that margin is always
-  empty and the DOM container never tracked the real canvas position. New
-  `fixDomContainerAlignment()` (`uiTheme.ts`) measures both elements'
-  actual on-screen position and corrects the DOM container's margin to
-  match — applied to both DOM-element scenes. Still needs Kevin's own look
-  to confirm the pixel-perfect result — see `KNOWN_ISSUES.md` KI-161.
+Fixed, confirmed by Kevin on the deployed site:
 - A second, unrelated bug found the same session (confirmed via a
   screenshot of the deployed site, broken since D-206): the "Team Level"
   bar fully covered the per-column "Save Character/Load Character" row
   beneath it, a proven 30px overlap. Fixed by moving the whole shared
   bottom control block down, unevenly — the buttons move the full amount
   needed, the two text rows below absorb less to protect their clearance
-  above the screen's outer frame.
+  above the screen's outer frame. Confirmed working after deploy.
+
+Still broken, two attempts so far:
+- The 4 hero-name `<input>` fields (and `CoopLobbyScene`'s join-code field)
+  still render near the top of the screen instead of inside their own
+  column — a real, static positioning bug, not a runtime desync (Kevin
+  corrected an earlier wrong guess: "the name plates don't drift, they
+  just start in that position"). A source-verified theory (Phaser's
+  `ScaleManager.js` copies the canvas's CSS margin onto its DOM element
+  container, which only works when Phaser itself centers the canvas —
+  this project centers via an external CSS flexbox instead) led to a new
+  `fixDomContainerAlignment()` helper (`uiTheme.ts`) — deployed, and
+  confirmed by Kevin to have had NO visible effect. A temporary on-screen
+  diagnostic (tagged "D-211 TEMP DIAGNOSTIC" in
+  `CharacterCreationScene.ts`, remove once resolved) now dumps the real
+  measured canvas/DOM-container/input positions so the next attempt is
+  based on actual browser numbers — see `KNOWN_ISSUES.md` KI-161.
 
 Tests: 1643 (unchanged — presentation-only). Typecheck clean, production
 build succeeds (152 modules, unchanged).

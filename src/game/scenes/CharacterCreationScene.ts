@@ -810,6 +810,30 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.refreshAll();
 
     onViewportResize(this, () => this.repositionLayout());
+
+    // D-211 TEMP DIAGNOSTIC — `fixDomContainerAlignment` had no visible
+    // effect on the hero-name-field position per Kevin's own screenshot, so
+    // rather than guess a third mechanism blind, dump the real numbers
+    // on-screen so the next round is based on measured data. Re-runs the
+    // fix here too (after the DOM `<input>` elements actually exist, unlike
+    // the earlier call at the top of `create()`) in case creation-order
+    // timing matters. REMOVE once the real bug is found and confirmed fixed.
+    fixDomContainerAlignment(this);
+    {
+      const game = this.sys.game;
+      const canvasRect = game.canvas.getBoundingClientRect();
+      const domRect = game.domContainer?.getBoundingClientRect();
+      const domStyle = game.domContainer?.style;
+      const inputRect = this.widgets[0]?.nameInputNode?.getBoundingClientRect();
+      const line =
+        `canvas L${canvasRect.left.toFixed(0)} T${canvasRect.top.toFixed(0)} W${canvasRect.width.toFixed(0)}  |  ` +
+        (domRect
+          ? `dom L${domRect.left.toFixed(0)} T${domRect.top.toFixed(0)} W${domRect.width.toFixed(0)}`
+          : "dom MISSING") +
+        `  |  margin ${domStyle?.marginLeft || "0px"}/${domStyle?.marginTop || "0px"}  transform ${domStyle?.transform || "none"}  |  ` +
+        (inputRect ? `input0 L${inputRect.left.toFixed(0)} T${inputRect.top.toFixed(0)}` : "input0 MISSING");
+      this.add.text(6, 1072, line, { fontFamily: "monospace", fontSize: "10px", color: "#ff33ff" }).setDepth(999);
+    }
   }
 
   /**
