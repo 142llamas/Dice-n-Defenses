@@ -2,6 +2,32 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Character Creation spacing fixes + name-field mitigation (D-211)
+
+From a Kevin screenshot of "Build Your Party." See `DECISIONS.md` D-211 for
+the full writeup.
+
+Fixed:
+- The Standard Array/Point Buy pill no longer overlaps the Background/
+  Ability Bonus row above it (a real 12px overlap D-206 left behind when it
+  added the Background row without adjusting this pill's position).
+- The Background/Ability Bonus row's gap widened slightly so it no longer
+  reads as a stray vertical line between the two labels.
+- The "unspent Background ability bonus" validation message now names the
+  actual control to click ("the button next to Background").
+
+Mitigated, unconfirmed:
+- Added the same `this.scale.refresh()` call D-162 used on Main Menu to
+  Character Creation's `create()`, targeting the recurring "hero name
+  fields render way out of place" report — D-162's own finding was that a
+  canvas/`ScaleManager` desync leaves DOM elements (like these 4 name
+  `<input>`s) positioned correctly while everything else on screen isn't,
+  which matches the symptom. Not independently root-caused or confirmed —
+  see `KNOWN_ISSUES.md` KI-161.
+
+Tests: 1643 (unchanged — presentation-only). Typecheck clean, production
+build succeeds (152 modules, unchanged).
+
 ## [Unreleased] — 0.2.0-dev — BattleScene visual reskin (D-210)
 
 Phase 5's second and final item, closing the "design-first, larger builds"

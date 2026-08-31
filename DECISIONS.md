@@ -11984,3 +11984,81 @@ checklist.
 - `DECISIONS.md` — this entry.
 - `KNOWN_ISSUES.md` — KI-160 (new).
 - `CHANGELOG.md`, `PROJECT_STATUS.md`, `PHASE_HANDOFF.md` — updated.
+
+### D-211 — Character Creation: fixed a real Standard Array/Background row overlap, widened a cramped row gap, clarified an unclear validation message, extended D-162's `scale.refresh()` mitigation to this scene
+
+Kevin sent a screenshot of "Build Your Party" flagging three things: the
+hero-name fields are "still awful"/"out of place" (a repeat of an old
+playtest note, never actually addressed by any prior session), general
+"poor spacing" naming the Standard Array row specifically, and confusion
+about the "Hero N still has an unspent Background ability bonus" message.
+
+**Confirmed, provable bug: the Standard Array/Point Buy pill overlapped the
+Background/Ability-Bonus row above it.** D-206 added the Background row at
+`y=266` (height 32, bottom edge 282) but never adjusted `abilityMethodHandle`
+(the Standard Array/Point Buy pill, still at its pre-D-206 `y=280`, height
+20, top edge 270) or `pointsLeftY` (`y=302`) to clear it — the pill's top
+edge sat 12px INTO the Background row's bottom edge, exactly matching what
+the screenshot showed. Fixed by moving the pill to `y=300` and
+`pointsLeftY` to `324`, both computed to fit inside the existing 266-to-344
+gap without needing to shift `abilityRowsTop` (and therefore without
+cascading every row below it, or growing the column past the parchment
+panel's existing bottom edge — a much larger, unverifiable change this
+session didn't need to make).
+
+**`bgRowGap` (Background/Ability-Bonus half-width split) widened 6px -> 10px**
+— at 6px the two buttons' bronze borders sat close enough to read as a
+stray vertical line between the two labels, which is what Kevin described
+as a "|" in the row.
+
+**Clarified the ability-bonus validation message** — `"Hero N still has an
+unspent Background ability bonus"` assumed the player already understood
+what that meant. Now reads `"Hero N still needs to pick an Ability Bonus
+(the button next to Background)"`, naming the actual control to click,
+matching the existing `"...unassigned ability scores (Standard Array)"`
+message's own style one branch above it.
+
+**Hero-name-field positioning — not independently root-caused, but a
+targeted extension of an existing, already-approved mitigation.** Kevin's
+screenshot shows the 4 name fields (real DOM `<input>` elements, D-147)
+rendering well above their intended `y=165` slot, floating near the
+subtitle text instead of inside their own column between the Human/AI
+toggle and Class button — matching his own earlier playtest note ("Names
+of characters are still way out of place... They also disappeared after a
+while") almost verbatim, and never fixed by any session since. Static
+reading can't prove a root cause (same limitation D-162 hit investigating
+a related canvas-squish report), but D-162's own finding is directly
+relevant: after that squish bug, "the canvas squishes... except DOM
+elements (the hero-name `<input>`s), which stay correct" — meaning a
+`ScaleManager`/canvas desync leaves DOM elements positioned against the
+REAL scale while canvas-drawn content (everything else) renders against a
+stale one, which would look exactly like "the name fields are floating in
+the wrong place relative to their column." D-162 mitigated this in
+`MainMenuScene.create()` with `this.scale.refresh()` (re-syncs
+`ScaleManager`'s tracked size against the real canvas/parent element) but
+never extended it anywhere else, and Kevin never confirmed whether it
+actually worked. `CharacterCreationScene` — the scene with the most DOM
+elements in the project — never had it. Added the identical call at the
+top of `create()`. **Explicitly flagged, not claimed as a confirmed fix**:
+this is the same "best-effort mitigation" honesty D-162 used, extended to
+a second scene on the strength of matching symptoms, not a new diagnosis.
+If it doesn't help, the next step is a live repro (inspect the `<input>`
+node's actual `getBoundingClientRect()` against the canvas element's own
+CSS box right after the bug shows), not a third blind guess.
+
+Tests: **1643** (unchanged — presentation-only positioning/text changes,
+no new pure-system logic). Typecheck clean, all 1643 pass, production
+build succeeds (**152 modules**, unchanged — no new file). No browser
+available in this environment — every change above needs Kevin's own look
+to confirm, especially the `scale.refresh()` mitigation, which by its own
+nature can't be verified without seeing whether the name fields actually
+land in the right place now.
+
+**Important files:**
+- `src/game/scenes/CharacterCreationScene.ts` — `create()`'s new
+  `this.scale.refresh()` call, `abilityMethodHandle`'s `y` (280 -> 300),
+  `pointsLeftY` (302 -> 324), `bgRowGap` (6 -> 10), the unspent-background
+  status message.
+- `DECISIONS.md` — this entry.
+- `KNOWN_ISSUES.md` — KI-161 (new).
+- `CHANGELOG.md`, `PROJECT_STATUS.md`, `PHASE_HANDOFF.md` — updated.

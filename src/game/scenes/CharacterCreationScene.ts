@@ -618,6 +618,17 @@ export class CharacterCreationScene extends Phaser.Scene {
   }
 
   create(): void {
+    // D-162 precedent (see `MainMenuScene.create()`): re-syncs the
+    // ScaleManager's tracked size against the real canvas/parent element on
+    // every entry. This scene has the most real DOM `<input>` elements (the
+    // 4 hero-name fields) of any scene — D-162's own finding was that a
+    // canvas/ScaleManager desync leaves DOM elements positioned correctly
+    // while the CANVAS content around them is squished/shifted, which would
+    // read exactly like "the name fields are floating in the wrong place."
+    // Cheap and harmless if the scale state was already correct; unconfirmed
+    // like D-162's own mitigation — flag to Kevin whether this helps.
+    this.scale.refresh();
+
     this.slots = [];
     this.widgets = [];
     this.saveFile = loadSaveFile(window.localStorage, SAVE_STORAGE_KEY);
@@ -988,7 +999,10 @@ export class CharacterCreationScene extends Phaser.Scene {
     // same `rowGap`/`halfWidth` technique as Gear|Pool and Plan Levels|
     // Cadence elsewhere in this file (computed locally since the shared
     // `rowGap`/`halfWidth` consts below are declared later in this method).
-    const bgRowGap = 6;
+    // Playtest fix: 6 -> 10. At 6px the two buttons' bronze borders sat close
+    // enough to read as a stray vertical line between "Background: X" and
+    // "Ability Bonus: Y" rather than a clear gap.
+    const bgRowGap = 10;
     const bgHalfWidth = (COLUMN_WIDTH - 20 - bgRowGap) / 2;
     const backgroundY = 266;
     const backgroundHandle = createOrnateButton(
@@ -1070,7 +1084,13 @@ export class CharacterCreationScene extends Phaser.Scene {
     // D-206: shifted down (258 -> 302) to make room for the new Background
     // row above — `abilityRowsTop` below shifts by the same amount so
     // everything cascades exactly like the Point Buy note above describes.
-    const pointsLeftY = 302;
+    // Playtest fix: 302 -> 324. D-206 shifted this row down to clear the new
+    // Background row (bottom edge y=282) but left only 20px before it, which
+    // the Standard Array/Point Buy pill below (`abilityMethodHandle`, moved
+    // to y=300 in the same fix) also needed to fit into — the two rows
+    // collided into the Background row above them. `abilityRowsTop` (below)
+    // is untouched, so nothing else in the column shifts.
+    const pointsLeftY = 324;
     const pointsLeftLabel = this.add
       .text(x, pointsLeftY, "", { fontFamily: FONT_BODY, fontSize: "11px", color: "#2f4a34" })
       .setOrigin(0.5)
@@ -1083,10 +1103,16 @@ export class CharacterCreationScene extends Phaser.Scene {
     // bug once (two labels sharing one row pushing each other off). Own row
     // pushes `abilityRowsTop` down another 292 -> 300, same cascade as the
     // 270 -> 292 shift above.
+    // Playtest fix: 280 -> 300. This pill's top edge (280-10=270) overlapped
+    // the Background/Ability-Bonus row above it (D-206 added that row at
+    // y=266, bottom edge 282) by 12px — visible in Kevin's own screenshot as
+    // the Standard Array pill crowding into the row above. `pointsLeftY`
+    // (below) moved 302 -> 324 in the same fix to keep its own gap under
+    // this pill; `abilityRowsTop` is untouched.
     const abilityMethodHandle = createOrnateButton(
       this,
       x,
-      280,
+      300,
       140,
       20,
       "",
@@ -2068,7 +2094,7 @@ export class CharacterCreationScene extends Phaser.Scene {
             : incompleteSlot !== -1
               ? `Hero ${incompleteSlot + 1} still has unassigned ability scores (Standard Array).`
               : unspentBackgroundSlot !== -1
-                ? `Hero ${unspentBackgroundSlot + 1} still has an unspent Background ability bonus.`
+                ? `Hero ${unspentBackgroundSlot + 1} still needs to pick an Ability Bonus (the button next to Background).`
                 : "Gear Points over budget — remove some gear or lower the difficulty.",
     );
 

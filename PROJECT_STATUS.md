@@ -1,6 +1,30 @@
 # Project Status
 
-## BattleScene visual reskin — DONE this session (D-210)
+## Character Creation spacing fixes + name-field mitigation — DONE this session (D-211)
+
+From a Kevin screenshot of "Build Your Party": three provable spacing/text
+fixes, plus one unconfirmed mitigation for the recurring "hero name fields
+render out of place" report.
+
+- Fixed a real overlap: the Standard Array/Point Buy pill's top edge sat
+  12px inside the Background/Ability-Bonus row above it (D-206 added that
+  row without adjusting this pill's position). Moved without needing to
+  shift the ability-score rows below it.
+- Widened the Background/Ability-Bonus row's gap (6px -> 10px) — it was
+  reading as a stray vertical line between the two labels.
+- Clarified the "unspent Background ability bonus" validation message to
+  name the actual control ("the button next to Background").
+- **Unconfirmed**: added `this.scale.refresh()` to this scene's `create()`
+  — the same mitigation D-162 used for a related canvas-squish report on
+  Main Menu — on the theory the hero-name-field mispositioning is the same
+  class of `ScaleManager`/canvas desync. Not independently root-caused; see
+  `KNOWN_ISSUES.md` KI-161 for what to check.
+
+Tests: **1643** (unchanged — presentation-only). Typecheck clean, all 1643
+pass, production build succeeds (**152 modules**, unchanged — no new
+file). No browser available in this environment.
+
+## BattleScene visual reskin — DONE prior session (D-210)
 
 Phase 5's second and final item ("design-first, larger builds," 2026-08-28
 playtest batch) — closes the whole batch. Designed with Kevin over an

@@ -29,6 +29,39 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
+### KI-161 — D-211: Character Creation spacing fixes + a `scale.refresh()` mitigation for the hero-name-field positioning bug
+Three small, provable fixes plus one unconfirmed mitigation, from a Kevin
+screenshot of "Build Your Party" — **(headless-verified, not yet played)**.
+- Open Character Creation, look at any hero column's Standard Array/Point
+  Buy pill (the small "Standard Array"/"Point Buy" label between Background/
+  Ability Bonus and the ability-score rows) — confirm it no longer visually
+  overlaps/crowds into the Background/Ability Bonus row directly above it,
+  and that "Points Left" (Point Buy mode) reads clearly on its own line
+  below the pill without crowding STR.
+- Look at the Background/Ability Bonus row specifically — confirm the gap
+  between "Background: X" and "Ability Bonus: Y" reads as a clear visual
+  gap now, not a stray vertical line between the two.
+- Leave a hero's Ability Bonus unchosen and try Start Battle — confirm the
+  validation message now reads "Hero N still needs to pick an Ability Bonus
+  (the button next to Background)" instead of the old, less actionable
+  "still has an unspent Background ability bonus."
+- **The big one, unconfirmed**: check where the 4 hero-name fields actually
+  render. Kevin's screenshot showed them floating up near the subtitle text
+  at the top of the screen instead of inside their own column, between the
+  Human/AI toggle and the Class button — the same "names are way out of
+  place" bug from an old playtest note, never fixed by any session before
+  this one. This session added a `this.scale.refresh()` call (the same
+  mitigation D-162 used for a related canvas-squish report on Main Menu) to
+  `CharacterCreationScene.create()`, on the theory that this is the same
+  class of `ScaleManager`/canvas desync D-162 found — but this is genuinely
+  unverified; no browser is available in this environment to see whether it
+  helped. If the name fields are STILL out of place after this, say so
+  explicitly rather than assuming it's fixed — the next step would be a live
+  repro (what does the `<input>`'s actual on-screen position look like
+  relative to the canvas right when the bug shows, and does anything in
+  particular precede it — e.g. coming from a battle, resizing the window,
+  reloading vs. navigating from Main Menu).
+
 ### KI-160 — D-210: BattleScene visual reskin (Phase 5's second item)
 The battle screen's chrome (background, HUD buttons, roster panel, action
 row, shop grid, combat log) now matches the wood/bronze/gilt theme the
