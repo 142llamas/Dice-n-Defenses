@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { SETTINGS_STORAGE_KEY } from "../config";
+import { SETTINGS_STORAGE_KEY, KEYBINDINGS_STORAGE_KEY } from "../config";
 import {
   ANIMATION_SPEEDS,
   ANIMATION_SPEED_LABELS,
@@ -9,6 +9,15 @@ import {
   toggleMuted,
   type Settings,
 } from "../systems/SettingsSystem";
+import {
+  loadKeyBindings,
+  saveKeyBindings,
+  keyBindingConflict,
+  formatKeyCode,
+  REBINDABLE_ACTION_LABELS,
+  type KeyBindings,
+  type RebindableAction,
+} from "../systems/KeyBindingSystem";
 import {
   FONT_DISPLAY,
   createOrnateButton,
@@ -54,6 +63,12 @@ export class SettingsScene extends Phaser.Scene {
   private titleText?: Phaser.GameObjects.Text;
   /** D-16x: the shared full-screen list-picker overlay (`openChoiceList`), replacing the old click-to-cycle Game Speed/volume buttons. */
   private choiceOverlay: Phaser.GameObjects.GameObject[] = [];
+  /** Phase 3 (D-205): the three rebindable in-battle keys — Controls section, below. */
+  private keyBindings: KeyBindings = loadKeyBindings(window.localStorage, KEYBINDINGS_STORAGE_KEY);
+  /** Set while a Controls row is "listening" for the next keypress to rebind to. */
+  private awaitingRebindFor: RebindableAction | null = null;
+  /** A transient rejection message (conflict) shown under the Controls rows, cleared on the next successful/cancelled rebind. */
+  private keyBindingMessage: string | null = null;
 
   constructor() {
     super("SettingsScene");
@@ -63,13 +78,49 @@ export class SettingsScene extends Phaser.Scene {
     this.returnScene = data.returnScene;
     this.battleScene = data.battleScene ?? null;
     this.settings = loadSettings(window.localStorage, SETTINGS_STORAGE_KEY);
+    this.keyBindings = loadKeyBindings(window.localStorage, KEYBINDINGS_STORAGE_KEY);
+    this.awaitingRebindFor = null;
+    this.keyBindingMessage = null;
   }
 
   create(): void {
     this.contentObjects = [];
     this.rebuildLayout();
 
-    this.input.keyboard?.on("keydown-ESC", () => this.back());
+    // Phase 3 (D-205): while a Controls row is capturing, Esc only cancels
+    // the capture (see the generic `keydown` listener below) — it must NOT
+    // also back out of Settings entirely.
+    this.input.keyboard?.on("keydown-ESC", () => {
+      if (this.awaitingRebindFor) return;
+      this.back();
+    });
+    // The rebind capture itself: any key while `awaitingRebindFor` is set.
+    // A raw `keydown` listener (not Phaser's `keydown-KEYNAME` sugar) so it
+    // can read whatever key was actually pressed, generically.
+    this.input.keyboard?.on("keydown", (event: KeyboardEvent) => {
+      if (!this.awaitingRebindFor) return;
+      event.preventDefault();
+      const action = this.awaitingRebindFor;
+      if (event.code === "Escape") {
+        this.awaitingRebindFor = null;
+        this.render();
+        return;
+      }
+      const conflict = keyBindingConflict(this.keyBindings, action, event.code);
+      if (conflict) {
+        this.keyBindingMessage =
+          conflict === "reserved"
+            ? "That key is already used elsewhere — pick another."
+            : `That key is already bound to ${REBINDABLE_ACTION_LABELS[conflict]}.`;
+        this.render();
+        return;
+      }
+      this.keyBindings = { ...this.keyBindings, [action]: event.code };
+      saveKeyBindings(window.localStorage, KEYBINDINGS_STORAGE_KEY, this.keyBindings);
+      this.awaitingRebindFor = null;
+      this.keyBindingMessage = null;
+      this.render();
+    });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.removeAllListeners();
       this.input.keyboard?.removeAllListeners();
@@ -118,7 +169,18 @@ export class SettingsScene extends Phaser.Scene {
 
     const cx = getViewport(this).width / 2;
     const width = 380;
-    const rows = { gameSpeed: 190, master: 260, music: 330, sfx: 400, mute: 470, back: 570 };
+    const rows = {
+      gameSpeed: 190,
+      master: 260,
+      music: 330,
+      sfx: 400,
+      mute: 470,
+      confirm: 550,
+      cancel: 620,
+      bonusAction: 690,
+      keyBindingMessage: 730,
+      back: 800,
+    };
 
     this.contentObjects.push(this.buildGameSpeedButton(cx, rows.gameSpeed, width).container);
     this.contentObjects.push(
@@ -152,6 +214,27 @@ export class SettingsScene extends Phaser.Scene {
       ).container,
     );
     this.contentObjects.push(this.buildMuteButton(cx, rows.mute, width).container);
+
+    // Phase 3 (D-205): Controls — Confirm/Cancel/Bonus Action, the three
+    // rebindable in-battle keys (full replace, not an additive extra key —
+    // see KeyBindingSystem.ts's own doc comment for what that means).
+    this.contentObjects.push(this.buildKeyBindingButton(cx, rows.confirm, width, "confirm").container);
+    this.contentObjects.push(this.buildKeyBindingButton(cx, rows.cancel, width, "cancel").container);
+    this.contentObjects.push(this.buildKeyBindingButton(cx, rows.bonusAction, width, "bonusAction").container);
+    if (this.keyBindingMessage) {
+      this.contentObjects.push(
+        this.add
+          .text(cx, rows.keyBindingMessage, this.keyBindingMessage, {
+            fontFamily: FONT_DISPLAY,
+            fontSize: "14px",
+            color: "#e07a7a",
+            align: "center",
+            wordWrap: { width: width + 40 },
+          })
+          .setOrigin(0.5)
+          .setDepth(5),
+      );
+    }
 
     this.contentObjects.push(
       createOrnateButton(this, cx, rows.back, 200, 48, "Back", () => this.back(), {
@@ -231,6 +314,35 @@ export class SettingsScene extends Phaser.Scene {
       { variant: "secondary", depth: 5 },
     );
     return handle;
+  }
+
+  /**
+   * Phase 3 (D-205): one Controls row — clicking arms `awaitingRebindFor` and
+   * a full `render()` relabels every row (simpler than tracking individual
+   * handles across capture-state changes, matching this file's existing
+   * "cheap full rebuild" style already used by `rebuildLayout`). The actual
+   * key capture happens in `create()`'s generic `keydown` listener, not here.
+   */
+  private buildKeyBindingButton(x: number, y: number, width: number, action: RebindableAction): OrnateButtonHandle {
+    const label = REBINDABLE_ACTION_LABELS[action];
+    const text =
+      this.awaitingRebindFor === action
+        ? `${label}: Press a key… (Esc cancels)`
+        : `${label}: ${formatKeyCode(this.keyBindings[action])}`;
+    return createOrnateButton(
+      this,
+      x,
+      y,
+      width,
+      54,
+      text,
+      () => {
+        this.awaitingRebindFor = action;
+        this.keyBindingMessage = null;
+        this.render();
+      },
+      { variant: "secondary", depth: 5 },
+    );
   }
 
   private buildMuteButton(x: number, y: number, width: number): OrnateButtonHandle {

@@ -108,9 +108,17 @@ export const GEAR_SLOT_IDS: readonly GearSlotId[] = [
   "footwear",
 ];
 
+/**
+ * Phase 2 (2026-08-28 playtest batch, D-204): per-hero SLOT labels read
+ * "Right hand"/"Left hand" instead of "Weapon"/"Shield" — the underlying
+ * mechanic already treats "shield" as a generic off-hand slot (a Light
+ * melee weapon fits there too, see Phase 17/D-108's dual-wielding). Deliberately
+ * NOT applied to `GEAR_SLOT_TYPE_LABELS` below, which categorizes item
+ * TYPES in the shop/Compendium catalogue, not per-hero slots.
+ */
 export const GEAR_SLOT_LABELS: Record<GearSlotId, string> = {
-  weapon: "Weapon",
-  shield: "Shield",
+  weapon: "Right hand",
+  shield: "Left hand",
   head: "Head",
   chest: "Chest",
   legs: "Legs",
@@ -655,4 +663,17 @@ export function getEquipmentDefinition(id: string): EquipmentDefinition {
 /** Every catalogue item that fits a given slot type, in catalogue order. */
 export function equipmentForSlotType(slot: GearSlotType): EquipmentDefinition[] {
   return EQUIPMENT_ORDER.map(getEquipmentDefinition).filter((def) => def.slot === slot);
+}
+
+/**
+ * Phase 2 (2026-08-28 playtest batch, D-204): true if `itemId` is a
+ * Two-Handed weapon — the real SRD grip rule (a Two-Handed weapon needs both
+ * hands, so it can't coexist with anything in the Shield/off-hand slot).
+ * Mirrors the same check `Hero.wouldConflictWithGrip` does against a live
+ * hero's `equippedItems`, just against a bare item id — used by
+ * `CharacterCreationScene`, which works in gear-slot indices before any
+ * `Hero` exists.
+ */
+export function isTwoHandedWeapon(itemId: string): boolean {
+  return !!getEquipmentDefinition(itemId).weapon?.properties.includes("twoHanded");
 }

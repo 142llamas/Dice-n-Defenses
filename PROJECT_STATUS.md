@@ -1,6 +1,242 @@
 # Project Status
 
-## Two Known Issues bug fixes — DONE this session (D-201, D-202)
+## BattleScene visual reskin — DONE this session (D-210)
+
+Phase 5's second and final item ("design-first, larger builds," 2026-08-28
+playtest batch) — closes the whole batch. Designed with Kevin over an
+interactive HTML mockup ("The Battlefield," an Artifact) before any code,
+same practice D-209 just used for The Armory.
+
+- The battle screen's chrome — background, HUD buttons, roster panel,
+  action-button row, shop/build catalog grid, combat log — now shares the
+  wood/bronze/gilt theme (`uiTheme.ts`, D-123) already used everywhere
+  else in the game. A new bold bronze/gilt frame with corner diamonds
+  hugs the board's outer edge. The board's own tile colors, hero/enemy
+  tokens, and every gameplay highlight are untouched — this is chrome
+  only, not a relayout.
+- Kevin's round-2 feedback, both shipped: roster HP bars simplified to a
+  two-state green-until-critical-then-red (was a three-tier gradient);
+  every action-row button (Confirm/Cancel/Ability/Potion, Bonus Action/
+  Action Surge/Class Action/Character Sheet, hotkeys) dropped its own flat
+  color to match the rest of the chrome, gaining real hover feedback in
+  the process.
+- The combat log now sits on a real backing panel that grows/shrinks with
+  its current line count, and the wave/phase banner sits on a sized-to-fit
+  wood-panel chip.
+
+Tests: **1643** (unchanged — presentation-only, no new pure-system logic).
+Typecheck clean, all 1643 pass, production build succeeds (**152
+modules**, unchanged — no new file). No browser available in this
+environment — see `KNOWN_ISSUES.md` KI-160 for the full confirmation
+checklist.
+
+## The Armory: gear-purchase UX redesign — DONE prior session (D-209)
+
+Phase 5 ("design-first, larger builds") of the 2026-08-28 playtest batch.
+Designed with Kevin over several rounds via an interactive HTML mockup
+("The Armory," an Artifact) before any code was written, replacing the old
+in-battle Gear grid entirely.
+
+- The old "click an item, then click a hero" flow is gone. The new
+  `GearShopScene` (launched the same `scene.launch`/`scene.pause` way as
+  `PauseMenuScene`/`CharacterSheetScene`) shows a hero rail with a 12-slot
+  paperdoll each (10 gear + 2 potion slots), then a catalog filtered to
+  whichever slot is picked.
+- "Weapon"/"Shield" now read "Right hand"/"Left hand" in the shop, matching
+  a per-hero label set (D-204) that existed already but the old Gear grid
+  never actually used.
+- Every catalog row has its own Purchase/Compare/Sell button, with a
+  ~650ms delayed confirm on anything that spends or sells money (so a
+  reflexive double-click can't fire it by accident). Buying into an
+  occupied slot auto-sells the occupant as part of the purchase, shown as a
+  trade-in tag plus a real net-cost button label.
+- New economy rule, confirmed with Kevin: selling (standalone, or as an
+  auto-trade-in) pays half of cost, rounded down
+  (`EconomySystem.sellValueForCost`) — replaces the old unequip action's
+  100%-refund behavior. Every other full-cost refund/award path (structure
+  removal, a reward with nowhere to go) is unaffected on purpose.
+- New pure module `GearCompareSystem.ts` (`isItemEligibleForSlot`,
+  `previewGearSlotChange`, `formatGearDelta`) replaces the old item-first
+  `targetGearSlot`/`previewEquipDelta` slot-guessing logic.
+
+Tests: **1643** (+16) — new `sellValueForCost` cases plus a new
+`tests/gearCompareSystem.test.ts`. Typecheck clean, all 1643 pass,
+production build succeeds (**152 modules**, +2 — `GearCompareSystem.ts`,
+`GearShopScene.ts`). No browser available in this environment — see
+`KNOWN_ISSUES.md` KI-159 for the full confirmation checklist.
+
+## Co-op economy: separate per-player gold pools — DONE prior session (D-208)
+
+Phase 4 of the 2026-08-28 playtest batch (Phases 1-3/2.5 — D-203 through
+D-207 — shipped earlier). Gold was a single flat number for the whole
+party; Kevin's explicit choice (`AskUserQuestion`, over a shared-pool/
+attribution-only alternative or deferring the phase) was **fully separate
+per-player pools** — the real co-op economy.
+
+- `EconomySystem` now holds one-or-more independent gold pools keyed by an
+  owner id, instead of one number. Every method takes the pool id it
+  applies to; an unrecognized id throws rather than silently misbehaving.
+  Solo play and every campaign (campaigns never run inside a coop session)
+  always use one pool, `SOLO_ECONOMY_OWNER` — no behavior change there
+  beyond the new required argument.
+- A coop session gives each participant their own full starting-gold
+  balance (not halved) plus only their own heroes' Background bonuses.
+  Kills are credited to the acting hero's owner where one exists (the
+  common case); trap kills, bundled summon-phase kills, and wave-completion/
+  time-bonus gold split evenly since there's no single attributable owner.
+  Gear/potion purchases charge the receiving hero's pool; structure
+  purchases and shop-affordability previews charge whichever participant is
+  acting on that client; a Gold Thief steals from the hero it hits.
+- The Gold HUD shows both players' balances in a coop session
+  (`Gold: Ng | {partner}: Mg`); solo play is unchanged.
+
+Tests: **1627** (+4) — a new multi-pool describe block in `economy.test.ts`;
+every other `EconomySystem`-touching test file updated to the new required-
+`ownerId` signature. Typecheck clean, all 1627 pass, production build
+succeeds (**150 modules**, unchanged — no new file). No browser available
+in this environment, and Phase 12.3's own KI-063 limitation (two coop
+clients' boards don't converge as either acts) means a genuine two-human
+confirmation isn't possible until that follow-up is built — see
+`KNOWN_ISSUES.md` KI-158.
+
+## Phase 3's leftover "off center" HUD fix — DONE prior session (D-207)
+
+Closes the one item D-205 (Phase 3, 2026-08-28 playtest batch) left
+unshipped, blocked since then on a screenshot from Kevin — he provided one
+this session (Wave 1, nothing logged yet), showing two concrete causes:
+
+- A large dead vertical gap between the roster panel and the action button
+  rows below it, from always reserving the combat log's full 5-line-cap
+  height (86px) even when the log has nothing in it yet. Now sized to the
+  log's actual current content (`BattleScene.actionRowY()`), converging back
+  to the same 86px once a battle has a few lines logged — nothing shifts
+  once play is underway.
+- Fixed left-to-right button offsets sized for an entire row's worth of
+  buttons, so a hero showing only one or two of a row's buttons (the common
+  case) looked lopsided to the right. Whichever buttons are actually visible
+  now center as a group (`BattleScene.centerRow()`/`refreshActionRowLayout()`).
+
+Tests: **1623** (unchanged) — scene-only layout change. Typecheck clean, all
+1623 pass, production build succeeds (**150 modules**, unchanged). No
+browser available in this environment — see **KI-157**.
+
+## Backgrounds — DONE prior session (D-206)
+
+Phase 2.5 of the same 2026-08-28 playtest batch — see `PHASE_HANDOFF.md` for
+the full batch and remaining phases. SRD 5.2.1 moved ability-score bonuses
+from Race to Background; this game had none until now.
+
+- **Critical scope correction**: the real SRD 5.2.1 has exactly 4
+  backgrounds (Acolyte, Criminal, Sage, Soldier), not the full PHB's ~16 —
+  verified directly against `dndbeyond.com`'s own SRD changelog before
+  writing any data. Kevin's call once told this: build the 4 real ones,
+  then also author original backgrounds — 6 built (Siege Engineer, Ashfall
+  Scout, Harborhand, Hedge-Warden, Ledger-Keeper, Ember-Marked), grounded in
+  this game's own tower-defense genre and `CAMPAIGN_STORY_DESIGN.md`'s
+  "Unremembering" throughline rather than PHB reskins.
+- Every background grants 2 skill proficiencies (4 new skills added —
+  Religion, Sleight of Hand, Arcana, History), a flavor-only tool
+  proficiency, a real ability-score-bonus choice (+2/+1 or +1/+1/+1 among 3
+  named abilities — a genuine, non-silent Character Creation choice that
+  blocks Start Battle until spent, same D-192 precedent), a single Origin
+  Feat (into the existing D-109 feat system), and a starting weapon/gold
+  nod.
+- Skill proficiency is now background-aware too — a Criminal-background
+  hero gets a real Stealth bonus even outside their class's own list.
+- New Background + ability-bonus picker buttons in Character Creation; a
+  new Compendium "Backgrounds" tab; all 12 companions got a fitting
+  background.
+
+Tests: **1623** (+16) — `tests/backgrounds.test.ts` (new),
+`applyBackgroundAbilityBonus`/`heroDefinitionFromBuild` wiring, and the
+background-aware skill-proficiency overload. Typecheck clean, all 1623
+pass, production build succeeds (**150 modules**, +1 for `backgrounds.ts`).
+No browser available in this environment — see **KI-156**. See
+`PHASE_HANDOFF.md` for next-chat instructions and the rest of the playtest
+batch's gameplan.
+
+## Battle interaction upgrades — DONE prior session (D-205)
+
+Phase 3 of the same 2026-08-28 playtest batch (Phase 1 D-203, Phase 2 D-204
+shipped earlier) — see `PHASE_HANDOFF.md` for the full batch and remaining
+phases. Three of Phase 3's four items; the fourth (Confirm/Cancel/Bonus
+Action/character-panel "off center") was fixed in D-207 above, once Kevin
+provided a screenshot.
+
+- Move-then-attack: clicking an out-of-range enemy now paths the hero toward
+  it (as far as this turn's movement allows) and attacks in the same click,
+  instead of just rejecting the order. A ranged hero stops as soon as it's in
+  range, not necessarily adjacent (`HeroAISystem.planApproachForAttack`).
+- Double-click-to-confirm: a real double-click on a legal move tile commits
+  immediately, skipping the separate Confirm-button/Enter step
+  (`BattleScene.isDoubleClickOn`, generalized for future reuse).
+- Real keyboard hotkey layer: the 6-slot ability hotkey bar now fires on
+  Shift+1..Shift+6 (plain digits stay hero-select); Confirm/Cancel/Bonus
+  Action are now rebindable (full replace, XCOM2-style, Kevin's explicit
+  choice) via a new "Controls" section in Settings, backed by
+  `KeyBindingSystem` with a basic conflict guard.
+
+Tests: **1607** (+14) — `HeroAISystem.planApproachForAttack` cases and a new
+`keyBindings.test.ts`. Typecheck clean, all 1607 pass, production build
+succeeds (**149 modules**, +1 for `KeyBindingSystem.ts`). No browser
+available in this environment — see **KI-155**. See `PHASE_HANDOFF.md` for
+next-chat instructions and the rest of the playtest batch's gameplan.
+
+## Character Creation depth — DONE prior session (D-204)
+
+Phase 2 of the same 2026-08-28 playtest batch (Phase 1, D-203, shipped last
+session) — see `PHASE_HANDOFF.md` for the full batch and remaining phases.
+
+- Standard Array now defaults to a per-class ability order
+  (`defaultAbilityOrderForClass`, derived from each class's own
+  `primaryAbility`/`spellcasting`/`savingThrowProficiencies`) instead of the
+  flat STR/DEX/CON/INT/WIS/CHA order — applies to a fresh slot and to
+  switching back into Standard Array from Point Buy; never re-applied on a
+  later class change (would silently reorder a player's own picks).
+- Gear slot rename: "Weapon"/"Shield" → "Right hand"/"Left hand" (per-hero
+  labels only, `GEAR_SLOT_LABELS`; the catalogue's item-type labels are
+  unchanged). Picking a Two-Handed weapon in Character Creation now
+  force-clears the other hand slot, and vice versa (`isTwoHandedWeapon`).
+- New per-character library (`CharacterLibrarySystem`, capped at 12
+  entries, local-only/global): every hero slot has "Save Character"/"Load
+  Character" — Save names and snapshots that slot's current build; Load
+  overwrites the slot from a saved one via the existing `slotStateFromBuild`
+  reconstruction, gated by the same `identityLocked` guard Class/Race use.
+
+Tests: **1593** (+18) — `defaultAbilityOrderForClass`, `isTwoHandedWeapon`,
+and a new `characterLibrarySystem.test.ts` mirroring
+`blueprintLibrarySystem.test.ts`. Typecheck clean, all 1593 pass, production
+build succeeds (**148 modules**, +1 for `CharacterLibrarySystem.ts`). No
+browser available in this environment — see **KI-154**. See
+`PHASE_HANDOFF.md` for next-chat instructions and the rest of the playtest
+batch's gameplan.
+
+## Main Menu reorg + Campaign/Free Play New-or-Load forks — DONE prior session (D-203)
+
+Phase 1 of a large playtest batch Kevin handed over as a summary + phased
+gameplan (see `PHASE_HANDOFF.md` for the full batch and remaining phases).
+
+- Main Menu reorganized to Kevin's own proposed grouping: Campaign is now
+  the primary "hero" button; Free Play/Co-op/Party Creation form the
+  secondary row (Party Creation consolidates the old duplicate "New Game"/
+  "Build Party" buttons — both started the exact same screen);
+  Compendium/Bestiary merge into a new "Knowledge Base" button; the
+  standalone "Load Game" button is retired (covered by the new forks
+  below). Settings/Sign-in were already present — confirmed, unchanged.
+- New `ModeEntryScene` gives Campaign and Free Play each a "New X"/"Load X"
+  fork ahead of their existing screens.
+- `LoadGameScene` gained an optional `filterMode` (campaign-linked vs. not)
+  — the in-battle pause menu's own unfiltered "Load Game" is unaffected.
+- New `KnowledgeBaseScene` (ornate-styled, matching Main Menu/Compendium/
+  Bestiary) holds the merged Compendium/Bestiary buttons.
+
+Tests: unchanged at **1575** (pure scene/presentation wiring, not
+unit-tested). Typecheck clean, all 1575 pass, production build succeeds
+(**147 modules**, +2). No browser available in this environment — see
+**KI-153**. See `PHASE_HANDOFF.md` for next-chat instructions and the rest
+of the playtest batch's gameplan.
+
+## Two Known Issues bug fixes — DONE prior session (D-201, D-202)
 
 Kevin: "let's fix both here and now," picking from `KNOWN_ISSUES.md`
 after the Party Creation Overhaul roadmap closed.

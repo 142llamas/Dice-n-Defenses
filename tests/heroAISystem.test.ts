@@ -111,3 +111,50 @@ describe("HeroAISystem.decideTurn", () => {
     expect(decision.move).toEqual({ x: 1, y: 0 });
   });
 });
+
+describe("HeroAISystem.planApproachForAttack", () => {
+  it("returns null (no move needed) when the target is already in range", () => {
+    const dest = ai.planApproachForAttack({
+      position: { x: 0, y: 0 },
+      targetPosition: { x: 3, y: 0 },
+      attackRangeTiles: 3,
+      movementBudget: 5,
+    });
+    expect(dest).toBeNull();
+  });
+
+  it("approaches only as far as needed for a ranged attack range, not all the way adjacent", () => {
+    const dest = ai.planApproachForAttack({
+      position: { x: 0, y: 0 },
+      targetPosition: { x: 5, y: 0 },
+      attackRangeTiles: 2,
+      movementBudget: 4,
+      isOccupied: (p) => p.x === 5 && p.y === 0, // the target's own tile
+    });
+    // (3,0) is distance 2 from the target (in range) and costs only 3 tiles of
+    // movement; (4,0) would also be in range but costs a full 4 tiles — the
+    // cheaper approach should win rather than closing all the way in.
+    expect(dest).toEqual({ x: 3, y: 0 });
+  });
+
+  it("returns null when the target is unreachable within the movement budget at any tile", () => {
+    const dest = ai.planApproachForAttack({
+      position: { x: 0, y: 0 },
+      targetPosition: { x: 5, y: 0 },
+      attackRangeTiles: 1,
+      movementBudget: 1,
+    });
+    expect(dest).toBeNull();
+  });
+
+  it("respects isOccupied — a blocked tile in the only path makes the target unreachable", () => {
+    const dest = ai.planApproachForAttack({
+      position: { x: 0, y: 0 },
+      targetPosition: { x: 5, y: 0 },
+      attackRangeTiles: 1,
+      movementBudget: 3,
+      isOccupied: (p) => p.x === 2 && p.y === 0, // blocks the lane partway through
+    });
+    expect(dest).toBeNull();
+  });
+});

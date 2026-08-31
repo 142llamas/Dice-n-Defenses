@@ -4,7 +4,7 @@ import { PathfindingSystem } from "../src/game/systems/PathfindingSystem";
 import { WaveSystem } from "../src/game/systems/WaveSystem";
 import { RandomService } from "../src/game/systems/RandomService";
 import { BuildSystem } from "../src/game/systems/BuildSystem";
-import { EconomySystem } from "../src/game/systems/EconomySystem";
+import { EconomySystem, SOLO_ECONOMY_OWNER } from "../src/game/systems/EconomySystem";
 import { RewardSystem } from "../src/game/systems/RewardSystem";
 import { CombatSystem, type AttackProfile } from "../src/game/systems/CombatSystem";
 import { TEST_MAP } from "../src/game/data/testMap";
@@ -178,7 +178,7 @@ describe("Ten-wave campaign is winnable via the real loop", () => {
     const waves = new WaveSystem(map, pathfinding, WAVES, {
       startingIntegrity: STRONGHOLD_START, random: RandomService.fixed(),
     });
-    const economy = new EconomySystem(STARTING_GOLD);
+    const economy = new EconomySystem({ [SOLO_ECONOMY_OWNER]: STARTING_GOLD });
     const build = new BuildSystem(map, pathfinding);
 
     let snarePlaced = false;
@@ -189,18 +189,18 @@ describe("Ten-wave campaign is winnable via the real loop", () => {
     // The player's between-wave spend: an anti-air Sky Snare first (the only
     // answer to flyers), then as many Spike Traps as gold and legality allow.
     const buyDefenses = (): void => {
-      if (!snarePlaced && economy.canAfford(7) && build.canPlace("sky-snare", SNARE_TILE).ok) {
-        if (economy.spend(7).ok && build.place("sky-snare", SNARE_TILE).ok) {
+      if (!snarePlaced && economy.canAfford(SOLO_ECONOMY_OWNER, 7) && build.canPlace("sky-snare", SNARE_TILE).ok) {
+        if (economy.spend(SOLO_ECONOMY_OWNER, 7).ok && build.place("sky-snare", SNARE_TILE).ok) {
           snarePlaced = true;
           boughtAnti = true;
         }
       }
       while (
         spikeIdx < SPIKE_TILES.length &&
-        economy.canAfford(8) &&
+        economy.canAfford(SOLO_ECONOMY_OWNER, 8) &&
         build.canPlace("spike-trap", SPIKE_TILES[spikeIdx]).ok
       ) {
-        if (economy.spend(8).ok && build.place("spike-trap", SPIKE_TILES[spikeIdx]).ok) {
+        if (economy.spend(SOLO_ECONOMY_OWNER, 8).ok && build.place("spike-trap", SPIKE_TILES[spikeIdx]).ok) {
           spikeIdx++;
         } else break;
       }
@@ -225,10 +225,10 @@ describe("Ten-wave campaign is winnable via the real loop", () => {
 
       while (guard++ < 100) {
         heroesAct();
-        economy.award(RewardSystem.killGold(waves.removeDefeated()));
+        economy.award(SOLO_ECONOMY_OWNER, RewardSystem.killGold(waves.removeDefeated()));
         if (waves.isCurrentWaveComplete()) {
           const r = RewardSystem.waveReward(waves.currentWave, guard);
-          economy.award(r.total);
+          economy.award(SOLO_ECONOMY_OWNER, r.total);
           if (r.timeBonusGold > 0) anyTimeBonus = true;
           cleared = true;
           break;
@@ -238,12 +238,12 @@ describe("Ten-wave campaign is winnable via the real loop", () => {
           trapAt: (p) => build.trapProfileAt(p),
           trapTargets: (p) => build.trapTargetsAt(p),
         });
-        economy.award(RewardSystem.killGold(waves.removeDefeated()));
+        economy.award(SOLO_ECONOMY_OWNER, RewardSystem.killGold(waves.removeDefeated()));
 
         expect(waves.isDefeated()).toBe(false); // integrity must never hit 0
         if (report.waveComplete) {
           const r = RewardSystem.waveReward(waves.currentWave, report.turn);
-          economy.award(r.total);
+          economy.award(SOLO_ECONOMY_OWNER, r.total);
           if (r.timeBonusGold > 0) anyTimeBonus = true;
           cleared = true;
           break;

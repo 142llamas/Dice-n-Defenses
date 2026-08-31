@@ -56,6 +56,14 @@ export interface HeroDefinition {
    */
   classId?: string;
   /**
+   * D-206: which Background this hero was built with, if any — set by
+   * `heroDefinitionFromBuild` from `CharacterBuild.backgroundId`. Drives the
+   * origin-feat grant (`BattleScene.buildHeroes`) and a real Stealth-
+   * proficiency bonus (`Hero.stealthCheckModifier`). Undefined for the
+   * classic fixed roster and any hero built before this feature.
+   */
+  backgroundId?: string;
+  /**
    * Phase 13.3 (D-089): a D&D-built hero's fixed six ability scores, carried
    * forward from `CharacterBuild` so `Hero.levelUpClass()` can redo
    * `CharacterSystem.combatStatsForClassLevel`'s math at any later level.

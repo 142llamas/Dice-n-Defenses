@@ -236,6 +236,8 @@ export interface HeroSnapshot {
   baseArmorClass: number;
   controlledBy: HeroControlMode;
   classId?: string;
+  /** D-206: which Background this hero was built with, if any. */
+  backgroundId?: string;
   abilityScores?: AbilityScores;
   maxHealth: number;
   attackDamage: number;
@@ -460,6 +462,8 @@ export class Hero implements Combatant {
   readonly controlledBy: HeroControlMode;
   /** Phase 13.2 (D-087): which class-gated action-economy features this hero qualifies for, if any. */
   readonly classId?: string;
+  /** D-206: which Background this hero was built with, if any — drives the origin-feat grant (`BattleScene.buildHeroes`) and a real Stealth-proficiency bonus (`stealthCheckModifier`). */
+  readonly backgroundId?: string;
   /**
    * Phase 13.3 (D-089): set at creation, used to recompute stats on
    * `levelUpClass`. Phase 13.6 (D-091): no longer `readonly` — an Ability
@@ -652,6 +656,7 @@ export class Hero implements Combatant {
     this.baseArmorClass = def.baseArmorClass;
     this.controlledBy = def.controlledBy ?? "human";
     this.classId = def.classId;
+    this.backgroundId = def.backgroundId;
     this.abilityScores = def.abilityScores;
     this.assignedSubclassId = def.subclassId;
     this.position = { ...startPosition };
@@ -2399,16 +2404,18 @@ export class Hero implements Combatant {
 
   /**
    * This hero's Stealth check modifier: ability modifier, plus proficiency
-   * bonus if its class is proficient (`data/skills.ts`), plus Ranger's Hide
-   * in Plain Sight (level 10+, only while it hasn't moved this turn — the
-   * SRD's own "camouflage" carve-out, a flat +10). No ability scores exist
-   * to derive a real passive-Perception DC from an enemy, so the DC side of
-   * this check is a flat, documented simplification supplied by the caller
-   * (`BattleScene`'s stealth-DC table by nearby enemy role).
+   * bonus if its class OR background is proficient (`data/skills.ts` —
+   * D-206 added the background half; a Criminal-background hero now gets a
+   * real Stealth bonus even outside its class's own list), plus Ranger's
+   * Hide in Plain Sight (level 10+, only while it hasn't moved this turn —
+   * the SRD's own "camouflage" carve-out, a flat +10). No ability scores
+   * exist to derive a real passive-Perception DC from an enemy, so the DC
+   * side of this check is a flat, documented simplification supplied by the
+   * caller (`BattleScene`'s stealth-DC table by nearby enemy role).
    */
   stealthCheckModifier(): number {
     if (!this.abilityScores) return 0;
-    const base = skillCheckModifier(this.abilityScores, "stealth", this.classId, this.classLevel);
+    const base = skillCheckModifier(this.abilityScores, "stealth", this.classId, this.classLevel, this.backgroundId);
     const hidingInPlainSight =
       this.classId === "ranger" && this.classLevel >= RANGER_HIDE_IN_PLAIN_SIGHT_LEVEL && !this.hasMoved;
     return base + (hidingInPlainSight ? HIDE_IN_PLAIN_SIGHT_BONUS : 0);
@@ -2925,6 +2932,7 @@ export class Hero implements Combatant {
       baseArmorClass: this.baseArmorClass,
       controlledBy: this.controlledBy,
       classId: this.classId,
+      backgroundId: this.backgroundId,
       abilityScores: this.abilityScores ? { ...this.abilityScores } : undefined,
       maxHealth: this.maxHealth,
       attackDamage: this.attackDamage,
@@ -3010,6 +3018,7 @@ export class Hero implements Combatant {
       baseArmorClass: snapshot.baseArmorClass,
       controlledBy: snapshot.controlledBy,
       classId: snapshot.classId,
+      backgroundId: snapshot.backgroundId,
       abilityScores: snapshot.abilityScores,
       classRiderDamage: snapshot.classRiderDamage,
     };

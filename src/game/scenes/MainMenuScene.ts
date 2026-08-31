@@ -34,6 +34,22 @@ import {
  * The title shown here is a working placeholder. Per the Source of Truth, the
  * final shipped name must be original and must NOT contain "Dungeons & Dragons"
  * or "D&D" branding.
+ *
+ * Phase 1 of the 2026-08-28 playtest batch: reorganized again per Kevin's
+ * own proposed grouping (Campaign / Free Play / Co-op / Party Creation /
+ * Knowledge Base / the 3 creator tools). Campaign is now the hero primary
+ * action (bigger than a blank Free Play or Party Creation build — 6 regions,
+ * 24 chapters, companions, a capstone), replacing the old "New Game" button;
+ * "New Game" and "Build Party" both started `CharacterCreationScene` with no
+ * init data (the exact same destination), so they're consolidated into one
+ * "Party Creation" button rather than kept as two labels for one screen.
+ * Campaign and Free Play now route through `ModeEntryScene`'s New/Load fork
+ * instead of jumping straight to `CampaignSelectScene`/`FreePlayScene`, and
+ * the standalone top-level "Load Game" button is retired since both modes'
+ * own Load option now covers it. Compendium/Bestiary collapse into one
+ * "Knowledge Base" button opening `KnowledgeBaseScene`. Settings and Sign-in
+ * were already present as this screen's top-right corner controls before
+ * this pass; unchanged here.
  */
 export class MainMenuScene extends Phaser.Scene {
   private layoutRoot?: Phaser.GameObjects.Container;
@@ -71,9 +87,9 @@ export class MainMenuScene extends Phaser.Scene {
 
     this.rebuildLayout();
 
-    // Keyboard shortcut: Enter or Space also starts a new game.
-    this.input.keyboard?.on("keydown-ENTER", () => this.scene.start("CharacterCreationScene"));
-    this.input.keyboard?.on("keydown-SPACE", () => this.scene.start("CharacterCreationScene"));
+    // Keyboard shortcut: Enter or Space also triggers the primary action (Campaign).
+    this.input.keyboard?.on("keydown-ENTER", () => this.scene.start("ModeEntryScene", { mode: "campaign" }));
+    this.input.keyboard?.on("keydown-SPACE", () => this.scene.start("ModeEntryScene", { mode: "campaign" }));
 
     onViewportResize(this, () => this.rebuildLayout());
   }
@@ -235,33 +251,29 @@ export class MainMenuScene extends Phaser.Scene {
       280,
       380,
       76,
-      "New Game",
-      () => this.scene.start("CharacterCreationScene"),
-      { variant: "primary", sublabel: "Build a party and begin your first battle", depth: 5 },
+      "Campaign",
+      () => this.scene.start("ModeEntryScene", { mode: "campaign" }),
+      { variant: "primary", sublabel: "Six regions, twenty-four chapters, a capstone finale", depth: 5 },
     );
   }
 
   /**
-   * Every way to actually get into a battle: New Game (above) is the hero
-   * action, these are the alternates. D-165 (KI-098 item 5) added "Build
-   * Party" — the one entry here that DOESN'T end in a battle: it opens the
-   * exact same `CharacterCreationScene` "New Game" does (which already
-   * lets a player Save Party and Back out without ever pressing Start
-   * Battle — see that scene's own Save Party button), just under an
-   * honestly-labeled entry point instead of leaving that capability
-   * undiscoverable behind a button named "New Game."
+   * Every other way to actually get into a battle: Campaign (above) is the
+   * hero action, these are the alternates. "Party Creation" consolidates
+   * the old "New Game" and "Build Party" buttons, which both started
+   * `CharacterCreationScene` with no init data — the exact same screen —
+   * into one honestly-labeled entry point (still lets a player Save Party
+   * and Back out without ever pressing Start Battle).
    */
   private buildJourneyRow(): void {
     const cx = getViewport(this).width / 2;
     createSectionLabel(this, cx, 366, "◆ Continue Your Journey ◆", 5);
 
     const entries: { label: string; onClick: () => void }[] = [
-      { label: "Load Game", onClick: () => this.scene.start("LoadGameScene") },
-      { label: "Campaigns", onClick: () => this.scene.start("CampaignSelectScene") },
-      { label: "Free Play", onClick: () => this.scene.start("FreePlayScene") },
+      { label: "Free Play", onClick: () => this.scene.start("ModeEntryScene", { mode: "freeplay" }) },
     ];
     if (firebaseReady) entries.push({ label: "Co-op", onClick: () => this.scene.start("CoopLobbyScene") });
-    entries.push({ label: "Build Party", onClick: () => this.scene.start("CharacterCreationScene") });
+    entries.push({ label: "Party Creation", onClick: () => this.scene.start("CharacterCreationScene") });
 
     const width = 220;
     const { xs, itemWidth } = centeredRowX(entries.length, width, 20, cx, getViewport(this).width - 80);
@@ -278,17 +290,9 @@ export class MainMenuScene extends Phaser.Scene {
     const cx = getViewport(this).width / 2;
     createSectionLabel(this, cx, 500, "◆ Know Your Foe ◆", 5);
 
-    const entries: { label: string; onClick: () => void }[] = [
-      { label: "Compendium", onClick: () => this.scene.start("CompendiumScene") },
-      { label: "Bestiary", onClick: () => this.scene.start("BestiaryScene") },
-    ];
-    const width = 260;
-    const { xs, itemWidth } = centeredRowX(entries.length, width, 24, cx, getViewport(this).width - 80);
-    entries.forEach((entry, i) => {
-      createOrnateButton(this, xs[i], 546, itemWidth, 58, entry.label, entry.onClick, {
-        variant: "secondary",
-        depth: 5,
-      });
+    createOrnateButton(this, cx, 546, 260, 58, "Knowledge Base", () => this.scene.start("KnowledgeBaseScene"), {
+      variant: "secondary",
+      depth: 5,
     });
   }
 
@@ -328,7 +332,7 @@ export class MainMenuScene extends Phaser.Scene {
         cx,
         y,
         "Move your heroes, spend gold to Build walls & traps, and survive the waves.\n" +
-          "Don't let the enemies breach your Stronghold. Click New Game or press Enter.",
+          "Don't let the enemies breach your Stronghold. Click Campaign or press Enter.",
         {
           fontFamily: FONT_BODY,
           fontSize: "17px",

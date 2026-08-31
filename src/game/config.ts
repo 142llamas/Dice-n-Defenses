@@ -80,6 +80,16 @@ export const COMPANION_ROSTER_STORAGE_KEY = "fantasy-td:companion-roster";
 // the above (no cloud sync — see D-199's own writeup for why this differs
 // from CloudSaveSync/MapSharingSync's Firestore-backed systems).
 export const BLUEPRINT_LIBRARY_STORAGE_KEY = "fantasy-td:blueprint-library";
+// Phase 2 (2026-08-28 playtest batch, D-204): a named, reusable single-hero
+// CharacterBuild (see systems/CharacterLibrarySystem.ts) — same local-only,
+// global-across-every-campaign treatment as the blueprint library above, its
+// own key since a library entry's shape (a whole build) is unrelated.
+export const CHARACTER_LIBRARY_STORAGE_KEY = "fantasy-td:character-library";
+// Phase 3 (2026-08-28 playtest batch, D-205): the three rebindable in-battle
+// keys — Confirm/Cancel/Bonus Action (see systems/KeyBindingSystem.ts) — same
+// local-only treatment as the above, its own key since a key-binding map's
+// shape is unrelated to any of them.
+export const KEYBINDINGS_STORAGE_KEY = "fantasy-td:keybindings";
 
 // A small, readable colour palette for placeholder art (all original, no IP).
 export const COLORS = {

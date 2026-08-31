@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { STANDARD_ARRAY, ABILITY_SCORE_IDS } from "../src/game/data/abilityScores";
+import { STANDARD_ARRAY, ABILITY_SCORE_IDS, type AbilityScoreId } from "../src/game/data/abilityScores";
 import {
   StandardArrayAllocator,
   allocatorFromScores,
@@ -10,8 +10,12 @@ import {
   POINT_BUY_MAX_SCORE,
   heroDefinitionFromBuild,
   hasDuplicateNames,
+  defaultAbilityOrderForClass,
+  applyBackgroundAbilityBonus,
   type CharacterBuild,
 } from "../src/game/systems/CharacterBuildSystem";
+import { CREATABLE_CLASS_IDS } from "../src/game/data/characterCreation";
+import { getClassDefinition } from "../src/game/data/classes";
 
 /**
  * Phase 11.1's "finish it" slice — the character-creation UI's pure engine:
@@ -24,6 +28,40 @@ import {
 function sortedValues(scores: Record<string, number>): number[] {
   return Object.values(scores).sort((a, b) => a - b);
 }
+
+/**
+ * Phase 2 (2026-08-28 playtest batch, D-204): a per-class default Standard
+ * Array order, so a fresh hero's scores aren't always the flat identity
+ * order regardless of class.
+ */
+describe("defaultAbilityOrderForClass (D-204)", () => {
+  it("puts a class's primary ability first", () => {
+    expect(defaultAbilityOrderForClass("fighter")[0]).toBe("str");
+    expect(defaultAbilityOrderForClass("wizard")[0]).toBe("int");
+    expect(defaultAbilityOrderForClass("rogue")[0]).toBe("dex");
+  });
+
+  it("places a caster's spellcasting ability early, even if it isn't the primary ability", () => {
+    const order = defaultAbilityOrderForClass("paladin");
+    expect(getClassDefinition("paladin").spellcasting?.spellcastingAbility).toBe("cha");
+    expect(order.indexOf("cha")).toBeLessThan(3);
+  });
+
+  it("returns a permutation of all six ability scores for every creatable class, with no duplicates", () => {
+    for (const classId of CREATABLE_CLASS_IDS) {
+      const order = defaultAbilityOrderForClass(classId);
+      expect(order).toHaveLength(6);
+      expect(new Set(order).size).toBe(6);
+      expect([...order].sort()).toEqual([...ABILITY_SCORE_IDS].sort());
+    }
+  });
+
+  it("feeding the order straight into StandardArrayAllocator puts the primary ability at the top score", () => {
+    const order = defaultAbilityOrderForClass("wizard");
+    const allocator = new StandardArrayAllocator(order as AbilityScoreId[]);
+    expect(allocator.scores().int).toBe(STANDARD_ARRAY[0]);
+  });
+});
 
 describe("StandardArrayAllocator", () => {
   it("starts with the standard array assigned in ability-score order", () => {
@@ -220,6 +258,43 @@ describe("heroDefinitionFromBuild", () => {
 
   it("defaults to the standard 6-tile speed for a Human (D-172: 30ft ÷ 5ft/tile)", () => {
     expect(heroDefinitionFromBuild(build()).movementTiles).toBe(6);
+  });
+
+  // D-206
+  it("bakes a Background's ability bonus into the returned abilityScores and passes backgroundId through", () => {
+    const def = heroDefinitionFromBuild(
+      build({ backgroundId: "soldier", backgroundAbilityChoice: { str: 2, con: 1 } }),
+    );
+    expect(def.backgroundId).toBe("soldier");
+    expect(def.abilityScores).toEqual({ str: 17, dex: 14, con: 14, int: 12, wis: 10, cha: 8 });
+    // STR 17 -> +3 (was +2 at 15); base weapon 2 + 3 = 5 (was 4 in the plain test above).
+    expect(def.attackDamage).toBe(5);
+  });
+
+  it("leaves abilityScores untouched when no background ability choice was made", () => {
+    const def = heroDefinitionFromBuild(build());
+    expect(def.abilityScores).toEqual({ str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 });
+    expect(def.backgroundId).toBeUndefined();
+  });
+});
+
+// D-206
+describe("applyBackgroundAbilityBonus", () => {
+  const scores = { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 };
+
+  it("adds a +2/+1 split on top of the base scores without mutating the input", () => {
+    const result = applyBackgroundAbilityBonus(scores, { str: 2, con: 1 });
+    expect(result).toEqual({ str: 17, dex: 14, con: 14, int: 12, wis: 10, cha: 8 });
+    expect(scores.str).toBe(15); // input untouched
+  });
+
+  it("adds a +1/+1/+1 split", () => {
+    const result = applyBackgroundAbilityBonus(scores, { str: 1, dex: 1, con: 1 });
+    expect(result).toEqual({ str: 16, dex: 15, con: 14, int: 12, wis: 10, cha: 8 });
+  });
+
+  it("is a no-op (shallow copy) when the choice is undefined", () => {
+    expect(applyBackgroundAbilityBonus(scores, undefined)).toEqual(scores);
   });
 });
 

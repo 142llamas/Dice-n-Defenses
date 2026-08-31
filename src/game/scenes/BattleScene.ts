@@ -14,6 +14,7 @@ import {
   WORLD_FLAG_STORAGE_KEY,
   COMPANION_ROSTER_STORAGE_KEY,
   SAVE_STORAGE_KEY,
+  KEYBINDINGS_STORAGE_KEY,
 } from "../config";
 import { SPRITE_MANIFEST } from "../data/spriteManifest";
 import { GridSystem, computeFittedTileSize, type GridPosition } from "../systems/GridSystem";
@@ -38,7 +39,8 @@ import { RandomService } from "../systems/RandomService";
 import { SavingThrowSystem } from "../systems/SavingThrowSystem";
 import { SkillCheckSystem } from "../systems/SkillCheckSystem";
 import { TurnSystem, PHASE_LABELS, type GamePhase } from "../systems/TurnSystem";
-import { EconomySystem } from "../systems/EconomySystem";
+import { EconomySystem, SOLO_ECONOMY_OWNER, sellValueForCost } from "../systems/EconomySystem";
+import { isItemEligibleForSlot, type ShopActionResult } from "../systems/GearCompareSystem";
 import { BuildSystem, type PlacedStructure } from "../systems/BuildSystem";
 import { SummonSystem } from "../systems/SummonSystem";
 import { RewardSystem } from "../systems/RewardSystem";
@@ -50,7 +52,7 @@ import { ProgressionSystem } from "../systems/ProgressionSystem";
 import { RestSystem } from "../systems/RestSystem";
 import { firstAvailableHeroAction, listHeroActions, hotkeyDisplayLabel } from "../systems/HeroActionRegistry";
 import { createTooltipController, attachHoverTooltip, type TooltipController } from "./tooltip";
-import { centeredRowX } from "./uiTheme";
+import { centeredRowX, drawScreenBackdrop, FONT_DISPLAY, FONT_BODY } from "./uiTheme";
 import { showDialogue, type DialogueBoxController, type DialogueLine } from "./dialogueBox";
 import { asiFeatureGrantedAtLevel, subclassGrantedAtLevel } from "../systems/CharacterSystem";
 import { subclassesForClass, getSubclassDefinition } from "../data/subclasses";
@@ -134,6 +136,8 @@ import { getMapById } from "../data/maps";
 import { ENEMY_COLORS, ENEMY_DEFINITIONS, getEnemyDefinition, type EnemyRole } from "../data/enemies";
 import type { HeroDefinition } from "../data/heroes";
 import { HeroAISystem } from "../systems/HeroAISystem";
+import { loadKeyBindings, type KeyBindings } from "../systems/KeyBindingSystem";
+import { getBackgroundDefinition } from "../data/backgrounds";
 import { canActOnHero } from "../systems/CoopSessionSystem";
 import {
   getDifficultyDefinition,
@@ -159,7 +163,6 @@ import {
   getEquipmentDefinition,
   GEAR_SLOT_IDS,
   GEAR_SLOT_LABELS,
-  GEAR_SLOT_TYPE_LABELS,
   RARITY_LABELS,
   gearSlotType,
   type GearSlotId,
@@ -277,7 +280,6 @@ type Interaction =
   | { kind: "heroSelected"; heroId: string }
   | { kind: "confirmingMove"; heroId: string; dest: GridPosition }
   | { kind: "building"; defId: string }
-  | { kind: "equipping"; itemId: string | null }
   | { kind: "choosingSpell"; heroId: string }
   | { kind: "aimingSpell"; heroId: string; abilityId: string }
   /**
@@ -332,56 +334,15 @@ const STEALTH_SENSE_RANGE_TILES = 2;
 const ALL_GEAR_CATALOG_IDS: string[] = [...EQUIPMENT_ORDER, ...POTION_ORDER];
 
 /**
- * Phase 17 (D-108): the real weapon/armor catalogue nearly quadrupled
- * `ALL_GEAR_CATALOG_IDS`'s size — a flat, un-paged grid (D-078's original
- * design) would now run many rows past the canvas. `showEquipUI` shows only
- * one page's worth (4 cols x 4 rows) at a time, keyed off the SAME
- * `gridFocusIndex` keyboard/mouse selection already tracks (its page is
- * just `floor(index / ITEM_GRID_PAGE_SIZE)`) — no separate page field needed,
- * and arrow-key navigation across a page boundary "just works" for free.
- *
- * Phase 25 (D-116): renamed from `GEAR_GRID_PAGE_SIZE` — the shop grid grew
- * past 20 structures this phase and now paginates through the exact same
- * mechanism (`showShopUI`/`turnGridPage`, sharing one nav control with the
- * Gear grid since the two are never shown at once). This caps BOTH grids at
- * a fixed 4 rows regardless of catalogue size, so neither can ever grow past
- * the canvas again.
+ * Phase 25 (D-116): the shop grid grew past 20 structures this phase and
+ * paginates via `showShopUI`/`turnGridPage`. D-209: this used to also cap
+ * the (now-deleted) in-scene Gear grid, sharing one nav control with Shop —
+ * `GearShopScene` handles its own catalog paging separately now.
  */
 const ITEM_GRID_PAGE_SIZE = 16;
 
 /** D-158: matches `CharacterCreationScene`'s own `MAX_PARTY_SIZE` — the hero roster strip builds this many slot widgets, then hides whichever aren't in play. */
 const MAX_ROSTER_SLOTS = 4;
-
-interface GearCatalogEntry {
-  id: string;
-  name: string;
-  cost: number;
-  description: string;
-  isPotion: boolean;
-}
-
-function gearCatalogEntry(id: string): GearCatalogEntry {
-  if (id in POTION_DEFINITIONS) {
-    const def = getPotionDefinition(id);
-    return { id, name: def.name, cost: def.cost, description: def.description, isPotion: true };
-  }
-  const def = getEquipmentDefinition(id);
-  return { id, name: def.name, cost: def.cost, description: def.description, isPotion: false };
-}
-
-/**
- * Button label: equipment shows its slot type, potions just say "Potion".
- * Phase 13.9 (D-094): an equipment item above "common" also shows its
- * rarity, so a rare-and-up item stands out in the grid before it's clicked.
- */
-function gearCatalogButtonLabel(id: string): string {
-  const entry = gearCatalogEntry(id);
-  if (entry.isPotion) return `${entry.name} · Potion (${entry.cost}g)`;
-  const def = getEquipmentDefinition(id);
-  const tag = GEAR_SLOT_TYPE_LABELS[def.slot];
-  const rarityTag = def.rarity === "common" ? "" : ` · ${RARITY_LABELS[def.rarity]}`;
-  return `${entry.name} · ${tag}${rarityTag} (${entry.cost}g)`;
-}
 
 /** Phase 13.7 (D-092): "1st"/"2nd"/"3rd"/"Nth" for a spell-slot level in the spellbook overlay. */
 function ordinalSpellLevel(level: number): string {
@@ -427,6 +388,12 @@ export class BattleScene extends Phaser.Scene {
   private restSystem!: RestSystem;
   private heroAI!: HeroAISystem;
   private wavesCleared = 0;
+  /** Phase 3 (D-205): rebindable Confirm/Cancel/Bonus Action keys — loaded in `create()`, refreshed on scene resume (see the `RESUME` listener) so a mid-battle Pause -> Settings rebind takes effect without a restart. */
+  private keyBindings!: KeyBindings;
+  /** Phase 3 (D-205): tracks the last board-tile click for double-click-to-confirm detection (see `isDoubleClickOn`) — generalized beyond just movement so a future tile-click feature can reuse it. */
+  private lastBoardClick: { tile: GridPosition; atMs: number } | null = null;
+  /** Phase 3 (D-205): true while a move-then-attack's approach is animating, between the move landing and the attack actually firing — blocks a stray click from interrupting mid-sequence. */
+  private movingIntoAttack = false;
 
   private heroes: Hero[] = [];
   private heroTokens = new Map<string, Token>();
@@ -489,6 +456,8 @@ export class BattleScene extends Phaser.Scene {
   private pendingRect!: Phaser.GameObjects.Rectangle;
 
   private bannerText!: Phaser.GameObjects.Text;
+  /** D-210 (Phase 5 reskin): the wood-panel/bronze chip drawn behind `bannerText`, resized to its real measured width every time `fitBannerToWidth` runs. */
+  private bannerChip!: Phaser.GameObjects.Graphics;
   // The widest pixel width the banner may render at before it would reach
   // the Gear button's left edge (KI-033) — set once in buildHud from the
   // buttons' own real coordinates, consumed by fitBannerToWidth().
@@ -521,6 +490,15 @@ export class BattleScene extends Phaser.Scene {
    */
   private messageText!: Phaser.GameObjects.Text;
   private combatLogText!: Phaser.GameObjects.Text;
+  /** D-210 (Phase 5 reskin): a bronze-hairline backing behind `combatLogText`, resized to the log's current line count every time it changes — see `refreshCombatLogPanel`. */
+  private combatLogPanel!: Phaser.GameObjects.Graphics;
+  /**
+   * KI-155's "off center" fix: the Y the Confirm/Cancel/Ability/Potion row
+   * sits at BEFORE the combat log's own (variable) reserved height is added
+   * — see `actionRowY`/`refreshActionRowLayout`. Fixed once at creation
+   * (depends only on grid size, never on log content).
+   */
+  private actionRowBaseY = 0;
   private endTurnButton!: Phaser.GameObjects.Rectangle;
   private endTurnLabel!: Phaser.GameObjects.Text;
   private confirmButton!: Phaser.GameObjects.Rectangle;
@@ -572,22 +550,17 @@ export class BattleScene extends Phaser.Scene {
   private equipLabel!: Phaser.GameObjects.Text;
   private shopButtons: Phaser.GameObjects.Rectangle[] = [];
   private shopLabels: Phaser.GameObjects.Text[] = [];
-  private equipItemButtons: Phaser.GameObjects.Rectangle[] = [];
-  private equipItemLabels: Phaser.GameObjects.Text[] = [];
   /**
-   * Phase 17 (D-108): page nav for whichever item grid is active — its page
-   * is derived from `gridFocusIndex`, no separate page field. Phase 25
-   * (D-116): shared between the Gear AND Shop grids (renamed from
-   * `gearPage*`) since the two are never shown at once.
+   * Phase 17 (D-108): page nav for the shop item grid — its page is derived
+   * from `gridFocusIndex`, no separate page field. D-209: this used to also
+   * serve the (now-deleted) in-scene Gear grid, renamed from `gearPage*`
+   * since the two were never shown at once.
    */
   private pageNavPrevButton!: Phaser.GameObjects.Text;
   private pageNavNextButton!: Phaser.GameObjects.Text;
   private pageNavLabel!: Phaser.GameObjects.Text;
   private doneButton!: Phaser.GameObjects.Rectangle;
   private doneLabel!: Phaser.GameObjects.Text;
-  /** Phase 11.7 (D-071): shown instead of the Gear grid when no living hero
-   * is near a "shop" tile — proximity-gated shopping's fallback message. */
-  private equipLockLabel!: Phaser.GameObjects.Text;
   private buildGhost!: Phaser.GameObjects.Rectangle;
   /** Phase 8: a check/cross glyph on the build ghost, so "can I build here"
    * doesn't rely solely on green-vs-red. */
@@ -1024,8 +997,6 @@ export class BattleScene extends Phaser.Scene {
     this.pathDots = [];
     this.shopButtons = [];
     this.shopLabels = [];
-    this.equipItemButtons = [];
-    this.equipItemLabels = [];
     this.endOverlay = [];
     this.restOverlay = [];
     this.pendingAfterRest = null;
@@ -1074,6 +1045,7 @@ export class BattleScene extends Phaser.Scene {
     this.keyboardFocus = "board";
     this.gridFocusIndex = 0;
     this.animationSpeed = loadSettings(window.localStorage, SETTINGS_STORAGE_KEY).animationSpeed;
+    this.keyBindings = loadKeyBindings(window.localStorage, KEYBINDINGS_STORAGE_KEY);
     this.bestiaryProgress = loadBestiaryProgress(window.localStorage, BESTIARY_STORAGE_KEY);
     this.campaignProgress = loadCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY);
     this.worldFlags = loadWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY);
@@ -1147,7 +1119,29 @@ export class BattleScene extends Phaser.Scene {
       enemyHpMultiplier: difficulty.enemyHpMultiplier * partySizeScalingFactor(heroCount),
       random: this.random,
     });
-    this.economy = new EconomySystem(STARTING_GOLD);
+    // D-206: each hero's Background contributes a small starting-gold bonus
+    // (this game's mechanical stand-in for the rest of the SRD equipment
+    // package's tools/books/clothes — see `data/backgrounds.ts`'s own
+    // comment). D-208 ("co-op economy"): one gold pool per economy owner —
+    // just `SOLO_ECONOMY_OWNER` outside a coop session (summing every
+    // hero's bonus into that one pool, unchanged from before this phase),
+    // or one pool per participant uid inside one, each summing only the
+    // bonuses of the heroes THAT participant owns.
+    const economyOwnerIds = this.coopSession
+      ? [...new Set(Object.values(this.coopSession.heroOwners))]
+      : [SOLO_ECONOMY_OWNER];
+    const startingGoldByOwner: Record<string, number> = {};
+    for (const ownerId of economyOwnerIds) {
+      const ownedDefs = this.coopSession
+        ? this.heroDefinitions.filter((def) => this.coopSession!.heroOwners[def.id] === ownerId)
+        : this.heroDefinitions;
+      const ownerBackgroundBonus = ownedDefs.reduce(
+        (sum, def) => sum + (def.backgroundId ? getBackgroundDefinition(def.backgroundId).startingGold : 0),
+        0,
+      );
+      startingGoldByOwner[ownerId] = STARTING_GOLD + ownerBackgroundBonus;
+    }
+    this.economy = new EconomySystem(startingGoldByOwner);
     this.buildSystem = new BuildSystem(this.map, this.pathfinding);
     this.progression = new ProgressionSystem();
     this.restSystem = new RestSystem({
@@ -1186,9 +1180,16 @@ export class BattleScene extends Phaser.Scene {
       GRID_TOP_MARGIN,
     );
 
-    this.cameras.main.setBackgroundColor("#0e0e14");
+    // D-210 (Phase 5 reskin): the same wood/stone backdrop + vignette as
+    // Main Menu/Compendium/Bestiary/Character Creation (D-123's
+    // `uiTheme.ts`), replacing the flat `#0e0e14` fill. Board-legibility
+    // colors (tile floor, hero/enemy tokens, highlights) are untouched —
+    // this only recolors the chrome around the board.
+    this.cameras.main.setBackgroundColor("#0a0704");
+    drawScreenBackdrop(this);
 
     this.buildBoard();
+    this.drawBoardFrame();
     this.buildHeroes();
     this.buildHighlightObjects();
     this.buildHud();
@@ -1311,7 +1312,7 @@ export class BattleScene extends Phaser.Scene {
     if (fate === "redeemed") {
       this.grantSorrelRedeemedReward();
     } else if (fate === "marked") {
-      this.economy.award(SORREL_MARKED_GOLD_REWARD);
+      this.economy.award(this.economyOwnerFor(), SORREL_MARKED_GOLD_REWARD);
       this.updateGoldHud();
       this.logCombat(`Sorrel presses something into your hand before she goes quiet again — +${SORREL_MARKED_GOLD_REWARD}g.`);
     }
@@ -1375,7 +1376,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private grantRegionBonusGold(amount: number): void {
-    this.economy.award(amount);
+    this.economy.award(this.economyOwnerFor(), amount);
     this.updateGoldHud();
     this.logCombat(`Region bonus: +${amount} starting gold!`);
   }
@@ -1409,7 +1410,7 @@ export class BattleScene extends Phaser.Scene {
       this.updateGoldHud();
       return;
     }
-    this.economy.award(def.cost);
+    this.economy.award(this.economyOwnerFor(), def.cost);
     this.logCombat(`${sourceLabel} (${def.name}) — no hero has room to equip it, sold for ${def.cost}g instead.`);
     this.updateGoldHud();
   }
@@ -1506,6 +1507,46 @@ export class BattleScene extends Phaser.Scene {
 
     for (const pos of this.map.data.spawns) this.drawMarker(pos, "IN", COLORS.spawn);
     for (const pos of this.map.data.exits) this.drawMarker(pos, "OUT", COLORS.exit);
+  }
+
+  /**
+   * D-210 (Phase 5 reskin): a bold double bronze/gilt frame with corner
+   * diamonds hugging the board's outer edge, matching Kevin's approved
+   * mockup ("The Battlefield") — drawn once, since the grid's geometry
+   * (`this.grid.originX/originY/tileSize`, `this.map.cols/rows`) is fixed
+   * for the lifetime of a battle. Sits in the padding OUTSIDE the tile area,
+   * so it never overlaps (or needs to match z-order with) any tile/token —
+   * purely decorative chrome, no gameplay color touched.
+   */
+  private drawBoardFrame(): void {
+    const pad = 16;
+    const x0 = this.grid.originX - pad;
+    const y0 = this.grid.originY - pad;
+    const w = this.map.cols * this.grid.tileSize + pad * 2;
+    const h = this.map.rows * this.grid.tileSize + pad * 2;
+
+    const g = this.add.graphics().setDepth(2);
+    g.lineStyle(5, COLORS.bronze, 1);
+    g.strokeRect(x0, y0, w, h);
+    g.lineStyle(2, COLORS.bronzeDark, 0.85);
+    g.strokeRect(x0 + 7, y0 + 7, w - 14, h - 14);
+
+    const corners: [number, number][] = [
+      [x0, y0],
+      [x0 + w, y0],
+      [x0, y0 + h],
+      [x0 + w, y0 + h],
+    ];
+    for (const [cx, cy] of corners) {
+      g.fillStyle(COLORS.gilt, 1);
+      g.beginPath();
+      g.moveTo(cx, cy - 9);
+      g.lineTo(cx + 9, cy);
+      g.lineTo(cx, cy + 9);
+      g.lineTo(cx - 9, cy);
+      g.closePath();
+      g.fillPath();
+    }
   }
 
   /**
@@ -1641,6 +1682,14 @@ export class BattleScene extends Phaser.Scene {
     definitions.forEach((def, i) => {
       const start = starts[i] ?? starts[0];
       const hero = new Hero(def, start);
+      // D-206: a Background's single Origin Feat, granted once right after
+      // construction — `Hero.meetsFeatPrerequisites`'s existing `alreadyHeld`
+      // check (keyed off `this.feats` regardless of how a feat got there)
+      // already stops the ASI-or-feat overlay from re-offering it later.
+      if (hero.backgroundId) {
+        const background = getBackgroundDefinition(hero.backgroundId);
+        hero.grantFeat(background.originFeatId, { magicInitiateList: background.magicInitiateList });
+      }
       if (def.startingLevel && def.startingLevel > 1) {
         // D-16x: whatever the fast-forward couldn't resolve from an
         // explicit plan entry gets queued, not silently defaulted — see
@@ -1775,11 +1824,16 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(30);
 
+    // D-210 (Phase 5 reskin): a wood-panel/bronze chip behind the banner,
+    // resized to the text's real measured width every time it changes (see
+    // `fitBannerToWidth`) — drawn below the text's own depth (30) so the
+    // text always renders on top of its own backing.
+    this.bannerChip = this.add.graphics().setDepth(29);
     this.bannerText = this.add
       .text(GAME_WIDTH / 2, 42, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_DISPLAY,
         fontSize: "20px",
-        color: "#9be0b4",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
@@ -1838,20 +1892,21 @@ export class BattleScene extends Phaser.Scene {
     const rightMargin = 24;
     const bx = GAME_WIDTH - rightMargin - 90;
     this.endTurnButton = this.add
-      .rectangle(bx, 34, 180, 44, 0x3a5a8a)
+      .rectangle(bx, 34, 180, 44, COLORS.woodPanel)
+      .setStrokeStyle(2, COLORS.bronze)
       .setInteractive({ useHandCursor: true })
       .setDepth(30);
     this.endTurnLabel = this.add
       .text(bx, 34, "End Turn (E)", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "18px",
-        color: "#e8e8f0",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(30);
-    this.endTurnButton.on("pointerover", () => this.endTurnButton.setFillStyle(0x4a6a9a));
-    this.endTurnButton.on("pointerout", () => this.endTurnButton.setFillStyle(0x3a5a8a));
+    this.endTurnButton.on("pointerover", () => this.endTurnButton.setFillStyle(COLORS.woodPanelHover).setStrokeStyle(2, COLORS.gilt));
+    this.endTurnButton.on("pointerout", () => this.endTurnButton.setFillStyle(COLORS.woodPanel).setStrokeStyle(2, COLORS.bronze));
     this.endTurnButton.on("pointerdown", () => this.endPlayerTurn());
 
     // ----- Below the grid: hero roster strip, then a small message line,
@@ -1885,8 +1940,8 @@ export class BattleScene extends Phaser.Scene {
     const rosterY = belowGridY + rosterBoxHeight / 2;
     for (let slot = 0; slot < MAX_ROSTER_SLOTS; slot++) {
       const box = this.add
-        .rectangle(0, rosterY, rosterBoxWidth, rosterBoxHeight, 0x1a1a26, 0.9)
-        .setStrokeStyle(2, 0x3a3a4a)
+        .rectangle(0, rosterY, rosterBoxWidth, rosterBoxHeight, COLORS.woodPanel, 0.9)
+        .setStrokeStyle(2, COLORS.bronze)
         .setDepth(30)
         .setInteractive({ useHandCursor: true })
         .setVisible(false);
@@ -1898,16 +1953,17 @@ export class BattleScene extends Phaser.Scene {
       box.on("pointerout", () => this.tooltip.hide());
       const nameText = this.add
         .text(0, rosterY - 18, "", {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "13px",
-          color: "#e8e8f0",
+          fontFamily: FONT_BODY,
+          fontSize: "14px",
+          color: "#f0e6c8",
           fontStyle: "bold",
         })
         .setOrigin(0.5)
         .setDepth(31)
         .setVisible(false);
       const hpBarBg = this.add
-        .rectangle(0, rosterY + 2, 230, 10, 0x2a2a3a)
+        .rectangle(0, rosterY + 2, 230, 10, 0x140f0a)
+        .setStrokeStyle(1, COLORS.bronzeDark)
         .setOrigin(0, 0.5)
         .setDepth(31)
         .setVisible(false);
@@ -1949,9 +2005,10 @@ export class BattleScene extends Phaser.Scene {
     const messageY = rosterY + rosterBoxHeight / 2 + 6;
     this.messageText = this.add
       .text(GAME_WIDTH / 2, messageY, "", {
-        fontFamily: "monospace",
-        fontSize: "13px",
-        color: "#9a9ab0",
+        fontFamily: FONT_BODY,
+        fontSize: "14px",
+        fontStyle: "italic",
+        color: "#8a7038",
         align: "center",
         wordWrap: { width: wrapWidth },
       })
@@ -1963,11 +2020,19 @@ export class BattleScene extends Phaser.Scene {
     // rosterBoxHeight (56) + a 6px gap + ~16px for one short message line.
     const statusBlockHeight = rosterBoxHeight + 6 + 16;
 
+    // D-210 (Phase 5 reskin): a bronze-hairline backing panel behind the
+    // log text, per Kevin's own ask — drawn just below the text's depth so
+    // it reads as a real backed panel rather than floating loose on the
+    // wood backdrop. Sized dynamically (`refreshCombatLogPanel`) to match
+    // whatever height the log's current line count reserves, same as the
+    // text itself — a fixed max-size panel would reintroduce the exact
+    // dead-space-on-Wave-1 bug KI-155/D-207 already fixed.
+    this.combatLogPanel = this.add.graphics().setDepth(29);
     this.combatLogText = this.add
       .text(GAME_WIDTH / 2, belowGridY + statusBlockHeight, "", {
-        fontFamily: "monospace",
-        fontSize: "12px",
-        color: "#c0a0a0",
+        fontFamily: FONT_BODY,
+        fontSize: "14px",
+        color: "#d8b98a",
         align: "center",
         // Playtest fix: this had no wordWrap at all — a single long combat-log
         // line (a multi-clause weapon-mastery/spell/status message) could
@@ -1976,34 +2041,57 @@ export class BattleScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0)
       .setDepth(30);
-    const logBlockHeight = 86; // reserves the actual 5-line cap (see logCombat)
+    // KI-155's "off center" fix: this used to always reserve the full
+    // 5-line log cap (86px), leaving a large dead gap under the roster on
+    // Wave 1 before the log has anything in it. `actionRowY()` now sizes
+    // this to the log's ACTUAL current line count instead, growing to the
+    // same 86px once the log fills up (see its own comment) so nothing
+    // shifts once a battle is underway.
+    this.actionRowBaseY = belowGridY + statusBlockHeight + 20;
+    this.refreshCombatLogPanel();
+    const cy = this.actionRowY();
+    // D-210 (Phase 5 reskin): every action-row button below (Confirm/Cancel/
+    // Ability/Potion, then Bonus Action/Action Surge/Class Action/Character
+    // Sheet/hotkeys further down) used to each carry its own flat identity
+    // color. Kevin's explicit call on the mockup: they don't need distinct
+    // colors, they should just match the rest of the chrome — so every one
+    // of them now shares this one wood-panel-and-bronze look, with the same
+    // hover feedback the top-bar buttons already got.
+    const themeButton = (
+      btn: Phaser.GameObjects.Rectangle,
+      label: Phaser.GameObjects.Text,
+    ): void => {
+      btn.setStrokeStyle(1.5, COLORS.bronze);
+      label.setColor("#f0e6c8").setFontFamily(FONT_BODY);
+      btn.on("pointerover", () => btn.setFillStyle(COLORS.woodPanelHover).setStrokeStyle(1.5, COLORS.gilt));
+      btn.on("pointerout", () => btn.setFillStyle(COLORS.woodPanel).setStrokeStyle(1.5, COLORS.bronze));
+    };
 
-    const cy = belowGridY + statusBlockHeight + logBlockHeight + 20;
     this.confirmButton = this.add
-      .rectangle(GAME_WIDTH / 2 - 150, cy, 150, 32, 0x4caf72)
+      .rectangle(GAME_WIDTH / 2 - 150, cy, 150, 32, COLORS.woodPanel)
       .setInteractive({ useHandCursor: true })
       .setDepth(31)
       .setVisible(false);
     this.confirmLabel = this.add
       .text(GAME_WIDTH / 2 - 150, cy, "Confirm (Enter)", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "15px",
-        color: "#0e0e14",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(31)
       .setVisible(false);
     this.cancelButton = this.add
-      .rectangle(GAME_WIDTH / 2, cy, 150, 32, 0x7a3a3a)
+      .rectangle(GAME_WIDTH / 2, cy, 150, 32, COLORS.woodPanel)
       .setInteractive({ useHandCursor: true })
       .setDepth(31)
       .setVisible(false);
     this.cancelLabel = this.add
       .text(GAME_WIDTH / 2, cy, "Cancel (Esc)", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "15px",
-        color: "#e8e8f0",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
@@ -2011,44 +2099,48 @@ export class BattleScene extends Phaser.Scene {
       .setVisible(false);
     this.confirmButton.on("pointerdown", () => this.confirmMove());
     this.cancelButton.on("pointerdown", () => this.cancelMove());
+    themeButton(this.confirmButton, this.confirmLabel);
+    themeButton(this.cancelButton, this.cancelLabel);
 
     // Ability button: visible when a hero that can still act is selected.
     this.abilityButton = this.add
-      .rectangle(GAME_WIDTH / 2 + 150, cy, 190, 32, 0x6a4a8a)
+      .rectangle(GAME_WIDTH / 2 + 150, cy, 190, 32, COLORS.woodPanel)
       .setInteractive({ useHandCursor: true })
       .setDepth(31)
       .setVisible(false);
     this.abilityLabel = this.add
       .text(GAME_WIDTH / 2 + 150, cy, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "14px",
-        color: "#f0e8ff",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(31)
       .setVisible(false);
     this.abilityButton.on("pointerdown", () => this.onAbilityButton());
+    themeButton(this.abilityButton, this.abilityLabel);
 
     // Potion button (Phase 11.5, D-078): visible when a hero that can still
     // act carries at least one potion. Placed to the right of Ability with
     // the same gap discipline as every other button row in this HUD.
     this.potionButton = this.add
-      .rectangle(GAME_WIDTH / 2 + 360, cy, 150, 32, 0x4a6a4a)
+      .rectangle(GAME_WIDTH / 2 + 360, cy, 150, 32, COLORS.woodPanel)
       .setInteractive({ useHandCursor: true })
       .setDepth(31)
       .setVisible(false);
     this.potionLabel = this.add
       .text(GAME_WIDTH / 2 + 360, cy, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "14px",
-        color: "#e8ffe8",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(31)
       .setVisible(false);
     this.potionButton.on("pointerdown", () => this.onPotionButton());
+    themeButton(this.potionButton, this.potionLabel);
 
     // Bonus Action / Action Surge buttons (Phase 13.2, D-087): a new row
     // BELOW the Confirm/Cancel/Ability/Potion row above, not to its right —
@@ -2059,38 +2151,40 @@ export class BattleScene extends Phaser.Scene {
     // already used for the row above, see its own comment).
     const cy2 = cy + 40;
     this.bonusActionButton = this.add
-      .rectangle(GAME_WIDTH / 2 + 150, cy2, 190, 32, 0x8a6a3a)
+      .rectangle(GAME_WIDTH / 2 + 150, cy2, 190, 32, COLORS.woodPanel)
       .setInteractive({ useHandCursor: true })
       .setDepth(31)
       .setVisible(false);
     this.bonusActionLabel = this.add
       .text(GAME_WIDTH / 2 + 150, cy2, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "14px",
-        color: "#fff0e0",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(31)
       .setVisible(false);
     this.bonusActionButton.on("pointerdown", () => this.onBonusActionButton());
+    themeButton(this.bonusActionButton, this.bonusActionLabel);
 
     this.actionSurgeButton = this.add
-      .rectangle(GAME_WIDTH / 2 + 360, cy2, 150, 32, 0xb04a4a)
+      .rectangle(GAME_WIDTH / 2 + 360, cy2, 150, 32, COLORS.woodPanel)
       .setInteractive({ useHandCursor: true })
       .setDepth(31)
       .setVisible(false);
     this.actionSurgeLabel = this.add
       .text(GAME_WIDTH / 2 + 360, cy2, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "14px",
-        color: "#ffe8e8",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(31)
       .setVisible(false);
     this.actionSurgeButton.on("pointerdown", () => this.onActionSurgeButton());
+    themeButton(this.actionSurgeButton, this.actionSurgeLabel);
 
     // D-125: a third row below Bonus Action/Action Surge — no horizontal
     // room left on their row (Action Surge already reaches close to the
@@ -2098,41 +2192,43 @@ export class BattleScene extends Phaser.Scene {
     // row" precedent that produced the Bonus Action/Action Surge row itself.
     const cy3 = cy2 + 40;
     this.classActionButton = this.add
-      .rectangle(GAME_WIDTH / 2 + 150, cy3, 260, 32, 0x4a6a8a)
+      .rectangle(GAME_WIDTH / 2 + 150, cy3, 260, 32, COLORS.woodPanel)
       .setInteractive({ useHandCursor: true })
       .setDepth(31)
       .setVisible(false);
     this.classActionLabel = this.add
       .text(GAME_WIDTH / 2 + 150, cy3, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "14px",
-        color: "#e0f0ff",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(31)
       .setVisible(false);
     this.classActionButton.on("pointerdown", () => this.onClassActionButton());
+    themeButton(this.classActionButton, this.classActionLabel);
 
     // D-148: same row as Class Action, to its right — plenty of horizontal
     // room left before the 1280px canvas edge (classActionButton's own
     // right edge sits at x=920).
     this.characterSheetButton = this.add
-      .rectangle(GAME_WIDTH / 2 + 460, cy3, 170, 32, 0x6a5a3a)
+      .rectangle(GAME_WIDTH / 2 + 460, cy3, 170, 32, COLORS.woodPanel)
       .setInteractive({ useHandCursor: true })
       .setDepth(31)
       .setVisible(false);
     this.characterSheetLabel = this.add
       .text(GAME_WIDTH / 2 + 460, cy3, "Character (C)", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "14px",
-        color: "#f0e8d0",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(31)
       .setVisible(false);
     this.characterSheetButton.on("pointerdown", () => this.openCharacterSheet());
+    themeButton(this.characterSheetButton, this.characterSheetLabel);
 
     // D-165 (KI-098 item 2): the pinned hotkey bar — a 4th row below Class
     // Action/Character, same "add a new row, no horizontal room left"
@@ -2145,15 +2241,15 @@ export class BattleScene extends Phaser.Scene {
     for (let slot = 0; slot < ACTION_HOTKEY_SLOT_COUNT; slot++) {
       const x = hotkeyXs[slot];
       const button = this.add
-        .rectangle(x, cy4, hotkeyWidth, 28, 0x5a4a7a)
+        .rectangle(x, cy4, hotkeyWidth, 28, COLORS.woodPanel)
         .setInteractive({ useHandCursor: true })
         .setDepth(31)
         .setVisible(false);
       const label = this.add
         .text(x, cy4, "", {
-          fontFamily: "system-ui, Arial, sans-serif",
+          fontFamily: FONT_BODY,
           fontSize: "11px",
-          color: "#f0e8ff",
+          color: "#f0e6c8",
           fontStyle: "bold",
           align: "center",
           wordWrap: { width: hotkeyWidth - 8 },
@@ -2163,6 +2259,7 @@ export class BattleScene extends Phaser.Scene {
         .setVisible(false);
       button.on("pointerdown", () => this.triggerHotkey(slot));
       attachHoverTooltip(this.tooltip, button, x, cy4 - 20, () => this.hotkeyTooltipText(slot));
+      themeButton(button, label);
       this.hotkeyButtons.push(button);
       this.hotkeyLabels.push(label);
     }
@@ -2218,8 +2315,8 @@ export class BattleScene extends Phaser.Scene {
     // phase-order log (y=56) with clear gaps on both sides.
     this.goldText = this.add
       .text(this.grid.originX, 32, "", {
-        fontFamily: "monospace",
-        fontSize: "16px",
+        fontFamily: FONT_BODY,
+        fontSize: "17px",
         color: "#f0c850",
         fontStyle: "bold",
       })
@@ -2233,20 +2330,21 @@ export class BattleScene extends Phaser.Scene {
     const endTurnLeftEdge = GAME_WIDTH - rightMargin - 180;
     const bbx = endTurnLeftEdge - gapBetweenButtons - 75;
     this.buildButton = this.add
-      .rectangle(bbx, 34, 150, 44, 0x5a6a3a)
+      .rectangle(bbx, 34, 150, 44, COLORS.woodPanel)
+      .setStrokeStyle(2, COLORS.bronze)
       .setInteractive({ useHandCursor: true })
       .setDepth(30);
     this.buildLabel = this.add
       .text(bbx, 34, "Build (B)", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "18px",
-        color: "#e8e8f0",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(30);
-    this.buildButton.on("pointerover", () => this.buildButton.setFillStyle(0x6a7a4a));
-    this.buildButton.on("pointerout", () => this.buildButton.setFillStyle(0x5a6a3a));
+    this.buildButton.on("pointerover", () => this.buildButton.setFillStyle(COLORS.woodPanelHover).setStrokeStyle(2, COLORS.gilt));
+    this.buildButton.on("pointerout", () => this.buildButton.setFillStyle(COLORS.woodPanel).setStrokeStyle(2, COLORS.bronze));
     this.buildButton.on("pointerdown", () => this.toggleBuildMode());
 
     // Phase 8 playtest fix: this used to be `bbx - gapBetweenButtons - 75`,
@@ -2266,21 +2364,22 @@ export class BattleScene extends Phaser.Scene {
     const bannerSafetyGap = 12;
     this.bannerMaxWidth = 2 * (gearLeftEdge - GAME_WIDTH / 2 - bannerSafetyGap);
     this.equipButton = this.add
-      .rectangle(gbx, 34, 150, 44, 0x5a3a6a)
+      .rectangle(gbx, 34, 150, 44, COLORS.woodPanel)
+      .setStrokeStyle(2, COLORS.bronze)
       .setInteractive({ useHandCursor: true })
       .setDepth(30);
     this.equipLabel = this.add
       .text(gbx, 34, "Gear (G)", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "18px",
-        color: "#e8e8f0",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(30);
-    this.equipButton.on("pointerover", () => this.equipButton.setFillStyle(0x6a4a7a));
-    this.equipButton.on("pointerout", () => this.equipButton.setFillStyle(0x5a3a6a));
-    this.equipButton.on("pointerdown", () => this.toggleEquipMode());
+    this.equipButton.on("pointerover", () => this.equipButton.setFillStyle(COLORS.woodPanelHover).setStrokeStyle(2, COLORS.gilt));
+    this.equipButton.on("pointerout", () => this.equipButton.setFillStyle(COLORS.woodPanel).setStrokeStyle(2, COLORS.bronze));
+    this.equipButton.on("pointerdown", () => this.openGearShop());
 
     // Ghost preview rectangle for the tile under the cursor while building.
     this.buildGhost = this.add
@@ -2299,15 +2398,15 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(7)
       .setVisible(false);
 
-    // Shop buttons (one per buildable structure) and the equip catalogue share
-    // the SAME grid area below the bottom row — never at the same time, since
-    // build mode and equip mode are mutually exclusive (setInteraction hides
-    // whichever one isn't active). Phase 7 grew the shop from 3 items to 7, so
-    // a single row of fixed slots (the Phase 5 layout) no longer fits; this is
-    // a small, generic grid instead, verified by the same bounding-box math as
-    // D-046 (see the GAME_HEIGHT comment in config.ts for the room it needs).
-    // Phase 25 (D-116): the shop catalogue passed the one-page limit, so it
-    // now paginates via `ITEM_GRID_PAGE_SIZE` exactly like the Gear grid does.
+    // Shop buttons, one per buildable structure — Phase 7 grew the shop from
+    // 3 items to 7, so a single row of fixed slots (the Phase 5 layout) no
+    // longer fits; this is a small, generic grid instead, verified by the
+    // same bounding-box math as D-046 (see the GAME_HEIGHT comment in
+    // config.ts for the room it needs). Phase 25 (D-116): the shop catalogue
+    // passed the one-page limit, so it now paginates via `ITEM_GRID_PAGE_SIZE`.
+    // D-209: this grid used to also host the equip/Gear catalogue (mutually
+    // exclusive with build mode via `setInteraction`) — that catalogue now
+    // lives in the separate `GearShopScene` instead.
     const shopItems = SHOP_ORDER.map((defId) => ({
       id: defId,
       label: `${getStructureDefinition(defId).name} (${getStructureDefinition(defId).cost}g)`,
@@ -2322,22 +2421,8 @@ export class BattleScene extends Phaser.Scene {
     this.shopButtons = shop.buttons;
     this.shopLabels = shop.labels;
 
-    const equipItems = this.visibleGearCatalog().map((itemId) => ({
-      id: itemId,
-      label: gearCatalogButtonLabel(itemId),
-    }));
-    const equip = this.buildItemGrid(
-      cy,
-      equipItems,
-      (id) => this.selectEquipItem(id),
-      (id) => this.setHoveredItem(id),
-      ITEM_GRID_PAGE_SIZE,
-    );
-    this.equipItemButtons = equip.buttons;
-    this.equipItemLabels = equip.labels;
-
     // Test Mode (D-138): three more grids sharing this exact same footprint —
-    // never shown at the same time as each other, Shop, or Gear (all mutually
+    // never shown at the same time as each other or Shop (all mutually
     // exclusive via `this.ui.kind`). Only ever built; only ever SHOWN when
     // `this.testMode`.
     const debugEnemyItems = DEBUG_ENEMY_IDS.map((id) => ({ id, label: getEnemyDefinition(id).name }));
@@ -2373,40 +2458,18 @@ export class BattleScene extends Phaser.Scene {
     this.debugStatusButtons = debugStatus.buttons;
     this.debugStatusLabels = debugStatus.labels;
 
-    // Phase 11.7 (D-071): shown in place of the Gear grid when no living
-    // hero is close enough to a shop tile — see showEquipUI/isAnyHeroNearShop.
-    this.equipLockLabel = this.add
-      .text(GAME_WIDTH / 2, cy + 40, "Move a hero to a Shop tile to buy/equip Gear", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "16px",
-        color: "#e0a860",
-        fontStyle: "bold",
-        align: "center",
-      })
-      .setOrigin(0.5)
-      .setDepth(31)
-      .setVisible(false);
-
-    // One Done button shared by both modes, positioned below the TALLER of
-    // the two grids. Phase 17 (D-108)/Phase 25 (D-116): BOTH the Gear and
-    // Shop catalogues' real ROW COUNTs now cap at one page (
-    // `ITEM_GRID_PAGE_SIZE` / cols = 4 rows) regardless of the underlying
-    // catalogue's total size, since both are paginated — otherwise either
-    // the ~90-item weapon/armor catalogue or the now-22-item shop would make
-    // this grid dozens of rows tall.
+    // D-209: BOTH the Done button and page-nav Y positions used to also
+    // account for the (now-deleted) Gear grid's own row/page counts, since
+    // it shared this exact footprint with the Shop grid — Shop is the only
+    // grid left here, so these are sized off it alone. Phase 25 (D-116):
+    // the shop catalogue's real ROW COUNT caps at one page
+    // (`ITEM_GRID_PAGE_SIZE` / cols = 4 rows) regardless of its total size,
+    // since it's paginated — otherwise the now-22-item shop would make this
+    // grid dozens of rows tall.
     const cols = 4;
-    const shopRows = Math.min(Math.ceil(SHOP_ORDER.length / cols), ITEM_GRID_PAGE_SIZE / cols);
-    const gearRows = Math.min(Math.ceil(this.visibleGearCatalog().length / cols), ITEM_GRID_PAGE_SIZE / cols);
-    const rows = Math.max(shopRows, gearRows);
+    const rows = Math.min(Math.ceil(SHOP_ORDER.length / cols), ITEM_GRID_PAGE_SIZE / cols);
     const rowHeight = 38; // button height (30) + vertical gap (8)
     const shopPageCount = Math.ceil(SHOP_ORDER.length / ITEM_GRID_PAGE_SIZE);
-    const gearPageCount = Math.ceil(this.visibleGearCatalog().length / ITEM_GRID_PAGE_SIZE);
-    // The page nav row sits just under the (capped) taller of the two grids;
-    // Done sits under THAT, so it never collides with a wider grid on
-    // another page. Only one of shop/gear nav is ever actually visible at a
-    // time (`refreshPageNav` decides which, from `this.ui.kind`), but both
-    // share this one Y position since `rows` already accounts for whichever
-    // grid is taller.
     const navY = cy + rows * rowHeight + 14;
     this.pageNavPrevButton = this.add
       .text(GAME_WIDTH / 2 - 90, navY, "◀ Prev", {
@@ -2441,7 +2504,7 @@ export class BattleScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true })
       .setVisible(false);
     this.pageNavNextButton.on("pointerdown", () => this.turnGridPage(1));
-    const navRowHeight = gearPageCount > 1 || shopPageCount > 1 ? 30 : 0;
+    const navRowHeight = shopPageCount > 1 ? 30 : 0;
     const doneY = cy + rows * rowHeight + navRowHeight + 6;
     this.doneButton = this.add
       .rectangle(GAME_WIDTH / 2, doneY, 120, 30, 0x7a5a3a)
@@ -2460,18 +2523,17 @@ export class BattleScene extends Phaser.Scene {
       .setVisible(false);
     this.doneButton.on("pointerdown", () => {
       if (this.ui.kind === "building") this.exitBuildMode();
-      else if (this.ui.kind === "equipping") this.exitEquipMode();
       else if (this.isDebugGridKind(this.ui.kind)) this.setInteraction({ kind: "idle" });
     });
   }
 
   /**
    * Build a row-major grid of small buttons, one per item, hidden until the
-   * caller shows them. Shared by the shop grid and the equip-item grid so
-   * both use identical, generically-sized slots regardless of catalogue size.
-   * `onHover` (Phase 8 tooltip) fires with the item id on pointerover and
-   * `null` on pointerout, so the status hint can preview a description
-   * without the player having to click/select first.
+   * caller shows them. Shared by the shop grid and the three Test Mode debug
+   * grids so all use identical, generically-sized slots regardless of
+   * catalogue size. `onHover` (Phase 8 tooltip) fires with the item id on
+   * pointerover and `null` on pointerout, so the status hint can preview a
+   * description without the player having to click/select first.
    */
   private buildItemGrid(
     cy: number,
@@ -2493,22 +2555,22 @@ export class BattleScene extends Phaser.Scene {
     items.forEach((item, i) => {
       // Phase 17 (D-108): position by the WITHIN-PAGE slot (i % perPage), not
       // the flat catalogue index — every page reuses the same on-screen
-      // slots, `showEquipUI` decides which item occupies them right now.
+      // slots, `showShopUI` decides which item occupies them right now.
       const onPageIndex = i % perPage;
       const col = onPageIndex % cols;
       const row = Math.floor(onPageIndex / cols);
       const x = startX + col * (btnW + gapX);
       const y = cy + row * (btnH + gapY);
       const btn = this.add
-        .rectangle(x, y, btnW, btnH, 0x3a4a6a)
+        .rectangle(x, y, btnW, btnH, COLORS.woodPanel)
         .setInteractive({ useHandCursor: true })
         .setDepth(31)
         .setVisible(false);
       const lbl = this.add
         .text(x, y, item.label, {
-          fontFamily: "system-ui, Arial, sans-serif",
+          fontFamily: FONT_BODY,
           fontSize: "12px",
-          color: "#e8e8f0",
+          color: "#f0e6c8",
           fontStyle: "bold",
         })
         .setOrigin(0.5)
@@ -2704,7 +2766,12 @@ export class BattleScene extends Phaser.Scene {
       this.logCombat(`${evt.summon.def.name} ${verb} ${targetName}${suffix}`);
       this.logTechnical(BattleScene.technicalAttackLine(evt.summon.def.name, targetName, evt.result));
     }
-    this.resolveDeaths(this.waveSystem.removeDefeated());
+    // D-208: a summon's kill IS attributable to a hero (its owner), but a
+    // single sweep here can bundle kills from several different summons at
+    // once (each possibly owned by a different participant in coop) — `null`
+    // (split evenly) is the honest, documented simplification for that
+    // batch case, same as the enemy-phase trap sweep below.
+    this.resolveDeaths(this.waveSystem.removeDefeated(), null);
     for (const instanceId of before) {
       if (!this.summonSystem.summons.some((s) => s.instanceId === instanceId)) this.removeSummonToken(instanceId);
     }
@@ -2817,7 +2884,12 @@ export class BattleScene extends Phaser.Scene {
       // the attack event) since `WaveSystem` has no `EconomySystem` access.
       for (const atk of report.attacks) {
         if (!atk.enemy.def.goldTheftAmount || atk.result.roll?.hit !== true) continue;
-        const stolen = this.economy.deduct(atk.enemy.def.goldTheftAmount);
+        // D-208: steals from the attacked HERO's own pool. `atk.target` is
+        // occasionally a summon rather than a hero (Combatant is generic) —
+        // falls back to the local/solo pool for that rare case, since a
+        // summon has no gold pool of its own.
+        const targetHero = atk.target instanceof Hero ? atk.target : undefined;
+        const stolen = this.economy.deduct(this.economyOwnerFor(targetHero), atk.enemy.def.goldTheftAmount);
         if (stolen > 0) {
           this.logCombat(`${atk.enemy.def.name} steals ${stolen}g!`);
           this.updateGoldHud();
@@ -2857,8 +2929,9 @@ export class BattleScene extends Phaser.Scene {
       }
       this.syncEnemyTokens();
       // Enemies slain by traps this phase are removed (and reward gold awarded)
-      // exactly once, just like hero kills.
-      this.resolveDeaths(this.waveSystem.removeDefeated());
+      // exactly once, just like hero kills. D-208: no single hero to credit
+      // (a trap belongs to the board, not a player) — split evenly.
+      this.resolveDeaths(this.waveSystem.removeDefeated(), null);
       this.syncHeroTokens();
       this.updateHud();
       this.turns.transitionTo("resolution");
@@ -2873,8 +2946,13 @@ export class BattleScene extends Phaser.Scene {
    * specifically because `removeDefeated()` already funnels through every
    * one of its 3 call sites into `awardKillGold`, so a death trigger fires
    * no matter which phase or source caused the kill.
+   *
+   * D-208: `creditOwnerId` is the economy pool this batch's kill gold (and
+   * any loot-drop cash fallback) goes to — a specific hero's owner when
+   * every kill in this batch is attributable to one acting hero, or `null`
+   * (split evenly across every pool) when it isn't. See each call site.
    */
-  private resolveDeaths(removed: Enemy[]): void {
+  private resolveDeaths(removed: Enemy[], creditOwnerId: string | null): void {
     // KI-098 item 13 (CAMPAIGN_STORY_DESIGN.md §4): if this chapter's own
     // sparable miniboss just went down, stash it for `afterWaveCleared` to
     // ask "finish or spare?" — it's always this chapter's finale spawn, so
@@ -2885,7 +2963,7 @@ export class BattleScene extends Phaser.Scene {
       const miniboss = removed.find((e) => e.def.id === sparableId);
       if (miniboss) this.pendingSparableKill = miniboss;
     }
-    this.awardKillGold(removed);
+    this.awardKillGold(removed, creditOwnerId);
     if (removed.length === 0) return;
     const report = this.waveSystem.resolveDeathTriggers(removed, this.livingHeroes());
     for (const enemy of report.spawned) {
@@ -2957,7 +3035,8 @@ export class BattleScene extends Phaser.Scene {
   private awardWaveReward(completionTurn: number): void {
     const wave = this.waveSystem.currentWave;
     const reward = RewardSystem.waveReward(wave, completionTurn);
-    this.economy.award(reward.total);
+    // D-208: no single hero clears a wave — split evenly across every pool.
+    this.creditGold(null, reward.total);
     this.wavesCleared += 1;
     let msg = `Wave ${this.waveSystem.waveNumber} cleared: +${reward.completionGold}g`;
     if (reward.timeBonusGold > 0) msg += ` (+${reward.timeBonusGold}g time bonus)`;
@@ -3058,7 +3137,7 @@ export class BattleScene extends Phaser.Scene {
         saveWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY, next);
       }
       this.logCombat(`${enemy.def.name} is spared, and slips away wounded.`);
-      this.economy.award(SPARE_MERCY_GOLD_REWARD);
+      this.economy.award(this.economyOwnerFor(), SPARE_MERCY_GOLD_REWARD);
       this.updateGoldHud();
       this.logCombat(`${enemy.def.name} owes you now — +${SPARE_MERCY_GOLD_REWARD}g.`);
       this.clearAsiOverlay();
@@ -3245,6 +3324,22 @@ export class BattleScene extends Phaser.Scene {
       size -= 1;
       this.bannerText.setFontSize(size);
     }
+    this.redrawBannerChip();
+  }
+
+  /** D-210 (Phase 5 reskin): resizes `bannerChip` to `bannerText`'s current measured bounds — called every time the banner's text or font size changes. */
+  private redrawBannerChip(): void {
+    const padX = 16;
+    const padY = 8;
+    const w = this.bannerText.width + padX * 2;
+    const h = this.bannerText.height + padY * 2;
+    const x = this.bannerText.x - w / 2;
+    const y = this.bannerText.y - h / 2;
+    this.bannerChip.clear();
+    this.bannerChip.fillStyle(COLORS.woodPanel, 0.92);
+    this.bannerChip.fillRoundedRect(x, y, w, h, 5);
+    this.bannerChip.lineStyle(1.5, COLORS.bronze, 1);
+    this.bannerChip.strokeRoundedRect(x, y, w, h, 5);
   }
 
   private updateHud(): void {
@@ -3784,29 +3879,26 @@ export class BattleScene extends Phaser.Scene {
     // mode this is leaving.
     this.setHoveredItem(null);
 
-    // KI-030: entering build/equip mode from anywhere else defaults keyboard
-    // focus to the item grid (there's nothing useful to place/equip until an
-    // item is picked); leaving it returns focus to the board. Switching
-    // between items WITHIN the same mode (e.g. clicking a different shop
-    // slot) keeps whatever focus/index already matches the new selection, so
-    // keyboard and mouse selection never fight over grid position.
-    const enteringGridMode =
-      next.kind === "building" || next.kind === "equipping" || this.isDebugGridKind(next.kind);
+    // KI-030: entering build mode from anywhere else defaults keyboard focus
+    // to the item grid (there's nothing useful to place until an item is
+    // picked); leaving it returns focus to the board. Switching between
+    // items WITHIN the same mode (e.g. clicking a different shop slot) keeps
+    // whatever focus/index already matches the new selection, so keyboard
+    // and mouse selection never fight over grid position.
+    const enteringGridMode = next.kind === "building" || this.isDebugGridKind(next.kind);
     if (enteringGridMode) {
-      if (prevKind !== "building" && prevKind !== "equipping" && !this.isDebugGridKind(prevKind)) this.keyboardFocus = "grid";
+      if (prevKind !== "building" && !this.isDebugGridKind(prevKind)) this.keyboardFocus = "grid";
       const items = this.currentGridItems(); // this.ui already === next, set above
       const currentId =
         next.kind === "building"
           ? next.defId
-          : next.kind === "equipping"
-            ? next.itemId
-            : next.kind === "debugSpawnEnemy"
-              ? next.enemyId
-              : next.kind === "debugPaintTerrain"
-                ? next.tileType
-                : next.kind === "debugStatus"
-                  ? next.statusId
-                  : undefined;
+          : next.kind === "debugSpawnEnemy"
+            ? next.enemyId
+            : next.kind === "debugPaintTerrain"
+              ? next.tileType
+              : next.kind === "debugStatus"
+                ? next.statusId
+                : undefined;
       const idx = currentId ? items.indexOf(currentId) : -1;
       this.gridFocusIndex = idx >= 0 ? idx : 0;
     } else {
@@ -3828,10 +3920,9 @@ export class BattleScene extends Phaser.Scene {
     this.buildGhost.setVisible(false);
     this.buildGhostGlyph.setVisible(false);
     this.showShopUI(next.kind === "building", next.kind === "building" ? next.defId : undefined);
-    this.showEquipUI(next.kind === "equipping", next.kind === "equipping" ? next.itemId : undefined);
     this.showDebugPickerUI();
     this.refreshPageNav();
-    const modeActive = next.kind === "building" || next.kind === "equipping" || this.isDebugGridKind(next.kind);
+    const modeActive = next.kind === "building" || this.isDebugGridKind(next.kind);
     this.doneButton.setVisible(modeActive);
     this.doneLabel.setVisible(modeActive);
     // Phase 13.7 (D-092): the spellbook overlay only ever exists while
@@ -3883,6 +3974,9 @@ export class BattleScene extends Phaser.Scene {
     // line belongs on the tooltip for whatever tile the mouse already sits
     // on, even with no mouse movement of its own.
     this.updateUnitTooltip(this.cursorPos);
+    // KI-155: which action buttons are visible just changed above — re-center
+    // whichever rows are now showing.
+    this.refreshActionRowLayout();
   }
 
   private showRange(hero: Hero): void {
@@ -4431,7 +4525,8 @@ export class BattleScene extends Phaser.Scene {
       if (!id) continue;
       const usable = this.hotkeyUsable(hero, id);
       this.hotkeyButtons[slot].setVisible(true).setAlpha(usable ? 1 : 0.45);
-      this.hotkeyLabels[slot].setVisible(true).setAlpha(usable ? 1 : 0.45).setText(`${slot + 1}: ${hotkeyDisplayLabel(hero, id)}`);
+      // Phase 3 (D-205): "Shift+N" — the slot's real keydown binding.
+      this.hotkeyLabels[slot].setVisible(true).setAlpha(usable ? 1 : 0.45).setText(`Shift+${slot + 1}: ${hotkeyDisplayLabel(hero, id)}`);
     }
   }
 
@@ -4621,18 +4716,16 @@ export class BattleScene extends Phaser.Scene {
 
     this.input.keyboard?.on("keydown-E", () => this.endPlayerTurn());
     this.input.keyboard?.on("keydown-B", () => this.toggleBuildMode());
-    this.input.keyboard?.on("keydown-G", () => this.toggleEquipMode());
+    this.input.keyboard?.on("keydown-G", () => this.openGearShop());
     this.input.keyboard?.on("keydown-Q", () => {
       if (this.ui.kind === "heroSelected") this.onAbilityButton();
     });
     this.input.keyboard?.on("keydown-P", () => {
       if (this.ui.kind === "heroSelected") this.onPotionButton();
     });
-    // Phase 13.2 (D-087): R (bonus action: Second Wind/Cunning Action) and F
-    // (Action Surge) — both class-gated, so they're no-ops for most heroes.
-    this.input.keyboard?.on("keydown-R", () => {
-      if (this.ui.kind === "heroSelected") this.onBonusActionButton();
-    });
+    // Phase 13.2 (D-087): F (Action Surge) — class-gated, a no-op for most
+    // heroes. Bonus Action's own key is rebindable (Phase 3, D-205) — see the
+    // generic `keydown` dispatcher below, which reads `this.keyBindings`.
     this.input.keyboard?.on("keydown-F", () => {
       if (this.ui.kind === "heroSelected") this.onActionSurgeButton();
     });
@@ -4645,12 +4738,31 @@ export class BattleScene extends Phaser.Scene {
     this.input.keyboard?.on("keydown-C", () => {
       if (this.ui.kind === "heroSelected") this.openCharacterSheet();
     });
-    this.input.keyboard?.on("keydown-ENTER", () => this.handlePrimaryActivate());
+    // SPACE is a permanent, non-rebindable Confirm alias (stays alongside
+    // whatever the rebindable "confirm" key is set to — see the generic
+    // dispatcher below).
     this.input.keyboard?.on("keydown-SPACE", (event: KeyboardEvent) => {
       event.preventDefault(); // SPACE otherwise scrolls the page
       this.handlePrimaryActivate();
     });
-    this.input.keyboard?.on("keydown-ESC", () => this.handleEscape());
+    // Phase 3 (D-205): Confirm/Cancel/Bonus Action are rebindable — defaults
+    // (Enter/Escape/R) reproduce the exact prior hardcoded behavior, so
+    // nothing changes for a player who never opens Settings' new Controls
+    // section. A raw (non-sugared) `keydown` listener is used here, rather
+    // than Phaser's `keydown-KEYNAME` sugar, because `this.keyBindings`
+    // stores native `KeyboardEvent.code` values captured generically from
+    // whatever key Settings' rebind screen catches.
+    this.input.keyboard?.on("keydown", (event: KeyboardEvent) => {
+      if (event.code === this.keyBindings.confirm) this.handlePrimaryActivate();
+      else if (event.code === this.keyBindings.cancel) this.handleEscape();
+      else if (event.code === this.keyBindings.bonusAction && this.ui.kind === "heroSelected") this.onBonusActionButton();
+    });
+    // Re-read bindings after a Pause Menu -> Settings -> rebind -> back trip
+    // (this scene stays alive, paused, throughout) so a mid-battle rebind
+    // takes effect immediately rather than only on the next battle.
+    this.events.on(Phaser.Scenes.Events.RESUME, () => {
+      this.keyBindings = loadKeyBindings(window.localStorage, KEYBINDINGS_STORAGE_KEY);
+    });
 
     // KI-030 ("full keyboard-only play"): arrow keys move either the board
     // tile cursor or, while the shop/Gear grid is open and focused (TAB),
@@ -4678,7 +4790,22 @@ export class BattleScene extends Phaser.Scene {
     // heroDefinitions/heroStarts, so a key always means the same hero
     // regardless of who else has fallen.
     ["ONE", "TWO", "THREE", "FOUR"].forEach((key, i) => {
-      this.input.keyboard?.on(`keydown-${key}`, () => this.selectHeroByIndex(i));
+      // Shift+1..4 is claimed by the ability hotkey bar below — don't ALSO
+      // reselect a hero on those chords.
+      this.input.keyboard?.on(`keydown-${key}`, (event: KeyboardEvent) => {
+        if (event.shiftKey) return;
+        this.selectHeroByIndex(i);
+      });
+    });
+
+    // Phase 3 (D-205): Shift+1..Shift+6 fire the per-hero customizable
+    // ability hotkey bar (`ACTION_HOTKEY_SLOT_COUNT` slots, previously
+    // click-only). Plain digits are taken by hero-select above, so this
+    // layer requires the Shift chord.
+    ["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX"].forEach((key, i) => {
+      this.input.keyboard?.on(`keydown-${key}`, (event: KeyboardEvent) => {
+        if (event.shiftKey) this.triggerHotkey(i);
+      });
     });
 
     // Reopen the how-to-play overlay any time (Phase 8 "tutorial prompts").
@@ -4717,6 +4844,11 @@ export class BattleScene extends Phaser.Scene {
     if (this.turns.current !== "player" || this.inputLocked()) return;
     if (!tile) return;
 
+    // Phase 3 (D-205): recorded for every tile click regardless of mode, so
+    // the double-click detector stays generic/reusable — only the movement
+    // branches below actually consume it today.
+    const doubleClicked = this.isDoubleClickOn(tile);
+
     // Build mode: a click builds on an empty tile or refunds a structure.
     if (this.ui.kind === "building") {
       this.handleBuildClick(tile);
@@ -4737,12 +4869,6 @@ export class BattleScene extends Phaser.Scene {
     }
     if (this.ui.kind === "debugStatus") {
       this.handleDebugStatusClick(tile);
-      return;
-    }
-
-    // Equip mode: a click on a hero equips (or unequips) the selected item.
-    if (this.ui.kind === "equipping") {
-      this.handleEquipClick(tile);
       return;
     }
 
@@ -4776,7 +4902,7 @@ export class BattleScene extends Phaser.Scene {
     if (enemyHere && (this.ui.kind === "heroSelected" || this.ui.kind === "confirmingMove")) {
       const hero = this.heroById(this.ui.heroId);
       if (hero && this.isEnemyTargetable(enemyHere, hero)) {
-        this.tryBasicAttack(hero, enemyHere);
+        this.tryAttackWithApproach(hero, enemyHere);
         return;
       }
     }
@@ -4792,11 +4918,13 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    // Otherwise, movement handling (unchanged from Phase 2).
+    // Otherwise, movement handling (unchanged from Phase 2, plus Phase 3's
+    // double-click-to-confirm, D-205).
     if (this.ui.kind === "heroSelected") {
       const hero = this.heroById(this.ui.heroId);
       if (hero && this.isLegalMove(hero, tile)) {
-        this.setInteraction({ kind: "confirmingMove", heroId: hero.id, dest: tile });
+        if (doubleClicked) this.commitHeroMoveTo(hero, tile);
+        else this.setInteraction({ kind: "confirmingMove", heroId: hero.id, dest: tile });
       } else {
         this.setInteraction({ kind: "idle" });
       }
@@ -4806,11 +4934,35 @@ export class BattleScene extends Phaser.Scene {
     if (this.ui.kind === "confirmingMove") {
       const hero = this.heroById(this.ui.heroId);
       if (hero && this.isLegalMove(hero, tile)) {
-        this.setInteraction({ kind: "confirmingMove", heroId: hero.id, dest: tile });
+        if (doubleClicked) this.commitHeroMoveTo(hero, tile);
+        else this.setInteraction({ kind: "confirmingMove", heroId: hero.id, dest: tile });
       } else {
         this.setInteraction({ kind: "heroSelected", heroId: this.ui.heroId });
       }
     }
+  }
+
+  /**
+   * Phase 3 (D-205): a genuine mouse double-click on the same board tile
+   * within `DOUBLE_CLICK_WINDOW_MS` — measured by wall-clock `performance.now()`,
+   * not `this.time.now`, since a real double-click's speed shouldn't change
+   * with the in-battle Game Speed setting. Deliberately generic (keyed only
+   * on tile + elapsed time, not on interaction mode) so a future tile-click
+   * feature can reuse it, even though only the movement-confirm flow
+   * consumes the result today. Consumes the match immediately (resets
+   * `lastBoardClick`) so a third rapid click can't chain into a second
+   * false double-click.
+   */
+  private static readonly DOUBLE_CLICK_WINDOW_MS = 350;
+  private isDoubleClickOn(tile: GridPosition): boolean {
+    const last = this.lastBoardClick;
+    const isMatch =
+      !!last &&
+      last.tile.x === tile.x &&
+      last.tile.y === tile.y &&
+      performance.now() - last.atMs <= BattleScene.DOUBLE_CLICK_WINDOW_MS;
+    this.lastBoardClick = isMatch ? null : { tile, atMs: performance.now() };
+    return isMatch;
   }
 
   /**
@@ -4852,13 +5004,11 @@ export class BattleScene extends Phaser.Scene {
     }
     const hero = this.heroAt(tile);
     if (hero) {
-      let text = `${hero.name}\nHP ${hero.health}/${hero.effectiveMaxHealth}  ·  AC ${hero.armorClass}`;
-      // D-148 (KI-098, a small slice of "equip UX needs a rethink"): while an
-      // item is selected in equip mode, hovering a hero previews what it
-      // would change before any gold is spent.
-      if (this.ui.kind === "equipping" && this.ui.itemId && !gearCatalogEntry(this.ui.itemId).isPotion) {
-        text += `\n${this.previewEquipDelta(hero, this.ui.itemId)}`;
-      }
+      const text = `${hero.name}\nHP ${hero.health}/${hero.effectiveMaxHealth}  ·  AC ${hero.armorClass}`;
+      // D-209: the equip-preview line this used to add while an item was
+      // selected in equip mode moved to `GearShopScene`'s own compare panel
+      // (`GearCompareSystem.previewGearSlotChange`/`formatGearDelta`) — that
+      // scene has no board to hover over, so this tooltip no longer needs it.
       this.showUnitTooltipAt(tile, text);
       return;
     }
@@ -4890,9 +5040,9 @@ export class BattleScene extends Phaser.Scene {
    * KI-030: Enter and Space both mean "act on whatever is focused" — the one
    * activation key a keyboard-only player needs. If a move is pending it
    * commits (unchanged from the original Enter-only hotkey); otherwise, if
-   * the shop/Gear grid currently has keyboard focus, it picks the
-   * highlighted item; otherwise it's exactly equivalent to clicking the tile
-   * under the board cursor.
+   * the shop grid currently has keyboard focus, it picks the highlighted
+   * item; otherwise it's exactly equivalent to clicking the tile under the
+   * board cursor.
    */
   private handlePrimaryActivate(): void {
     if (this.turns.current !== "player" || this.inputLocked()) return;
@@ -4900,7 +5050,7 @@ export class BattleScene extends Phaser.Scene {
       this.confirmMove();
       return;
     }
-    if ((this.ui.kind === "building" || this.ui.kind === "equipping") && this.keyboardFocus === "grid") {
+    if (this.ui.kind === "building" && this.keyboardFocus === "grid") {
       this.activateFocusedGridItem();
       return;
     }
@@ -4911,7 +5061,7 @@ export class BattleScene extends Phaser.Scene {
   private handleArrowKey(dx: number, dy: number): void {
     if (this.turns.current !== "player" || this.inputLocked()) return;
     if (
-      (this.ui.kind === "building" || this.ui.kind === "equipping" || this.isDebugGridKind(this.ui.kind)) &&
+      (this.ui.kind === "building" || this.isDebugGridKind(this.ui.kind)) &&
       this.keyboardFocus === "grid"
     ) {
       this.moveGridFocus(dx, dy);
@@ -4927,7 +5077,7 @@ export class BattleScene extends Phaser.Scene {
     this.updateHoverAt(next);
   }
 
-  /** Row-major navigation within the currently visible shop/equip/debug-picker grid. */
+  /** Row-major navigation within the currently visible shop/debug-picker grid. */
   private moveGridFocus(dx: number, dy: number): void {
     const items = this.currentGridItems();
     if (items.length === 0) return;
@@ -4940,9 +5090,9 @@ export class BattleScene extends Phaser.Scene {
     this.refreshGridFocusVisual();
   }
 
-  /** Toggle whether arrow keys drive the shop/Gear/debug-picker grid or the board cursor. */
+  /** Toggle whether arrow keys drive the shop/debug-picker grid or the board cursor. */
   private toggleKeyboardFocus(): void {
-    if (this.ui.kind !== "building" && this.ui.kind !== "equipping" && !this.isDebugGridKind(this.ui.kind)) return;
+    if (this.ui.kind !== "building" && !this.isDebugGridKind(this.ui.kind)) return;
     this.keyboardFocus = this.keyboardFocus === "grid" ? "board" : "grid";
     // D-158: routes through `setHoveredItem` (not a raw field set) so
     // switching focus INTO the grid previews the newly-focused item's
@@ -4959,20 +5109,18 @@ export class BattleScene extends Phaser.Scene {
 
   private currentGridItems(): readonly string[] {
     if (this.ui.kind === "building") return SHOP_ORDER;
-    if (this.ui.kind === "equipping") return this.visibleGearCatalog();
     if (this.ui.kind === "debugSpawnEnemy") return DEBUG_ENEMY_IDS;
     if (this.ui.kind === "debugPaintTerrain") return DEBUG_TERRAIN_TYPES;
     if (this.ui.kind === "debugStatus") return STATUS_EFFECT_ORDER;
     return [];
   }
 
-  /** Pick the item currently highlighted by keyboard focus in the shop/Gear grid. */
+  /** Pick the item currently highlighted by keyboard focus in the shop grid. */
   private activateFocusedGridItem(): void {
     const items = this.currentGridItems();
     const id = items[this.gridFocusIndex];
     if (!id) return;
     if (this.ui.kind === "building") this.selectShopItem(id);
-    else if (this.ui.kind === "equipping") this.selectEquipItem(id);
     else if (this.ui.kind === "debugSpawnEnemy") this.selectDebugEnemy(id);
     else if (this.ui.kind === "debugPaintTerrain") this.selectDebugTerrain(id as TileType);
     else if (this.ui.kind === "debugStatus") this.selectDebugStatus(id as StatusEffectId);
@@ -4981,7 +5129,6 @@ export class BattleScene extends Phaser.Scene {
   /** Redraw the grid's keyboard-focus ring without tearing down the whole mode. */
   private refreshGridFocusVisual(): void {
     if (this.ui.kind === "building") this.showShopUI(true, this.ui.defId);
-    else if (this.ui.kind === "equipping") this.showEquipUI(true, this.ui.itemId);
     else if (this.isDebugGridKind(this.ui.kind)) this.showDebugPickerUI();
     this.refreshPageNav();
   }
@@ -4989,7 +5136,7 @@ export class BattleScene extends Phaser.Scene {
   /** Phase 8 keyboard hotkey: select the hero at this fixed roster index. */
   private selectHeroByIndex(i: number): void {
     if (this.turns.current !== "player" || this.inputLocked()) return;
-    if (this.ui.kind === "building" || this.ui.kind === "equipping" || this.isDebugGridKind(this.ui.kind)) return;
+    if (this.ui.kind === "building" || this.isDebugGridKind(this.ui.kind)) return;
     const hero = this.heroes[i];
     if (!hero || !hero.isAlive() || !this.canLocallyControl(hero)) return;
     this.setInteraction({ kind: "heroSelected", heroId: hero.id });
@@ -4997,49 +5144,28 @@ export class BattleScene extends Phaser.Scene {
 
   /**
    * D-165 (KI-098 item 3, "equip-flow UX rethink"): clicking a roster-strip
-   * box now does something, instead of being purely decorative — in equip
-   * mode it targets that hero directly (`resolveEquipOnHero`), the same
-   * click-item-then-click-a-hero flow as before, just aimed at the always-
-   * visible roster box instead of hunting for a small board token that
-   * might be tucked behind terrain/other units. Outside equip mode it's a
-   * second way to select a hero, identical to `selectHeroByIndex`'s own
-   * gates (this doesn't replace clicking the board token, which still
-   * works exactly as before either way).
+   * box selects that hero — a second way to do it, identical to
+   * `selectHeroByIndex`'s own gates (this doesn't replace clicking the
+   * board token, which still works exactly as before either way). D-209:
+   * this used to also target a hero directly while in equip mode
+   * (`resolveEquipOnHero`) — The Armory has its own hero rail now, so that
+   * branch is gone.
    */
   private onRosterBoxClick(slot: number): void {
     if (this.turns.current !== "player" || this.inputLocked()) return;
     const hero = this.heroes[slot];
     if (!hero) return;
-    if (this.ui.kind === "equipping") {
-      if (!hero.isAlive()) return;
-      // Phase 11.7 (D-071): the same proximity gate `handleEquipClick`
-      // enforces for a board-tile click.
-      if (!this.isAnyHeroNearShop()) {
-        this.rejectAt(hero.position, "Move a hero to a Shop tile to access Gear");
-        return;
-      }
-      this.resolveEquipOnHero(hero);
-      return;
-    }
     if (this.ui.kind === "building" || this.isDebugGridKind(this.ui.kind)) return;
     if (!hero.isAlive() || !this.canLocallyControl(hero)) return;
     this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
 
-  /**
-   * D-165: the roster box's own hover tooltip — the same HP/AC text (and,
-   * in equip mode with a non-potion item selected, the same before/after
-   * `previewEquipDelta` line) `updateUnitTooltip` already shows for a
-   * board-token hover, so the two entry points read identically.
-   */
+  /** D-165: the roster box's own hover tooltip — the same HP/AC text `updateUnitTooltip` already shows for a board-token hover. */
   private showRosterHoverTooltip(slot: number): void {
     const hero = this.heroes[slot];
     if (!hero) return;
     const box = this.heroSlotBoxes[slot];
-    let text = `${hero.name}\nHP ${hero.health}/${hero.effectiveMaxHealth}  ·  AC ${hero.armorClass}`;
-    if (this.ui.kind === "equipping" && this.ui.itemId && !gearCatalogEntry(this.ui.itemId).isPotion) {
-      text += `\n${this.previewEquipDelta(hero, this.ui.itemId)}`;
-    }
+    const text = `${hero.name}\nHP ${hero.health}/${hero.effectiveMaxHealth}  ·  AC ${hero.armorClass}`;
     this.tooltip.showAt(box.x, box.y - box.height / 2 - 4, text);
   }
 
@@ -5075,8 +5201,6 @@ export class BattleScene extends Phaser.Scene {
       this.scene.start("MainMenuScene");
     } else if (this.ui.kind === "building") {
       this.exitBuildMode();
-    } else if (this.ui.kind === "equipping") {
-      this.exitEquipMode();
     } else if (this.isDebugGridKind(this.ui.kind)) {
       this.setInteraction({ kind: "idle" });
     } else if (
@@ -5131,17 +5255,27 @@ export class BattleScene extends Phaser.Scene {
     if (this.ui.kind !== "confirmingMove") return;
     const hero = this.heroById(this.ui.heroId);
     if (!hero) return;
+    this.commitHeroMoveTo(hero, this.ui.dest);
+  }
+
+  /**
+   * Phase 3 (D-205): the actual "walk to `dest`" commit, extracted from
+   * `confirmMove` so a double-click on a legal tile (`handleClick`) can
+   * commit immediately without first entering/reading the `confirmingMove`
+   * state.
+   */
+  private commitHeroMoveTo(hero: Hero, dest: GridPosition): void {
     // D-173: the dest was already validated reachable (isLegalMove) when
     // this state was entered — recompute its real tile cost here so a move
     // shorter than the full budget leaves the rest spendable later this
     // turn, same as the drag-move flow (`resolveDrop`) already does.
-    const route = this.movement.routeThroughWaypoints([this.ui.dest], {
+    const route = this.movement.routeThroughWaypoints([dest], {
       start: hero.position,
       budget: hero.movementBudget(),
       isOccupied: (p) => this.isHeroMovementBlocked(p),
       blocksStopping: (p) => this.isHeroStoppingBlocked(p, hero.id),
     });
-    hero.moveTo(this.ui.dest, route?.usedTiles);
+    hero.moveTo(dest, route?.usedTiles);
     const token = this.heroTokens.get(hero.id);
     if (token) this.moveHeroToken(token, hero.position);
     this.checkTreasureAt(hero);
@@ -5228,6 +5362,53 @@ export class BattleScene extends Phaser.Scene {
     return CombatSystem.hitChance(profile.attackBonus, enemy.armorClass, profile.advantage ?? "normal", profile.critThreshold);
   }
 
+  /**
+   * Phase 3 (D-205): "move-then-attack" — clicking an out-of-range enemy used
+   * to just reject the order outright; this paths the hero toward it (using
+   * whatever movement is left this turn) and attacks in the same click, when
+   * that's actually possible. Falls through to `tryBasicAttack`'s own
+   * unchanged reject message ("is out of range") whenever it isn't — no
+   * movement left, or the target is unreachable within range at any tile —
+   * so behavior degrades exactly to the pre-Phase-3 outcome in those cases.
+   */
+  private tryAttackWithApproach(hero: Hero, enemy: Enemy): void {
+    if (!hero.canAct()) {
+      this.rejectAt(enemy.position, `${hero.name} has already acted this turn`);
+      return;
+    }
+    if (CombatSystem.isInRange(hero.position, enemy.position, hero.attackRangeTiles) || !hero.canMove()) {
+      this.tryBasicAttack(hero, enemy);
+      return;
+    }
+    const dest = this.heroAI.planApproachForAttack({
+      position: hero.position,
+      targetPosition: enemy.position,
+      attackRangeTiles: hero.attackRangeTiles,
+      movementBudget: hero.movementBudget(),
+      isOccupied: (p) => this.isHeroMovementBlocked(p),
+      blocksStopping: (p) => this.isHeroStoppingBlocked(p, hero.id),
+    });
+    if (!dest) {
+      this.tryBasicAttack(hero, enemy); // unreachable in range — same reject as before
+      return;
+    }
+    const route = this.movement.routeThroughWaypoints([dest], {
+      start: hero.position,
+      budget: hero.movementBudget(),
+      isOccupied: (p) => this.isHeroMovementBlocked(p),
+      blocksStopping: (p) => this.isHeroStoppingBlocked(p, hero.id),
+    });
+    hero.moveTo(dest, route?.usedTiles);
+    const token = this.heroTokens.get(hero.id);
+    if (token) this.moveHeroToken(token, hero.position);
+    this.checkTreasureAt(hero);
+    this.movingIntoAttack = true;
+    this.time.delayedCall(this.scaledDuration(ANIM_MS), () => {
+      this.movingIntoAttack = false;
+      this.tryBasicAttack(hero, enemy);
+    });
+  }
+
   private tryBasicAttack(hero: Hero, enemy: Enemy): void {
     if (!hero.canAct()) {
       this.rejectAt(enemy.position, `${hero.name} has already acted this turn`);
@@ -5297,7 +5478,7 @@ export class BattleScene extends Phaser.Scene {
       if (BattleScene.didHit(result)) this.showHeroHit(enemy);
     }
     this.tryOffHandAttack(hero, enemy);
-    const clearedEarly = this.afterHeroDamage();
+    const clearedEarly = this.afterHeroDamage(hero);
     if (!clearedEarly) this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
 
@@ -5354,7 +5535,7 @@ export class BattleScene extends Phaser.Scene {
       }
       case "push": {
         if (!landedDamage || !enemy.isAlive()) return;
-        this.pushEnemyAway(hero.position, enemy, 2);
+        this.pushEnemyAway(hero.position, enemy, 2, hero);
         if (enemy.isAlive()) {
           const token = this.enemyTokens.get(enemy.instanceId);
           if (token) this.placeToken(token, enemy.position);
@@ -5742,13 +5923,13 @@ export class BattleScene extends Phaser.Scene {
     // away from the caster, after damage/status but before the wave-clear
     // check (a pushed-then-dead enemy has nowhere to go, so this is skipped).
     if (ability.forcedMoveTiles && BattleScene.didHit(result) && enemy.isAlive()) {
-      this.pushEnemyAway(hero.position, enemy, ability.forcedMoveTiles);
+      this.pushEnemyAway(hero.position, enemy, ability.forcedMoveTiles, hero);
       if (enemy.isAlive()) {
         const token = this.enemyTokens.get(enemy.instanceId);
         if (token) this.placeToken(token, enemy.position);
       }
     }
-    const clearedEarly = this.afterHeroDamage();
+    const clearedEarly = this.afterHeroDamage(hero);
     if (!clearedEarly) this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
 
@@ -5759,9 +5940,11 @@ export class BattleScene extends Phaser.Scene {
    * mechanical stand-in for every SRD forced-movement spell. `from` is the
    * CASTER's tile for a single-target push, or the blast's own center tile
    * for an `aoeAtRange` push (see `castAoeAtRangeSpell`) — pushing away
-   * from wherever the effect actually originated.
+   * from wherever the effect actually originated. `hero` is the caster whose
+   * spell forced this push — D-208 credits a pit-fall kill (see below) to
+   * their economy pool, same as any other hero-caused kill.
    */
-  private pushEnemyAway(from: GridPosition, enemy: Enemy, tiles: number): void {
+  private pushEnemyAway(from: GridPosition, enemy: Enemy, tiles: number, hero: Hero): void {
     const dx = enemy.position.x - from.x;
     const dy = enemy.position.y - from.y;
     const stepX = Math.abs(dx) >= Math.abs(dy) ? Math.sign(dx) : 0;
@@ -5780,7 +5963,7 @@ export class BattleScene extends Phaser.Scene {
         enemy.position = next;
         enemy.health = 0;
         this.logCombat(`${enemy.def.name} is shoved into a pit and falls to its doom!`);
-        this.resolveDeaths(this.waveSystem.removeDefeated());
+        this.resolveDeaths(this.waveSystem.removeDefeated(), this.economyOwnerFor(hero));
         return;
       }
       if (!this.map.isWalkable(next)) break;
@@ -5849,7 +6032,7 @@ export class BattleScene extends Phaser.Scene {
         this.logCombat(`${enemy.def.name} is ${getStatusEffectDefinition(ability.appliesStatus.statusId).name.toLowerCase()}`);
       }
     }
-    const clearedEarly = this.afterHeroDamage();
+    const clearedEarly = this.afterHeroDamage(hero);
     if (!clearedEarly) this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
 
@@ -5995,7 +6178,7 @@ export class BattleScene extends Phaser.Scene {
             this.logCombat(`${enemy.def.name} is ${getStatusEffectDefinition(ability.appliesStatus.statusId).name.toLowerCase()}`);
           }
           if (ability.forcedMoveTiles && enemy.isAlive()) {
-            this.pushEnemyAway(tile, enemy, ability.forcedMoveTiles);
+            this.pushEnemyAway(tile, enemy, ability.forcedMoveTiles, hero);
             if (enemy.isAlive()) {
               const token = this.enemyTokens.get(enemy.instanceId);
               if (token) this.placeToken(token, enemy.position);
@@ -6029,7 +6212,7 @@ export class BattleScene extends Phaser.Scene {
       if (ability.forcedMoveTiles) {
         for (const enemy of targets) {
           if (!enemy.isAlive()) continue;
-          this.pushEnemyAway(tile, enemy, ability.forcedMoveTiles);
+          this.pushEnemyAway(tile, enemy, ability.forcedMoveTiles, hero);
           if (enemy.isAlive()) {
             const token = this.enemyTokens.get(enemy.instanceId);
             if (token) this.placeToken(token, enemy.position);
@@ -6037,7 +6220,7 @@ export class BattleScene extends Phaser.Scene {
         }
       }
     }
-    const clearedEarly = this.afterHeroDamage();
+    const clearedEarly = this.afterHeroDamage(hero);
     if (!clearedEarly) this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
 
@@ -6407,7 +6590,7 @@ export class BattleScene extends Phaser.Scene {
     hero.markActedForSpellCast();
     this.playCastVisual(ability, hero.position, hero.position);
     this.applyHeroResults(hero, ability.name, results, ability.appliesStatus, deathCauseForAbility(ability));
-    const clearedEarly = this.afterHeroDamage();
+    const clearedEarly = this.afterHeroDamage(hero);
     if (!clearedEarly) this.setInteraction({ kind: "heroSelected", heroId: hero.id });
   }
 
@@ -6612,12 +6795,16 @@ export class BattleScene extends Phaser.Scene {
    * check whether that just cleared the whole wave. Returns true when it did
    * — in which case the game has already moved on (to Between Waves or
    * Victory) and the CALLER must NOT re-select the hero afterward.
+   *
+   * D-208: `hero` is whichever hero just acted — every call site is a single
+   * hero's attack/ability resolution, so any enemy this sweeps up as
+   * defeated is credited to THAT hero's economy pool.
    */
-  private afterHeroDamage(): boolean {
+  private afterHeroDamage(hero: Hero): boolean {
     this.syncEnemyTokens();
     // Enemies the heroes defeated are removed and their reward gold awarded
     // exactly once (removeDefeated returns each slain enemy a single time).
-    this.resolveDeaths(this.waveSystem.removeDefeated());
+    this.resolveDeaths(this.waveSystem.removeDefeated(), this.economyOwnerFor(hero));
     this.updateHud();
     // Phase 21 (D-112): the Reflector archetype is the first way a hero's
     // OWN attack can kill that same hero (a reflected hit) — D-068's
@@ -6682,16 +6869,21 @@ export class BattleScene extends Phaser.Scene {
     const key = `${hero.position.x},${hero.position.y}`;
     if (this.consumedTreasureTiles.has(key)) return;
     this.consumedTreasureTiles.add(key);
-    this.economy.award(TREASURE_GOLD_BONUS);
+    this.economy.award(this.economyOwnerFor(hero), TREASURE_GOLD_BONUS);
     this.logCombat(`${hero.name} finds a treasure cache (+${TREASURE_GOLD_BONUS}g)`);
     this.updateGoldHud();
   }
 
-  /** Award reward gold for a set of removed enemies and clear their tokens. */
-  private awardKillGold(removed: Enemy[]): void {
+  /**
+   * Award reward gold for a set of removed enemies and clear their tokens.
+   * D-208: `creditOwnerId` is the pool this batch's gold (kills, and any
+   * loot-drop cash fallback) goes to — a hero's owner, or `null` to split
+   * evenly (see `resolveDeaths`'s own doc comment for which callers pass which).
+   */
+  private awardKillGold(removed: Enemy[], creditOwnerId: string | null): void {
     if (removed.length === 0) return;
     const gold = RewardSystem.killGold(removed);
-    if (gold > 0) this.economy.award(gold);
+    if (gold > 0) this.creditGold(creditOwnerId, gold);
     for (const enemy of removed) {
       this.playEnemyDeathVisual(enemy);
       // Phase 20 (D-111): a treasure-laden enemy's bonus is called out on
@@ -6707,7 +6899,7 @@ export class BattleScene extends Phaser.Scene {
       // more often than not, same "the common case is nothing happens"
       // shape as every other per-kill check in this loop.
       const drop = rollLootDrop(enemy.def.role, this.random, this.currentLootPoolIds);
-      if (drop) this.grantLootDrop(drop, enemy.def.name);
+      if (drop) this.grantLootDrop(drop, enemy.def.name, creditOwnerId);
     }
     this.updateGoldHud();
   }
@@ -6719,9 +6911,11 @@ export class BattleScene extends Phaser.Scene {
    * current grip, same gates the shop's own equip flow enforces), or, if no
    * hero can currently take it, auto-sell it for its listed gold cost. No
    * "found but not equipped" inventory/browsing UI exists this pass — a
-   * deliberate, documented scope boundary (see KNOWN_ISSUES).
+   * deliberate, documented scope boundary (see KNOWN_ISSUES). `creditOwnerId`
+   * (D-208) only matters for the "sold for gold" fallback below — free
+   * equips never touch the economy at all.
    */
-  private grantLootDrop(drop: LootDropResult, sourceName: string): void {
+  private grantLootDrop(drop: LootDropResult, sourceName: string, creditOwnerId: string | null): void {
     const rarityTag = drop.rarity === "common" ? "" : ` (${RARITY_LABELS[drop.rarity]})`;
     if (isPotionId(drop.itemId)) {
       const def = getPotionDefinition(drop.itemId);
@@ -6734,7 +6928,7 @@ export class BattleScene extends Phaser.Scene {
         this.updateGoldHud();
         return;
       }
-      this.economy.award(def.cost);
+      this.creditGold(creditOwnerId, def.cost);
       this.logCombat(`${sourceName} drops ${def.name}${rarityTag}, but no one has room to carry it — sold for ${def.cost}g`);
       this.updateGoldHud();
       return;
@@ -6753,7 +6947,7 @@ export class BattleScene extends Phaser.Scene {
       this.updateGoldHud();
       return;
     }
-    this.economy.award(def.cost);
+    this.creditGold(creditOwnerId, def.cost);
     this.logCombat(`${sourceName} drops ${def.name}${rarityTag}, but no hero can equip it right now — sold for ${def.cost}g`);
     this.updateGoldHud();
   }
@@ -6967,8 +7161,7 @@ export class BattleScene extends Phaser.Scene {
   /**
    * Show/hide the shop buttons and highlight the selected, affordable items.
    * Phase 25 (D-116): only the current PAGE (`ITEM_GRID_PAGE_SIZE` slots) is
-   * shown, the same pagination `showEquipUI` already used — see
-   * `refreshPageNav` for the shared nav control both grids drive.
+   * shown — see `refreshPageNav` for the shared nav control.
    */
   private showShopUI(show: boolean, selectedDefId?: string): void {
     const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
@@ -6980,44 +7173,10 @@ export class BattleScene extends Phaser.Scene {
       if (visible) {
         const defId = SHOP_ORDER[i];
         const selected = defId === selectedDefId;
-        const affordable = this.economy.canAfford(getStructureDefinition(defId).cost);
-        btn.setFillStyle(selected ? 0x5a7ab0 : 0x3a4a6a);
-        this.shopLabels[i].setColor(affordable ? "#e8e8f0" : "#8a8a8a");
+        const affordable = this.economy.canAfford(this.economyOwnerFor(), getStructureDefinition(defId).cost);
+        btn.setFillStyle(selected ? COLORS.bronze : COLORS.woodPanel);
+        this.shopLabels[i].setColor(affordable ? "#f0e6c8" : "#7a6a4a");
         this.applyGridFocusRing(btn, "building", i);
-      }
-    });
-  }
-
-  /**
-   * Show/hide the equip-item buttons and highlight the selected, affordable
-   * ones. Phase 11.7 (D-071): "shop anywhere" is replaced by proximity — the
-   * grid itself is only shown when a living hero is near a shop tile;
-   * otherwise `equipLockLabel` explains why, rather than the HUD silently
-   * doing nothing. Recomputed every time the mode is (re)entered, which is
-   * the existing cadence this method is already called on (mode toggle,
-   * grid-focus refresh) — no new per-frame poll needed.
-   */
-  private showEquipUI(show: boolean, selectedItemId?: string | null): void {
-    const gridVisible = show && this.isAnyHeroNearShop();
-    this.equipLockLabel.setVisible(show && !gridVisible);
-    // Phase 17 (D-108): only one PAGE of the catalogue is visible at once —
-    // its page is derived from `gridFocusIndex` (the same index keyboard nav
-    // and mouse selection already track), so opening the grid on a specific
-    // item (or arrowing past a page boundary) lands on the right page for
-    // free, with no separate page field to keep in sync.
-    const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
-    this.equipItemButtons.forEach((btn, i) => {
-      const onThisPage = Math.floor(i / ITEM_GRID_PAGE_SIZE) === page;
-      const visible = gridVisible && onThisPage;
-      btn.setVisible(visible);
-      this.equipItemLabels[i].setVisible(visible);
-      if (visible) {
-        const itemId = this.visibleGearCatalog()[i];
-        const selected = itemId === selectedItemId;
-        const affordable = this.economy.canAfford(gearCatalogEntry(itemId).cost);
-        btn.setFillStyle(selected ? 0x5a7ab0 : 0x3a4a6a);
-        this.equipItemLabels[i].setColor(affordable ? "#e8e8f0" : "#8a8a8a");
-        this.applyGridFocusRing(btn, "equipping", i);
       }
     });
   }
@@ -7025,9 +7184,9 @@ export class BattleScene extends Phaser.Scene {
   /**
    * Test Mode (D-138): show/hide whichever debug-picker grid (Spawn Enemy,
    * Paint Terrain, Set Status) matches `this.ui.kind`, one page at a time —
-   * same pagination shape as `showShopUI`/`showEquipUI`. Hides all three
-   * grids outright when `this.ui.kind` isn't one of them (called
-   * unconditionally from `setInteraction`, same as those two).
+   * same pagination shape as `showShopUI`. Hides all three grids outright
+   * when `this.ui.kind` isn't one of them (called unconditionally from
+   * `setInteraction`, same as `showShopUI`).
    */
   private showDebugPickerUI(): void {
     const ui = this.ui;
@@ -7046,8 +7205,8 @@ export class BattleScene extends Phaser.Scene {
         labels[i].setVisible(visible);
         if (visible) {
           const selected = items[i] === selectedId;
-          btn.setFillStyle(selected ? 0x5a7ab0 : 0x3a4a6a);
-          btn.setStrokeStyle(this.keyboardFocus === "grid" && i === this.gridFocusIndex ? 3 : 0, 0xffffff);
+          btn.setFillStyle(selected ? COLORS.bronze : COLORS.woodPanel);
+          btn.setStrokeStyle(this.keyboardFocus === "grid" && i === this.gridFocusIndex ? 3 : 0, COLORS.gilt);
         }
       });
     };
@@ -7076,15 +7235,14 @@ export class BattleScene extends Phaser.Scene {
 
   /**
    * Phase 17 (D-108)/Phase 25 (D-116): the page-nav control shared by
-   * whichever item grid is active (Shop, Gear, or a Test Mode debug picker —
+   * whichever item grid is active (Shop, or a Test Mode debug picker —
    * never more than one at once), refreshed after any change to
    * `gridFocusIndex` or mode. Hidden entirely when no grid is showing, or
    * when the active grid's whole catalogue fits on one page.
    */
   private refreshPageNav(): void {
     const kind = this.ui.kind;
-    const gridVisible =
-      kind === "building" || (kind === "equipping" && this.isAnyHeroNearShop()) || this.isDebugGridKind(kind);
+    const gridVisible = kind === "building" || this.isDebugGridKind(kind);
     const items = this.currentGridItems();
     const pageCount = Math.max(1, Math.ceil(items.length / ITEM_GRID_PAGE_SIZE));
     const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
@@ -7094,9 +7252,9 @@ export class BattleScene extends Phaser.Scene {
     this.pageNavLabel.setVisible(showNav).setText(`Page ${page + 1}/${pageCount}`);
   }
 
-  /** Phase 17 (D-108)/Phase 25 (D-116): jump the active grid's (Shop, Gear, or a Test Mode debug picker) page by moving `gridFocusIndex` to the start of the adjacent page. */
+  /** Phase 17 (D-108)/Phase 25 (D-116): jump the active grid's (Shop, or a Test Mode debug picker) page by moving `gridFocusIndex` to the start of the adjacent page. */
   private turnGridPage(direction: 1 | -1): void {
-    if (this.ui.kind !== "building" && this.ui.kind !== "equipping" && !this.isDebugGridKind(this.ui.kind)) return;
+    if (this.ui.kind !== "building" && !this.isDebugGridKind(this.ui.kind)) return;
     const items = this.currentGridItems();
     const pageCount = Math.max(1, Math.ceil(items.length / ITEM_GRID_PAGE_SIZE));
     const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
@@ -7110,17 +7268,17 @@ export class BattleScene extends Phaser.Scene {
   /**
    * KI-030: a white outline on whichever grid button currently has keyboard
    * focus (via Tab + arrow keys), independent of the blue "selected" fill
-   * both grids already used — a keyboard user needs to see where the cursor
+   * the grid already used — a keyboard user needs to see where the cursor
    * is BEFORE committing to an item, the same way a mouse user sees it via
    * pointer position alone.
    */
   private applyGridFocusRing(
     btn: Phaser.GameObjects.Rectangle,
-    kind: "building" | "equipping",
+    kind: "building",
     index: number,
   ): void {
     const focused = this.keyboardFocus === "grid" && this.ui.kind === kind && index === this.gridFocusIndex;
-    btn.setStrokeStyle(focused ? 3 : 0, 0xffffff);
+    btn.setStrokeStyle(focused ? 3 : 0, COLORS.gilt);
   }
 
   /** Update the ghost placement preview at the hovered tile while building. */
@@ -7138,7 +7296,7 @@ export class BattleScene extends Phaser.Scene {
       this.livingHeroes().map((h) => h.position),
       this.nearestLivingHeroId(tile),
     );
-    const ok = check.ok && this.economy.canAfford(def.cost);
+    const ok = check.ok && this.economy.canAfford(this.economyOwnerFor(), def.cost);
     const c = this.grid.tileToWorldCenter(tile);
     const color = ok ? COLORS.buildValid : COLORS.buildInvalid;
     this.buildGhost
@@ -7167,7 +7325,10 @@ export class BattleScene extends Phaser.Scene {
 
   private tryBuild(defId: string, tile: GridPosition): void {
     const def = getStructureDefinition(defId);
-    if (!this.economy.canAfford(def.cost)) {
+    // D-208: a structure belongs to the board, not a hero — charged to
+    // whichever participant is actually clicking on THIS client.
+    const payerId = this.economyOwnerFor();
+    if (!this.economy.canAfford(payerId, def.cost)) {
       this.rejectAt(tile, `Not enough gold for ${def.name} (need ${def.cost}g)`);
       return;
     }
@@ -7180,7 +7341,7 @@ export class BattleScene extends Phaser.Scene {
     }
     // Spend once, then place. canPlace already guarantees place() succeeds, so
     // gold changes exactly once per successful purchase.
-    this.economy.spend(def.cost);
+    this.economy.spend(payerId, def.cost);
     const result = this.buildSystem.place(defId, tile, (p) => this.isUnitAt(p), heroPositions, builtBy);
     if (result.structure) this.renderStructure(result.structure);
     this.logCombat(`Built ${def.name} for ${def.cost}g`);
@@ -7193,7 +7354,7 @@ export class BattleScene extends Phaser.Scene {
     const def = getStructureDefinition(structure.defId);
     const removed = this.buildSystem.remove(structure.instanceId);
     if (!removed) return;
-    this.economy.refund(def.cost);
+    this.economy.refund(this.economyOwnerFor(), def.cost);
     this.destroyStructureToken(structure.instanceId);
     this.logCombat(`Removed ${def.name} (+${def.cost}g refunded)`);
     this.updateGoldHud();
@@ -7237,18 +7398,17 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * Phase 8 tooltip, D-158: preview the hovered (or keyboard-focused)
-   * shop/gear item's name/cost/description via the shared board tooltip
-   * (`this.tooltip`, D-132) rather than the old packed status line. Called
-   * from mouse `pointerover` (`buildItemGrid`'s `onHover`), keyboard
-   * grid-focus navigation (`moveGridFocus`/`toggleKeyboardFocus`), and mode
-   * changes (`setInteraction`, to hide a stale tooltip) — all of which
-   * already funnelled through this one method before this redesign, so the
-   * tooltip stays exactly as keyboard-accessible as the text it replaced
-   * (KI-034's own checklist). Every button in `shopButtons`/
-   * `equipItemButtons` sits at a fixed, known `(x, y)` per grid slot
-   * (`buildItemGrid`), found here by matching `id`'s position in the same
-   * ordered list `currentGridItems()` already uses.
+   * Phase 8 tooltip, D-158: preview the hovered (or keyboard-focused) shop
+   * item's name/cost/description via the shared board tooltip (`this.tooltip`,
+   * D-132) rather than the old packed status line. Called from mouse
+   * `pointerover` (`buildItemGrid`'s `onHover`), keyboard grid-focus
+   * navigation (`moveGridFocus`/`toggleKeyboardFocus`), and mode changes
+   * (`setInteraction`, to hide a stale tooltip) — all of which already
+   * funnelled through this one method before this redesign, so the tooltip
+   * stays exactly as keyboard-accessible as the text it replaced (KI-034's
+   * own checklist). Every button in `shopButtons` sits at a fixed, known
+   * `(x, y)` per grid slot (`buildItemGrid`), found here by matching `id`'s
+   * position in the same ordered list `currentGridItems()` already uses.
    */
   private setHoveredItem(id: string | null): void {
     if (id === null) {
@@ -7257,16 +7417,21 @@ export class BattleScene extends Phaser.Scene {
       const btn = this.shopButtons[SHOP_ORDER.indexOf(id)];
       const def = getStructureDefinition(id);
       if (btn) this.tooltip.showAt(btn.x, btn.y - 22, `${def.name} (${def.cost}g): ${def.description}`);
-    } else if (this.ui.kind === "equipping") {
-      const btn = this.equipItemButtons[this.visibleGearCatalog().indexOf(id)];
-      const entry = gearCatalogEntry(id);
-      if (btn) this.tooltip.showAt(btn.x, btn.y - 22, `${entry.name} (${entry.cost}g): ${entry.description}`);
     }
     this.refreshStatus();
   }
 
   private updateGoldHud(): void {
-    this.goldText.setText(`Gold: ${this.economy.gold}g`);
+    const mine = this.economy.gold(this.economyOwnerFor());
+    if (!this.coopSession) {
+      this.goldText.setText(`Gold: ${mine}g`);
+      return;
+    }
+    // D-208: a coop battle has exactly 2 pools — show both, so a real
+    // "separate wallets" economy actually reads as one on the shared HUD.
+    const partnerUid = Object.values(this.coopSession.heroOwners).find((uid) => uid !== this.coopSession!.localUid);
+    const partnerGold = partnerUid ? this.economy.gold(partnerUid) : 0;
+    this.goldText.setText(`Gold: ${mine}g | ${this.coopSession.partnerName}: ${partnerGold}g`);
   }
 
   /** True if a living hero or an enemy stands on a tile (build occupancy). */
@@ -7275,132 +7440,15 @@ export class BattleScene extends Phaser.Scene {
   }
 
   // ----- Equipment (Phase 7, "limited equipment") -------------------------
-
-  private toggleEquipMode(): void {
-    if (this.turns.current !== "player" || this.inputLocked()) return;
-    if (this.ui.kind === "equipping") this.exitEquipMode();
-    else this.setInteraction({ kind: "equipping", itemId: null });
-  }
-
-  private exitEquipMode(): void {
-    this.setInteraction({ kind: "idle" });
-  }
-
-  private selectEquipItem(itemId: string): void {
-    if (this.ui.kind !== "equipping") return;
-    // Clicking the already-selected item deselects it (so a click on a hero
-    // afterward unequips instead of swapping).
-    const next = this.ui.itemId === itemId ? null : itemId;
-    this.setInteraction({ kind: "equipping", itemId: next });
-  }
-
-  /**
-   * In equip mode, a click on a hero equips the selected item into whichever
-   * slot fits it, or unequips it if that hero already carries it somewhere
-   * (Phase 11.5, D-078). Equipment and potions live in separate id
-   * namespaces, so checking both slot maps unambiguously finds "does this
-   * hero already have this exact item" without needing to track kind.
-   */
-  private handleEquipClick(tile: GridPosition): void {
-    if (this.ui.kind !== "equipping") return;
-    // Phase 11.7 (D-071): the same proximity gate the Gear grid's visibility
-    // uses, enforced again here so a stale keyboard-focused selection can't
-    // bypass the hidden grid.
-    if (!this.isAnyHeroNearShop()) {
-      this.rejectAt(tile, "Move a hero to a Shop tile to access Gear");
-      return;
-    }
-    const hero = this.heroAt(tile);
-    if (!hero) return;
-    this.resolveEquipOnHero(hero);
-  }
-
-  /**
-   * D-165 (KI-098 item 3): the equip-resolution core both `handleEquipClick`
-   * (a board-tile click) and the roster-strip click (`onRosterBoxClick`)
-   * funnel through — given a hero and the item currently selected in equip
-   * mode, equips it into whichever slot fits, or unequips it if this hero
-   * already carries it. Callers are responsible for their own proximity/
-   * liveness gates first (each needs its own rejection message/target tile).
-   */
-  private resolveEquipOnHero(hero: Hero): void {
-    if (this.ui.kind !== "equipping") return;
-    const itemId = this.ui.itemId;
-    if (!itemId) return;
-
-    if (itemId in POTION_DEFINITIONS) {
-      const slot = this.findGeneralSlotHolding(hero, itemId);
-      if (slot) this.unequipPotionFromHero(hero, slot);
-      else this.equipPotionOnHero(hero, itemId);
-      return;
-    }
-    const slot = this.findGearSlotHolding(hero, itemId);
-    if (slot) this.unequipGearFromHero(hero, slot);
-    else this.equipGearOnHero(hero, itemId);
-  }
-
-  private findGearSlotHolding(hero: Hero, itemId: string): GearSlotId | null {
-    return GEAR_SLOT_IDS.find((slot) => hero.equippedItems[slot] === itemId) ?? null;
-  }
-
-  private findGeneralSlotHolding(hero: Hero, itemId: string): GeneralSlotId | null {
-    return GENERAL_SLOT_IDS.find((slot) => hero.equippedPotions[slot] === itemId) ?? null;
-  }
-
-  /**
-   * True for a Light melee weapon — the one item type that may target
-   * EITHER hand slot (Phase 19, D-110's dual-wielding system). Every other
-   * weapon only ever targets `"weapon"`, same as before this phase.
-   */
-  private static isOffHandEligibleWeapon(def: EquipmentDefinition): boolean {
-    return def.slot === "weapon" && def.weapon?.kind === "melee" && def.weapon.properties.includes("light");
-  }
-
-  /**
-   * Both ring slots share one type; other slot types map 1:1 to their
-   * instance id. Phase 19 (D-110): a Light melee weapon targets the empty
-   * `"weapon"` slot first, then falls back to `"shield"` (the off-hand) —
-   * same "first empty slot" rule ring1/ring2 already use. `equipGearOnHero`
-   * rejects the one case this fallback can't safely resolve (main hand
-   * already filled AND the off-hand already holds a real Shield) before
-   * this is ever called, so `"shield"` is always safe to return here.
-   */
-  private targetGearSlot(hero: Hero, itemId: string): GearSlotId {
-    const def = getEquipmentDefinition(itemId);
-    if (def.slot === "ring") {
-      if (!hero.equippedItems.ring1) return "ring1";
-      if (!hero.equippedItems.ring2) return "ring2";
-      return "ring1"; // both full — replace the first ring
-    }
-    if (BattleScene.isOffHandEligibleWeapon(def)) {
-      return hero.equippedItems.weapon ? "shield" : "weapon";
-    }
-    return def.slot;
-  }
-
-  /**
-   * D-148 (KI-098, a small slice of "equip UX needs a rethink"): a before/
-   * after AC/attack-bonus preview for hovering a hero while an item is
-   * selected in equip mode — the flow itself (click item, then click a hero
-   * token) is untouched; this only answers "what would change" before
-   * committing gold. Simulates on a throwaway `Hero.fromSnapshot` clone
-   * (bypassing cost/attunement/grip validation, which only matters for the
-   * REAL equip in `equipGearOnHero`) so hovering never touches the live
-   * hero or the player's gold.
-   */
-  private previewEquipDelta(hero: Hero, itemId: string): string {
-    const slot = this.targetGearSlot(hero, itemId);
-    const clone = Hero.fromSnapshot(hero.toSnapshot());
-    clone.equippedItems[slot] = itemId;
-    clone.onGearChanged();
-    const parts: string[] = [];
-    if (clone.armorClass !== hero.armorClass) parts.push(`AC ${hero.armorClass}→${clone.armorClass}`);
-    const fmt = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
-    if (clone.effectiveAttackBonus !== hero.effectiveAttackBonus) {
-      parts.push(`attack ${fmt(hero.effectiveAttackBonus)}→${fmt(clone.effectiveAttackBonus)}`);
-    }
-    return parts.length > 0 ? parts.join(", ") : "No AC/attack change";
-  }
+  //
+  // D-209 (The Armory): the old click-item-then-click-hero Gear grid this
+  // section used to hold (`toggleEquipMode`/`handleEquipClick`/
+  // `resolveEquipOnHero`/`equipGearOnHero`/`unequipGearFromHero`/etc., plus
+  // the `targetGearSlot`/`previewEquipDelta`/`isOffHandEligibleWeapon` slot
+  // math) was deleted wholesale — fully superseded by `GearShopScene` and
+  // the "The Armory" methods below, not reused. `isOffHandEligibleWeapon`
+  // and the slot-eligibility logic `targetGearSlot` used to derive live on
+  // as pure functions in `systems/GearCompareSystem.ts`.
 
   /**
    * Phase 22 (magic-item expansion): the Gear grid's actual visible catalog
@@ -7420,102 +7468,192 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  private equipGearOnHero(hero: Hero, itemId: string): void {
-    const def = getEquipmentDefinition(itemId);
-    if (!this.economy.canAfford(def.cost)) {
-      this.rejectAt(hero.position, `Not enough gold for ${def.name} (need ${def.cost}g)`);
-      return;
-    }
-    // Phase 19 (D-110): a Light melee weapon can dual-wield into the
-    // off-hand ("shield") slot, but not while a real Shield already sits
-    // there — reject explicitly (same "reject before any gold changes
-    // hands" shape as the attunement/grip gates below) rather than letting
-    // `targetGearSlot`'s fallback silently displace the main-hand weapon
-    // instead.
-    if (BattleScene.isOffHandEligibleWeapon(def) && hero.equippedItems.weapon) {
-      const shieldItemId = hero.equippedItems.shield;
-      const shieldItemDef = shieldItemId ? getEquipmentDefinition(shieldItemId) : null;
-      if (shieldItemId && !shieldItemDef?.weapon) {
-        this.rejectAt(hero.position, `${hero.name}'s Shield is in the way — unequip it first to dual-wield`);
-        return;
-      }
-    }
-    const slot = this.targetGearSlot(hero, itemId);
-    // Phase 13.9 (D-094): a rare-and-up item requires attunement — gated
-    // here, before any gold changes hands, rather than letting a hero wear
-    // a dead-weight unattuned item (see Hero.wouldExceedAttunementLimit).
-    if (hero.wouldExceedAttunementLimit(itemId, slot)) {
-      this.rejectAt(hero.position, `${hero.name} is already attuned to ${MAX_ATTUNEMENTS} items — unequip one first`);
-      return;
-    }
-    // Phase 17 (D-108): a Two-Handed weapon needs both hands — refuse
-    // equipping it alongside a Shield (or, since Phase 19/D-110, an
-    // off-hand weapon — `wouldConflictWithGrip`'s "shield" branch just
-    // checks the slot isn't empty, so it already covers both), and vice
-    // versa (see Hero.wouldConflictWithGrip). Same "reject before any gold
-    // changes hands" shape as the attunement gate above.
-    if (hero.wouldConflictWithGrip(itemId, slot)) {
-      this.rejectAt(hero.position, `${hero.name} can't wear a Shield with a Two-Handed weapon equipped`);
-      return;
-    }
-    // Swap: refund whatever this hero already had in the target slot, then
-    // spend once for the new item — gold changes at most twice, and only on
-    // success.
-    const prevId = hero.equippedItems[slot];
-    if (prevId) this.economy.refund(getEquipmentDefinition(prevId).cost);
-    this.economy.spend(def.cost);
-    hero.equippedItems[slot] = itemId;
-    this.logCombat(`${hero.name} equips ${def.name} into ${GEAR_SLOT_LABELS[slot]} (${def.cost}g)`);
-    this.ensureHeroCape(hero);
-    hero.onGearChanged();
-    this.updateGoldHud();
-    this.setInteraction({ kind: "equipping", itemId });
+  // ----- The Armory (D-209) -----------------------------------------------
+  //
+  // A new full-screen scene (`GearShopScene`) replaces the old click-item-
+  // then-click-hero Gear grid this section used to hold: pick a hero, pick
+  // one of their slots, browse a catalog filtered to that slot, buy or sell
+  // right on the row. Every method below is a thin, independently-
+  // revalidating entry point the launched overlay scene calls back into —
+  // mirrors the precedent `castAbilityFromCharacterSheet` already set
+  // (D-165): "never trust the caller," since a paused scene's request could
+  // in principle be stale.
+
+  /** Heroes eligible to shop for/from — living only, same scope `isAnyHeroNearShop` already uses. */
+  public shopHeroes(): Hero[] {
+    return this.livingHeroes();
   }
 
-  private unequipGearFromHero(hero: Hero, slot: GearSlotId): void {
+  /** Every item id (equipment AND potions) this party's average level has unlocked — same catalog the old Gear grid showed. */
+  public shopVisibleItemIds(): string[] {
+    return this.visibleGearCatalog();
+  }
+
+  /**
+   * `hero`'s own gold pool. Always the real per-hero owner (coop or solo) —
+   * strictly better than the old grid's affordability preview, which had to
+   * approximate against the LOCAL player's pool because no hero was chosen
+   * yet; the Armory always has a hero picked before browsing.
+   */
+  public goldFor(hero: Hero): number {
+    return this.economy.gold(this.economyOwnerFor(hero));
+  }
+
+  /**
+   * Sells whatever occupies `slot` on `hero` for half its cost
+   * (`sellValueForCost`) and credits `hero`'s own pool. Returns `null` if
+   * the slot was already empty — shared by the standalone Sell action and
+   * the auto-trade-in a purchase performs on an occupied slot.
+   */
+  private sellGearAt(hero: Hero, slot: GearSlotId): { itemName: string; amount: number } | null {
     const itemId = hero.equippedItems[slot];
-    if (!itemId) return;
+    if (!itemId) return null;
     const def = getEquipmentDefinition(itemId);
+    const amount = sellValueForCost(def.cost);
     delete hero.equippedItems[slot];
-    this.economy.refund(def.cost);
-    this.logCombat(`${hero.name} unequips ${def.name} from ${GEAR_SLOT_LABELS[slot]} (+${def.cost}g refunded)`);
+    this.economy.award(this.economyOwnerFor(hero), amount);
+    return { itemName: def.name, amount };
+  }
+
+  /** Potion equivalent of `sellGearAt` — sells whatever `hero` carries in `slot`. */
+  private sellPotionAt(hero: Hero, slot: GeneralSlotId): { itemName: string; amount: number } | null {
+    const itemId = hero.equippedPotions[slot];
+    if (!itemId) return null;
+    const def = getPotionDefinition(itemId);
+    const amount = sellValueForCost(def.cost);
+    delete hero.equippedPotions[slot];
+    this.economy.award(this.economyOwnerFor(hero), amount);
+    return { itemName: def.name, amount };
+  }
+
+  private shopGateReason(hero: Hero): string | null {
+    if (this.turns.current !== "player" || this.inputLocked()) return "It's not your turn.";
+    if (!this.isAnyHeroNearShop()) return "No hero is near a Shop tile.";
+    if (!this.shopHeroes().includes(hero)) return `${hero.name} can't shop right now.`;
+    return null;
+  }
+
+  /**
+   * Buys `itemId` into `hero`'s `slot`, auto-selling whatever already
+   * occupies it as part of the same transaction (D-209 — there's still no
+   * general inventory). Re-validates everything a real equip needs
+   * (eligibility, attunement, grip conflicts, and afford against the NET
+   * cost after the trade-in) independently of whatever `GearShopScene`'s
+   * own UI already checked.
+   */
+  public buyGearForHero(hero: Hero, slot: GearSlotId, itemId: string): ShopActionResult {
+    const gateReason = this.shopGateReason(hero);
+    if (gateReason) return { ok: false, reason: gateReason };
+    if (!isItemEligibleForSlot(itemId, slot)) return { ok: false, reason: "That item doesn't fit this slot." };
+    const def = getEquipmentDefinition(itemId);
+    if (hero.equippedItems[slot] === itemId) {
+      return { ok: false, reason: `${hero.name} already has ${def.name} equipped.` };
+    }
+    if (hero.wouldExceedAttunementLimit(itemId, slot)) {
+      return { ok: false, reason: `${hero.name} is already attuned to ${MAX_ATTUNEMENTS} items — unequip one first.` };
+    }
+    if (hero.wouldConflictWithGrip(itemId, slot)) {
+      return { ok: false, reason: `${hero.name} can't wear a Shield with a Two-Handed weapon equipped.` };
+    }
+    const occupantId = hero.equippedItems[slot];
+    const tradeIn = occupantId ? sellValueForCost(getEquipmentDefinition(occupantId).cost) : 0;
+    const netCost = def.cost - tradeIn;
+    if (netCost > 0 && !this.economy.canAfford(this.economyOwnerFor(hero), netCost)) {
+      return { ok: false, reason: `Not enough gold for ${def.name} (need ${netCost}g).` };
+    }
+    const sold = this.sellGearAt(hero, slot);
+    this.economy.spend(this.economyOwnerFor(hero), def.cost);
+    hero.equippedItems[slot] = itemId;
     this.ensureHeroCape(hero);
     hero.onGearChanged();
     this.updateGoldHud();
-    this.setInteraction({ kind: "equipping", itemId: this.currentEquipItemId() });
+    const message = sold
+      ? `${hero.name} sells ${sold.itemName} (+${sold.amount}g) and equips ${def.name} into ${GEAR_SLOT_LABELS[slot]} (${def.cost}g)`
+      : `${hero.name} equips ${def.name} into ${GEAR_SLOT_LABELS[slot]} (${def.cost}g)`;
+    this.logCombat(message);
+    return { ok: true, message };
   }
 
-  private equipPotionOnHero(hero: Hero, itemId: string): void {
+  /** Sells whatever `hero` has equipped in `slot` outright, for half its cost. */
+  public sellGearFromHero(hero: Hero, slot: GearSlotId): ShopActionResult {
+    const gateReason = this.shopGateReason(hero);
+    if (gateReason) return { ok: false, reason: gateReason };
+    const sold = this.sellGearAt(hero, slot);
+    if (!sold) return { ok: false, reason: `${hero.name} has nothing equipped there.` };
+    this.ensureHeroCape(hero);
+    hero.onGearChanged();
+    this.updateGoldHud();
+    const message = `${hero.name} sells ${sold.itemName} (+${sold.amount}g)`;
+    this.logCombat(message);
+    return { ok: true, message };
+  }
+
+  /** Potion equivalent of `buyGearForHero` — any potion fits any `GeneralSlotId`, so there's no `isItemEligibleForSlot`-style gate to check. */
+  public buyPotionForHero(hero: Hero, slot: GeneralSlotId, itemId: string): ShopActionResult {
+    const gateReason = this.shopGateReason(hero);
+    if (gateReason) return { ok: false, reason: gateReason };
     const def = getPotionDefinition(itemId);
-    if (!this.economy.canAfford(def.cost)) {
-      this.rejectAt(hero.position, `Not enough gold for ${def.name} (need ${def.cost}g)`);
+    if (hero.equippedPotions[slot] === itemId) {
+      return { ok: false, reason: `${hero.name} already carries ${def.name} there.` };
+    }
+    const occupantId = hero.equippedPotions[slot];
+    const tradeIn = occupantId ? sellValueForCost(getPotionDefinition(occupantId).cost) : 0;
+    const netCost = def.cost - tradeIn;
+    if (netCost > 0 && !this.economy.canAfford(this.economyOwnerFor(hero), netCost)) {
+      return { ok: false, reason: `Not enough gold for ${def.name} (need ${netCost}g).` };
+    }
+    const sold = this.sellPotionAt(hero, slot);
+    this.economy.spend(this.economyOwnerFor(hero), def.cost);
+    hero.equippedPotions[slot] = itemId;
+    this.updateGoldHud();
+    const message = sold
+      ? `${hero.name} sells ${sold.itemName} (+${sold.amount}g) and stocks ${def.name} in ${GENERAL_SLOT_LABELS[slot]} (${def.cost}g)`
+      : `${hero.name} stocks ${def.name} in ${GENERAL_SLOT_LABELS[slot]} (${def.cost}g)`;
+    this.logCombat(message);
+    return { ok: true, message };
+  }
+
+  /** Potion equivalent of `sellGearFromHero`. */
+  public sellPotionFromHero(hero: Hero, slot: GeneralSlotId): ShopActionResult {
+    const gateReason = this.shopGateReason(hero);
+    if (gateReason) return { ok: false, reason: gateReason };
+    const sold = this.sellPotionAt(hero, slot);
+    if (!sold) return { ok: false, reason: `${hero.name} isn't carrying anything there.` };
+    this.updateGoldHud();
+    const message = `${hero.name} sells ${sold.itemName} (+${sold.amount}g)`;
+    this.logCombat(message);
+    return { ok: true, message };
+  }
+
+  /**
+   * The Armory's entry point — what "G"/the Gear button call now, replacing
+   * the deleted `toggleEquipMode`. Same modal-guard list `openPauseMenu`
+   * already uses, so it can never open on top of an active drag or a forced
+   * choice.
+   */
+  private openGearShop(): void {
+    if (this.turns.current !== "player" || this.inputLocked()) return;
+    if (
+      this.heroDrag ||
+      this.choosingAsi ||
+      this.choosingSubclass ||
+      this.choosingSpellPick ||
+      this.choosingLevelUpAck ||
+      this.choosingRest ||
+      this.choosingSpellPrep ||
+      this.tutorialOverlay.length > 0 ||
+      this.technicalLogOverlay.length > 0 ||
+      this.debugMenuOverlay.length > 0 ||
+      this.endOverlay.length > 0
+    ) {
       return;
     }
-    const slot: GeneralSlotId = hero.equippedPotions.general1 === undefined ? "general1"
-      : hero.equippedPotions.general2 === undefined ? "general2"
-      : "general1"; // both full — replace the first potion
-    const prevId = hero.equippedPotions[slot];
-    if (prevId) this.economy.refund(getPotionDefinition(prevId).cost);
-    this.economy.spend(def.cost);
-    hero.equippedPotions[slot] = itemId;
-    this.logCombat(`${hero.name} stocks ${def.name} in ${GENERAL_SLOT_LABELS[slot]} (${def.cost}g)`);
-    this.updateGoldHud();
-    this.setInteraction({ kind: "equipping", itemId });
-  }
-
-  private unequipPotionFromHero(hero: Hero, slot: GeneralSlotId): void {
-    const itemId = hero.equippedPotions[slot];
-    if (!itemId) return;
-    const def = getPotionDefinition(itemId);
-    delete hero.equippedPotions[slot];
-    this.economy.refund(def.cost);
-    this.logCombat(`${hero.name} removes ${def.name} from ${GENERAL_SLOT_LABELS[slot]} (+${def.cost}g refunded)`);
-    this.updateGoldHud();
-    this.setInteraction({ kind: "equipping", itemId: this.currentEquipItemId() });
-  }
-
-  private currentEquipItemId(): string | null {
-    return this.ui.kind === "equipping" ? this.ui.itemId : null;
+    if (!this.isAnyHeroNearShop()) {
+      this.logCombat("Move a hero to a Shop tile to buy/equip Gear.");
+      return;
+    }
+    this.scene.launch("GearShopScene", { battleScene: this });
+    this.scene.pause();
   }
 
   // ----- Helpers ---------------------------------------------------------
@@ -7632,6 +7770,50 @@ export class BattleScene extends Phaser.Scene {
   private canLocallyControl(hero: Hero): boolean {
     if (!this.coopSession) return true;
     return canActOnHero(this.coopSession.heroOwners, hero.id, this.coopSession.localUid);
+  }
+
+  /**
+   * D-208 (Phase 4 of the 2026-08-28 playtest batch, "co-op economy"):
+   * resolves which `EconomySystem` pool a gold change belongs to. Outside a
+   * coop session (solo play, every campaign — a campaign never runs inside
+   * one, see `CoopLobbyScene`) there's exactly one pool, `SOLO_ECONOMY_OWNER`,
+   * regardless of `hero`. Inside a coop session: pass the specific hero a
+   * gold change is tied to (equip/unequip, a treasure tile, a theft target,
+   * a kill this hero's own attack caused) to charge/credit THEIR owner;
+   * omit it for an action with no single hero attached (building or
+   * removing a structure, or previewing shop/gear affordability before a
+   * hero is chosen) to use whichever participant is acting on THIS client,
+   * `localUid`.
+   */
+  private economyOwnerFor(hero?: Hero): string {
+    if (!this.coopSession) return SOLO_ECONOMY_OWNER;
+    if (hero) return this.coopSession.heroOwners[hero.id] ?? this.coopSession.localUid;
+    return this.coopSession.localUid;
+  }
+
+  /**
+   * D-208: awards `amount` gold credited to `ownerId`, or — when the source
+   * has no single attributable owner (a trap kill, a bundled summon-kill
+   * sweep, wave-completion/time-bonus gold) — splits it evenly across every
+   * pool that currently exists. Outside a coop session there's only ever the
+   * one solo pool, so `null` and a real id behave identically there; this
+   * only actually splits gold once a second pool exists. Any remainder goes
+   * to the first pool, same flooring convention `EconomySystem`'s own
+   * methods already use.
+   */
+  private creditGold(ownerId: string | null, amount: number): void {
+    if (ownerId !== null) {
+      this.economy.award(ownerId, amount);
+      return;
+    }
+    const owners = this.economy.ownerIds();
+    const share = Math.floor(amount / owners.length);
+    let remainder = amount - share * owners.length;
+    for (const id of owners) {
+      const extra = remainder > 0 ? 1 : 0;
+      if (extra > 0) remainder--;
+      this.economy.award(id, share + extra);
+    }
   }
 
   private enemyAt(pos: GridPosition): Enemy | undefined {
@@ -8122,10 +8304,114 @@ export class BattleScene extends Phaser.Scene {
     this.messageText.setText(message);
   }
 
-  private logCombat(line: string): void {
+  /** Public since D-209: The Armory (`GearShopScene`) logs buy/sell results from a different scene instance, same as `castAbilityFromCharacterSheet`'s "call back into the paused BattleScene" precedent. A one-line appender with no board/position coupling, so widening it is safe. */
+  public logCombat(line: string): void {
     this.combatLog.push(line);
     if (this.combatLog.length > 5) this.combatLog.shift();
     this.combatLogText.setText(this.combatLog.join("\n"));
+    this.refreshCombatLogPanel();
+    // KI-155: the action-button row's Y depends on how much log there
+    // currently is (see `actionRowY`) — refresh whenever it changes.
+    this.refreshActionRowLayout();
+  }
+
+  /**
+   * KI-155's "off center" fix, part 1 (vertical): reserves only as much
+   * room under the roster/message line as the combat log currently has
+   * content for (17px/line, same per-line height the original fixed 86px
+   * reservation assumed for its 5-line cap), instead of always reserving
+   * the full 5-line cap up front. A 10px floor keeps a little breathing
+   * room even at 0 lines (Wave 1, before anything has logged yet).
+   */
+  private actionRowY(): number {
+    const logBlockHeight = Math.min(86, Math.max(10, this.combatLog.length * 17));
+    return this.actionRowBaseY + logBlockHeight;
+  }
+
+  /**
+   * D-210 (Phase 5 reskin): resizes `combatLogPanel` to the SAME height
+   * `actionRowY()` reserves for the log's current line count, so the
+   * panel grows/shrinks with the text instead of sitting at a fixed
+   * 5-line-cap size — a fixed-size panel would reintroduce the dead-gap-
+   * on-Wave-1 bug KI-155/D-207 fixed. Width is fixed at 900px (the same
+   * base width `dialogueBox.ts`'s parchment panel established), centered
+   * under the roster.
+   */
+  private refreshCombatLogPanel(): void {
+    const logBlockHeight = Math.min(86, Math.max(10, this.combatLog.length * 17));
+    const w = 900;
+    const x = GAME_WIDTH / 2 - w / 2;
+    const y = this.combatLogText.y;
+    this.combatLogPanel.clear();
+    this.combatLogPanel.fillStyle(0x140f0a, 0.55);
+    this.combatLogPanel.fillRect(x, y, w, logBlockHeight);
+    this.combatLogPanel.lineStyle(1, COLORS.bronzeDark, 0.85);
+    this.combatLogPanel.lineBetween(x, y, x + w, y);
+    this.combatLogPanel.lineBetween(x, y + logBlockHeight, x + w, y + logBlockHeight);
+  }
+
+  /**
+   * KI-155's "off center" fix, part 2 (horizontal): each HUD action row
+   * (Confirm/Cancel or Ability/Potion; Bonus Action/Action Surge; Class
+   * Action/Character Sheet) was laid out at fixed offsets from center sized
+   * for ALL its members being visible at once — when only one or two
+   * actually are (the common case for any given hero), they land lopsided
+   * to one side instead of centered as a group. This lays out whichever
+   * `items` are currently visible as one centered group with a fixed gap
+   * between them, leaving hidden buttons' positions alone (they're
+   * invisible, so it doesn't matter where they sit until shown again).
+   */
+  private centerRow(
+    y: number,
+    items: Array<{ rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; width: number }>,
+  ): void {
+    const gap = 20;
+    const totalWidth = items.reduce((sum, it) => sum + it.width, 0) + gap * Math.max(0, items.length - 1);
+    let x = GAME_WIDTH / 2 - totalWidth / 2;
+    for (const it of items) {
+      const cx = x + it.width / 2;
+      it.rect.setPosition(cx, y);
+      it.label.setPosition(cx, y);
+      x += it.width + gap;
+    }
+  }
+
+  /** KI-155: recomputes both the Y (log-aware) and X (visible-group-centered) layout for every action-row button. Safe to call any time — reads each button's current `.visible` rather than tracking hero/mode state separately. */
+  private refreshActionRowLayout(): void {
+    const cy = this.actionRowY();
+    const cy2 = cy + 40;
+    const cy3 = cy2 + 40;
+
+    const row1 = this.confirmButton.visible
+      ? [
+          { rect: this.confirmButton, label: this.confirmLabel, width: 150 },
+          { rect: this.cancelButton, label: this.cancelLabel, width: 150 },
+        ]
+      : [
+          ...(this.abilityButton.visible ? [{ rect: this.abilityButton, label: this.abilityLabel, width: 190 }] : []),
+          ...(this.potionButton.visible ? [{ rect: this.potionButton, label: this.potionLabel, width: 150 }] : []),
+        ];
+    this.centerRow(cy, row1);
+
+    const row2 = [
+      ...(this.bonusActionButton.visible
+        ? [{ rect: this.bonusActionButton, label: this.bonusActionLabel, width: 190 }]
+        : []),
+      ...(this.actionSurgeButton.visible
+        ? [{ rect: this.actionSurgeButton, label: this.actionSurgeLabel, width: 150 }]
+        : []),
+    ];
+    this.centerRow(cy2, row2);
+
+    const row3 = [
+      ...(this.classActionButton.visible
+        ? [{ rect: this.classActionButton, label: this.classActionLabel, width: 260 }]
+        : []),
+      ...(this.characterSheetButton.visible
+        ? [{ rect: this.characterSheetButton, label: this.characterSheetLabel, width: 170 }]
+        : []),
+    ];
+    this.centerRow(cy3, row3);
   }
 
   /** KI-085/D-130: append a line to the technical log's own history (see `technicalLog`'s doc comment). */
@@ -8176,23 +8462,29 @@ export class BattleScene extends Phaser.Scene {
           this.ui.kind === "aimingSpell" ||
           this.ui.kind === "aimingTileSpell") &&
         this.ui.heroId === h.id;
-      box.setStrokeStyle(2, isSelected ? COLORS.heroActive : 0x3a3a4a);
+      box.setStrokeStyle(2, isSelected ? COLORS.gilt : COLORS.bronze);
       if (!h.isAlive()) {
-        box.setFillStyle(0x1a1a26, 0.5);
-        this.heroSlotNameText[i].setText(`${h.name} (down)`).setColor("#6a6a80");
+        box.setFillStyle(COLORS.woodPanel, 0.5);
+        this.heroSlotNameText[i].setText(`${h.name} (down)`).setColor("#7a6a4a");
         this.heroSlotHpBarBg[i].setVisible(false);
         this.heroSlotHpBarFg[i].setVisible(false);
         this.heroSlotHpText[i].setVisible(false);
         this.heroSlotDetailText[i].setText("");
         return;
       }
-      box.setFillStyle(0x1a1a26, 0.9);
+      box.setFillStyle(COLORS.woodPanel, 0.9);
       // Phase 13.3 (D-089): only a D&D-built hero has a meaningful class level to show.
       const level = h.classId !== undefined ? ` Lv${h.level}` : "";
-      this.heroSlotNameText[i].setText(`${h.name}${level}`).setColor("#e8e8f0");
+      this.heroSlotNameText[i].setText(`${h.name}${level}`).setColor("#f0e6c8");
       const fraction = h.effectiveMaxHealth > 0 ? Phaser.Math.Clamp(h.health / h.effectiveMaxHealth, 0, 1) : 0;
       const barMaxWidth = this.heroSlotHpBarBg[i].width;
-      const barColor = fraction > 0.5 ? COLORS.hero : fraction > 0.25 ? 0xe8c06a : COLORS.enemy;
+      // D-210 (Phase 5 reskin, Kevin's explicit call): a two-state bar —
+      // green until a critical threshold, then red — replacing the old
+      // three-tier green/gold/red gradient. Reuses the old red tier's own
+      // cutoff (25%) as the critical point, rather than inventing a new
+      // balance number.
+      const CRITICAL_HP_FRACTION = 0.25;
+      const barColor = fraction > CRITICAL_HP_FRACTION ? COLORS.hero : COLORS.enemy;
       this.heroSlotHpBarFg[i].setSize(Math.max(1, barMaxWidth * fraction), this.heroSlotHpBarFg[i].height).setFillStyle(barColor);
       this.heroSlotHpBarBg[i].setVisible(true);
       this.heroSlotHpBarFg[i].setVisible(true);
@@ -8228,9 +8520,6 @@ export class BattleScene extends Phaser.Scene {
     else if (this.ui.kind === "aimingSpell") message = "Click an outlined ally or enemy to cast the spell · Esc to cancel";
     else if (this.ui.kind === "aimingTileSpell") message = "Click an outlined tile to cast the spell · Esc to cancel";
     else if (this.ui.kind === "building") {
-      const focusHint = this.keyboardFocus === "grid" ? "Tab: aim on board" : "Tab: pick item";
-      message = `${focusHint} · Esc when done`;
-    } else if (this.ui.kind === "equipping") {
       const focusHint = this.keyboardFocus === "grid" ? "Tab: aim on board" : "Tab: pick item";
       message = `${focusHint} · Esc when done`;
     } else if (this.ui.kind === "debugSpawnEnemy") {
@@ -9096,7 +9385,8 @@ export class BattleScene extends Phaser.Scene {
       this.tutorialOverlay.length > 0 ||
       this.technicalLogOverlay.length > 0 ||
       this.debugMenuOverlay.length > 0 ||
-      this.chapterDialogue !== null
+      this.chapterDialogue !== null ||
+      this.movingIntoAttack
     );
   }
 
@@ -9418,20 +9708,21 @@ export class BattleScene extends Phaser.Scene {
     const x = 110;
     const y = GAME_HEIGHT - 24;
     const btn = this.add
-      .rectangle(x, y, 180, 36, 0x3a3a4a)
+      .rectangle(x, y, 180, 36, COLORS.woodPanel)
+      .setStrokeStyle(1.5, COLORS.bronze)
       .setInteractive({ useHandCursor: true })
       .setDepth(30);
     this.add
       .text(x, y, "Menu (Esc)", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "13px",
-        color: "#e8e8f0",
+        fontFamily: FONT_BODY,
+        fontSize: "14px",
+        color: "#f0e6c8",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(30);
-    btn.on("pointerover", () => btn.setFillStyle(0x4a4a5e));
-    btn.on("pointerout", () => btn.setFillStyle(0x3a3a4a));
+    btn.on("pointerover", () => btn.setFillStyle(COLORS.woodPanelHover).setStrokeStyle(1.5, COLORS.gilt));
+    btn.on("pointerout", () => btn.setFillStyle(COLORS.woodPanel).setStrokeStyle(1.5, COLORS.bronze));
     btn.on("pointerdown", () => this.openPauseMenu());
   }
 

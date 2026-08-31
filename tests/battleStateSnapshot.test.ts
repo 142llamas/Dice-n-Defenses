@@ -4,7 +4,7 @@ import { GameMap } from "../src/game/systems/GameMap";
 import { PathfindingSystem } from "../src/game/systems/PathfindingSystem";
 import { WaveSystem } from "../src/game/systems/WaveSystem";
 import { BuildSystem } from "../src/game/systems/BuildSystem";
-import { EconomySystem } from "../src/game/systems/EconomySystem";
+import { EconomySystem, SOLO_ECONOMY_OWNER } from "../src/game/systems/EconomySystem";
 import { RestSystem } from "../src/game/systems/RestSystem";
 import { TurnSystem } from "../src/game/systems/TurnSystem";
 import { RandomService } from "../src/game/systems/RandomService";
@@ -140,9 +140,9 @@ function makeLaneBattle(): {
   buildSystem.place("spike-trap", { x: 1, y: 0 });
   buildSystem.place("barricade", { x: 2, y: 0 }, undefined, undefined, "hero-ash");
 
-  const economy = new EconomySystem(100);
-  economy.spend(30);
-  economy.award(12);
+  const economy = new EconomySystem({ [SOLO_ECONOMY_OWNER]: 100 });
+  economy.spend(SOLO_ECONOMY_OWNER, 30);
+  economy.award(SOLO_ECONOMY_OWNER, 12);
 
   const restSystem = new RestSystem({ shortRestCharges: 3, longRestCharges: 1 });
   restSystem.takeShortRest([]);
@@ -211,7 +211,7 @@ describe("captureBattleState / restoreBattleState — full battle round trip", (
     });
 
     expect(restored.turns.current).toBe(liveState.turns.current);
-    expect(restored.economy.gold).toBe(liveState.economy.gold);
+    expect(restored.economy.gold(SOLO_ECONOMY_OWNER)).toBe(liveState.economy.gold(SOLO_ECONOMY_OWNER));
     expect(restored.wavesCleared).toBe(liveState.wavesCleared);
     expect(restored.restSystem.shortRestsRemaining).toBe(liveState.restSystem.shortRestsRemaining);
     expect(restored.restSystem.longRestsRemaining).toBe(liveState.restSystem.longRestsRemaining);

@@ -137,6 +137,36 @@ export class StandardArrayAllocator implements AbilityScoreAllocator {
 }
 
 /**
+ * Phase 2 (2026-08-28 playtest batch, D-204): a per-class default Standard
+ * Array order, so a fresh hero's scores are usable out of the box instead of
+ * always landing on the flat STR/DEX/CON/INT/WIS/CHA identity order
+ * regardless of class. Derived from data the class already declares
+ * (`primaryAbility`/`spellcasting`/`savingThrowProficiencies`) rather than a
+ * hand-authored priority table per class — stays correct automatically if
+ * those fields ever change, and needs no separate SRD verification pass
+ * (this is a QoL ordering heuristic, not SRD-sourced content).
+ *
+ * Purely a DEFAULT for a freshly-constructed allocator — the player's own
+ * per-stat dropdown (`StandardArrayAllocator.assign`) always freely
+ * rearranges it afterward, and changing class on an already-configured hero
+ * deliberately does NOT re-run this (see `CharacterCreationScene`'s Class
+ * picker, which leaves gear picks untouched on class change for the same
+ * "don't silently rewrite the player's own choices" reason).
+ */
+export function defaultAbilityOrderForClass(classId: string): AbilityScoreId[] {
+  const def = getClassDefinition(classId);
+  const priority: AbilityScoreId[] = [
+    def.primaryAbility,
+    ...(def.spellcasting ? [def.spellcasting.spellcastingAbility] : []),
+    ...def.savingThrowProficiencies,
+  ];
+  const order: AbilityScoreId[] = [];
+  for (const ability of priority) if (!order.includes(ability)) order.push(ability);
+  for (const ability of ABILITY_SCORE_IDS) if (!order.includes(ability)) order.push(ability);
+  return order;
+}
+
+/**
  * Reconstruct an allocator whose `.scores()` matches a stored `AbilityScores`
  * object — the inverse of `.scores()` (Phase 9, D-083: loading a saved party
  * needs to seed a fresh allocator from what was saved). `STANDARD_ARRAY`'s
@@ -245,6 +275,24 @@ export interface CharacterBuild {
   level: number;
   abilityScores: AbilityScores;
   /**
+   * D-206: which Background this hero picked, if any — undefined means "no
+   * background," the exact behavior of every build made before this
+   * feature (`defaultPartyBuilds`' Co-op-lobby fallback, and any pre-D-206
+   * save). `CharacterCreationScene`'s own Background button always defaults
+   * to a real selection (index 0), so a build made through that real UI
+   * flow always has one.
+   */
+  backgroundId?: string;
+  /**
+   * D-206: which of the background's `abilityTriad`-derived combinations
+   * (see `backgroundAbilityChoices`) the player picked — e.g. `{str:2,
+   * dex:1}` or `{str:1,dex:1,con:1}`. Undefined means "not yet spent";
+   * `CharacterCreationScene` blocks Start Battle/Save Party on this exactly
+   * like an unassigned Standard Array slot (see D-192) whenever
+   * `backgroundId` is set — a real, non-silent choice, not an auto-pick.
+   */
+  backgroundAbilityChoice?: Partial<Record<AbilityScoreId, number>>;
+  /**
    * D-147 (piece 3): which allocation method produced `abilityScores` —
    * undefined means "standardArray," identical to every pre-D-147 build
    * (this project's real ruleset choice is party-wide, not per-hero, but
@@ -341,15 +389,43 @@ export function subclassIdForNewBuild(classId: string, subclassIndex = 0): strin
 }
 
 /**
+ * D-206: adds a background's ability-score bonus (see
+ * `backgroundAbilityChoices` in `data/backgrounds.ts`) on top of `scores`,
+ * without mutating the input — the RAW Standard-Array/Point-Buy allocation
+ * a build carries stays untouched, so switching allocator method or class
+ * later never loses or duplicates the bonus (it's recomputed fresh from
+ * `backgroundAbilityChoice` every time `heroDefinitionFromBuild` runs, not
+ * baked into `build.abilityScores` itself). A no-op (returns a shallow copy)
+ * when `choice` is undefined — every build made before this feature, or one
+ * with no background chosen.
+ */
+export function applyBackgroundAbilityBonus(
+  scores: AbilityScores,
+  choice: Partial<Record<AbilityScoreId, number>> | undefined,
+): AbilityScores {
+  if (!choice) return { ...scores };
+  const result = { ...scores };
+  for (const ability of ABILITY_SCORE_IDS) {
+    const bonus = choice[ability];
+    if (bonus) result[ability] += bonus;
+  }
+  return result;
+}
+
+/**
  * Turn a finished character build into the HeroDefinition shape BattleScene
  * plays. Phase 13.3 (D-089): also carries the build's `abilityScores`
  * forward onto the definition — `Hero.levelUpClass()` needs them to redo
- * this same math at any later level, not just level 1.
+ * this same math at any later level, not just level 1. D-206: the
+ * background ability bonus is folded in here, once, so it's already baked
+ * into every downstream computation (stats, AC, and the `abilityScores`
+ * `levelUpClass()` re-derives from later).
  */
 export function heroDefinitionFromBuild(build: CharacterBuild): HeroDefinition {
-  const stats = combatStatsForClassLevel(build.classId, build.level, build.abilityScores);
+  const effectiveAbilityScores = applyBackgroundAbilityBonus(build.abilityScores, build.backgroundAbilityChoice);
+  const stats = combatStatsForClassLevel(build.classId, build.level, effectiveAbilityScores);
   const style = attackStyleForClass(build.classId);
-  const dexMod = modifierFor(build.abilityScores, "dex");
+  const dexMod = modifierFor(effectiveAbilityScores, "dex");
   return {
     id: build.id,
     name: build.name,
@@ -364,9 +440,13 @@ export function heroDefinitionFromBuild(build: CharacterBuild): HeroDefinition {
     // features (Second Wind, Action Surge, Cunning Action, Uncanny Dodge)
     // know which hero qualifies. See HeroDefinition's own comment.
     classId: build.classId,
+    // D-206: drives the origin-feat grant (`BattleScene.buildHeroes`) and a
+    // real Stealth-proficiency bonus (`Hero.stealthCheckModifier`).
+    backgroundId: build.backgroundId,
     // Phase 13.3 (D-089): kept so a later class level-up can redo this
     // file's math (recompute maxHealth/attackDamage/attackBonus) itself.
-    abilityScores: build.abilityScores,
+    // D-206: already includes the background ability bonus baked in.
+    abilityScores: effectiveAbilityScores,
     // Phase 13.11 (D-096): a level-1-choice class's subclass, if any; a
     // later-choice class stays undefined until BattleScene assigns one.
     subclassId: build.subclassId,

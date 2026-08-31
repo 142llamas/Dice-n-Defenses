@@ -59,4 +59,17 @@ describe("data/skills.ts proficiency (D-125)", () => {
     expect(level1).toBe(5);
     expect(level17).toBe(9);
   });
+
+  // D-206: a Background can now ALSO grant skill proficiency, unioned with class.
+  it("isProficientInSkill: a Criminal background grants Stealth even for a non-rogue class", () => {
+    expect(isProficientInSkill("wizard", "stealth", "criminal")).toBe(true);
+    expect(isProficientInSkill("wizard", "stealth")).toBe(false); // no background passed — unchanged prior behavior
+    expect(isProficientInSkill("wizard", "stealth", "soldier")).toBe(false); // wrong background, still not proficient
+  });
+
+  it("skillCheckModifier: the background half of proficiency adds the same bonus the class half would", () => {
+    const viaBackground = skillCheckModifier(scores, "stealth", "wizard", 1, "criminal");
+    const viaClass = skillCheckModifier(scores, "stealth", "rogue", 1);
+    expect(viaBackground).toBe(viaClass);
+  });
 });

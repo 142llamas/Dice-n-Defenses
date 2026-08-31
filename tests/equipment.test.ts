@@ -5,6 +5,7 @@ import { heroDefinitionFromBuild, type CharacterBuild } from "../src/game/system
 import {
   getEquipmentDefinition,
   gearSlotType,
+  isTwoHandedWeapon,
   EQUIPMENT_DEFINITIONS,
   EQUIPMENT_ORDER,
   RARITY_ORDER,
@@ -658,5 +659,25 @@ describe("Ability-score-setting items (D-127)", () => {
     hero.equippedItems.head = "headband-of-intellect"; // sets INT to 19 -> +4 mod
     hero.onGearChanged();
     expect(hero.spellSaveDC).toBe((baseDC ?? 0) + 4);
+  });
+});
+
+describe("isTwoHandedWeapon (D-204)", () => {
+  it("is true for a Two-Handed weapon", () => {
+    expect(isTwoHandedWeapon("greatsword")).toBe(true);
+    expect(isTwoHandedWeapon("longbow")).toBe(true);
+  });
+
+  it("is false for a one-handed weapon", () => {
+    expect(isTwoHandedWeapon("dagger")).toBe(false);
+    expect(isTwoHandedWeapon("rapier")).toBe(false);
+  });
+
+  it("is false for a Versatile weapon (usable one- or two-handed, but not exclusively two-handed)", () => {
+    expect(isTwoHandedWeapon("longsword")).toBe(false);
+  });
+
+  it("is false for a non-weapon item", () => {
+    expect(isTwoHandedWeapon("amulet-of-health")).toBe(false);
   });
 });

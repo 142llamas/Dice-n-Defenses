@@ -4,6 +4,7 @@ import {
   COMPANION_ROSTER_STORAGE_KEY,
   CAMPAIGN_PROGRESS_STORAGE_KEY,
   BLUEPRINT_LIBRARY_STORAGE_KEY,
+  CHARACTER_LIBRARY_STORAGE_KEY,
 } from "../config";
 import { loadCampaignProgress, isCampaignCompleted } from "../systems/CampaignProgressSystem";
 import { getCompanionDefinition } from "../data/companions";
@@ -62,9 +63,18 @@ import {
   type SpellSwapStepKind,
 } from "../systems/SpellPreparationSystem";
 import { subclassesForClass, getSubclassDefinition } from "../data/subclasses";
-import { getEquipmentDefinition, gearSlotType, GEAR_SLOT_IDS, GEAR_SLOT_LABELS, type GearSlotId } from "../data/equipment";
+import {
+  getEquipmentDefinition,
+  gearSlotType,
+  isTwoHandedWeapon,
+  GEAR_SLOT_IDS,
+  GEAR_SLOT_LABELS,
+  type GearSlotId,
+} from "../data/equipment";
 import { FEAT_IDS, getFeat } from "../data/feats";
 import { RACE_IDS, getRaceDefinition } from "../data/races";
+import { BACKGROUND_IDS, getBackgroundDefinition, backgroundAbilityChoices } from "../data/backgrounds";
+import { getSkillDefinition } from "../data/skills";
 import type { HeroDefinition, HeroControlMode } from "../data/heroes";
 import { Hero, MAX_CLASS_LEVEL, type MagicInitiateListId } from "../entities/Hero";
 import {
@@ -85,6 +95,15 @@ import {
   upsertBlueprint,
   type LevelUpBlueprint,
 } from "../systems/BlueprintLibrarySystem";
+import {
+  MAX_LIBRARY_ENTRIES,
+  deleteLibraryEntry,
+  loadCharacterLibrary,
+  saveCharacterLibrary,
+  upsertLibraryEntry,
+  type CharacterLibraryEntry,
+  type CharacterLibraryState,
+} from "../systems/CharacterLibrarySystem";
 import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
 import type { WaveDefinition } from "../data/waves";
 import type { ParsedMap } from "../data/testMap";
@@ -97,6 +116,7 @@ import {
   heroDefinitionFromBuild,
   hasDuplicateNames,
   subclassIdForNewBuild,
+  defaultAbilityOrderForClass,
   type AbilityScoreAllocator,
   type CharacterBuild,
 } from "../systems/CharacterBuildSystem";
@@ -267,6 +287,18 @@ interface SlotState {
   name: string;
   classIndex: number;
   raceIndex: number;
+  /** D-206: index into `BACKGROUND_IDS`. Defaults to 0 (a real selection, same "always some default" precedent Class/Race already use) — never an "unassigned" state. */
+  backgroundIndex: number;
+  /**
+   * D-206: which of the current background's `abilityTriad`-derived
+   * combinations (see `backgroundAbilityChoices`) was picked — undefined
+   * means "not yet spent," which blocks Start Battle/Save Party exactly
+   * like an unassigned Standard Array slot (D-192's precedent) so this
+   * real choice is never silently defaulted. Reset to undefined whenever
+   * the Background itself changes (a different triad invalidates any prior
+   * pick).
+   */
+  backgroundAbilityChoice?: Partial<Record<AbilityScoreId, number>>;
   /** Party Creation Overhaul Plan 1.2: whichever kind matches THIS SLOT's own `abilityScoreMethod` — swapped wholesale (not converted) when this hero's own method pill is clicked. Was scene-wide/party-wide before Plan 1.2. */
   allocator: AbilityScoreAllocator;
   /** Party Creation Overhaul Plan 1.2: per-hero ability-score allocation method — was one scene-wide field before this. */
@@ -371,6 +403,10 @@ interface SlotWidgets {
   nameInputNode: HTMLInputElement;
   classHandle: OrnateButtonHandle;
   raceHandle: OrnateButtonHandle;
+  /** D-206: opens the Background picker. */
+  backgroundHandle: OrnateButtonHandle;
+  /** D-206: opens the ability-bonus-choice picker (7 combinations of the current background's triad). */
+  backgroundAbilityHandle: OrnateButtonHandle;
   /** Party Creation Overhaul Plan 1.2: this hero's own Standard Array/Point Buy toggle pill — replaces the old single party-wide button. */
   abilityMethodHandle: OrnateButtonHandle;
   /** Standard Array mode: one dropdown-trigger ornate button per ability, label IS the score text (Party Creation Overhaul Plan 1.1: opens a per-value dropdown instead of cycling). */
@@ -400,6 +436,9 @@ interface SlotWidgets {
   cadenceHandle: OrnateButtonHandle;
   /** D-135: the "Spells" row — see `openSpellPicker`. */
   spellsHandle: OrnateButtonHandle;
+  /** D-204: the "Save Character"/"Load Character" row — see `CharacterLibrarySystem`. */
+  saveCharacterHandle: OrnateButtonHandle;
+  loadCharacterHandle: OrnateButtonHandle;
   /** Playtest fix (Party Creation Overhaul, Plan 0): Point Buy's "Points Left" readout, now its own row instead of riding on the STR label. */
   pointsLeftLabel: Phaser.GameObjects.Text;
   /** Every GameObject this slot created, for dimming an inactive (beyond party size) slot. */
@@ -501,6 +540,13 @@ export class CharacterCreationScene extends Phaser.Scene {
   /** Plan 6.3: a fresh blueprint's synthetic id — `Date.now()` plus this (incremented per save) breaks a same-millisecond tie, same idiom `CompanionRosterScene.onUnequipAllClicked` already uses for pool-entry ids. */
   private blueprintSaveCounter = 0;
 
+  /** D-204: the global per-character library (see `CharacterLibrarySystem`) — loaded once in `create()`, same treatment as `saveFile`. */
+  private characterLibrary!: CharacterLibraryState;
+  /** D-204: which library entry's Delete button is armed (two-click confirm, no timer) — same idiom as `blueprintDeleteArmedId`. */
+  private libraryDeleteArmedId: string | null = null;
+  /** D-204: a fresh library entry's synthetic id — same idiom as `blueprintSaveCounter`. */
+  private librarySaveCounter = 0;
+
   /**
    * D-135: the "Spells" wizard overlay's own working state — reuses
    * `levelPlanOverlay`/`renderPlanPrompt`/`clearLevelPlanOverlay` above (both
@@ -575,6 +621,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.slots = [];
     this.widgets = [];
     this.saveFile = loadSaveFile(window.localStorage, SAVE_STORAGE_KEY);
+    this.characterLibrary = loadCharacterLibrary(window.localStorage, CHARACTER_LIBRARY_STORAGE_KEY);
     initAuth((state) => (this.authState = state));
 
     // Party Creation Overhaul Plan 8: the ornate/parchment theme (D-123),
@@ -704,7 +751,16 @@ export class CharacterCreationScene extends Phaser.Scene {
               name: CHARACTER_NAME_POOL[slot % CHARACTER_NAME_POOL.length],
               classIndex: 0,
               raceIndex: 0,
-              allocator: new StandardArrayAllocator(),
+              // D-206: a fresh slot always has a real Background selected
+              // (index 0, same "never unassigned" precedent as Class/Race)
+              // but no ability-bonus choice spent yet — see `SlotState`'s
+              // own comment.
+              backgroundIndex: 0,
+              backgroundAbilityChoice: undefined,
+              // D-204: a fresh slot's Standard Array defaults to slot 0's own
+              // class (`CREATABLE_CLASS_IDS[0]`) rather than the flat
+              // identity order — see `defaultAbilityOrderForClass`.
+              allocator: new StandardArrayAllocator(defaultAbilityOrderForClass(CREATABLE_CLASS_IDS[0])),
               abilityScoreMethod: "standardArray",
               // D-129: default to 1 human, the rest AI-controlled — Kevin's
               // own request, so a fresh party is playtest-ready without
@@ -907,12 +963,11 @@ export class CharacterCreationScene extends Phaser.Scene {
         if (s.identityLocked) return;
         // D-147 (piece 5): each option's desc shows what's actually real
         // (speed, flavor traits) — deliberately no invented ability-score
-        // bonus. This project's spell-prep economy (D-134) already committed
-        // to real SRD 5.2.1, which moved ability-score increases from Race to
-        // Background — no race grants one there either, so nothing is
-        // missing here, and the picker's title says so plainly.
+        // bonus. SRD 5.2.1 moved ability-score increases from Race to
+        // Background (D-206, see the Background row below) — no race grants
+        // one here, by design, not a gap.
         this.openChoicePicker(
-          "Choose a Race — SRD 5.2.1 ties ability-score increases to Background, not Race, so none are missing below.",
+          "Choose a Race — ability-score increases come from Background now, see the row below.",
           RACE_IDS.map((id, i) => {
             const race = getRaceDefinition(id);
             return {
@@ -929,6 +984,78 @@ export class CharacterCreationScene extends Phaser.Scene {
       { variant: "tab" },
     );
 
+    // D-206: Background — half-width split with its ability-bonus choice,
+    // same `rowGap`/`halfWidth` technique as Gear|Pool and Plan Levels|
+    // Cadence elsewhere in this file (computed locally since the shared
+    // `rowGap`/`halfWidth` consts below are declared later in this method).
+    const bgRowGap = 6;
+    const bgHalfWidth = (COLUMN_WIDTH - 20 - bgRowGap) / 2;
+    const backgroundY = 266;
+    const backgroundHandle = createOrnateButton(
+      this,
+      x - bgHalfWidth / 2 - bgRowGap / 2,
+      backgroundY,
+      bgHalfWidth,
+      32,
+      "",
+      () => {
+        const s = this.slots[slot];
+        if (s.identityLocked) return;
+        this.openChoicePicker(
+          "Choose a Background",
+          BACKGROUND_IDS.map((id, i) => {
+            const bg = getBackgroundDefinition(id);
+            return {
+              label: bg.name,
+              desc: `${bg.skillIds.map((sid) => getSkillDefinition(sid).name).join(", ")} · ${bg.abilityTriad
+                .map((a) => ABILITY_SCORE_NAMES[a])
+                .join("/")} · ${getFeat(bg.originFeatId).name}`,
+              highlighted: i === s.backgroundIndex,
+              onPick: () => {
+                s.backgroundIndex = i;
+                // A different background has a different ability triad — any
+                // prior ability-bonus pick no longer makes sense.
+                s.backgroundAbilityChoice = undefined;
+                // Pre-fill the background's starting weapon, ONLY if that
+                // slot is still empty — visible and freely changeable
+                // afterward, never a silent overwrite of the player's own pick.
+                if (bg.startingWeaponId && !s.gearIndices.weapon) {
+                  const pool = startingGearIdsForSlotType(gearSlotType("weapon"));
+                  const index = pool.indexOf(bg.startingWeaponId);
+                  if (index >= 0) s.gearIndices.weapon = index + 1;
+                }
+              },
+            };
+          }),
+        );
+      },
+      { variant: "tab" },
+    );
+    const backgroundAbilityHandle = createOrnateButton(
+      this,
+      x + bgHalfWidth / 2 + bgRowGap / 2,
+      backgroundY,
+      bgHalfWidth,
+      32,
+      "",
+      () => {
+        const s = this.slots[slot];
+        if (s.abilityScoreLocked) return;
+        const background = getBackgroundDefinition(BACKGROUND_IDS[s.backgroundIndex]);
+        this.openChoicePicker(
+          "Choose the Background's Ability Bonus",
+          backgroundAbilityChoices(background.abilityTriad).map((choice) => ({
+            label: this.backgroundAbilityChoiceLabel(choice),
+            highlighted: JSON.stringify(s.backgroundAbilityChoice ?? null) === JSON.stringify(choice),
+            onPick: () => {
+              s.backgroundAbilityChoice = choice;
+            },
+          })),
+        );
+      },
+      { variant: "tab" },
+    );
+
     // Playtest fix (Party Creation Overhaul, Plan 0): Point Buy's
     // "Points Left" readout used to be concatenated onto the STR row's own
     // label text, pushing STR itself off the edge of the button. It now
@@ -940,7 +1067,10 @@ export class CharacterCreationScene extends Phaser.Scene {
     // relative to `abilityRowsTop`, so they cascade automatically.
     // Party Creation Overhaul Plan 8: dark ink color for the new parchment
     // backdrop (was a dim green on near-black).
-    const pointsLeftY = 258;
+    // D-206: shifted down (258 -> 302) to make room for the new Background
+    // row above — `abilityRowsTop` below shifts by the same amount so
+    // everything cascades exactly like the Point Buy note above describes.
+    const pointsLeftY = 302;
     const pointsLeftLabel = this.add
       .text(x, pointsLeftY, "", { fontFamily: FONT_BODY, fontSize: "11px", color: "#2f4a34" })
       .setOrigin(0.5)
@@ -963,7 +1093,13 @@ export class CharacterCreationScene extends Phaser.Scene {
       () => {
         const s = this.slots[slot];
         s.abilityScoreMethod = s.abilityScoreMethod === "standardArray" ? "pointBuy" : "standardArray";
-        s.allocator = s.abilityScoreMethod === "pointBuy" ? new PointBuyAllocator() : new StandardArrayAllocator();
+        // D-204: switching back INTO Standard Array seeds a fresh allocator
+        // from this hero's CURRENT class's own default order, not the flat
+        // identity order — same reasoning as the initial slot default.
+        s.allocator =
+          s.abilityScoreMethod === "pointBuy"
+            ? new PointBuyAllocator()
+            : new StandardArrayAllocator(defaultAbilityOrderForClass(CREATABLE_CLASS_IDS[s.classIndex]));
         this.closeDropdown();
         this.refreshAll();
       },
@@ -984,7 +1120,8 @@ export class CharacterCreationScene extends Phaser.Scene {
     // toggle.
     const standardArrayRowButtons: OrnateButtonHandle[] = [];
     const pointBuyButtons: OrnateButtonHandle[] = [];
-    const abilityRowsTop = 300;
+    // D-206: shifted down 300 -> 344, same reason as `pointsLeftY` above.
+    const abilityRowsTop = 344;
     // Party Creation Overhaul Plan 8: 30 -> 34 (ornate rows need more room).
     const abilityRowHeight = 34;
     ABILITY_SCORE_IDS.forEach((ability, row) => {
@@ -1244,10 +1381,43 @@ export class CharacterCreationScene extends Phaser.Scene {
       { variant: "tab" },
     );
 
+    // D-204: a global per-character library — save this slot's current
+    // build for reuse in a later party, or load a previously-saved one in.
+    // Half-width split, same `rowGap`/`halfWidth` technique as Gear|Pool and
+    // Plan Levels|Cadence above, one more row below Spells.
+    const libraryY = spellsY + 44;
+    const saveCharacterHandle = createOrnateButton(
+      this,
+      x - halfWidth / 2 - rowGap / 2,
+      libraryY,
+      halfWidth,
+      32,
+      "",
+      () => this.openSaveCharacterScreen(slot),
+      { variant: "tab" },
+    );
+    const loadCharacterHandle = createOrnateButton(
+      this,
+      x + halfWidth / 2 + rowGap / 2,
+      libraryY,
+      halfWidth,
+      32,
+      "",
+      () => {
+        // Same guard as Class/Race — loading replaces class/race identity,
+        // so a locked companion slot can't take it.
+        if (this.slots[slot].identityLocked) return;
+        this.openCharacterLibraryPicker(slot);
+      },
+      { variant: "tab" },
+    );
+
     allObjects.push(
       nameInput,
       classHandle.container,
       raceHandle.container,
+      backgroundHandle.container,
+      backgroundAbilityHandle.container,
       gearHandle.container,
       poolHandle.container,
       subclassHandle.container,
@@ -1256,11 +1426,15 @@ export class CharacterCreationScene extends Phaser.Scene {
       planHandle.container,
       cadenceHandle.container,
       spellsHandle.container,
+      saveCharacterHandle.container,
+      loadCharacterHandle.container,
       pointsLeftLabel,
     );
     interactiveButtons.push(
       classHandle,
       raceHandle,
+      backgroundHandle,
+      backgroundAbilityHandle,
       gearHandle,
       poolHandle,
       subclassHandle,
@@ -1268,6 +1442,8 @@ export class CharacterCreationScene extends Phaser.Scene {
       planHandle,
       cadenceHandle,
       spellsHandle,
+      saveCharacterHandle,
+      loadCharacterHandle,
     );
 
     return {
@@ -1276,6 +1452,8 @@ export class CharacterCreationScene extends Phaser.Scene {
       nameInputNode: nameNode,
       classHandle,
       raceHandle,
+      backgroundHandle,
+      backgroundAbilityHandle,
       abilityMethodHandle,
       standardArrayHandles,
       pointBuyValueLabels,
@@ -1289,6 +1467,8 @@ export class CharacterCreationScene extends Phaser.Scene {
       planHandle,
       cadenceHandle,
       spellsHandle,
+      saveCharacterHandle,
+      loadCharacterHandle,
       pointsLeftLabel,
       allObjects,
       interactiveButtons,
@@ -1630,6 +1810,10 @@ export class CharacterCreationScene extends Phaser.Scene {
     catalogueGearIds?: Partial<Record<GearSlotId, string>>,
     abilityScoreLocked = identityLocked,
   ): SlotState {
+    // D-206: undefined `build.backgroundId` (any build made before this
+    // feature) falls back to index 0, same defensive spirit as everything
+    // else here.
+    const backgroundIndex = Math.max(0, BACKGROUND_IDS.indexOf(build.backgroundId ?? ""));
     return {
       identityLocked,
       gearLocked,
@@ -1637,6 +1821,20 @@ export class CharacterCreationScene extends Phaser.Scene {
       name: build.name,
       classIndex: Math.max(0, CREATABLE_CLASS_IDS.indexOf(build.classId)),
       raceIndex: Math.max(0, RACE_IDS.indexOf(build.raceId)),
+      backgroundIndex,
+      // A read-time migration for any save made before this feature (never
+      // had a chance to record a real choice) — silently backfills the
+      // neutral "+1 to all three" option rather than blocking Start Battle
+      // on old data, the same "read-time migration, not a version bump"
+      // precedent KI-143 used for an old save gaining new gear-slot data. A
+      // genuinely FRESH slot starts with this undefined instead (see the
+      // slot-construction default), so a brand-new hero still gets the
+      // real, visible choice.
+      backgroundAbilityChoice:
+        build.backgroundAbilityChoice ??
+        backgroundAbilityChoices(getBackgroundDefinition(BACKGROUND_IDS[backgroundIndex]).abilityTriad).find(
+          (c) => Object.keys(c).length === 3,
+        ),
       allocator:
         build.abilityScoreMethod === "pointBuy"
           ? pointBuyAllocatorFromScores(build.abilityScores)
@@ -1718,50 +1916,56 @@ export class CharacterCreationScene extends Phaser.Scene {
    * contributes nothing here, so it's excluded from both validation and the
    * roster BattleScene receives.
    */
+  /** D-204: extracted from `buildsFromSlots` so a single slot's build can be snapshotted on its own — see `openSaveCharacterScreen`. */
+  private buildFromSlot(i: number): CharacterBuild {
+    const s = this.slots[i];
+    const classId = CREATABLE_CLASS_IDS[s.classIndex];
+    return {
+      id: `party-${i + 1}`,
+      name: s.name,
+      raceId: RACE_IDS[s.raceIndex],
+      backgroundId: BACKGROUND_IDS[s.backgroundIndex],
+      backgroundAbilityChoice: s.backgroundAbilityChoice,
+      classId,
+      level: 1,
+      abilityScores: s.allocator.scores(),
+      abilityScoreMethod: s.abilityScoreMethod === "pointBuy" ? "pointBuy" : undefined,
+      controlledBy: s.controlledBy,
+      // Phase 13.11 (D-096): a level-1-choice class (Cleric/Sorcerer/
+      // Warlock) already has a modeled subclass the instant it's created —
+      // Phase 14.2 (D-099): WHICH one is now the player's real choice, via
+      // the Subclass row's cycle button (`s.subclassIndex`). Every other
+      // class starts undefined (see BattleScene's subclass-choice queue).
+      subclassId: subclassIdForNewBuild(classId, s.subclassIndex),
+      // D-193: pure new-shape gear from here on — `startingEquipmentId`
+      // (legacy) is intentionally left undefined for every freshly-built
+      // party; it's read-only back-compat, see `gearIndicesFromBuild`.
+      // D-194: a campaign companion (`gearLocked`) never reads
+      // `s.gearIndices` (their Gear button is a no-op, see the guard
+      // above) — their kit is always freshly derived from their
+      // authored baseline + the CURRENT difficulty instead, so a live
+      // Difficulty change updates it immediately. Party Creation Overhaul
+      // Plan 3.2: checks `gearLocked`, not `identityLocked` — a returning
+      // PC has identity locked but keeps its own freely-edited gear.
+      // Plan 2.3: see `resolveGearIdsForSlot` — a `gearLocked` slot's base
+      // kit is stripped of anything currently sitting claimable in the
+      // pool, then this session's own pool picks (`s.poolGearIds`) are
+      // applied on top for every slot, locked or not.
+      startingGearIds: this.resolveGearIdsForSlot(s, i),
+      startingLevel: s.startingLevel,
+      // D-133: undefined for a "fresh"/never-planned hero — identical to
+      // every pre-D-133 build.
+      levelUpPlan: s.levelUpPlan.mode === "fresh" ? undefined : s.levelUpPlan,
+      // D-135: undefined for any field the player never customized —
+      // identical to every pre-D-135 build.
+      preparedSpellIds: s.spellPicks.leveledSpellIds,
+      knownCantripIds: s.spellPicks.cantripIds,
+      spellbookIds: s.spellPicks.spellbookIds,
+    };
+  }
+
   private buildsFromSlots(): CharacterBuild[] {
-    return this.slots.slice(0, this.partySize).map((s, i) => {
-      const classId = CREATABLE_CLASS_IDS[s.classIndex];
-      return {
-        id: `party-${i + 1}`,
-        name: s.name,
-        raceId: RACE_IDS[s.raceIndex],
-        classId,
-        level: 1,
-        abilityScores: s.allocator.scores(),
-        abilityScoreMethod: s.abilityScoreMethod === "pointBuy" ? "pointBuy" : undefined,
-        controlledBy: s.controlledBy,
-        // Phase 13.11 (D-096): a level-1-choice class (Cleric/Sorcerer/
-        // Warlock) already has a modeled subclass the instant it's created —
-        // Phase 14.2 (D-099): WHICH one is now the player's real choice, via
-        // the Subclass row's cycle button (`s.subclassIndex`). Every other
-        // class starts undefined (see BattleScene's subclass-choice queue).
-        subclassId: subclassIdForNewBuild(classId, s.subclassIndex),
-        // D-193: pure new-shape gear from here on — `startingEquipmentId`
-        // (legacy) is intentionally left undefined for every freshly-built
-        // party; it's read-only back-compat, see `gearIndicesFromBuild`.
-        // D-194: a campaign companion (`gearLocked`) never reads
-        // `s.gearIndices` (their Gear button is a no-op, see the guard
-        // above) — their kit is always freshly derived from their
-        // authored baseline + the CURRENT difficulty instead, so a live
-        // Difficulty change updates it immediately. Party Creation Overhaul
-        // Plan 3.2: checks `gearLocked`, not `identityLocked` — a returning
-        // PC has identity locked but keeps its own freely-edited gear.
-        // Plan 2.3: see `resolveGearIdsForSlot` — a `gearLocked` slot's base
-        // kit is stripped of anything currently sitting claimable in the
-        // pool, then this session's own pool picks (`s.poolGearIds`) are
-        // applied on top for every slot, locked or not.
-        startingGearIds: this.resolveGearIdsForSlot(s, i),
-        startingLevel: s.startingLevel,
-        // D-133: undefined for a "fresh"/never-planned hero — identical to
-        // every pre-D-133 build.
-        levelUpPlan: s.levelUpPlan.mode === "fresh" ? undefined : s.levelUpPlan,
-        // D-135: undefined for any field the player never customized —
-        // identical to every pre-D-135 build.
-        preparedSpellIds: s.spellPicks.leveledSpellIds,
-        knownCantripIds: s.spellPicks.cantripIds,
-        spellbookIds: s.spellPicks.spellbookIds,
-      };
-    });
+    return this.slots.slice(0, this.partySize).map((_, i) => this.buildFromSlot(i));
   }
 
   private buildRoster(): HeroDefinition[] {
@@ -1833,6 +2037,11 @@ export class CharacterCreationScene extends Phaser.Scene {
       .findIndex(
         (s) => s.abilityScoreMethod === "standardArray" && !(s.allocator as StandardArrayAllocator).isComplete(),
       );
+    // D-206: same "real, non-silent choice" treatment as the Standard Array
+    // check above — a background is always selected (never unassigned,
+    // index 0 default), but its ability-score bonus must be explicitly
+    // spent, not silently defaulted.
+    const unspentBackgroundSlot = this.slots.slice(0, this.partySize).findIndex((s) => !s.backgroundAbilityChoice);
     // D-194: the PC's (slot 0) gear point-buy budget — checked ONLY in
     // campaign mode, and ONLY against slot 0 specifically (a companion's
     // `gearIndices` is reconstructed but never actually spent from, see
@@ -1842,7 +2051,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     const gearPointsOverBudget =
       !!this.campaignId &&
       this.gearPointsSpent(this.slots[0]) > getDifficultyDefinition(this.difficultyId).startingGearPoints;
-    const valid = !invalidNames && incompleteSlot === -1 && !gearPointsOverBudget;
+    const valid = !invalidNames && incompleteSlot === -1 && unspentBackgroundSlot === -1 && !gearPointsOverBudget;
     this.partyValid = valid;
 
     // Party Creation Overhaul Plan 8: `OrnateButtonHandle` has no direct
@@ -1858,7 +2067,9 @@ export class CharacterCreationScene extends Phaser.Scene {
             ? "Every hero needs a unique name."
             : incompleteSlot !== -1
               ? `Hero ${incompleteSlot + 1} still has unassigned ability scores (Standard Array).`
-              : "Gear Points over budget — remove some gear or lower the difficulty.",
+              : unspentBackgroundSlot !== -1
+                ? `Hero ${unspentBackgroundSlot + 1} still has an unspent Background ability bonus.`
+                : "Gear Points over budget — remove some gear or lower the difficulty.",
     );
 
     this.refreshSaveControls(valid);
@@ -1883,6 +2094,13 @@ export class CharacterCreationScene extends Phaser.Scene {
           ? "Save slots full (max 6) — delete one first"
           : "Unsaved party",
     );
+  }
+
+  /** D-206: "+2 Strength, +1 Dexterity" or "+1 to all three" — shared by the ability-bonus picker's own option list and its button's current-choice label. */
+  private backgroundAbilityChoiceLabel(choice: Partial<Record<AbilityScoreId, number>>): string {
+    const entries = Object.entries(choice) as [AbilityScoreId, number][];
+    if (entries.length === 3) return "+1 to all three";
+    return entries.map(([ability, amount]) => `+${amount} ${ABILITY_SCORE_NAMES[ability]}`).join(", ");
   }
 
   private refreshSlot(slot: number, build: CharacterBuild): void {
@@ -1915,6 +2133,15 @@ export class CharacterCreationScene extends Phaser.Scene {
     // for Class/Race/the first ability row/Subclass are no longer needed.
     w.classHandle.setLabel(`Class: ${getClassDefinition(build.classId).name}${companionTag}`);
     w.raceHandle.setLabel(`Race: ${getRaceDefinition(build.raceId).name}`);
+    // D-206: `build.backgroundId` is only undefined for a pre-D-206 build
+    // that somehow reached this method without going through
+    // `slotStateFromBuild`'s own fallback (shouldn't normally happen) —
+    // defensively falls back to the same index-0 default that path uses.
+    w.backgroundHandle.setLabel(`Background: ${getBackgroundDefinition(build.backgroundId ?? BACKGROUND_IDS[0]).name}`);
+    const backgroundAbilityChoice = this.slots[slot].backgroundAbilityChoice;
+    w.backgroundAbilityHandle.setLabel(
+      `Ability Bonus: ${backgroundAbilityChoice ? this.backgroundAbilityChoiceLabel(backgroundAbilityChoice) : "not chosen"}`,
+    );
     // Party Creation Overhaul Plan 1.2: this hero's own method pill.
     const method = this.slots[slot].abilityScoreMethod;
     w.abilityMethodHandle.setLabel(method === "pointBuy" ? "Point Buy" : "Standard Array");
@@ -2004,6 +2231,12 @@ export class CharacterCreationScene extends Phaser.Scene {
     w.cadenceHandle.setDisabled(isAiControlled);
 
     w.spellsHandle.setLabel(this.spellsSummary(slot, build.classId, build.startingLevel ?? 1));
+
+    // D-204: static labels — this row's meaning never depends on the slot's
+    // own state (unlike Gear's live item count), it just needs re-setting
+    // here like every other button (`createOrnateButton` starts blank).
+    w.saveCharacterHandle.setLabel("Save Character");
+    w.loadCharacterHandle.setLabel("Load Character");
   }
 
   /**
@@ -2197,6 +2430,18 @@ export class CharacterCreationScene extends Phaser.Scene {
           highlighted: (s.gearIndices[slotId] ?? 0) === i + 1,
           onClick: () => {
             s.gearIndices[slotId] = i + 1;
+            // D-204: the SRD grip rule — a Two-Handed weapon needs both
+            // hands, so it can't coexist with anything in the other hand
+            // slot. Force-clears the conflicting slot instead of rejecting
+            // the pick (BattleScene's mid-battle equip flow rejects instead —
+            // this is Character Creation's own, more forgiving, pre-battle
+            // picker).
+            if (slotId === "weapon" && isTwoHandedWeapon(id)) delete s.gearIndices.shield;
+            if (slotId === "shield") {
+              const weaponIndex = s.gearIndices.weapon;
+              const weaponId = weaponIndex ? startingGearIdsForSlotType("weapon")[weaponIndex - 1] : undefined;
+              if (weaponId && isTwoHandedWeapon(weaponId)) delete s.gearIndices.weapon;
+            }
             this.openGearPicker(slot);
           },
         })),
@@ -2616,6 +2861,137 @@ export class CharacterCreationScene extends Phaser.Scene {
     nameNode = nameInput.node.querySelector("input") as HTMLInputElement;
     nameNode.addEventListener("keydown", (e: KeyboardEvent) => e.stopPropagation());
     this.levelPlanOverlay.push(nameInput);
+  }
+
+  /**
+   * D-204: snapshot this slot's CURRENT build into the global character
+   * library, named by the player — see `CharacterLibrarySystem`. Reuses the
+   * exact DOM `<input>` name-entry technique `showBlueprintNameEntryScreen`
+   * above already established. Available on any slot, including a locked
+   * companion — unlike Load, this only READS the slot, so there's nothing
+   * for a lock to protect against.
+   */
+  private openSaveCharacterScreen(slot: number): void {
+    if (this.characterLibrary.entries.length >= MAX_LIBRARY_ENTRIES) {
+      this.renderPlanPrompt("Save Character", [
+        {
+          label: `Library is full (${MAX_LIBRARY_ENTRIES} max) — delete a character from Load Character first.`,
+          onClick: () => {},
+        },
+        { label: "◀ Back", onClick: () => this.clearLevelPlanOverlay() },
+      ]);
+      return;
+    }
+    const defaultName = this.slots[slot].name.trim() || "Unnamed Hero";
+    let nameNode!: HTMLInputElement;
+    this.renderPlanPrompt("Name This Character", [
+      {
+        label: "Save",
+        onClick: () => {
+          const name = nameNode.value.trim() || defaultName;
+          const id = `character-${Date.now()}-${this.librarySaveCounter++}`;
+          this.characterLibrary = upsertLibraryEntry(this.characterLibrary, {
+            id,
+            name,
+            createdAt: Date.now(),
+            build: this.buildFromSlot(slot),
+          });
+          saveCharacterLibrary(window.localStorage, CHARACTER_LIBRARY_STORAGE_KEY, this.characterLibrary);
+          this.clearLevelPlanOverlay();
+        },
+      },
+      { label: "◀ Back", onClick: () => this.clearLevelPlanOverlay() },
+    ]);
+    const nameInput = this.add
+      .dom(getViewport(this).width / 2, 140)
+      .createFromHTML(
+        `<input type="text" maxlength="40" placeholder="${defaultName}" style="
+          width: 320px; height: 34px; font-size: 16px;
+          font-family: 'EB Garamond', Georgia, 'Times New Roman', serif; font-weight: bold;
+          text-align: center; background: #e8d8ae; color: #2a1a10;
+          border: 1px solid #5a3a20; border-radius: 4px; outline: none;
+          box-sizing: border-box;
+        " />`,
+      )
+      .setOrigin(0.5)
+      .setDepth(65);
+    nameNode = nameInput.node.querySelector("input") as HTMLInputElement;
+    nameNode.addEventListener("keydown", (e: KeyboardEvent) => e.stopPropagation());
+    this.levelPlanOverlay.push(nameInput);
+  }
+
+  /**
+   * D-204: lists every library entry (list-of-rows, same shape as
+   * `showBlueprintPicker`) — clicking one opens a submenu to load it into
+   * this slot or delete it from the library.
+   */
+  private openCharacterLibraryPicker(slot: number): void {
+    if (this.characterLibrary.entries.length === 0) {
+      this.renderPlanPrompt("Load Character", [
+        { label: "No characters saved to the library yet.", onClick: () => {} },
+        { label: "◀ Back", onClick: () => this.clearLevelPlanOverlay() },
+      ]);
+      return;
+    }
+    this.renderPlanPrompt(
+      "Load Character",
+      this.characterLibrary.entries
+        .map((entry) => ({
+          label: `${entry.name} (${getClassDefinition(entry.build.classId).name})`,
+          onClick: () => this.showCharacterLibraryEntrySubmenu(slot, entry),
+        }))
+        .concat([{ label: "◀ Back", onClick: () => this.clearLevelPlanOverlay() }]),
+    );
+  }
+
+  /** D-204: Load Into This Slot (applies immediately) / Delete (two-click confirm, no timer, same idiom as `showBlueprintSubmenu`) / Back. */
+  private showCharacterLibraryEntrySubmenu(slot: number, entry: CharacterLibraryEntry): void {
+    const armed = this.libraryDeleteArmedId === entry.id;
+    this.renderPlanPrompt(`Character: ${entry.name}`, [
+      {
+        label: "Load Into This Slot",
+        desc: "Overwrites this slot's class/race/ability scores/gear/level/spells with this saved character.",
+        onClick: () => {
+          this.libraryDeleteArmedId = null;
+          // `slotStateFromBuild` already fully reconstructs a SlotState
+          // (allocator, gear indices, subclass, level, level-up plan, spell
+          // picks) from a CharacterBuild — same reconstruction Load Game
+          // uses. Not identity/gear/ability-locked: a library-loaded
+          // character is always freely editable afterward.
+          this.slots[slot] = this.slotStateFromBuild(entry.build, false, false, undefined, false);
+          // The name field is a real DOM <input> whose value isn't re-set by
+          // `refreshSlot` (see `SlotWidgets.nameInput`'s own doc comment) —
+          // sync it explicitly.
+          this.widgets[slot].nameInputNode.value = this.slots[slot].name;
+          this.clearLevelPlanOverlay();
+          this.refreshAll();
+        },
+      },
+      {
+        label: armed ? "Confirm Delete?" : "Delete",
+        desc: armed
+          ? "Click again to permanently remove this character from the library."
+          : "Permanently remove this character from the library.",
+        onClick: () => {
+          if (!armed) {
+            this.libraryDeleteArmedId = entry.id;
+            this.showCharacterLibraryEntrySubmenu(slot, entry);
+            return;
+          }
+          this.characterLibrary = deleteLibraryEntry(this.characterLibrary, entry.id);
+          saveCharacterLibrary(window.localStorage, CHARACTER_LIBRARY_STORAGE_KEY, this.characterLibrary);
+          this.libraryDeleteArmedId = null;
+          this.openCharacterLibraryPicker(slot);
+        },
+      },
+      {
+        label: "◀ Back",
+        onClick: () => {
+          this.libraryDeleteArmedId = null;
+          this.openCharacterLibraryPicker(slot);
+        },
+      },
+    ]);
   }
 
   private showNextPlanStep(): void {

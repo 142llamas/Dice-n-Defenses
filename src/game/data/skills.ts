@@ -1,5 +1,6 @@
 import { modifierFor, type AbilityScoreId, type AbilityScores } from "./abilityScores";
 import { proficiencyBonusForLevel } from "../systems/CharacterSystem";
+import { BACKGROUND_IDS, getBackgroundDefinition } from "./backgrounds";
 
 /**
  * Skills — Phase 13.5 (DECISIONS D-086 item scope, D-090). SRD 5.2.1 has 18
@@ -13,6 +14,11 @@ import { proficiencyBonusForLevel } from "../systems/CharacterSystem";
  * Skill NAMES and their governing ability are SRD 5.2.1 mechanics (CC BY
  * 4.0, see CONTENT_SOURCES.md); every `description` below is original
  * wording for this project, not copied SRD text.
+ *
+ * D-206 (Backgrounds): four more skills (Religion, Sleight of Hand, Arcana,
+ * History) were added specifically because the SRD's 4 real backgrounds
+ * reference them — the first real new consumer this "framework" list has
+ * had since D-090/D-125's own extension for the Stealth check.
  */
 
 export interface SkillDefinition {
@@ -28,12 +34,16 @@ export interface SkillDefinition {
 // not position, so reordering is safe.
 export const SKILL_ORDER = [
   "acrobatics",
+  "arcana",
   "athletics",
+  "history",
   "insight",
   "intimidation",
   "investigation",
   "perception",
   "persuasion",
+  "religion",
+  "sleight-of-hand",
   "stealth",
 ] as const;
 
@@ -86,6 +96,30 @@ export const SKILLS: Record<string, SkillDefinition> = {
     ability: "cha",
     description: "Winning someone over through threats, hostility, or sheer force of presence.",
   },
+  arcana: {
+    id: "arcana",
+    name: "Arcana",
+    ability: "int",
+    description: "Recalling lore about magic, spells, and the arcane — what something is, and what it costs to make.",
+  },
+  history: {
+    id: "history",
+    name: "History",
+    ability: "int",
+    description: "Recalling what actually happened, and to whom, before living memory of it faded.",
+  },
+  religion: {
+    id: "religion",
+    name: "Religion",
+    ability: "int",
+    description: "Recalling the rites, hierarchies, and old grudges of a faith.",
+  },
+  "sleight-of-hand": {
+    id: "sleight-of-hand",
+    name: "Sleight of Hand",
+    ability: "dex",
+    description: "Quick, deniable hands — planting, lifting, or palming something before anyone notices.",
+  },
 };
 
 /** Look up a skill definition, throwing on an unknown id so typos fail loudly. */
@@ -133,23 +167,40 @@ export const SKILL_PROFICIENCIES_BY_CLASS: Record<string, string[]> = {
   wizard: ["investigation", "insight"],
 };
 
-/** True if a character of this class is proficient in this skill (see `SKILL_PROFICIENCIES_BY_CLASS`). */
-export function isProficientInSkill(classId: string | undefined, skillId: string): boolean {
-  return !!classId && (SKILL_PROFICIENCIES_BY_CLASS[classId]?.includes(skillId) ?? false);
+/**
+ * D-206: a background's 2 `skillIds`, keyed by background id — derived
+ * straight from `data/backgrounds.ts` (not hand-duplicated) so the two
+ * files can never drift apart.
+ */
+export const SKILL_PROFICIENCIES_BY_BACKGROUND: Record<string, string[]> = Object.fromEntries(
+  BACKGROUND_IDS.map((id) => [id, getBackgroundDefinition(id).skillIds]),
+);
+
+/**
+ * True if a character is proficient in this skill via its class OR its
+ * background (D-206 — a hero now has both). `backgroundId` is optional so
+ * every pre-Background caller/hero (the classic fixed roster, any hero
+ * built before this feature) keeps its exact prior behavior unchanged.
+ */
+export function isProficientInSkill(classId: string | undefined, skillId: string, backgroundId?: string): boolean {
+  const viaClass = !!classId && (SKILL_PROFICIENCIES_BY_CLASS[classId]?.includes(skillId) ?? false);
+  const viaBackground = !!backgroundId && (SKILL_PROFICIENCIES_BY_BACKGROUND[backgroundId]?.includes(skillId) ?? false);
+  return viaClass || viaBackground;
 }
 
 /**
  * The full skill-check modifier: ability modifier, plus proficiency bonus
- * only if this class is proficient in this skill — the exact formula
- * `CharacterSystem.savingThrowBonus` already uses for saving throws, applied
- * to skills instead.
+ * if this class OR background is proficient in this skill — the exact
+ * formula `CharacterSystem.savingThrowBonus` already uses for saving
+ * throws, applied to skills instead.
  */
 export function skillCheckModifier(
   abilityScores: AbilityScores,
   skillId: string,
   classId: string | undefined,
   level: number,
+  backgroundId?: string,
 ): number {
   const base = skillModifier(abilityScores, skillId);
-  return base + (isProficientInSkill(classId, skillId) ? proficiencyBonusForLevel(level) : 0);
+  return base + (isProficientInSkill(classId, skillId, backgroundId) ? proficiencyBonusForLevel(level) : 0);
 }

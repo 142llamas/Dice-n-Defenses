@@ -41,6 +41,21 @@ export interface HeroAIDecision {
   targetId: string | null;
 }
 
+/**
+ * Phase 3 (D-205): "move-then-attack" for a HUMAN player's own click — unlike
+ * `decideTurn` (which always walks toward the NEAREST enemy), this targets
+ * whichever enemy was specifically clicked.
+ */
+export interface ApproachForAttackQuery {
+  position: GridPosition;
+  targetPosition: GridPosition;
+  attackRangeTiles: number;
+  /** Tiles this hero may still move this turn (0 if it has already moved). */
+  movementBudget: number;
+  isOccupied?: (pos: GridPosition) => boolean;
+  blocksStopping?: (pos: GridPosition) => boolean;
+}
+
 export class HeroAISystem {
   constructor(private readonly movement: MovementSystem) {}
 
@@ -74,5 +89,36 @@ export class HeroAISystem {
 
     const postMoveTarget = CombatSystem.chooseTarget(bestTile, attackRangeTiles, enemies);
     return { move: bestTile, targetId: postMoveTarget?.id ?? null };
+  }
+
+  /**
+   * Phase 3 (D-205): a specific-target move-then-attack, for a player's own
+   * click on an out-of-range enemy (`BattleScene.tryAttackWithApproach`).
+   * Returns the LEAST-movement reachable tile that lands `targetPosition`
+   * within `attackRangeTiles` — approaching just far enough to be in range,
+   * not necessarily adjacent, which matters for a ranged hero (a 2-3 tile
+   * `weaponRangeTiles()`) who shouldn't be walked into melee distance when a
+   * shorter approach already puts the target in range. Returns null if
+   * `targetPosition` is already in range (no move needed) or unreachable
+   * within `movementBudget` from ANY tile.
+   */
+  planApproachForAttack(query: ApproachForAttackQuery): GridPosition | null {
+    const { position, targetPosition, attackRangeTiles, movementBudget, isOccupied, blocksStopping } = query;
+    if (CombatSystem.isInRange(position, targetPosition, attackRangeTiles)) return null;
+
+    const reachable = this.movement.reachableTiles({ start: position, budget: movementBudget, isOccupied, blocksStopping });
+    const inRange = reachable.filter((tile) => CombatSystem.isInRange(tile, targetPosition, attackRangeTiles));
+    if (inRange.length === 0) return null;
+
+    let best: GridPosition | null = null;
+    let bestSteps = Number.POSITIVE_INFINITY;
+    for (const tile of inRange) {
+      const path = this.movement.findPath(tile, { start: position, budget: movementBudget, isOccupied, blocksStopping });
+      if (path && path.length < bestSteps) {
+        bestSteps = path.length;
+        best = tile;
+      }
+    }
+    return best;
   }
 }

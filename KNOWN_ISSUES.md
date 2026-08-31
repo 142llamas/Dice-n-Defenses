@@ -29,6 +29,354 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
+### KI-160 — D-210: BattleScene visual reskin (Phase 5's second item)
+The battle screen's chrome (background, HUD buttons, roster panel, action
+row, shop grid, combat log) now matches the wood/bronze/gilt theme the
+other screens already have, plus a bold frame around the board —
+**(headless-verified, not yet played)**. Design was agreed via a mockup
+Artifact before any code was written, so the shape of the change isn't in
+question, but the real thing needs a look:
+- Start any battle — confirm the wood/stone backdrop and the bold bronze/
+  gilt frame around the board render correctly, and that the board's own
+  tiles/tokens read exactly as before (no color change there).
+- Confirm the wave/phase banner's new wood-panel chip resizes correctly
+  for both a short string ("Between Waves") and the longest one ("Wave 10
+  / 10 · Player Phase") without clipping or overlapping the Gear button.
+- Log a few combat lines (attack, a status tick, a kill) — confirm the new
+  backing panel behind the combat log grows with the log's line count
+  (starts small on Wave 1, settles at its max once 5 lines have logged)
+  rather than showing a fixed-size box from the start.
+- Damage a hero down past 25% HP — confirm their roster HP bar flips
+  cleanly from green to red at that threshold, with no in-between color.
+- Select a hero and check every action button that can appear for them
+  (Confirm/Cancel, Ability, Potion, Bonus Action, Action Surge, Class
+  Action, Character Sheet, hotkey bar) — confirm they all read as the same
+  neutral wood-panel style now, with a visible hover/press response on
+  each (several of these never had hover feedback before this change).
+- Open Build mode and Gear mode — confirm the shop grid's buttons, the
+  "selected" highlight, and (if using Test Mode) the debug pickers' focus
+  ring all still read clearly against the new palette.
+- General "does this look and feel right at 1280x1080" pass, same as
+  KI-159's own checklist for The Armory.
+
+### KI-159 — D-209: The Armory, the new full-screen gear-purchase UX
+The old in-battle Gear grid (click an item, then click a hero) is gone,
+replaced by a new full-screen screen: pick a hero, pick one of their 12
+slots (paperdoll), browse a filtered catalog, buy/sell right on the row —
+**(headless-verified, not yet played)**. This is the largest pure-UI change
+in a while, so a full pass through the checklist below matters more than
+usual:
+- Press "G" (or click the Gear button) near a Shop tile — confirm The
+  Armory opens, the battle board pauses behind it, and Esc/Close returns
+  you to the exact same battle state.
+- Press "G" while NO hero is near a Shop tile — confirm it does NOT open,
+  and the combat log explains why ("Move a hero to a Shop tile...").
+- Click through all 4 hero cards and confirm each one's paperdoll shows the
+  RIGHT items in the right slots — especially "Right hand"/"Left hand"
+  (not "Weapon"/"Shield") and both Potion slots.
+- Click an EMPTY slot — confirm its catalog rows show a Purchase button
+  directly (no Compare step), and buying one actually updates the paperdoll
+  and the gold total.
+- Click an OCCUPIED slot's own item (not the one there) — confirm its
+  button says "Compare" first, opens the compare panel above, then flips to
+  "Purchase — Ng net" (or "Need Ng" if you can't afford the net cost) after
+  a beat, NOT instantly.
+- Click the slot's own occupant row — confirm it shows "Sell — Ng" (half
+  its cost), flips to "Confirm Sell +Ng" after the same delay, and selling
+  it actually empties the slot and adds the gold.
+- Buy a DIFFERENT item into an already-occupied slot — confirm the OLD item
+  is auto-sold (half its cost credited) as part of the same purchase, and
+  the price shown included a "+Ng trade-in" tag beforehand.
+- Confirm the compare panel's own Purchase/Sell button (not just the row's)
+  works identically to the row's button.
+- Confirm the Gold total shown updates correctly after every buy/sell, and
+  matches what the paused battle shows once you close The Armory.
+- General "does this feel good" pass: is the paperdoll legible, is the
+  catalog list readable, does anything overlap or run off-screen at
+  1280x1080?
+
+### KI-158 — D-208: Co-op economy, fully separate per-player gold pools
+Gold is now one independent pool per participant in a coop session (was one
+flat shared number) — **(headless-verified, not yet played)**. This can
+only really be exercised with two humans in one coop session, and Phase
+12.3's own KI-063 limitation still stands (the two clients' boards don't
+converge as either acts), so a genuine two-tab/two-device confirmation
+pass is the only way to see this for real:
+- Create a coop session in one browser tab, join with a second (anonymous
+  sign-in is fine), and start the battle — confirm the Gold HUD reads
+  `Gold: Ng | {partner name}: Mg`, both starting at the same amount (no
+  halving).
+- On the HOST's client, buy a structure (wall/trap) — confirm only the
+  HOST's own number in the HUD drops, not the partner's (structures charge
+  whichever client actually clicks "Build").
+- Equip an item onto one of YOUR OWN heroes — confirm only your own pool is
+  charged, not your partner's.
+- If the (currently ungated) equip flow lets you click a PARTNER's hero
+  token while an item is selected, confirm the CHARGE lands on the
+  partner's pool, not yours — the game correctly attributes gear cost to
+  whichever hero receives it, regardless of who clicked.
+- Land a kill with one of your own heroes — confirm the reward gold lands
+  in YOUR pool, not the partner's (or split, if it's an environmental kill
+  like a trap or a pit-shove from your partner's spell).
+- Clear a wave — confirm the completion/time-bonus gold splits evenly
+  between both pools (check both HUD numbers went up by the same amount,
+  give or take 1g for an odd total).
+- A Gold Thief enemy attacking one of your heroes should steal from YOUR
+  pool specifically, not your partner's.
+
+### KI-157 — D-207: Phase 3's leftover "off center" HUD fix
+Confirm/Cancel/Bonus Action/Class Action/Character Sheet button rows no
+longer reserve a fixed 86px gap under the roster (they now grow with the
+combat log's actual content, starting small on Wave 1), and whichever of
+those buttons are visible for the selected hero now center as a group
+instead of sitting at fixed offsets sized for the whole row —
+**(headless-verified, not yet played)**.
+- Start a fresh battle (Wave 1, nothing logged yet) and select any hero —
+  confirm the visible action button(s) (e.g. just "Character (C)" for a
+  hero with no class/bonus action available, or "Bonus: <name>" next to it
+  for one that has one) sit close under the roster panel with only a small
+  gap, NOT the large dead space from before this fix.
+- Compare a hero with just ONE row-member visible (e.g. a non-caster with
+  no potion) against one with TWO (e.g. a caster with a potion) — confirm
+  the single button sits centered under the grid rather than off to one
+  side, and the two-button case is centered as a pair with a small gap
+  between them, not spread to the row's old fixed left/right slots.
+- Play into Wave 2+ until the combat log fills with a few lines — confirm
+  the button rows settle at roughly their old position once the log has
+  meaningful content (should stop moving once several actions have
+  logged), and don't overlap the log text.
+- Select a hero with Bonus Action AND Action Surge both available (a
+  Fighter that's already acted this turn) — confirm both buttons appear
+  side by side, centered as a pair, not one left and one at a fixed offset
+  with a gap.
+- Select a hero with a Class Action AND Character Sheet both visible
+  (e.g. a Barbarian mid-Rage) — confirm the same centered-pair layout on
+  that row.
+- Open a pending move (click a legal tile once) — confirm Confirm/Cancel
+  appear centered as a pair, same as always, unaffected by this change.
+
+### KI-156 — D-206: Backgrounds (Phase 2.5 of the 2026-08-28 playtest batch)
+A new Background system — 4 real SRD backgrounds (Acolyte, Criminal, Sage,
+Soldier) plus 6 original ones (Siege Engineer, Ashfall Scout, Harborhand,
+Hedge-Warden, Ledger-Keeper, Ember-Marked) — **(headless-verified, not yet
+played)**.
+- Open Character Creation (Free Play/Create Party) — confirm a new
+  "Background: <name>" button appears near Race, defaulting to Acolyte, and
+  a second "Ability Bonus: not chosen" button next to it (half-width split,
+  same row). Confirm Start Battle/Save Party is BLOCKED with a message
+  naming that specific hero ("Hero N still has an unspent Background
+  ability bonus") until you actually open and pick from the ability-bonus
+  button.
+- Click the Background button — confirm all 10 show (4 real + 6 original),
+  each with a one-line preview (skills/ability triad/origin feat) and a
+  hover tooltip with the full flavor description. Pick one, then click the
+  ability-bonus button — confirm it lists exactly 7 options for that
+  background's 3 abilities (6 "+2 X, +1 Y" combinations plus "+1 to all
+  three"), and picking one clears the Start Battle block and updates the
+  button's own label.
+- Pick a DIFFERENT background after already choosing an ability bonus —
+  confirm the ability-bonus choice resets to "not chosen" (a different
+  background has a different triad, so the old pick no longer applies) and
+  the block reappears until you re-pick.
+- Pick Soldier or Sage (both grant a starting weapon — Spear and
+  Quarterstaff respectively) on a hero whose Weapon gear slot is still
+  empty — confirm that slot auto-fills with the matching weapon, visible
+  and still freely changeable via the normal Gear picker. Then pick a
+  background with a weapon grant on a hero who ALREADY has something
+  equipped in Weapon — confirm it does NOT get overwritten.
+- Start a battle with a couple of heroes using different backgrounds —
+  confirm the starting gold shown in the HUD reflects the SUM of each
+  hero's background's gold bonus on top of the usual starting gold (check
+  `data/backgrounds.ts`'s `startingGold` values against what the HUD
+  actually shows).
+- Give one hero the Criminal background (grants Stealth proficiency) on a
+  CLASS that normally has no Stealth proficiency of its own (e.g. a
+  Wizard) — start a battle, try to Hide with that hero, and confirm the
+  Stealth check reads as noticeably easier/more reliable than the same
+  attempt on an otherwise-identical hero with a different background.
+- Level up a hero whose background grants Magic Initiate (Acolyte/Sage, or
+  original Hedge-Warden) to an Ability-Score-Improvement level and pick
+  "Feat" — confirm Magic Initiate is NOT offered again for the SAME list it
+  already has (it should still be offered if choosing a DIFFERENT list is
+  possible, since Magic Initiate alone is repeatable) — and confirm a
+  background-granted NON-repeatable feat (Alert/Savage Attacker/Tough/
+  Lucky) never shows up in that same ASI-or-feat picker at all.
+- Open the Compendium's new "Backgrounds" tab — confirm all 10 show,
+  alphabetized, each with a one-line summary and a hover tooltip for the
+  full description; confirm nothing overlaps/runs off the now-13-tab
+  category row along the top.
+- Open a companion's build (Campaign mode, Companions screen or Character
+  Creation) — confirm each of the 12 shows a real, already-assigned
+  Background (not "not chosen"), and confirm the Background/ability-bonus
+  buttons are INERT for a locked companion slot (same as Class/Race),
+  clickable only for the unlocked PC slot.
+- Save a party with backgrounds chosen, reload it (Load Game or the
+  per-character library) — confirm the Background/ability-bonus selections
+  come back correctly, not reset to Acolyte/not-chosen.
+- If you have an OLD save from before this session — confirm loading it
+  does NOT block Start Battle (it should silently show "Acolyte" and
+  "+1 to all three" already filled in, not force you through the picker
+  first) — this is a deliberate migration, not a bug, but worth confirming
+  it actually reads as painless rather than confusing.
+- **Specifically flag design/balance feedback**, since these are first-pass:
+  do the 6 original backgrounds' names/flavor/mechanical fit feel "thematic
+  and extremely good design," or off in any way? Does the starting-gold
+  amount per background feel right? Does pre-filling a weapon on
+  background-pick feel expected, or surprising?
+
+### KI-155 — D-205: Battle interaction upgrades (Phase 3 of the 2026-08-28 playtest batch)
+Move-then-attack, double-click-to-confirm movement, and a real keyboard
+hotkey layer including rebindable Confirm/Cancel/Bonus Action keys —
+**(headless-verified, not yet played)**.
+- Select a MELEE hero (attack range 1) and click an enemy just out of attack
+  range but within this turn's movement — confirm the hero walks toward it
+  (animated, same as a normal move) and then swings, all from one click, in
+  cases where clicking used to just show "is out of range" and do nothing.
+- Select a RANGED hero (a bow/thrown weapon, attack range 2-3) and click an
+  enemy several tiles out of range but reachable — confirm the hero
+  approaches only as far as needed to be in range, NOT all the way adjacent
+  (it should stop short if a shorter approach already puts the target in
+  range).
+- With a hero that has already used its whole movement this turn, click an
+  out-of-range enemy — confirm it still rejects with "is out of range"
+  exactly as before (no movement left to spend).
+- Click an out-of-range enemy that's genuinely unreachable within this turn's
+  movement (e.g. behind a longer wall detour than the budget allows) —
+  confirm it still rejects with "is out of range" rather than doing anything
+  strange.
+- Select a hero, click a legal move tile ONCE (confirm the usual path-preview
+  /Confirm-Cancel buttons appear, unchanged) — then click a DIFFERENT legal
+  tile fast enough to register as one browser double-click — confirm the
+  hero moves there immediately with no separate Confirm-button click needed.
+  Also try double-clicking a legal tile as the very FIRST click (no prior
+  selection preview) — confirm it also commits immediately.
+- Click a legal move tile, wait more than half a second, then click it again
+  (a genuinely slow second click, not a real double-click) — confirm this
+  does NOT count as a double-click (should just refresh/re-show the same
+  preview, same as before this session).
+- Select a hero with at least one ability pinned to its hotkey bar
+  (Character Sheet's Hotkeys tab, or an already-pinned one from a save) —
+  confirm the HUD's hotkey bar now labels each filled slot "Shift+N: ..."
+  instead of just "N: ...", and confirm pressing Shift+1 through Shift+6
+  actually fires the corresponding slot. Confirm plain 1-4 (no Shift) still
+  only reselects a hero, same as always.
+- Open Settings (Main Menu, or Pause Menu → Settings mid-battle) — confirm a
+  new "Controls" section shows three rows: Confirm, Cancel, Bonus Action,
+  each showing its current key (Enter/Esc/R by default).
+- Click the Cancel row, then press a key that's genuinely free (e.g. a
+  letter not used anywhere) — confirm the row updates to show the new key
+  and Escape no longer cancels an in-battle pending move (try it mid-battle:
+  select a hero, click a legal move tile, press Escape — confirm it does
+  nothing now, then confirm the NEW key you bound does cancel it). Confirm
+  Escape still works completely normally everywhere else (Main Menu,
+  Settings' own Back, Pause Menu, etc.).
+- Click a Controls row, then press a key already used by ANOTHER Controls row
+  (e.g. try to bind Cancel to Confirm's current key) — confirm it's refused
+  with a visible message and the row stays in "press a key" mode rather than
+  silently applying. Same check for a key already used by one of the game's
+  many other fixed hotkeys (e.g. try binding Bonus Action to "E") — confirm
+  that's refused too.
+- Click a Controls row to start rebinding, then press Escape — confirm it
+  cancels just the rebind capture (row reverts to showing its old key) and
+  does NOT exit Settings back to the previous screen.
+- Rebind Bonus Action to a new key mid-battle via Pause Menu → Settings, then
+  resume the battle and select a hero with a bonus action available (e.g. a
+  Fighter's Second Wind) — confirm the NEW key triggers it and the OLD key
+  (R, unless something else now uses it) no longer does, without needing to
+  leave and restart the battle.
+- Close and reopen the browser tab (a real reload, not just navigating
+  screens) after rebinding all three — confirm the rebinding is still there
+  (real `localStorage` persistence, not just session state).
+
+### KI-154 — D-204: Character Creation depth (Phase 2 of the 2026-08-28 playtest batch)
+Per-class default ability order, the Right hand/Left hand gear rename +
+two-handed grip fix, and the new per-character library — **(headless-
+verified, not yet played)**.
+- Start a brand-new party (Free Play/Party Creation). For a few different
+  classes (e.g. Fighter, Wizard, Rogue, Paladin), confirm the Standard Array
+  ability scores default to a sensible order for that class (Fighter's
+  highest score on STR, Wizard's on INT, etc.) instead of always the same
+  STR/DEX/CON/INT/WIS/CHA order.
+- Change a hero's class AFTER already customizing their ability scores —
+  confirm the scores do NOT silently reorder (this is deliberate — see
+  D-204).
+- Toggle a hero from Standard Array to Point Buy and back — confirm
+  Standard Array resets to a fresh, class-appropriate default order (not
+  whatever was there before switching to Point Buy).
+- Open a hero's Gear picker — confirm the two hand slots now read "Right
+  hand" and "Left hand" instead of "Weapon"/"Shield".
+- Pick a Two-Handed weapon (e.g. Greatsword, Longbow) into Right hand while
+  something is equipped in Left hand — confirm Left hand automatically
+  clears. Then pick something into Left hand while that Two-Handed weapon
+  is still equipped — confirm Right hand automatically clears instead.
+- In-battle, confirm gear-equip log messages also read "Right hand"/"Left
+  hand" (e.g. "X equips Y into Right hand (Zg)") — this label is shared
+  everywhere, not just Character Creation.
+- On any hero slot, click "Save Character," give it a name, confirm it
+  saves. Click "Load Character" on a DIFFERENT slot (or the same one after
+  changing something) — confirm your saved character appears in the list
+  and, once picked, fully overwrites that slot (class/race/ability scores/
+  gear/starting level/spells) with what you saved.
+- Delete a saved character from the Load Character list (two-click
+  confirm) — confirm it's gone from the list afterward, and confirm it's
+  still gone after a full page reload (this is real `localStorage`
+  persistence, not just session state).
+- Confirm "Save Character" works on a locked companion slot (campaign mode)
+  but "Load Character" is a no-op there (can't overwrite a companion's fixed
+  identity).
+
+### KI-153 — D-203: Main Menu reorg + Campaign/Free Play New-or-Load forks
+Phase 1 of Kevin's 2026-08-28 playtest batch. Three separate screens
+changed at once — **(headless-verified, not yet played)**.
+- Open the Main Menu — confirm the button groups now read: a single large
+  "Campaign" primary button, then a row of "Free Play" / "Co-op" (if
+  Firebase is configured) / "Party Creation", then a single "Knowledge
+  Base" button, then the unchanged "Map Builder" / "Test Mode" / "Browse
+  Shared Maps" creator-tools row. Confirm Settings (top-right) and Sign-in
+  (below it) are still there — these already existed before this session,
+  just re-confirming they satisfy the ask.
+- Confirm there is no longer a standalone "New Game", "Build Party", or
+  "Load Game" button directly on the Main Menu (all three folded into the
+  buttons above).
+- Click "Campaign" — confirm a new screen appears with "New Campaign" and
+  "Load Campaign" buttons (not the old direct jump into the region list).
+  Click "New Campaign" — confirm it behaves EXACTLY like the old
+  "Campaigns" button used to (same region list, same auto-resume-per-region
+  behavior). Click Back from here, then "Load Campaign" — confirm it opens
+  a Load Game-style list showing ONLY saves with a linked campaign (i.e.
+  ones made via a campaign battle's in-battle pause-menu Save Party) — if
+  you have no such save, confirm it shows a "No saved campaign parties yet"
+  message instead of every save or a blank list.
+- Click "Free Play" from Main Menu — confirm the same New/Load fork
+  appears with "New Game"/"Load Game" instead, "New Game" behaves exactly
+  like the old direct "Free Play" button, and "Load Game" shows only saves
+  WITHOUT a campaign link (your classic/Free Play/Party Creation saves).
+- From either fork screen, click "Load Campaign"/"Load Game", then click
+  Back — confirm it returns to the fork screen (not straight to Main
+  Menu), preserving your New/Load choice.
+- In-battle, open the pause menu and click its own "Load Game" button —
+  confirm it's completely unaffected: still shows every saved party
+  (campaign-linked and not), same as always.
+- Click "Party Creation" on Main Menu — confirm it opens Character
+  Creation fresh, and specifically confirm the D-202/KI-152 "resume a
+  plain draft" behavior still works from this one consolidated button
+  (type a name, Back to Main Menu, click Party Creation again, confirm the
+  name is still there) — this used to work from two buttons ("New Game"
+  and "Build Party"); confirm it still works from the one that remains.
+- Click "Knowledge Base" on Main Menu — confirm a new screen opens with
+  "Compendium" and "Bestiary" buttons (ornate/parchment styled, matching
+  Main Menu's own look), each opening the same screens the old direct
+  Main Menu buttons used to.
+- Press Enter or Space on Main Menu — confirm it now opens the Campaign
+  New/Load fork (matching the new primary button), not Character Creation
+  directly like it used to.
+- Known, deliberate scope: `ModeEntryScene`/`CampaignSelectScene`/
+  `FreePlayScene`/`LoadGameScene` are NOT visually reskinned to the D-123
+  ornate theme in this pass (only `KnowledgeBaseScene` is, since it sits
+  between two screens that already are) — a plain-rectangle look next to
+  Main Menu's ornate one is expected here, not a bug; that reskin is its
+  own later item.
+
 ### KI-152 — D-202: Character Creation resumes a "plain" draft across Back-and-return
 No repro was ever obtained for the original hero-name report — this fixes
 the one concrete defect static reading found, on Kevin's own explicit

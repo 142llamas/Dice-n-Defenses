@@ -12,6 +12,7 @@ import { STRUCTURE_DEFINITIONS, type StructureDefinition } from "../data/structu
 import { classProgressionTable, type ProgressionLevelEntry } from "../systems/ClassProgressionSystem";
 import { ABILITY_SCORE_NAMES } from "../data/abilityScores";
 import { SKILLS, SKILL_ORDER } from "../data/skills";
+import { BACKGROUND_IDS, getBackgroundDefinition } from "../data/backgrounds";
 import { PORTRAIT_MANIFEST } from "../data/portraitManifest";
 import { showDialogue, type DialogueBoxController, type DialogueLine } from "./dialogueBox";
 import { createTooltipController, attachHoverTooltip, type TooltipController } from "./tooltip";
@@ -90,6 +91,7 @@ type CategoryId =
   | "races"
   | "feats"
   | "skills"
+  | "backgrounds"
   | "spells"
   | "equipment"
   | "potions"
@@ -104,6 +106,7 @@ const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: "races", label: "Races" },
   { id: "feats", label: "Feats" },
   { id: "skills", label: "Skills" },
+  { id: "backgrounds", label: "Backgrounds" },
   { id: "spells", label: "Spells" },
   { id: "equipment", label: "Equipment" },
   { id: "potions", label: "Potions" },
@@ -466,6 +469,9 @@ export class CompendiumScene extends Phaser.Scene {
       case "skills":
         this.renderSkillsDetail();
         break;
+      case "backgrounds":
+        this.renderBackgroundsDetail();
+        break;
       case "potions":
         this.renderPotionsDetail();
         break;
@@ -547,6 +553,9 @@ export class CompendiumScene extends Phaser.Scene {
         break;
       case "skills":
         this.renderSkillsDetail();
+        break;
+      case "backgrounds":
+        this.renderBackgroundsDetail();
         break;
       case "potions":
         this.renderPotionsDetail();
@@ -782,6 +791,24 @@ export class CompendiumScene extends Phaser.Scene {
       const s = SKILLS[id];
       return { text: `${s.name} (${ABILITY_SCORE_NAMES[s.ability]})`, tooltip: s.description };
     });
+    this.renderRowList(null, this.panelWidth(), rows);
+  }
+
+  // D-206: alphabetical, same "local sorted copy" precedent as Feats/
+  // Potions/Status Effects above — `BACKGROUND_IDS`' own order (SRD four,
+  // then the six originals) backs Character Creation's own picker instead.
+  private renderBackgroundsDetail(): void {
+    const rows: DetailRow[] = [...BACKGROUND_IDS]
+      .sort((a, b) => getBackgroundDefinition(a).name.localeCompare(getBackgroundDefinition(b).name))
+      .map((id) => {
+        const b = getBackgroundDefinition(id);
+        const skills = b.skillIds.map((sid) => SKILLS[sid].name).join(", ");
+        const abilities = b.abilityTriad.map((a) => ABILITY_SCORE_NAMES[a]).join("/");
+        return {
+          text: `${b.name} — ${skills} · ${abilities} · ${FEATS[b.originFeatId].name}`,
+          tooltip: b.description,
+        };
+      });
     this.renderRowList(null, this.panelWidth(), rows);
   }
 

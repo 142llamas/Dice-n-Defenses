@@ -4,7 +4,7 @@ import { PathfindingSystem } from "../src/game/systems/PathfindingSystem";
 import { WaveSystem } from "../src/game/systems/WaveSystem";
 import { RandomService } from "../src/game/systems/RandomService";
 import { BuildSystem } from "../src/game/systems/BuildSystem";
-import { EconomySystem } from "../src/game/systems/EconomySystem";
+import { EconomySystem, SOLO_ECONOMY_OWNER } from "../src/game/systems/EconomySystem";
 import { RewardSystem } from "../src/game/systems/RewardSystem";
 import { CombatSystem, type AttackProfile } from "../src/game/systems/CombatSystem";
 import { TEST_MAP } from "../src/game/data/testMap";
@@ -50,7 +50,7 @@ function freshGame() {
   const waves = new WaveSystem(map, pathfinding, WAVES, {
     startingIntegrity: STRONGHOLD_START, random: RandomService.fixed(),
   });
-  const economy = new EconomySystem(STARTING_GOLD);
+  const economy = new EconomySystem({ [SOLO_ECONOMY_OWNER]: STARTING_GOLD });
   const build = new BuildSystem(map, pathfinding);
   return { map, pathfinding, waves, economy, build };
 }
@@ -75,9 +75,9 @@ describe("Integrated MVP â€” a sensible player can win the whole campaign",
     const trapTile = { x: 2, y: 4 };
     expect(build.canPlace(trapDef, trapTile).ok).toBe(true);
     const cost = 8;
-    expect(economy.spend(cost).ok).toBe(true);
+    expect(economy.spend(SOLO_ECONOMY_OWNER, cost).ok).toBe(true);
     expect(build.place(trapDef, trapTile).ok).toBe(true);
-    const goldAfterBuying = economy.gold; // 20 - 8 = 12
+    const goldAfterBuying = economy.gold(SOLO_ECONOMY_OWNER); // 20 - 8 = 12
 
     let anyTrapTriggered = false;
     let wavesCleared = 0;
@@ -90,9 +90,9 @@ describe("Integrated MVP â€” a sensible player can win the whole campaign",
       while (guard++ < 60) {
         // --- Player phase: heroes act, then collect kills and gold. ---
         heroesAct(waves);
-        economy.award(RewardSystem.killGold(waves.removeDefeated()));
+        economy.award(SOLO_ECONOMY_OWNER, RewardSystem.killGold(waves.removeDefeated()));
         if (waves.isCurrentWaveComplete()) {
-          economy.award(RewardSystem.waveReward(waves.currentWave, guard).total);
+          economy.award(SOLO_ECONOMY_OWNER, RewardSystem.waveReward(waves.currentWave, guard).total);
           cleared = true;
           break;
         }
@@ -103,11 +103,11 @@ describe("Integrated MVP â€” a sensible player can win the whole campaign",
           trapTargets: (p) => build.trapTargetsAt(p),
         });
         if (report.trapTriggers.length > 0) anyTrapTriggered = true;
-        economy.award(RewardSystem.killGold(waves.removeDefeated()));
+        economy.award(SOLO_ECONOMY_OWNER, RewardSystem.killGold(waves.removeDefeated()));
 
         expect(waves.isDefeated()).toBe(false); // integrity must never hit 0 here
         if (report.waveComplete) {
-          economy.award(RewardSystem.waveReward(waves.currentWave, report.turn).total);
+          economy.award(SOLO_ECONOMY_OWNER, RewardSystem.waveReward(waves.currentWave, report.turn).total);
           cleared = true;
           break;
         }
@@ -124,7 +124,7 @@ describe("Integrated MVP â€” a sensible player can win the whole campaign",
     // The economy actually flowed: the trap earned its keep, and rewards left
     // the party richer than it was after buying the trap.
     expect(anyTrapTriggered).toBe(true);
-    expect(economy.gold).toBeGreaterThan(goldAfterBuying);
+    expect(economy.gold(SOLO_ECONOMY_OWNER)).toBeGreaterThan(goldAfterBuying);
   });
 });
 

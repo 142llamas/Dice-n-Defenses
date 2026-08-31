@@ -30,6 +30,15 @@ import { getViewport, onViewportResize } from "./uiTheme";
  * anywhere in this project today, so this matches that established norm
  * (flagged as a low-priority nit in KNOWN_ISSUES, same tier as KI-033).
  *
+ * Phase 1 of the 2026-08-28 playtest batch: accepts an optional
+ * `filterMode: "campaign" | "freeplay"` from `ModeEntryScene`'s Load
+ * Campaign/Load Game buttons, showing only slots with (or without) a
+ * `campaignId`. Omitted entirely when reached from `PauseMenuScene`'s
+ * in-battle "Load Game" button, which still shows every slot exactly as
+ * before this change. When a filter is active, "Back" returns to
+ * `ModeEntryScene` (preserving the New/Load choice) instead of straight to
+ * Main Menu.
+ *
  * Phase 10 (D-084) added a "Sync with Cloud" button (only meaningful once
  * signed in with Google — see `MainMenuScene`'s Account control; syncing
  * an anonymous-only session is pointless, nothing else can ever reach that
@@ -39,15 +48,24 @@ import { getViewport, onViewportResize } from "./uiTheme";
  * mirrors the delete to the cloud when signed in, so a synced-away slot
  * doesn't reappear on the next sync.
  */
+interface LoadGameData {
+  filterMode?: "campaign" | "freeplay";
+}
+
 export class LoadGameScene extends Phaser.Scene {
   private authState: AuthState = { uid: null, isAnonymous: true, displayName: null };
   private syncButton?: Phaser.GameObjects.Rectangle;
   private syncLabel?: Phaser.GameObjects.Text;
   private syncStatusLabel?: Phaser.GameObjects.Text;
   private layoutRoot?: Phaser.GameObjects.Container;
+  private filterMode?: "campaign" | "freeplay";
 
   constructor() {
     super("LoadGameScene");
+  }
+
+  init(data: LoadGameData): void {
+    this.filterMode = data?.filterMode;
   }
 
   create(): void {
@@ -84,8 +102,9 @@ export class LoadGameScene extends Phaser.Scene {
     const before = new Set<Phaser.GameObjects.GameObject>(this.children.list);
     const { width } = getViewport(this);
 
+    const title = this.filterMode === "campaign" ? "Load Campaign" : "Load Game";
     this.add
-      .text(width / 2, 40, "Load Game", {
+      .text(width / 2, 40, title, {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "36px",
         color: "#e8e8f0",
@@ -95,8 +114,14 @@ export class LoadGameScene extends Phaser.Scene {
 
     this.buildButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
 
+    const subtitle =
+      this.filterMode === "campaign"
+        ? "Load a saved campaign party, or delete one you no longer need."
+        : this.filterMode === "freeplay"
+          ? "Load a saved Free Play/classic party, or delete one you no longer need."
+          : "Load a previously saved party, or delete one you no longer need.";
     this.add
-      .text(width / 2, 90, "Load a previously saved party, or delete one you no longer need.", {
+      .text(width / 2, 90, subtitle, {
         fontFamily: "system-ui, Arial, sans-serif",
         fontSize: "14px",
         color: "#8a8aa0",
@@ -112,6 +137,10 @@ export class LoadGameScene extends Phaser.Scene {
   }
 
   private leave(): void {
+    if (this.filterMode) {
+      this.scene.start("ModeEntryScene", { mode: this.filterMode });
+      return;
+    }
     this.scene.start("MainMenuScene");
   }
 
@@ -206,10 +235,21 @@ export class LoadGameScene extends Phaser.Scene {
   /** One clickable card per save slot, stacked vertically below the intro text, or an empty-state line. */
   private buildSlotCards(width: number): void {
     const file = loadSaveFile(window.localStorage, SAVE_STORAGE_KEY);
+    const filtered = file.slots.filter((slot) => {
+      if (this.filterMode === "campaign") return slot.campaignId !== undefined;
+      if (this.filterMode === "freeplay") return slot.campaignId === undefined;
+      return true;
+    });
 
-    if (file.slots.length === 0) {
+    if (filtered.length === 0) {
+      const emptyMessage =
+        this.filterMode === "campaign"
+          ? "No saved campaign parties yet — save one from a campaign battle's pause menu."
+          : this.filterMode === "freeplay"
+            ? 'No saved parties yet — build one in Party Creation and click "Save Party."'
+            : 'No saved parties yet — build one in Create Party and click "Save Party."';
       this.add
-        .text(width / 2, 260, 'No saved parties yet — build one in Create Party and click "Save Party."', {
+        .text(width / 2, 260, emptyMessage, {
           fontFamily: "system-ui, Arial, sans-serif",
           fontSize: "16px",
           color: "#6a6a80",
@@ -224,7 +264,7 @@ export class LoadGameScene extends Phaser.Scene {
     const startY = 220;
 
     // Most-recently-updated first, so a slot the player keeps re-saving stays near the top.
-    const slots = [...file.slots].sort((a, b) => b.updatedAt - a.updatedAt);
+    const slots = [...filtered].sort((a, b) => b.updatedAt - a.updatedAt);
 
     slots.forEach((slot, i) => {
       const y = startY + i * (cardHeight + gap);

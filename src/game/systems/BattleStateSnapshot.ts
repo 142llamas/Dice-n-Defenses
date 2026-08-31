@@ -47,7 +47,8 @@ import type { WaveDefinition } from "../data/waves";
 
 export interface BattleStateSnapshot {
   phaseHistory: GamePhase[];
-  gold: number;
+  /** D-208: one balance per economy pool owner (`SOLO_ECONOMY_OWNER` outside a coop session, a participant uid inside one) — see `EconomySystem`'s own header comment. */
+  gold: Record<string, number>;
   heroes: HeroSnapshot[];
   wave: WaveStateSnapshot;
   structures: BuildStateSnapshot;
@@ -81,7 +82,7 @@ export interface BattleStateRestoreConfig {
 export function captureBattleState(state: LiveBattleState): BattleStateSnapshot {
   return {
     phaseHistory: [...state.turns.history],
-    gold: state.economy.gold,
+    gold: state.economy.goldByOwner(),
     heroes: state.heroes.map((hero) => hero.toSnapshot()),
     wave: state.waveSystem.toSnapshot(),
     structures: state.buildSystem.toSnapshot(),
