@@ -2,12 +2,13 @@
 
 All notable changes to this project are recorded here.
 
-## [Unreleased] — 0.2.0-dev — Character Creation spacing fixes + name-field mitigation (D-211)
+## [Unreleased] — 0.2.0-dev — Character Creation spacing fixes + the hero-name-field positioning bug (D-211)
 
-From a Kevin screenshot of "Build Your Party." See `DECISIONS.md` D-211 for
-the full writeup.
+From a Kevin screenshot of "Build Your Party." All items below are
+**confirmed working** on the deployed site. See `DECISIONS.md` D-211 for
+the full writeup, including two wrong theories before the real fix landed.
 
-Fixed:
+Fixed, confirmed:
 - The Standard Array/Point Buy pill no longer overlaps the Background/
   Ability Bonus row above it (a real 12px overlap D-206 left behind when it
   added the Background row without adjusting this pill's position).
@@ -15,33 +16,28 @@ Fixed:
   reads as a stray vertical line between the two labels.
 - The "unspent Background ability bonus" validation message now names the
   actual control to click ("the button next to Background").
-
-Fixed, confirmed by Kevin on the deployed site:
-- A second, unrelated bug found the same session (confirmed via a
-  screenshot of the deployed site, broken since D-206): the "Team Level"
-  bar fully covered the per-column "Save Character/Load Character" row
-  beneath it, a proven 30px overlap. Fixed by moving the whole shared
-  bottom control block down, unevenly — the buttons move the full amount
-  needed, the two text rows below absorb less to protect their clearance
-  above the screen's outer frame. Confirmed working after deploy.
-
-Attempted three times, latest believed to close it (unverified):
-- The 4 hero-name `<input>` fields (and `CoopLobbyScene`'s join-code field)
-  render near the top of the screen instead of inside their own column —
-  a real, static positioning bug, not a runtime desync (Kevin corrected an
-  earlier wrong guess: "the name plates don't drift, they just start in
-  that position"). A source-verified theory (Phaser's `ScaleManager.js`
-  copies the canvas's CSS margin onto its DOM element container, which
-  only works when Phaser itself centers the canvas) produced
-  `fixDomContainerAlignment()` (`uiTheme.ts`) — deployed, confirmed by
-  Kevin to have had no visible effect. A readable diagnostic panel (his
-  attempt to zoom in on a too-small first version revealed the canvas
-  doesn't visibly resize with browser zoom while the name fields do —
-  itself a useful clue) then supplied real numbers: the fix's correction
-  MATH was right, it just went stale against live zoom/resize churn.
-  `fixDomContainerAlignment` now reruns every frame instead of on a
-  one-time/resize-event basis (self-healing) — should close the bug, but
-  still needs Kevin's confirmation. See `KNOWN_ISSUES.md` KI-161.
+- A second, unrelated bug found the same session (broken since D-206): the
+  "Team Level" bar fully covered the per-column "Save Character/Load
+  Character" row beneath it, a proven 30px overlap. Fixed by moving the
+  whole shared bottom control block down, unevenly — the buttons move the
+  full amount needed, the two text rows below absorb less to protect their
+  clearance above the screen's outer frame.
+- The 4 hero-name `<input>` fields (and `CoopLobbyScene`'s join-code
+  field) rendered near the top of the screen instead of inside their own
+  column — a real, static positioning bug, not a runtime desync (Kevin
+  corrected an earlier wrong guess: "the name plates don't drift, they
+  just start in that position"). Root cause: Phaser's `ScaleManager.js`
+  keeps its DOM element container aligned with the canvas by copying the
+  canvas's CSS margin onto it, which only works when Phaser itself centers
+  the canvas — this project centers via an external CSS flexbox instead,
+  so that margin is always empty. `fixDomContainerAlignment()`
+  (`uiTheme.ts`) corrects this directly, and now reruns every frame
+  (`update()`, both DOM-element scenes) rather than once at load — a
+  one-time correction proved to go stale against live browser zoom/resize
+  churn, confirmed via a diagnostic panel's real measured numbers before
+  landing on the per-frame fix. Also confirmed, not a bug: the game's
+  apparent size doesn't change with browser zoom at all — expected under
+  `Scale.FIT`.
 
 Tests: 1643 (unchanged — presentation-only). Typecheck clean, production
 build succeeds (152 modules, unchanged).

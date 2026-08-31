@@ -1,14 +1,11 @@
 # Project Status
 
-## Character Creation spacing fixes — DONE this session; name-field bug LIKELY closed, unverified (D-211)
+## Character Creation spacing fixes + the hero-name-field positioning bug — DONE and CONFIRMED (D-211)
 
-From a Kevin screenshot of "Build Your Party": four spacing/text fixes,
-confirmed working after deploy. The recurring "hero name fields render out
-of place" report took three attempts — the first two confirmed
-unsuccessful, but Kevin's diagnostic-panel screenshot proved the
-correction formula was right and only its timing was wrong; the third
-attempt (reapply every frame) should close it but still needs his
-confirmation once deployed.
+From a Kevin screenshot of "Build Your Party." All five fixes below are
+**confirmed working** on the deployed site — including the recurring
+"hero name fields render out of place" report, an old playtest note no
+prior session had actually fixed, which took three attempts this session.
 
 - Fixed a real overlap: the Standard Array/Point Buy pill's top edge sat
   12px inside the Background/Ability-Bonus row above it (D-206 added that
@@ -18,26 +15,24 @@ confirmation once deployed.
   reading as a stray vertical line between the two labels.
 - Clarified the "unspent Background ability bonus" validation message to
   name the actual control ("the button next to Background").
-- **Second, unrelated bug found and fixed the same session, CONFIRMED
-  working**: the "Team Level" bar fully covered the per-column "Save
-  Character/Load Character" row beneath it (a proven 30px overlap, broken
-  since D-206) — confirmed via a Kevin screenshot of the deployed site.
-  Fixed by shifting the whole shared bottom control block down, unevenly,
-  to protect the validation text's clearance above the screen's outer
-  frame. Kevin deployed and confirmed this fix, plus the Standard Array/
-  Background-gap/validation-message fixes above, all landed correctly.
-- **Hero-name-field positioning: likely closed on the third attempt,
-  unverified.** Kevin's diagnostic-panel screenshot gave real numbers
-  (`canvas rect L467 T70` vs `domContainer rect L447 T-17`, same size,
-  offset 20px left/87px up, with a genuinely nonzero partial correction
-  already applied) proving `fixDomContainerAlignment()`'s correction
-  MATH was right all along — it just went stale against live browser
-  zoom/resize churn (a one-time call plus resize-event reapplication
-  wasn't enough). Now reruns every frame (`update()`, both
+- A second, unrelated bug found the same session: the "Team Level" bar
+  fully covered the per-column "Save Character/Load Character" row
+  beneath it (a proven 30px overlap, broken since D-206). Fixed by
+  shifting the whole shared bottom control block down, unevenly, to
+  protect the validation text's clearance above the screen's outer frame.
+- **Hero-name-field positioning, closed on the third attempt.** Root
+  cause: Phaser's `ScaleManager.js` keeps its DOM element container
+  aligned with the canvas by copying the canvas's CSS margin onto it,
+  which only works when Phaser itself centers the canvas — this project
+  centers via an external CSS flexbox instead, so that margin is always
+  empty. `fixDomContainerAlignment()` (`uiTheme.ts`) corrects this
+  directly; a diagnostic panel proved the correction math was right but
+  going stale between a one-time application and infrequent resize-event
+  reapplication, so it now reruns every frame (`update()`, both
   `CharacterCreationScene` and `CoopLobbyScene`) instead — self-healing
-  regardless of what caused the drift. Formula proven correct against real
-  measurements, but still needs Kevin's own confirmation once deployed.
-  See `KNOWN_ISSUES.md` KI-161.
+  regardless of what caused the drift. Also confirmed, not a bug: the
+  game's apparent size doesn't change with browser zoom at all — expected
+  under `Scale.FIT`. See `KNOWN_ISSUES.md` KI-161 (now resolved).
 
 Tests: **1643** (unchanged — presentation-only). Typecheck clean, all 1643
 pass, production build succeeds (**152 modules**, unchanged — no new

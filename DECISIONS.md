@@ -12194,3 +12194,21 @@ as "should be fixed" until Kevin confirms, not "confirmed fixed."
 - `DECISIONS.md` — this entry.
 - `KNOWN_ISSUES.md` — KI-161 (new).
 - `CHANGELOG.md`, `PROJECT_STATUS.md`, `PHASE_HANDOFF.md` — updated.
+
+**Sixth amendment, same session: Kevin deployed the per-frame fix and
+confirmed the hero-name fields are now correctly aligned.** Closes the
+whole name-field saga (three fix attempts total, the third one landing).
+Also confirmed one more data point, not a bug: browser zoom doesn't
+visibly change the game's apparent size at all — expected under
+`Scale.FIT` (the canvas always resizes to exactly fill the available
+space regardless of what triggered the resize, zoom included, so there's
+nothing to fix there; flagged to Kevin as intentional, not a gap).
+Removed the temporary diagnostic panel (`domDebugBg`/`domDebugText`/
+`updateDomDebugText()` and their creation in `create()`) from
+`CharacterCreationScene.ts` — `update()` in both `CharacterCreationScene`
+and `CoopLobbyScene` now just calls `fixDomContainerAlignment(this)`
+directly, which is the real, permanent fix, not debug scaffolding.
+
+Tests: **1643** (unchanged). Typecheck clean, all 1643 pass, production
+build succeeds (**152 modules**, unchanged — diagnostic removal is a pure
+deletion, no new file).

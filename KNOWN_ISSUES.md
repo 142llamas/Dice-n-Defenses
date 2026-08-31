@@ -29,84 +29,45 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
-### KI-161 — D-211: Character Creation spacing fixes + a `scale.refresh()` mitigation for the hero-name-field positioning bug
-Three small, provable fixes plus one unconfirmed mitigation, from a Kevin
-screenshot of "Build Your Party" — **(headless-verified, not yet played)**.
-- Open Character Creation, look at any hero column's Standard Array/Point
-  Buy pill (the small "Standard Array"/"Point Buy" label between Background/
-  Ability Bonus and the ability-score rows) — confirm it no longer visually
-  overlaps/crowds into the Background/Ability Bonus row directly above it,
-  and that "Points Left" (Point Buy mode) reads clearly on its own line
-  below the pill without crowding STR.
-- Look at the Background/Ability Bonus row specifically — confirm the gap
-  between "Background: X" and "Ability Bonus: Y" reads as a clear visual
-  gap now, not a stray vertical line between the two.
-- Leave a hero's Ability Bonus unchosen and try Start Battle — confirm the
-  validation message now reads "Hero N still needs to pick an Ability Bonus
-  (the button next to Background)" instead of the old, less actionable
-  "still has an unspent Background ability bonus."
-- **STILL BROKEN, confirmed by Kevin on the real deployed site**: the 4
-  hero-name fields render in the same wrong spot (floating up near the
-  subtitle text, not inside their column) as before this session's fix —
-  the "names are way out of place" bug from an old playtest note. Two
-  theories have now been tried and both missed: a runtime desync
-  (disproven — Kevin confirmed the fields start wrong immediately, no
-  drift), then a DOM-container-margin fix based on reading Phaser's own
-  `ScaleManager.js` source (`fixDomContainerAlignment()` in `uiTheme.ts`,
-  applied to both `CharacterCreationScene` and `CoopLobbyScene`) — that
-  mechanism is real (verified in Phaser's source) but had NO visible effect
-  on the actual bug, meaning either the fix has its own error or the true
-  cause is something else the source-reading didn't surface. A first
-  diagnostic attempt (a small magenta text line) was too small to read —
-  Kevin's attempt to browser-zoom in to read it turned up a real clue
-  instead: the CANVAS content doesn't visibly change size with browser
-  zoom at all, but the hero-name fields DO shift (up-left zooming in,
-  down-right zooming out), meaning the DOM container isn't staying in sync
-  with the canvas across a zoom/resize event. The diagnostic is now a
-  large, always-current, readable panel (white text on a black backing
-  box, search `CharacterCreationScene.ts` for "D-211 TEMP DIAGNOSTIC") that
-  updates every frame and includes window size/devicePixelRatio/
-  visualViewport scale alongside the canvas/DOM-container/first-input
-  rects — no zooming needed to read it this time, and Kevin's screenshot
-  of it gave real numbers: `canvas rect L467 T70 W1200 H1012` vs
-  `domContainer rect L447 T-17 W1200 H1012` (same size, offset 20px left/
-  87px up) with a genuinely nonzero, partial `margin 40.16px/33.89px`
-  already applied. That confirms the fix's MATH was correct all along — it
-  just goes stale, since a one-time correction plus resize-event
-  reapplication isn't enough against live browser zoom/resize churn.
-  **Third attempt**: `fixDomContainerAlignment` now reruns every frame
-  (`update()`, both `CharacterCreationScene` and `CoopLobbyScene`) instead
-  of relying on event timing — self-healing regardless of what causes the
-  drift. This SHOULD close the bug (the formula is proven correct against
-  real measurements), but is still unverified without a browser — confirm
-  the 4 hero-name fields now render INSIDE their own column, staying
-  correct even after resizing the window or changing browser zoom (Kevin's
-  own zoom test is a good way to re-check: zoom in/out and confirm the
-  fields DON'T shift anymore). Once confirmed, remove the diagnostic panel
-  (`domDebugBg`/`domDebugText`/`updateDomDebugText()`, tagged "D-211 TEMP
-  DIAGNOSTIC") — but the `update()` method's `fixDomContainerAlignment`
-  call itself should likely stay (it's the actual fix, not the
-  diagnostic).
-- While there, also check `CoopLobbyScene`'s join-code field (create/join a
-  co-op session) — same fix applied there, same "should position correctly"
-  gap KI-062 already listed but never confirmed either way.
-- **Second, unrelated bug found and fixed in the same session**: the "Team
-  Level: N (all heroes)" bar was fully covering the per-column "Save
-  Character/Load Character" row underneath it (a proven 30px overlap,
-  broken since D-206, not caused by anything above) — confirmed from a
-  Kevin screenshot of the DEPLOYED site (which didn't even have this
-  session's other fixes yet). Fixed by shifting the whole shared bottom
-  block down, but the shift wasn't uniform — Team Level/Party Size/
-  Difficulty/Start Battle/Save Party all moved the full amount needed
-  (they had no gap left to compress), while the save-status line and the
-  validation text below them absorbed less, to protect their clearance
-  above the screen's outer frame (down to ~15px from ~35px, not the ~5px a
-  uniform shift would have left — this exact frame-adjacent zone broke
-  once before, see KI-141/D-159). Confirm: the Save/Load Character row is
-  now fully visible and clickable for EVERY hero column (not just some),
-  Team Level sits cleanly below it with a real gap, and the bottom of the
-  screen (Start Battle, Save New Party, the save-status text, and the red
-  validation message) doesn't crowd or clip against the outer frame.
+### KI-161 — D-211: Character Creation spacing fixes + the hero-name-field positioning bug — **RESOLVED, confirmed by Kevin**
+All five items below are confirmed working on the deployed site as of the
+end of this session. Kept as historical record (see `DECISIONS.md` D-211
+for the full session-by-session story, including two wrong theories along
+the way before the real fix landed).
+- Standard Array/Point Buy pill no longer overlaps the Background/Ability
+  Bonus row above it; "Points Left" (Point Buy mode) reads clearly on its
+  own line without crowding STR. **Confirmed.**
+- The Background/Ability Bonus row's gap reads as a clear visual gap, not
+  a stray vertical line. **Confirmed.**
+- The unspent-ability-bonus validation message now names the actual
+  control ("the button next to Background"). **Confirmed.**
+- The "Team Level" bar no longer covers the per-column "Save Character/
+  Load Character" row beneath it (was a real, proven 30px overlap, broken
+  since D-206) — the whole shared bottom control block shifted down,
+  unevenly, to protect its clearance above the screen's outer frame.
+  **Confirmed** — Save/Load Character is fully visible/clickable for every
+  hero column, and the bottom of the screen doesn't crowd the frame.
+- The 4 hero-name `<input>` fields ("names are way out of place," an old
+  playtest note untouched until this session) now render correctly inside
+  their own column. **Confirmed** — this took three attempts: a wrong
+  runtime-desync guess, a source-verified but incompletely-applied
+  DOM-container-margin fix, then a diagnostic panel (built after a
+  too-small first attempt, whose failure to read even after Kevin tried
+  browser-zooming in revealed that canvas content doesn't visibly resize
+  with zoom while DOM content does) that supplied real numbers proving the
+  fix's correction math was right all along — it just went stale between a
+  one-time application and infrequent resize-event reapplication.
+  `fixDomContainerAlignment()` (`uiTheme.ts`) now reruns every frame in
+  both `CharacterCreationScene` and `CoopLobbyScene`, closing the gap for
+  good. The temporary diagnostic panel has been removed.
+- **Not independently confirmed**: `CoopLobbyScene`'s join-code field
+  (KI-062's own "should position correctly" gap) got the identical
+  per-frame fix, on the strength of sharing the exact same mechanism, but
+  Kevin hasn't specifically checked the co-op lobby screen itself.
+- **Also confirmed, not a bug**: browser zoom doesn't visibly change the
+  game's apparent size at all — this is expected under `Scale.FIT` (the
+  canvas always resizes to exactly fill the available space regardless of
+  what triggered the resize), not a gap to fix.
 
 ### KI-160 — D-210: BattleScene visual reskin (Phase 5's second item)
 The battle screen's chrome (background, HUD buttons, roster panel, action
