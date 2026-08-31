@@ -11,7 +11,16 @@ import {
   defaultFlexPicks,
   UNLOCK_MISSION_FLEX_SLOTS,
 } from "../systems/UnlockMissionSystem";
-import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
+import {
+  getViewport,
+  onViewportResize,
+  openChoiceList,
+  drawScreenBackdrop,
+  drawParchmentPanel,
+  createOrnateButton,
+  FONT_DISPLAY,
+  FONT_BODY,
+} from "./uiTheme";
 import type { DifficultyId } from "../data/difficulty";
 
 /**
@@ -50,7 +59,12 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor("#0e0e14");
+    // D-123 ornate/parchment theme: same recipe every other menu-adjacent
+    // screen uses (Main Menu, Compendium, Bestiary, Character Creation) —
+    // replaces the old flat `setBackgroundColor("#0e0e14")`. Drawn once here
+    // (not inside `rebuildLayout`, which also runs on resize) so it isn't
+    // redrawn on top of itself.
+    drawScreenBackdrop(this);
 
     // Same defensive re-seed every companion-roster-reading scene performs
     // (CampaignSelectScene/CharacterCreationScene/CompanionRosterScene) —
@@ -91,26 +105,6 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
     this.scene.start("CampaignSelectScene");
   }
 
-  private buildButton(
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    text: string,
-    color: number,
-    onClick: () => void,
-  ): { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text } {
-    const rect = this.add
-      .rectangle(x, y, w, h, color)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    const label = this.add
-      .text(x, y, text, { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#e8e8f0" })
-      .setOrigin(0.5);
-    rect.on("pointerdown", onClick);
-    return { rect, label };
-  }
-
   private rebuildLayout(): void {
     this.layoutRoot?.destroy();
     this.layoutRoot = this.add.container(0, 0);
@@ -120,16 +114,21 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
     this.layoutRoot.add(
       this.add
         .text(width / 2, 40, "Prepare the Mission", {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "36px",
-          color: "#e8e8f0",
+          fontFamily: FONT_DISPLAY,
+          fontSize: "34px",
+          color: "#f0dfa8",
           fontStyle: "bold",
+          letterSpacing: 2 as unknown as number,
         })
-        .setOrigin(0.5),
+        .setOrigin(0.5)
+        .setShadow(0, 2, "#000000", 6, true, true),
     );
 
-    const back = this.buildButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
-    this.layoutRoot.add([back.rect, back.label]);
+    const back = createOrnateButton(this, 110, 40, 160, 44, "Back (Esc)", () => this.leave(), {
+      variant: "tool",
+      depth: 5,
+    });
+    this.layoutRoot.add(back.container);
 
     this.layoutRoot.add(
       this.add
@@ -137,7 +136,7 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
           width / 2,
           92,
           `Winning this battle recruits ${this.target.name} — they'll fight alongside you for it. Your own hero and ${this.target.name} are locked into this party; choose your other two from anyone already recruited.`,
-          { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#8a8aa0", wordWrap: { width: width - 200 }, align: "center" },
+          { fontFamily: FONT_BODY, fontSize: "14px", color: "#c8b888", wordWrap: { width: width - 200 }, align: "center" },
         )
         .setOrigin(0.5),
     );
@@ -155,7 +154,7 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
     const startX = (width - (cols * cardWidth + (cols - 1) * gap)) / 2 + cardWidth / 2;
     const y = 260;
 
-    const pcCard = this.buildCard(startX, y, cardWidth, cardHeight, {
+    const pcCard = this.buildInfoCard(startX, y, cardWidth, cardHeight, {
       title: "Your Hero",
       subtitle: "Built on the next screen",
       body: "Always slot 1 — unaffected by this screen.",
@@ -163,7 +162,7 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
     });
     this.layoutRoot?.add(pcCard);
 
-    const targetCard = this.buildCard(startX + (cardWidth + gap), y, cardWidth, cardHeight, {
+    const targetCard = this.buildInfoCard(startX + (cardWidth + gap), y, cardWidth, cardHeight, {
       title: this.target.name,
       subtitle: getClassDefinition(this.target.build.classId).name,
       body: "LOCKED — joins this battle and your roster on victory.",
@@ -175,54 +174,107 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
       const flexId = this.flexIds[i];
       const flexCompanion = flexId ? getCompanionDefinition(flexId) : undefined;
       const x = startX + (cardWidth + gap) * (2 + i);
-      const card = this.buildCard(x, y, cardWidth, cardHeight, {
+      const card = this.buildFlexCard(x, y, cardWidth, cardHeight, {
         title: flexCompanion?.name ?? "Choose a companion",
-        subtitle: flexCompanion ? getClassDefinition(flexCompanion.build.classId).name : "",
-        body: "Click to swap.",
-        color: flexCompanion ? 0x4a6a8a : 0x8a5a3a,
+        subtitle: flexCompanion ? getClassDefinition(flexCompanion.build.classId).name : "Empty slot",
+        body: flexCompanion ? "Click to swap." : "Click to choose.",
+        filled: !!flexCompanion,
         onClick: () => this.openFlexPicker(i),
       });
       this.layoutRoot?.add(card);
     }
   }
 
-  private buildCard(
+  /**
+   * A non-interactive parchment info card (Your Hero / the locked recruit) —
+   * a role-color accent bar along the top preserves the old per-role
+   * color-coding (`opts.color`, previously the card's whole stroke color)
+   * without breaking the parchment look.
+   */
+  private buildInfoCard(
     x: number,
     y: number,
     w: number,
     h: number,
-    opts: { title: string; subtitle: string; body: string; color: number; onClick?: () => void },
+    opts: { title: string; subtitle: string; body: string; color: number },
   ): Phaser.GameObjects.GameObject[] {
-    const card = this.add.rectangle(x, y, w, h, 0x1a1a26).setStrokeStyle(2, opts.color);
-    if (opts.onClick) {
-      card.setInteractive({ useHandCursor: true });
-      card.on("pointerover", () => card.setFillStyle(0x22222e));
-      card.on("pointerout", () => card.setFillStyle(0x1a1a26));
-      card.on("pointerdown", opts.onClick);
-    }
+    const panel = drawParchmentPanel(this, x, y, w, h, 2);
+    const accent = this.add.graphics().setDepth(3);
+    accent.fillStyle(opts.color, 0.9);
+    accent.fillRoundedRect(x - (w - 32) / 2, y - h / 2 + 10, w - 32, 6, 3);
+
     const title = this.add
-      .text(x, y - h / 2 + 24, opts.title, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "17px",
-        color: "#e8e8f0",
+      .text(x, y - h / 2 + 32, opts.title, {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "16px",
+        color: "#2a1a10",
         fontStyle: "bold",
         wordWrap: { width: w - 24 },
         align: "center",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(3);
     const subtitle = this.add
-      .text(x, y - h / 2 + 54, opts.subtitle, { fontFamily: "system-ui, Arial, sans-serif", fontSize: "13px", color: "#a0a0b0" })
-      .setOrigin(0.5);
+      .text(x, y - h / 2 + 60, opts.subtitle, {
+        fontFamily: FONT_BODY,
+        fontSize: "13px",
+        color: "#6a4a2a",
+        align: "center",
+      })
+      .setOrigin(0.5)
+      .setDepth(3);
     const body = this.add
-      .text(x, y + 4, opts.body, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "11px",
-        color: "#7a7a8a",
+      .text(x, y + 6, opts.body, {
+        fontFamily: FONT_BODY,
+        fontSize: "12px",
+        color: "#6a4a2a",
         wordWrap: { width: w - 24 },
         align: "center",
       })
-      .setOrigin(0.5, 0);
-    return [card, title, subtitle, body];
+      .setOrigin(0.5, 0)
+      .setDepth(3);
+    return [panel, accent, title, subtitle, body];
+  }
+
+  /**
+   * A clickable flex-slot card — an ornate button sized to the same card
+   * footprint as `buildInfoCard`, with an extra body line and a role-color
+   * accent bar (same blue-filled/orange-empty coding the old stroke color
+   * used) added into its container. `setSelected` gives the currently-filled
+   * slots the theme's gilt "locked in" border so a filled slot still reads
+   * clearly distinct from an empty one, matching the flat version's
+   * blue-vs-orange contrast.
+   */
+  private buildFlexCard(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    opts: { title: string; subtitle: string; body: string; filled: boolean; onClick: () => void },
+  ): Phaser.GameObjects.GameObject {
+    const handle = createOrnateButton(this, x, y, w, h, opts.title, opts.onClick, {
+      variant: "secondary",
+      sublabel: opts.subtitle,
+      depth: 2,
+    });
+    handle.setSelected(opts.filled);
+
+    const accent = this.add.graphics();
+    accent.fillStyle(opts.filled ? 0x4a6a8a : 0x8a5a3a, 0.9);
+    accent.fillRoundedRect(-(w - 32) / 2, -h / 2 + 10, w - 32, 5, 3);
+    handle.container.add(accent);
+
+    const body = this.add
+      .text(0, h / 2 - 26, opts.body, {
+        fontFamily: FONT_BODY,
+        fontSize: "12px",
+        color: "#f0e6c8",
+        align: "center",
+      })
+      .setOrigin(0.5);
+    handle.container.add(body);
+
+    return handle.container;
   }
 
   private openFlexPicker(slotIndex: number): void {
@@ -247,13 +299,13 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
     if (!this.target) return;
     const target = this.target;
     const ready = this.flexIds.every((id) => !!id);
-    const button = this.buildButton(
+    const button = createOrnateButton(
+      this,
       width / 2,
       430,
       280,
       52,
       ready ? "Start Mission" : "Choose your other two companions",
-      ready ? 0x3a5a3a : 0x2a2a3a,
       () => {
         if (!ready) return;
         this.scene.start("CharacterCreationScene", {
@@ -263,7 +315,8 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
           difficultyId: this.difficultyId,
         });
       },
+      { variant: "primary", depth: 5, disabled: !ready },
     );
-    this.layoutRoot?.add([button.rect, button.label]);
+    this.layoutRoot?.add(button.container);
   }
 }

@@ -2,6 +2,105 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — The Armory's layout rebuilt to match the agreed mockup (D-216)
+
+Kevin said he hated the shipped Armory layout compared to the mockup he'd
+approved. See `DECISIONS.md` D-216 for the full writeup.
+
+Changed:
+- `GearShopScene` ("The Armory") now shows a narrow hero sidebar (compact
+  color-coded paperdoll cells, no item text) instead of all 4 heroes' full
+  paperdolls in a row across the top.
+- The redundant full-width slot-chip row (duplicating the paperdoll's own
+  labels) is gone — one shared row of slot tabs now lives in the main
+  shopping panel instead.
+- The catalog gained the space that freed up: 9 items per page instead of 6.
+- Pure presentation change — no economy/gear logic touched.
+
+Tests: 1643 (unchanged — this file has no game-rule logic). Typecheck
+clean, production build succeeds. Not yet browser-tested.
+
+## [Unreleased] — 0.2.0-dev — Campaign menu scenes reskinned to the ornate theme (D-215)
+
+The last unreskinned corner of the menu flow. See `DECISIONS.md` D-215 for
+the full writeup.
+
+Changed:
+- `ModeEntryScene`, `CampaignSelectScene`, `FreePlayScene`, `LoadGameScene`,
+  `CoopLobbyScene`, `UnlockMissionPartyScene`, and `CompanionRosterScene`
+  all switched from plain dark rectangles to the D-123 wood/bronze/gilt/
+  parchment theme, matching Main Menu/Character Creation/Compendium/
+  Bestiary/The Armory/BattleScene. Pure visual pass — no logic, navigation,
+  or state changed in any of the 7 files.
+
+Tests: 1643 (unchanged). Typecheck clean, production build succeeds (152
+modules, unchanged).
+
+## [Unreleased] — 0.2.0-dev — Character Creation's Gear picker rebuilt to match The Armory (D-214)
+
+Closes items 4 and 17 of Kevin's feedback batch — his "gear screen doesn't
+look like what you showed me" complaint. See `DECISIONS.md` D-214 for the
+full writeup, including why it was a different screen than the one that
+actually regressed.
+
+Changed:
+- Character Creation's "Gear" button now opens a real paperdoll+catalog
+  overlay (5x2 grid of the 10 gear slots, a filtered catalog with an
+  inline AC/attack delta per item) instead of the old plain vertical list
+  — matching the in-battle Armory's visual language.
+- Campaign PC Gear-Points budget gating preserved exactly (unaffordable
+  items are omitted, not shown-disabled).
+- The "Gear" button now centers at full width when the "Pool" button isn't
+  shown, instead of staying pinned half-width with nothing beside it.
+
+Tests: 1643 (unchanged). Typecheck clean, production build succeeds (152
+modules, unchanged).
+
+## [Unreleased] — 0.2.0-dev — 17-item batch: 2 real bugs + a wide UX polish pass (D-213)
+
+See `DECISIONS.md` D-213 for the full writeup.
+
+Fixed:
+- A campaign PC's Class/Race/Background/ability scores were silently
+  locking after the first Start Battle in a campaign (a design decision,
+  D-195, that Kevin wants removed for his own character) — now always
+  editable. The PC can no longer be switched to AI-controlled.
+- Campaign companions weren't actually defaulting to AI-controlled (a
+  hardcoded data value was silently overriding the existing D-129 default)
+  — now they do.
+- A real (if likely harmless) listener leak: `BattleScene`'s keybinding-
+  reload listener stacked one extra copy per battle started, never cleaned
+  up on scene shutdown — now explicitly removed. Does NOT confirm the
+  reported lockup bug itself is fixed; needs a DevTools-console repro next.
+- The board's D-210 frame was drawn directly over the "Enemies: N" and
+  "Next: Wave..." HUD text — both moved clear of it.
+
+Changed:
+- Inline "+N" badges on ability-score rows show a Background bonus
+  directly, instead of it being baked silently into the number.
+- Roster-panel per-hero detail text recolored for readability against the
+  D-210 wood panel (was a leftover pre-reskin color).
+- "Move" renamed to "Speed" throughout; "Lv" renamed to "Lvl " (with a
+  space) everywhere it appears.
+- The per-hero parchment panel now extends far enough to cover the Spells
+  and Save/Load Character rows.
+- Hero column headers now read "Hero 1 (Player)"/"Companion N (Player/AI)"
+  instead of "Hero N — Human/AI-Controlled"; the Class row's redundant
+  "(Companion)" tag is gone.
+- Clicking a name field now select-alls it — typing replaces the whole
+  name instead of appending.
+- Start Battle centers correctly in campaign mode (Save Party is hidden
+  there, so it no longer sits off-center).
+- The not-yet-eligible Subclass label simplified to "Subclass: None
+  (unlocks at Lvl N)".
+- The level-up cadence pill (Auto/Prompt/Fresh) now has a hover tooltip
+  explaining each mode.
+- The intro/flavor text on Character Creation is larger and rewritten.
+
+Tests: 1643 (unchanged apart from the trivial new `backgroundBonusFor`
+helper). Typecheck clean, production build succeeds (152 modules,
+unchanged).
+
 ## [Unreleased] — 0.2.0-dev — Hero-name fields rebuilt canvas-native (D-212)
 
 Kevin's follow-up right after D-211: even fixed, the name fields' load-time

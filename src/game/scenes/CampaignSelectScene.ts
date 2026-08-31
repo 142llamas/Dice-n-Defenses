@@ -30,7 +30,16 @@ import { seedStartingCompanions } from "../systems/CompanionSeedSystem";
 import { resolveUnlockMissionCompanion } from "../systems/UnlockMissionSystem";
 import { RandomService } from "../systems/RandomService";
 import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
-import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
+import {
+  getViewport,
+  onViewportResize,
+  openChoiceList,
+  createOrnateButton,
+  drawScreenBackdrop,
+  FONT_DISPLAY,
+  FONT_BODY,
+  type OrnateButtonHandle,
+} from "./uiTheme";
 
 /**
  * CampaignSelectScene — Phase 11.8 (D-071): lists the boss-themed campaigns
@@ -38,8 +47,8 @@ import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
  * before building a party for it.
  *
  * Modeled on `BestiaryScene`'s visual conventions (title, Back button, the
- * same small `buildButton` helper style) so it reads as part of the same
- * game rather than a bolted-on screen. Unlike the Bestiary, every campaign
+ * shared `uiTheme.ts` ornate/parchment button style) so it reads as part of
+ * the same game rather than a bolted-on screen. Unlike the Bestiary, every campaign
  * here is always fully visible (no unlock-on-encounter gating) — only the
  * "completed" tag depends on stored progress.
  *
@@ -56,7 +65,7 @@ export class CampaignSelectScene extends Phaser.Scene {
   /** D-16x-style shared full-screen list-picker overlay (`openChoiceList`). */
   private choiceOverlay: Phaser.GameObjects.GameObject[] = [];
   /** Plan 3 (new, additive): "Reset Campaign Progress" needs a real button reference to flip its label for the two-click confirm. */
-  private resetButton?: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text };
+  private resetButton?: OrnateButtonHandle;
   private resetArmed = false;
   private resetArmTimer?: Phaser.Time.TimerEvent;
 
@@ -65,7 +74,7 @@ export class CampaignSelectScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor("#0e0e14");
+    drawScreenBackdrop(this);
     // KI-098 item 13 (companion roster, Phase 1): the earliest real "entering
     // Campaign mode" choke point — seeds a brand-new playthrough's random
     // starting trio before the player can reach the Companions screen or
@@ -98,25 +107,32 @@ export class CampaignSelectScene extends Phaser.Scene {
     this.layoutRoot.add(
       this.add
         .text(width / 2, 40, "Campaigns", {
-          fontFamily: "system-ui, Arial, sans-serif",
+          fontFamily: FONT_DISPLAY,
           fontSize: "36px",
-          color: "#e8e8f0",
+          color: "#f0dfa8",
           fontStyle: "bold",
         })
         .setOrigin(0.5),
     );
 
-    const back = this.buildButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
-    this.layoutRoot.add([back.rect, back.label]);
+    const back = createOrnateButton(this, 110, 40, 160, 44, "Back (Esc)", () => this.leave(), { variant: "tool" });
+    this.layoutRoot.add(back.container);
 
-    const companions = this.buildButton(width - 110, 40, 180, 44, "Companions", 0x2a2a3a, () =>
+    const companions = createOrnateButton(
+      this,
+      width - 110,
+      40,
+      180,
+      44,
+      "Companions",
       // Party Creation Overhaul Plan 2.3: forwards the currently-selected
       // difficulty so "Unequip All Benched Heroes" can compute each
       // companion's actual currently-equipped kit
       // (`companionStartingGearForDifficulty`) rather than assuming one.
-      this.scene.start("CompanionRosterScene", { difficultyId: this.selectedDifficultyId }),
+      () => this.scene.start("CompanionRosterScene", { difficultyId: this.selectedDifficultyId }),
+      { variant: "tool" },
     );
-    this.layoutRoot.add([companions.rect, companions.label]);
+    this.layoutRoot.add(companions.container);
 
     this.layoutRoot.add(
       this.add
@@ -125,9 +141,10 @@ export class CampaignSelectScene extends Phaser.Scene {
           90,
           "Pick a boss-themed campaign, then build a party for it. Each campaign has its own map and enemy lineup.",
           {
-            fontFamily: "system-ui, Arial, sans-serif",
-            fontSize: "14px",
-            color: "#8a8aa0",
+            fontFamily: FONT_BODY,
+            fontSize: "15px",
+            color: "#a89058",
+            fontStyle: "italic",
           },
         )
         .setOrigin(0.5),
@@ -148,53 +165,47 @@ export class CampaignSelectScene extends Phaser.Scene {
   private buildControlRow(width: number): void {
     const y = 136;
 
-    const difficultyButton = this.add
-      .rectangle(width / 2 - 170, y, 300, 36, 0x2a2a3a)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    const difficultyLabel = this.add
-      .text(width / 2 - 170, y, `Difficulty: ${getDifficultyDefinition(this.selectedDifficultyId).name}`, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "14px",
-        color: "#e8e8f0",
-      })
-      .setOrigin(0.5);
-    difficultyButton.on("pointerover", () => difficultyButton.setFillStyle(0x3a3a4a));
-    difficultyButton.on("pointerout", () => difficultyButton.setFillStyle(0x2a2a3a));
-    difficultyButton.on("pointerdown", () => {
-      openChoiceList(
-        this,
-        this.choiceOverlay,
-        "Choose Difficulty",
-        DIFFICULTY_IDS.map((id) => ({
-          label: getDifficultyDefinition(id).name,
-          desc: difficultyChoiceDescription(id),
-          highlighted: id === this.selectedDifficultyId,
-          onPick: () => (this.selectedDifficultyId = id),
-        })),
-        () => {
-          difficultyLabel.setText(`Difficulty: ${getDifficultyDefinition(this.selectedDifficultyId).name}`);
-        },
-      );
-    });
-    this.layoutRoot?.add([difficultyButton, difficultyLabel]);
+    const difficultyHandle = createOrnateButton(
+      this,
+      width / 2 - 170,
+      y,
+      300,
+      36,
+      `Difficulty: ${getDifficultyDefinition(this.selectedDifficultyId).name}`,
+      () => {
+        openChoiceList(
+          this,
+          this.choiceOverlay,
+          "Choose Difficulty",
+          DIFFICULTY_IDS.map((id) => ({
+            label: getDifficultyDefinition(id).name,
+            desc: difficultyChoiceDescription(id),
+            highlighted: id === this.selectedDifficultyId,
+            onPick: () => (this.selectedDifficultyId = id),
+          })),
+          () => {
+            difficultyHandle.setLabel(`Difficulty: ${getDifficultyDefinition(this.selectedDifficultyId).name}`);
+          },
+        );
+      },
+      { variant: "secondary", fontSize: 14 },
+    );
+    this.layoutRoot?.add(difficultyHandle.container);
 
     this.resetArmed = false;
     this.resetArmTimer?.remove();
-    const resetRect = this.add
-      .rectangle(width / 2 + 170, y, 300, 36, 0x3a2424)
-      .setStrokeStyle(1, 0x5a3a3a)
-      .setInteractive({ useHandCursor: true });
-    const resetLabel = this.add
-      .text(width / 2 + 170, y, "Reset Campaign Progress", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "13px",
-        color: "#e8b8b8",
-      })
-      .setOrigin(0.5);
-    this.resetButton = { rect: resetRect, label: resetLabel };
-    resetRect.on("pointerdown", () => this.onResetButtonClicked());
-    this.layoutRoot?.add([resetRect, resetLabel]);
+    const resetHandle = createOrnateButton(
+      this,
+      width / 2 + 170,
+      y,
+      300,
+      36,
+      "Reset Campaign Progress",
+      () => this.onResetButtonClicked(),
+      { variant: "secondary", fontSize: 13 },
+    );
+    this.resetButton = resetHandle;
+    this.layoutRoot?.add(resetHandle.container);
   }
 
   /**
@@ -210,11 +221,11 @@ export class CampaignSelectScene extends Phaser.Scene {
   private onResetButtonClicked(): void {
     if (!this.resetArmed) {
       this.resetArmed = true;
-      this.resetButton?.label.setText("Click again to confirm — wipes ALL campaign progress");
+      this.resetButton?.setLabel("Click again to confirm — wipes ALL campaign progress");
       this.resetArmTimer?.remove();
       this.resetArmTimer = this.time.delayedCall(4000, () => {
         this.resetArmed = false;
-        this.resetButton?.label.setText("Reset Campaign Progress");
+        this.resetButton?.setLabel("Reset Campaign Progress");
       });
       return;
     }
@@ -228,31 +239,6 @@ export class CampaignSelectScene extends Phaser.Scene {
 
   private leave(): void {
     this.scene.start("MainMenuScene");
-  }
-
-  /** Small button+label pair, matching BestiaryScene/CompendiumScene's simple rectangle-button style. */
-  private buildButton(
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    text: string,
-    color: number,
-    onClick: () => void,
-  ): { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text } {
-    const rect = this.add
-      .rectangle(x, y, w, h, color)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    const label = this.add
-      .text(x, y, text, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "14px",
-        color: "#e8e8f0",
-      })
-      .setOrigin(0.5);
-    rect.on("pointerdown", onClick);
-    return { rect, label };
   }
 
   /**
@@ -287,37 +273,44 @@ export class CampaignSelectScene extends Phaser.Scene {
             : !prologueCleared;
       const nextChapterIndex = this.nextChapterIndexFor(campaign, progress);
 
-      const card = this.add
-        .rectangle(width / 2, y, cardWidth, cardHeight, 0x1a1a26)
-        .setStrokeStyle(1, completed ? 0x6a8a6a : 0x2a2a3a);
-      if (locked) {
-        card.setAlpha(0.55);
-      } else {
-        card.setInteractive({ useHandCursor: true });
-        card.on("pointerover", () => card.setFillStyle(0x22222e));
-        card.on("pointerout", () => card.setFillStyle(0x1a1a26));
-        card.on("pointerdown", () => this.selectCampaign(campaign, nextChapterIndex));
-      }
+      // Whole card is one ornate button (a wood/bronze plaque) — its own
+      // built-in label is left blank and the card's real title/description/
+      // boss-line text is added into its container afterward, positioned
+      // relative to the container's own center (same left-inset the plain
+      // rectangle version used, just container-local now). `setDisabled`
+      // reproduces the old locked-card dimming + non-interactivity;
+      // `setSelected` on a completed campaign reproduces the old
+      // green-tinted stroke as a gilt highlighted border instead.
+      const cardHandle = createOrnateButton(
+        this,
+        width / 2,
+        y,
+        cardWidth,
+        cardHeight,
+        "",
+        () => this.selectCampaign(campaign, nextChapterIndex),
+        { variant: "secondary", disabled: locked },
+      );
+      if (completed) cardHandle.setSelected(true);
 
+      const leftInset = -cardWidth / 2 + 20;
       const title = this.add
-        .text(90, y - cardHeight / 2 + 16, this.cardTitle(campaign, completed, locked), {
-          fontFamily: "system-ui, Arial, sans-serif",
+        .text(leftInset, -cardHeight / 2 + 16, this.cardTitle(campaign, completed, locked), {
+          fontFamily: FONT_DISPLAY,
           fontSize: "20px",
-          color: "#e8e8f0",
+          color: locked ? "#7a6a4a" : "#f0e6c8",
           fontStyle: "bold",
         })
-        .setOrigin(0, 0.5)
-        .setAlpha(locked ? 0.55 : 1);
+        .setOrigin(0, 0.5);
 
       const description = this.add
-        .text(90, y, campaign.description, {
-          fontFamily: "system-ui, Arial, sans-serif",
+        .text(leftInset, 0, campaign.description, {
+          fontFamily: FONT_BODY,
           fontSize: "13px",
-          color: "#a0a0b0",
+          color: locked ? "#5a4a34" : "#c8b898",
           wordWrap: { width: cardWidth - 60 },
         })
-        .setOrigin(0, 0.5)
-        .setAlpha(locked ? 0.55 : 1);
+        .setOrigin(0, 0.5);
 
       // Locked cards show the unlock hint in place of the boss/wave line
       // (also avoids spoiling a region's next boss while it's still locked).
@@ -326,19 +319,16 @@ export class CampaignSelectScene extends Phaser.Scene {
           ? "Complete all 6 regions to unlock"
           : "Complete The Proving Ground to unlock";
       const bossLine = this.add
-        .text(
-          90,
-          y + cardHeight / 2 - 18,
-          locked ? lockedHint : this.bossLineFor(campaign, nextChapterIndex),
-          {
-            fontFamily: locked ? "system-ui, Arial, sans-serif" : "monospace",
-            fontSize: "13px",
-            color: locked ? "#a06a4a" : "#8aa0c0",
-          },
-        )
+        .text(leftInset, cardHeight / 2 - 18, locked ? lockedHint : this.bossLineFor(campaign, nextChapterIndex), {
+          fontFamily: locked ? FONT_BODY : "monospace",
+          fontSize: "13px",
+          color: locked ? "#a06a4a" : "#c8a458",
+          fontStyle: locked ? "italic" : "normal",
+        })
         .setOrigin(0, 0.5);
 
-      this.layoutRoot?.add([card, title, description, bossLine]);
+      cardHandle.container.add([title, description, bossLine]);
+      this.layoutRoot?.add(cardHandle.container);
     });
   }
 

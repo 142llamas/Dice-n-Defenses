@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { COMPANION_ROSTER_STORAGE_KEY } from "../config";
+import { COMPANION_ROSTER_STORAGE_KEY, COLORS } from "../config";
 import { COMPANIONS, getCompanionDefinition, type CompanionDefinition } from "../data/companions";
 import { getCampaignDefinition } from "../data/campaigns";
 import { getClassDefinition } from "../data/classes";
@@ -17,7 +17,20 @@ import {
   type CompanionRosterState,
 } from "../systems/CompanionRosterSystem";
 import { unequipAllBenchedGear } from "../systems/PartyInventorySystem";
-import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
+import {
+  getViewport,
+  onViewportResize,
+  openChoiceList,
+  createOrnateButton,
+  drawScreenBackdrop,
+  drawParchmentPanel,
+  FONT_DISPLAY,
+  FONT_BODY,
+  type OrnateButtonHandle,
+} from "./uiTheme";
+
+const INK = "#2a1a10";
+const INK_MUTED = "#6a4a2a";
 
 /**
  * CompanionRosterScene — KI-098 item 13 (companion roster/recruitment,
@@ -27,6 +40,11 @@ import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
  * back here). Shows all 12 companions grouped by status and lets the
  * player freely swap the active 3 with anyone benched, any time outside
  * battle. Every mutation saves immediately.
+ *
+ * Reskinned to the D-123 ornate/parchment theme this session — a pure
+ * presentation pass (`drawScreenBackdrop`, `createOrnateButton`,
+ * `drawParchmentPanel`) with zero change to roster state, recruit/activate/
+ * bench logic, or the unequip-all confirm timer.
  */
 export class CompanionRosterScene extends Phaser.Scene {
   private layoutRoot?: Phaser.GameObjects.Container;
@@ -45,7 +63,7 @@ export class CompanionRosterScene extends Phaser.Scene {
   private difficultyId: DifficultyId = "normal";
   private unequipArmed = false;
   private unequipArmTimer?: Phaser.Time.TimerEvent;
-  private unequipButton?: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text };
+  private unequipButton?: OrnateButtonHandle;
 
   constructor() {
     super("CompanionRosterScene");
@@ -56,7 +74,6 @@ export class CompanionRosterScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor("#0e0e14");
     this.roster = loadCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY);
     this.rebuildLayout();
 
@@ -83,19 +100,26 @@ export class CompanionRosterScene extends Phaser.Scene {
     this.layoutRoot = this.add.container(0, 0);
     const { width } = getViewport(this);
 
+    drawScreenBackdrop(this);
+
     this.layoutRoot.add(
       this.add
-        .text(width / 2, 40, "Companions", {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "36px",
-          color: "#e8e8f0",
+        .text(width / 2, 42, "Companions", {
+          fontFamily: FONT_DISPLAY,
+          fontSize: "34px",
+          color: "#f0dfa8",
           fontStyle: "bold",
+          letterSpacing: 2 as unknown as number,
         })
-        .setOrigin(0.5),
+        .setOrigin(0.5)
+        .setShadow(0, 2, "#000000", 6, true, true),
     );
 
-    const back = this.buildButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
-    this.layoutRoot.add([back.rect, back.label]);
+    const back = createOrnateButton(this, 120, 42, 160, 44, "Back (Esc)", () => this.leave(), {
+      variant: "tool",
+      depth: 5,
+    });
+    this.layoutRoot.add(back.container);
 
     this.layoutRoot.add(
       this.add
@@ -103,7 +127,7 @@ export class CompanionRosterScene extends Phaser.Scene {
           width / 2,
           88,
           `Active (${this.roster.activeIds.length}/3) fight alongside you now. Click a Benched companion to swap them in, an Active one to bench them, or a locked one offering a side quest to attempt it.`,
-          { fontFamily: "system-ui, Arial, sans-serif", fontSize: "13px", color: "#8a8aa0", wordWrap: { width: width - 160 } },
+          { fontFamily: FONT_BODY, fontSize: "13px", color: "#c8b078", wordWrap: { width: width - 160 } },
         )
         .setOrigin(0.5),
     );
@@ -119,28 +143,28 @@ export class CompanionRosterScene extends Phaser.Scene {
    * .buildControlRow` already uses at its own `y=136`) — "Unequip All
    * Benched Heroes" moves every benched companion's current kit into the
    * shared pool, and a small label shows how many items are sitting there.
-   * Reuses this scene's own plain `buildButton` (Rectangle+Text), not
-   * `createOrnateButton` — this scene has never adopted the D-123 ornate
-   * theme (D-191/Plan 8 was scoped to `CharacterCreationScene` only), and a
-   * single ornate button here would look like a half-finished migration
-   * rather than a deliberate one.
+   * Reskinned to `createOrnateButton` this session (D-123 ornate theme) —
+   * the two-click arm-then-confirm STATE lives entirely in
+   * `onUnequipAllClicked`/`unequipArmed`, unaffected by the button's visual
+   * construction.
    */
   private buildPartyInventoryRow(width: number): void {
     const y = 124;
 
     this.unequipArmed = false;
     this.unequipArmTimer?.remove();
-    this.unequipButton = this.buildButton(width / 2 - 150, y, 300, 34, "Unequip All Benched Heroes", 0x2a2a3a, () =>
+    this.unequipButton = createOrnateButton(this, width / 2 - 150, y, 300, 34, "Unequip All Benched Heroes", () =>
       this.onUnequipAllClicked(),
+      { variant: "tool", fontSize: 13 },
     );
-    this.layoutRoot?.add([this.unequipButton.rect, this.unequipButton.label]);
+    this.layoutRoot?.add(this.unequipButton.container);
 
     const itemCount = getPartyInventory(this.roster).length;
     const countLabel = this.add
       .text(width / 2 + 20, y, `Party Inventory: ${itemCount} item${itemCount === 1 ? "" : "s"}`, {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "13px",
-        color: "#8a8aa0",
+        color: "#c8b078",
       })
       .setOrigin(0, 0.5);
     this.layoutRoot?.add(countLabel);
@@ -158,11 +182,11 @@ export class CompanionRosterScene extends Phaser.Scene {
   private onUnequipAllClicked(): void {
     if (!this.unequipArmed) {
       this.unequipArmed = true;
-      this.unequipButton?.label.setText("Click again to confirm");
+      this.unequipButton?.setLabel("Click again to confirm");
       this.unequipArmTimer?.remove();
       this.unequipArmTimer = this.time.delayedCall(4000, () => {
         this.unequipArmed = false;
-        this.unequipButton?.label.setText("Unequip All Benched Heroes");
+        this.unequipButton?.setLabel("Unequip All Benched Heroes");
       });
       return;
     }
@@ -179,26 +203,6 @@ export class CompanionRosterScene extends Phaser.Scene {
     this.save(next);
   }
 
-  private buildButton(
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    text: string,
-    color: number,
-    onClick: () => void,
-  ): { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text } {
-    const rect = this.add
-      .rectangle(x, y, w, h, color)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    const label = this.add
-      .text(x, y, text, { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#e8e8f0" })
-      .setOrigin(0.5);
-    rect.on("pointerdown", onClick);
-    return { rect, label };
-  }
-
   private statusOf(id: string): "active" | "benched" | "lost" | "locked" {
     if (isCompanionActive(this.roster, id)) return "active";
     if (isCompanionBenched(this.roster, id)) return "benched";
@@ -211,84 +215,134 @@ export class CompanionRosterScene extends Phaser.Scene {
     return `Unlocks: ${getCampaignDefinition(companion.homeRegionId!).name} Ch. 1`;
   }
 
+  /**
+   * Reskinned to the D-123 ornate theme this session: each card is a
+   * `drawParchmentPanel` backing with a status-colored accent border, ink/
+   * cream text (`INK`/`INK_MUTED`), and a `createOrnateButton` as the click
+   * target — a disabled button for the two non-interactive states (Lost,
+   * Locked with no side mission) doubles as that state's visual ("greyed
+   * plaque"), matching `createOrnateButton`'s own disabled look elsewhere.
+   * All status/eligibility computation (`statusOf`, `canAttemptSideMission`,
+   * `clickable`) is unchanged from before the reskin.
+   */
   private buildCompanionCards(width: number): void {
     const cardWidth = 270;
-    const cardHeight = 130;
+    const cardHeight = 170;
     const gapX = 20;
     const gapY = 20;
     const cols = 4;
     const startX = (width - (cols * cardWidth + (cols - 1) * gapX)) / 2 + cardWidth / 2;
     const startY = 160;
 
-    const statusColor: Record<ReturnType<CompanionRosterScene["statusOf"]>, number> = {
-      active: 0x6a8a6a,
-      benched: 0x4a6a8a,
-      lost: 0x4a2a2a,
-      locked: 0x2a2a3a,
+    type Status = ReturnType<CompanionRosterScene["statusOf"]>;
+    const statusAccentNum: Record<Status, number> = {
+      active: 0x2f6a3a,
+      benched: 0x2a4a7a,
+      lost: 0x6a2a2a,
+      locked: COLORS.bronze,
     };
-    const statusLabel: Record<ReturnType<CompanionRosterScene["statusOf"]>, string> = {
+    const statusAccentHex: Record<Status, string> = {
+      active: "#2f6a3a",
+      benched: "#2a4a7a",
+      lost: "#6a2a2a",
+      locked: "#6a4a2a",
+    };
+    const statusCaption: Record<Status, string> = {
       active: "ACTIVE",
-      benched: "BENCHED — click to activate",
+      benched: "BENCHED",
       lost: "LOST",
       locked: "LOCKED",
     };
+    const sideMissionAccentNum = COLORS.gilt;
+    const sideMissionAccentHex = "#8a5a10";
 
     COMPANIONS.forEach((companion, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
       const x = startX + col * (cardWidth + gapX);
       const y = startY + row * (cardHeight + gapY) + cardHeight / 2;
+      const cardTop = y - cardHeight / 2;
       const status = this.statusOf(companion.id);
       const canAttemptSideMission = status === "locked" && !!companion.sideMissionId;
       const clickable = status === "active" || status === "benched" || canAttemptSideMission;
-
-      const card = this.add
-        .rectangle(x, y, cardWidth, cardHeight, 0x1a1a26)
-        .setStrokeStyle(2, statusColor[status]);
-      if (clickable) {
-        card.setInteractive({ useHandCursor: true });
-        card.on("pointerover", () => card.setFillStyle(0x22222e));
-        card.on("pointerout", () => card.setFillStyle(0x1a1a26));
-        card.on("pointerdown", () => this.onCardClicked(companion, status));
-      }
-
       const dimmed = status === "locked" || status === "lost";
+
+      const panel = drawParchmentPanel(this, x, y, cardWidth, cardHeight, 2);
+
+      const accentColorNum = canAttemptSideMission ? sideMissionAccentNum : statusAccentNum[status];
+      const accentColorHex = canAttemptSideMission ? sideMissionAccentHex : statusAccentHex[status];
+      const accent = this.add.graphics().setDepth(3);
+      accent.lineStyle(3, accentColorNum, 1);
+      accent.strokeRoundedRect(x - cardWidth / 2, y - cardHeight / 2, cardWidth, cardHeight, 14);
+
       const name = this.add
-        .text(x, y - cardHeight / 2 + 18, dimmed ? "???" : companion.name, {
-          fontFamily: "system-ui, Arial, sans-serif",
+        .text(x, cardTop + 20, dimmed ? "???" : companion.name, {
+          fontFamily: FONT_BODY,
           fontSize: "17px",
-          color: dimmed ? "#5a5a68" : "#e8e8f0",
+          color: dimmed ? INK_MUTED : INK,
           fontStyle: "bold",
         })
-        .setOrigin(0.5);
+        .setOrigin(0.5)
+        .setDepth(4);
 
       const classLine = this.add
-        .text(x, y - cardHeight / 2 + 42, dimmed ? "" : getClassDefinition(companion.build.classId).name, {
-          fontFamily: "system-ui, Arial, sans-serif",
+        .text(x, cardTop + 42, dimmed ? "" : getClassDefinition(companion.build.classId).name, {
+          fontFamily: FONT_BODY,
           fontSize: "13px",
-          color: "#a0a0b0",
+          color: INK_MUTED,
         })
-        .setOrigin(0.5);
+        .setOrigin(0.5)
+        .setDepth(4);
+
+      const caption = this.add
+        .text(x, cardTop + 60, canAttemptSideMission ? "SIDE QUEST AVAILABLE" : statusCaption[status], {
+          fontFamily: FONT_BODY,
+          fontSize: "11px",
+          color: accentColorHex,
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(4);
 
       const hook = this.add
-        .text(x, y + 4, status === "locked" ? this.lockedHint(companion) : companion.hook, {
-          fontFamily: "system-ui, Arial, sans-serif",
+        .text(x, cardTop + 78, status === "locked" ? this.lockedHint(companion) : companion.hook, {
+          fontFamily: FONT_BODY,
           fontSize: "11px",
-          color: status === "locked" ? "#8a8aa0" : "#7a7a8a",
-          wordWrap: { width: cardWidth - 24 },
+          color: INK_MUTED,
+          wordWrap: { width: cardWidth - 28 },
           align: "center",
         })
-        .setOrigin(0.5, 0);
+        .setOrigin(0.5, 0)
+        .setDepth(4);
 
-      const badge = this.add
-        .text(x, y + cardHeight / 2 - 14, canAttemptSideMission ? "LOCKED — click for a side quest" : statusLabel[status], {
-          fontFamily: "monospace",
-          fontSize: "11px",
-          color: "#c8c8d8",
-        })
-        .setOrigin(0.5);
+      if (dimmed) {
+        panel.setAlpha(0.7);
+        accent.setAlpha(0.7);
+        name.setAlpha(0.7);
+        classLine.setAlpha(0.7);
+        caption.setAlpha(0.7);
+        hook.setAlpha(0.7);
+      }
 
-      this.layoutRoot?.add([card, name, classLine, hook, badge]);
+      let buttonLabel: string;
+      if (status === "active") buttonLabel = "Bench";
+      else if (status === "benched") buttonLabel = "Activate";
+      else if (canAttemptSideMission) buttonLabel = "Attempt Side Quest";
+      else if (status === "lost") buttonLabel = "Lost";
+      else buttonLabel = "Locked";
+
+      const button = createOrnateButton(
+        this,
+        x,
+        cardTop + cardHeight - 24,
+        cardWidth - 30,
+        30,
+        buttonLabel,
+        () => this.onCardClicked(companion, status),
+        { variant: "tool", fontSize: 12, depth: 4, disabled: !clickable },
+      );
+
+      this.layoutRoot?.add([panel, accent, name, classLine, caption, hook, button.container]);
     });
   }
 

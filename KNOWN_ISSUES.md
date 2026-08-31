@@ -29,6 +29,163 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
+### KI-166 — D-216: The Armory's layout rebuilt to match the agreed mockup
+Kevin said the shipped Armory (D-209) didn't match the mockup he'd approved
+and that he hated it — **(headless-verified, not yet played)**. The layout
+changed significantly, so a real look matters more than usual.
+- Open The Armory (in-battle) — confirm a narrow hero list now sits on the
+  LEFT (not all 4 heroes' full paperdolls in a row across the top), with
+  one wide shopping panel on the right.
+- In the sidebar, confirm each hero's compact 6x2 paperdoll shows
+  colored/bordered cells (gold border = the slot you're currently shopping
+  for, tan border = occupied, dark = empty) — clicking any cell should
+  switch both the active hero and slot.
+- Confirm the right-hand panel's "Shopping for {hero} — {slot}" header, its
+  one row of slot tabs (now a single shared row, not repeated once per
+  hero), the compare strip, and the catalog list all still work exactly as
+  before — Compare → arm → Purchase, and Sell → arm → Confirm Sell, with
+  the trade-in tag and net-cost label unchanged.
+- Confirm the catalog now shows more items per page (9, up from 6) before
+  Prev/Next pagination kicks in.
+- General "does this look like the mockup now" gut check — that's the whole
+  point of this rebuild.
+
+### KI-165 — D-215: campaign menu scenes (7 files) reskinned to the D-123 ornate/parchment theme
+`ModeEntryScene`, `CampaignSelectScene`, `FreePlayScene`, `LoadGameScene`,
+`CoopLobbyScene`, `UnlockMissionPartyScene`, `CompanionRosterScene` all
+switched from plain dark rectangles to the wood/bronze/gilt/parchment look
+— **(headless-verified, not yet played)**. Pure visual pass, but touches
+every campaign-adjacent menu screen at once, so a full click-through
+matters more than usual.
+- Main Menu → "Campaign" → confirm the New/Load fork screen (`ModeEntryScene`)
+  reads as one matching parchment page, same as Main Menu/Character
+  Creation. Repeat for "Free Play".
+- On the Campaign region list (`CampaignSelectScene`), confirm every card
+  (locked/unlocked/completed) still reads its status clearly — a completed
+  region should show a distinct gilt-highlighted border, a locked one
+  should look visibly dimmed/inert. Click the Difficulty control and the
+  Reset Campaign Progress button (two-click arm/confirm) — confirm both
+  still work exactly as before, just restyled.
+- On Free Play's setup screen (`FreePlayScene`), click through every
+  map/boss/wave-count/minion-source option and confirm the selected one
+  highlights clearly (gilt border), and that a locked map/boss option still
+  reads as unavailable. Confirm the longest boss name ("The Hollow
+  Empress") doesn't overflow its button.
+- On Load Game (`LoadGameScene`), confirm each save slot's card, its
+  Load/Delete buttons, and the "Sync with Cloud" button all still work; try
+  Delete and confirm whatever confirmation behavior existed before still
+  behaves the same.
+- On Co-op (`CoopLobbyScene`) — needs two clients/tabs to fully exercise:
+  confirm Create/Join/Start Battle/Leave all still work through all 3 lobby
+  modes (choose / join-code entry / in-session), and confirm the join-code
+  DOM `<input>` field still positions/functions correctly (only its CSS was
+  touched, but this is the one DOM-in-Phaser element in the project, worth
+  a specific look).
+- If reachable (an "unlock mission" campaign chapter), confirm
+  `UnlockMissionPartyScene`'s flex-slot cards still show which slot is
+  filled vs. empty clearly, and Confirm still proceeds correctly.
+- On the Companions screen (`CompanionRosterScene`), confirm all 12
+  companion cards clearly distinguish active/benched/locked/lost status
+  (color/dimming), the "Unequip All Benched Heroes" two-click confirm still
+  works, and every card's own action button (Bench/Activate/Attempt Side
+  Quest) still does the right thing.
+- General "does this look and feel like the rest of the game now" pass —
+  these 7 screens were the last visibly-inconsistent corner of the menu
+  flow; confirm nothing feels like a leftover plain screen anymore.
+
+### KI-164 — D-214: Character Creation's Gear picker rebuilt to match The Armory
+The old plain-list Gear picker is gone, replaced by a paperdoll+catalog
+overlay matching `GearShopScene` ("The Armory")'s visual language —
+**(headless-verified, not yet played)**. This is the item Kevin was most
+vocal about (item 17: "why even show me the mocked up version if you're
+not going to make that") — a real look at this one matters most in the
+whole batch.
+- Click "Gear" for any hero — confirm a full-screen overlay opens showing a
+  5x2 paperdoll (Weapon/Shield/Head/Chest/Legs, then Back/Ring 1/Ring
+  2/Amulet/Footwear) in the game's ornate parchment style, not the old
+  plain vertical list.
+- Click an empty paperdoll cell — confirm the catalog below filters to that
+  slot's eligible items, each showing a one-line AC/attack delta (e.g. "AC
+  14→16"), and clicking "Equip" on one actually fills the paperdoll cell
+  and updates the "Currently equipped" line.
+- Click an OCCUPIED cell's own currently-equipped item in the catalog —
+  confirm it shows an "Equipped" badge (no button), and confirm the "None"
+  row (unequip) works and shows "Removes {item name}".
+- In CAMPAIGN mode on the PC (slot 1), confirm the header shows "Gear
+  Points: X/Y" and that overspending items simply don't appear in the list
+  at all (not shown-but-disabled) — try switching Difficulty and confirm
+  the budget/availability updates accordingly. Confirm Free Play/manual
+  Create Party shows NO Gear Points readout at all.
+- Pick a Two-Handed weapon into Right hand while Left hand has something
+  equipped — confirm Left hand auto-clears (and vice versa), same as
+  before this rebuild.
+- If the catalog has more than 6 items for a slot, confirm Prev/Next
+  pagination appears and works.
+- Click "Done" — confirm it closes and the hero's "Gear: ..." button label
+  updates correctly (name list if ≤3 items, a count if more).
+- Confirm a locked companion's Gear button still does nothing when clicked
+  (unchanged from before this rebuild).
+- General "does this actually look like the Armory now" gut check — that's
+  the whole point of this rebuild.
+
+### KI-163 — D-213: 17-item batch — 2 real bugs + a wide UX polish pass
+Covers items 2/3/5/6/7/8/9/10/11/12/13/14/15/16 from Kevin's own numbered
+feedback list — **(headless-verified, not yet played)** except where noted.
+- **Item 3 (the real bug)**: in a CAMPAIGN party, confirm your own PC
+  (slot 1)'s Class/Race/Background/Ability Bonus/ability scores are ALL
+  freely editable — including after you've played and returned to a later
+  chapter of the same campaign (this used to lock after the first Start
+  Battle; it no longer should, ever, for the PC). Confirm the PC's
+  Human/AI toggle no longer does anything when clicked — it should always
+  read "Hero 1 (Player)". Confirm companions (slots 2-4) are COMPLETELY
+  unaffected — their Class/Race stay locked as always.
+- **Item 2**: start a brand-new campaign — confirm all 3 companions default
+  to AI-Controlled (not Human) without you touching anything.
+- **Item 14 (the freeze — NOT confirmed fixed)**: start a battle, exit to
+  Main Menu, start a NEW battle, then play a while and click around —
+  **if it locks up again, open the browser DevTools console (F12) BEFORE
+  it happens if you can, or immediately after, and report whatever red
+  error/stack trace is there** — that's the one piece of information a
+  static code review couldn't get, and would likely pinpoint the real
+  cause immediately.
+- **Item 9**: confirm every hero column's header now reads "Hero 1
+  (Player)" or "Companion N (Player/AI)" (companion numbering starts at 1,
+  independent of the PC), and that the Class row no longer has a separate
+  "(Companion)" tag (a "(Stats Unlocked)" tag should still appear once
+  earned, per Plan 3.4).
+- **Item 10**: click into a hero's name field that already has a name —
+  confirm typing a letter REPLACES the whole name (not appends), and
+  Backspace clears it entirely. Click away without typing, click back in,
+  press an arrow key (should do nothing), then type a letter — confirm it
+  STILL replaces the whole name (an ignored key shouldn't cancel this).
+- **Item 11**: in CAMPAIGN mode (where Save Party is hidden), confirm Start
+  Battle is centered on the screen, not shifted left.
+- **Item 5**: for a later-choice class (e.g. Cleric before its subclass
+  level), confirm the Subclass row now reads "Subclass: None (unlocks at
+  Lvl N)".
+- **Item 6**: pick a Background ability bonus that boosts, say, STR — confirm
+  a small gilt "+N" badge appears at that ability row's corner; confirm no
+  badge shows for an ability with no bonus, and none show at all before a
+  bonus choice is made.
+- **Item 7**: in-battle, select a hero and confirm the "AC{n} move:ready
+  act:ready..." detail line under their roster portrait is clearly
+  readable (warm cream tone) against the wood panel, not a dull
+  blue-gray. In Character Creation, confirm the stats line reads "Speed
+  {n}" instead of "Move {n}".
+- **Item 8**: confirm the parchment panel background behind each hero
+  column now visibly extends down through the Spells and Save/Load
+  Character rows, instead of stopping short of them.
+- **Item 12**: hover the Cadence pill ("Auto"/"Prompt"/"Fresh") — confirm a
+  tooltip card appears explaining what each of the 3 modes does.
+- **Item 13**: confirm the intro line under "BUILD YOUR PARTY" is bigger
+  and easier to read than before.
+- **Item 15**: in battle, confirm the "Enemies: N" count and the "Next:
+  Wave N — ..." preview line no longer overlap the board's bronze frame —
+  both should sit cleanly above it now.
+- **Item 16**: spot-check a hero's level display in a few places (roster
+  panel, Character Sheet, Compendium) — confirm it reads "Lvl N" (with the
+  space), not "Lv N"/"LvN".
+
 ### KI-162 — D-212: the 4 hero-name fields rebuilt as canvas-native (no more real DOM `<input>`)
 Replaces D-147's real HTML `<input>` elements with a hand-rolled text field
 using the same ornate-button visuals as every other row in the column —

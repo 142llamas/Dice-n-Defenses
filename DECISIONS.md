@@ -12322,3 +12322,291 @@ buttons isn't close enough.
 - `DECISIONS.md` — this entry.
 - `KNOWN_ISSUES.md` — KI-162 (new).
 - `CHANGELOG.md`, `PROJECT_STATUS.md`, `PHASE_HANDOFF.md` — updated.
+
+### D-213 — Campaign/Character Creation batch: two real bugs, plus a wide UX polish pass (Kevin's 17-item feedback batch, items 2/3/5/6/7/8/9/10/11/12/13/14/15/16)
+
+Kevin sent a 17-item playtest batch in one message. Two items turned out, on
+reading the actual code, to be genuine bugs rather than the design questions
+they first looked like — found by tracing the real logic instead of trusting
+either Kevin's framing or the original design intent:
+
+- **Item 3** (couldn't change class/race/background/stats for his own PC in
+  campaign mode, and could accidentally set the PC to AI-controlled).
+  `CharacterCreationScene.ts`'s `identityLocked` (line ~757) was computed as
+  `companionBuildsForSlots[slot] !== undefined` for EVERY slot including 0 —
+  and `companionBuildsForSlots[0] = getPcBuild(roster)` populates on every
+  campaign entry once `setPcBuild` has ever run (i.e. after the first Start
+  Battle in that campaign). This was D-195/Plan 3.2's deliberate "returning
+  PC identity freeze" design, but asked directly, Kevin wants his own
+  character always fully editable — companions keep their fixed identities
+  unchanged. Fixed: `identityLocked = slot !== 0 && companionBuildsForSlots[slot]
+  !== undefined`. Also added a slot-0 guard on the Human/AI toggle
+  (`controlHandle`) — the PC can no longer be switched to AI-controlled at
+  all, matching Kevin's explicit "I shouldn't be able to make the Player
+  character AI controlled."
+- **Item 2** (campaign companions not defaulting to AI). D-129 already
+  defaults a fresh slot's `controlledBy` to `"ai"` for slots 1-3, but every
+  campaign companion is a "loaded build" (`slotStateFromBuild`), which reads
+  `controlledBy` straight from the companion's static definition —
+  `src/game/data/companions.ts` hardcoded `controlledBy: "human"` on all 12
+  entries, silently overriding D-129's default. Fixed: all 12 changed to
+  `"ai"`.
+- **Item 14** (a lockup after Start Battle → Exit → Start Battle again).
+  Static review (input/keyboard plugin cleanup, scene shutdown, every
+  module/system singleton, `GearShopScene`'s launch/pause, the Menu↔Battle
+  scene-stop bookkeeping) found no mechanism that would cause a hard freeze
+  — Phaser's own per-scene `InputPlugin`/`KeyboardPlugin` cleanup already
+  rules out the likely leak classes, and every stateful collection in
+  `BattleScene.create()` is confirmed freshly reset. One real (if almost
+  certainly harmless) defect WAS found and fixed: `wireInput()`'s
+  `this.events.on(Phaser.Scenes.Events.RESUME, ...)` (re-reads keybindings
+  after a Pause→Settings→rebind trip) was registered fresh every `create()`
+  with no matching removal — `Systems.shutdown()` clears `this.input`/
+  `this.input.keyboard` but NOT a scene's own `this.events` emitter, so this
+  listener genuinely stacked, one extra per battle started (each stacked
+  copy just does redundant, harmless work). Now named and explicitly
+  `.off()`'d in the existing `SHUTDOWN` cleanup block. **This does not
+  confirm the freeze is fixed** — "no crash message, just stops responding"
+  is the signature of an uncaught exception silently killing the frame loop,
+  invisible without DevTools open; next chat should ask Kevin to reproduce
+  with the browser console open and report whatever error/stack trace
+  appears.
+
+The rest of the batch, all headless-verified UI/UX fixes with exact root
+causes traced before touching code:
+
+- **Item 5**: the not-yet-eligible subclass label (`Subclass: Lv N in battle
+  (M opts)`) simplified to `Subclass: None (unlocks at Lvl N)`, matching the
+  "Ability Bonus: not chosen" phrasing convention already on this screen.
+- **Item 6**: a small gilt "+N" badge added to each ability-score row
+  (`CharacterCreationScene.ts`, new `backgroundBonusFor(slot, ability)`
+  helper) showing a Background ability bonus inline, instead of it being
+  baked silently into the score with zero visual indicator. The "Ability
+  Bonus: X" button stays as the actual picker (a real, player-made choice
+  per Kevin's standing "no silent choice defaults" rule) — the badge is a
+  supplementary readout. No item/spell currently modifies a raw ability
+  score, so Background is the only source today; structured so a future
+  source is a one-line addition.
+- **Item 7**: `BattleScene.ts`'s roster-panel detail line (`AC{n}
+  move:ready act:ready...`) was still `#9a9ab0` (a cool gray-blue left over
+  from the pre-D-210 dark UI), unreadable against D-210's warm
+  `COLORS.woodPanel` — changed to `#d8c8a0`. "Move" renamed to "Speed" in
+  Character Creation's stats-preview line (the one real occurrence; the
+  race-description text already said "Speed" elsewhere on the same screen).
+- **Item 8**: the per-hero parchment panel (`drawParchmentPanel`, height
+  680/centerY 445, spanning y105-785) ended above the Spells row
+  (`spellsY=788`) and the Save/Load Character row (`libraryY=832`) — a gap
+  independently flagged (but not fixed) during D-212's own investigation.
+  Grown to height 770/centerY 490 (spans y105-875).
+- **Item 9**: column headers changed from `Hero N — Human/AI-Controlled` to
+  `Hero 1 (Player)` for the PC (always, now inert per item 3) and
+  `Companion N (Player/AI)` for companions (numbered from 1, independent of
+  the PC's own slot-1 offset). The Class label's separate `" (Companion)"`
+  tag is gone (pure duplication now); the `" (Stats Unlocked)"` tag (Plan
+  3.4) stays, since the header doesn't carry that information.
+- **Item 10**: clicking a name field now arms a `nameSelectAllPending` flag
+  — the FIRST edit-relevant keystroke (Backspace or a printable character)
+  replaces/clears the whole name instead of appending, so the player can
+  just start typing over an existing name. An ignored key (arrow key, bare
+  modifier) leaves it armed rather than silently consuming it.
+- **Item 11**: `buildStartButton`'s Start Battle button was hardcoded to
+  `width/2 - 150`, mirroring Save Party at `+150` — but Save Party is fully
+  hidden in campaign mode (D-195/Plan 3.7), leaving Start Battle 150px off
+  center with nothing to balance it. Now centers on `width/2` whenever
+  `this.campaignId` is set.
+- **Item 12**: added a `tooltip?: string` option to `createOrnateButton`
+  itself (`uiTheme.ts`) — a small parchment card shown on hover, hidden on
+  pointerout, scene-agnostic like the rest of that module rather than a
+  one-off hack. Used it on the level-up cadence pill to explain what
+  Auto/Prompt/Fresh actually do, which previously had zero in-UI
+  explanation.
+- **Item 13**: the intro/flavor text bumped 15px → 18px (Kevin's own "too
+  small to read" call) and rewritten with a little more voice while staying
+  genuine onboarding instruction, not lore.
+- **Item 15**: D-210's board frame (`drawBoardFrame`, stroke band at
+  y≈74-82) was drawn directly over `enemyCountText` (y=74) and
+  `previewText` (y=68) — both text rows already extended almost to
+  `originY` (90) even before the frame existed. Reordered/moved the
+  left-column HUD rows (Integrity → enemy count → log, each with its own
+  clear row) and pulled `previewText` up to y=60, clearing the frame
+  entirely rather than resizing it.
+- **Item 16**: "Lv" → "Lvl " (with the space) in all 7 occurrences across
+  `BattleScene.ts`, `CharacterCreationScene.ts`, `CharacterSheetScene.ts`
+  (x2), `CompendiumScene.ts` (x2), `GearShopScene.ts`.
+
+Tests: **1643** (unchanged — presentation-only/narrowly-scoped bugfixes, no
+new pure-system logic beyond the trivial `backgroundBonusFor` helper).
+Typecheck clean, all 1643 pass, production build succeeds (**152 modules**,
+unchanged — no new file from this entry). Headless-verified only.
+
+**Important files:** `src/game/scenes/CharacterCreationScene.ts` (items
+3/5/6/7/8/9/10/11/12/13, plus the gear-picker rebuild in D-214 below),
+`src/game/scenes/BattleScene.ts` (items 7/14/15/16), `src/game/data/
+companions.ts` (item 2), `src/game/scenes/uiTheme.ts` (item 12's new
+tooltip option), `src/game/scenes/CompendiumScene.ts`/
+`CharacterSheetScene.ts`/`GearShopScene.ts` (item 16 only).
+
+### D-214 — Character Creation's Gear picker rebuilt to match The Armory (items 4/17)
+
+Kevin's item 17 was blunt: "the gear screen doesn't look like the one you
+showed me... why even show me the mocked up version if you're not going to
+make that." Reading the actual code confirmed he was right to be angry, but
+about a different screen than the one that regressed: `GearShopScene.ts`
+("The Armory," D-209) genuinely DOES match the agreed mockup — paperdoll,
+Right/Left hand labels, compare strip, delayed Purchase/Sell, the ornate
+theme are all really there, confirmed by a direct file read. Character
+Creation's own "Gear" button, however, opens `openGearPicker` →
+`renderChoiceOverlay` — the same generic plain vertical-list overlay used
+for every other prompt in that file — which was simply never connected to
+the Armory redesign at all. Kevin was looking at the untouched old picker
+and, reasonably, judging it against the mockup he'd approved for a
+different screen.
+
+**What shipped**: `openGearPicker`/`openGearItemPicker` replaced with a new
+`refreshGearPicker()` — a self-contained in-scene overlay (dim rect +
+`drawParchmentPanel` panels + `createOrnateButton`s, destroy-and-rebuild
+like every other overlay in this file), NOT a second Phaser Scene:
+`GearShopScene` is only a separate scene because it sits atop a live,
+paused `BattleScene` it calls back into for gold mutations; this picker has
+no paused scene underneath and no economy transaction to guard, just plain
+`SlotState.gearIndices` this scene already owns.
+
+- A 5-col x 2-row paperdoll of the 10 `GEAR_SLOT_IDS` (row 1:
+  weapon/shield/head/chest/legs, row 2: back/ring1/ring2/amulet/footwear —
+  no potions, not a pre-battle concept). Clicking a cell filters the
+  catalog below to that slot.
+- The catalog reuses `GearCompareSystem.previewGearSlotChange`/
+  `formatGearDelta` (built for the Armory, D-209) to show a one-line AC/
+  attack delta on every candidate, computed off a real `Hero` via
+  `simulateHeroForPlanning` — same pure logic, no duplication. No
+  delayed-confirm/hover-compare step: unlike a real purchase, a click here
+  IS the equip action (no gold at risk to guard against a reflexive
+  double-click).
+- Campaign-PC Gear-Points budget (D-194) preserved exactly: an unaffordable
+  item is omitted from the list entirely (never shown-disabled), same
+  `availableForThisSlot` formula as the picker this replaces. Free Play/
+  manual-create-party heroes see no budget UI at all.
+- Deliberately does NOT touch `s.poolGearIds` — matches the exact
+  pre-existing behavior of the picker it replaces (only the separate "Pool"
+  button/picker writes pool claims). A pool-filled slot can still look odd
+  here (reads off `gearIndices` alone) — a pre-existing quirk, not a
+  regression from this rebuild.
+- `gearHandle`'s row now centers at full column width when the "Pool"
+  button isn't shown (Free Play, or an empty campaign pool) instead of
+  staying pinned to its old half-width slot with nothing on the right —
+  folds in item 4's "should be centered" ask.
+
+**Deliberate scope decision**: did NOT extract a shared paperdoll-cell
+drawing helper into `uiTheme.ts` and refactor `GearShopScene` to use it,
+despite that being one option considered — `GearShopScene` already works
+and Kevin already approved it; touching it to chase code reuse would risk
+regressing something not in scope for this ask. The new picker draws its
+own (smaller, simpler) cells inline instead — some duplication, zero risk
+to the Armory.
+
+Tests: **1643** (unchanged — presentation-only). Typecheck clean, all 1643
+pass, production build succeeds (**152 modules**, unchanged — no new
+file). Headless-verified only — this is the single highest-stakes item in
+the batch given Kevin's reaction, so it needs an actual look before
+anything else in this area is touched again.
+
+**Important files**: `src/game/scenes/CharacterCreationScene.ts` (new
+`gearPickerOverlay`/`gearPickerSlotIndex`/`gearPickerGearSlot`/
+`gearPickerCatalogPage` fields, `openGearPicker`/`refreshGearPicker`,
+`gearHandle`'s centering logic), `src/game/systems/GearCompareSystem.ts`
+(reused, unchanged), `src/game/scenes/GearShopScene.ts` (unchanged — read
+for reference, not modified).
+
+### D-215 — Campaign menu scenes reskinned to the D-123 ornate/parchment theme (item 1)
+
+The last unreskinned corner of the game's menu flow: `ModeEntryScene`,
+`CampaignSelectScene`, `FreePlayScene`, `LoadGameScene`, `CoopLobbyScene`,
+`UnlockMissionPartyScene`, and `CompanionRosterScene` were still plain
+dark-rectangle screens (KI-153 had explicitly flagged the first four as
+deliberately out of scope for that session; the latter three had simply
+never come up). All 7 now use the same `drawScreenBackdrop`/
+`createOrnateButton`/`drawParchmentPanel` helpers (`uiTheme.ts`) as
+`MainMenuScene`/`CharacterCreationScene`/`KnowledgeBaseScene`/
+`GearShopScene`/`BattleScene` (D-210) already do — a pure visual pass, zero
+gameplay/navigation/state logic touched in any of the 7 files.
+
+Built via 7 parallel agents, one per file (independent files, no shared
+state, no conflict risk) — each given the same reference scenes
+(`MainMenuScene.ts`, `CharacterCreationScene.ts`) and told to preserve
+every button's exact position/size/label/onClick and every piece of
+existing state-dependent visual logic (locked/completed/active/benched
+distinctions, arm-then-confirm two-click patterns, disabled states).
+`CoopLobbyScene` was flagged as the highest-risk file since its buttons
+were typed fields (`Phaser.GameObjects.Rectangle`) referenced by show/hide/
+enable/disable logic across 3 lobby modes — verified afterward (grep for
+every old field's usage sites) that the retype to `OrnateButtonHandle` and
+the `.container.setVisible()`/`.setDisabled()` translations were complete
+and consistent.
+
+`CampaignSelectScene`'s campaign cards and `UnlockMissionPartyScene`'s
+flex-slot cards became single `createOrnateButton`s with their existing
+title/description text added into the button's own container afterward, at
+container-LOCAL coordinates (verified — an easy mistake here is leaving
+text at absolute screen coordinates, which double-offsets once added to an
+already-positioned container). `CompanionRosterScene` (the largest, 12
+companion cards) got `drawParchmentPanel` backings plus status-colored
+accent borders, preserving its three-way active/benched/locked visual
+distinction. `CoopLobbyScene`'s one real DOM `<input>` (the join-code
+field) was left structurally untouched, only its inline CSS restyled to
+the parchment palette.
+
+A handful of transient typecheck failures appeared mid-session as different
+agents' concurrent edits crossed paths (`CompanionRosterScene`'s unused
+imports, `UnlockMissionPartyScene`'s stale `buildButton` reference,
+`FreePlayScene`'s unused `startButton` var) — each was a real-but-temporary
+state from another agent's in-progress edit, not a genuine regression.
+Confirmed by running `npm run typecheck`/`npm test -- --run`/`npm run
+build` once, fresh, after all 7 agents finished: clean typecheck, **1643/
+1643** tests, production build succeeds (**152 modules**, unchanged — no
+new files, 7 existing files edited).
+
+**Important files**: `src/game/scenes/ModeEntryScene.ts`,
+`CampaignSelectScene.ts`, `FreePlayScene.ts`, `LoadGameScene.ts`,
+`CoopLobbyScene.ts`, `UnlockMissionPartyScene.ts`, `CompanionRosterScene.ts`
+— all 7 reskinned, no other files touched by this entry.
+
+### D-216 — The Armory: layout rebuilt to match the originally-agreed mockup
+
+Kevin flagged that the real `GearShopScene` (D-209) had drifted from the
+interactive HTML mockup he'd approved (see `project_armory_mockup` memory)
+and said he hated the result: the first ship put all 4 heroes' full 12-slot
+paperdolls in a row across the top of the screen, then a *second*,
+redundant full-width row of 12 slot-filter chips repeating the same slot
+labels again, leaving the catalog squeezed into a small 6-item paginated
+strip at the bottom. The mockup instead used a narrow hero sidebar and gave
+the catalog a whole wide dedicated panel — this entry rebuilds the scene's
+layout to match that intent, no gameplay/economy logic touched.
+
+New layout: a fixed 300px-wide hero list on the left (`buildHeroSidebar`) —
+each hero gets a compact card with a 6x2 paperdoll of colored/bordered
+cells only (gold border = selected slot, bronze = occupied, dark = empty;
+tiny slot-label text, no occupant item name — that detail now lives only in
+the compare strip, which is what keeps the sidebar legible at this width
+without cramming two lines of text into ~40px cells). The right side is one
+wide shopping panel for whichever hero/slot is active: a "Shopping for
+{hero} — {slot}" header, ONE row of slot tabs (wraps to 2 rows, not
+duplicated per hero), the existing compare strip, and a catalog list that
+grew from 6 to 9 rows per page since it no longer has to share the screen
+with 4 full-size paperdolls.
+
+`buildHeroRail`/`buildSlotChips` were replaced by `buildHeroSidebar`/
+`buildShopHeader`/`buildSlotTabs`; `buildCompareStrip`/`buildCatalog` were
+reparented onto a `(contentX, contentWidth)` pair instead of the full
+screen width so they only occupy the right-hand panel. No change to
+`buildActionButton`, the Purchase/Compare/Sell arm-then-confirm mechanic, or
+any `BattleScene` read/mutation call — this was a pure `GearShopScene`
+presentation rework, same "no game-rule logic in this file" property as
+before.
+
+Verified: `npm run typecheck` clean, **1643/1643** tests pass (unchanged —
+this file has no game-rule logic, so no test file covers it), production
+build succeeds. Not yet browser-tested — Kevin should confirm the new
+layout reads the way the mockup did before this closes out.
+
+**Important files**: `src/game/scenes/GearShopScene.ts` — layout rework
+only, no other files touched.

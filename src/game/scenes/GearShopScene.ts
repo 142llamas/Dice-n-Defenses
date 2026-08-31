@@ -17,6 +17,7 @@ import {
   type GearSlotId,
   type EquipmentRarity,
 } from "../data/equipment";
+import { getClassDefinition } from "../data/classes";
 import { POTION_DEFINITIONS, getPotionDefinition, GENERAL_SLOT_LABELS, type GeneralSlotId } from "../data/potions";
 import { sellValueForCost } from "../systems/EconomySystem";
 import { isItemEligibleForSlot, previewGearSlotChange, formatGearDelta } from "../systems/GearCompareSystem";
@@ -39,6 +40,16 @@ import type { BattleScene } from "./BattleScene";
  * (still no general inventory) at half its cost — `EconomySystem.
  * sellValueForCost`, confirmed with Kevin as the real economy rule.
  *
+ * Layout (reworked after the first ship drifted from the agreed mockup —
+ * see `project_armory_mockup` memory): a narrow hero SIDEBAR on the left
+ * (compact paperdoll per hero, no item text — just colored/bordered cells)
+ * and one wide shopping panel on the right for whichever hero/slot is
+ * selected (header, one row of slot tabs, compare strip, catalog). The
+ * original ship instead put all heroes' full paperdolls in a row across the
+ * top plus a second, redundant full-width slot-chip row, which left the
+ * catalog squeezed into a small paginated strip at the bottom — the mockup
+ * traded per-hero paperdoll detail for a much bigger catalog area instead.
+ *
  * Holds NO game-rule logic itself — every read (`shopHeroes`/
  * `shopVisibleItemIds`/`goldFor`) and every mutation (`buyGearForHero`/
  * `sellGearFromHero`/`buyPotionForHero`/`sellPotionFromHero`) goes through
@@ -48,7 +59,15 @@ import type { BattleScene } from "./BattleScene";
  */
 
 const PRIME_DELAY_MS = 650;
-const CATALOG_PAGE_SIZE = 6;
+const CATALOG_PAGE_SIZE = 9;
+
+// Sidebar-vs-content split (mockup layout): a narrow hero list on the left,
+// one wide shopping panel on the right for the selected hero/slot.
+const SIDEBAR_X = 40;
+const SIDEBAR_WIDTH = 300;
+const CONTENT_GAP = 24;
+const CONTENT_TOP = 100;
+const CONTENT_BOTTOM_MARGIN = 40;
 
 type ArmorySlotId = GearSlotId | GeneralSlotId;
 
@@ -217,7 +236,7 @@ export class GearShopScene extends Phaser.Scene {
     const before = new Set<Phaser.GameObjects.GameObject>(this.children.list);
 
     drawScreenBackdrop(this);
-    const { width } = getViewport(this);
+    const { width, height } = getViewport(this);
 
     this.add
       .text(width / 2, 40, "The Armory", { fontFamily: FONT_DISPLAY, fontSize: "34px", color: "#f0dfa8", fontStyle: "bold" })
@@ -234,71 +253,86 @@ export class GearShopScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(5);
 
-    this.buildHeroRail(width);
-    this.buildSlotChips(width);
-    this.buildCompareStrip(width);
-    this.buildCatalog(width);
+    const contentX = SIDEBAR_X + SIDEBAR_WIDTH + CONTENT_GAP;
+    const contentWidth = width - contentX - 40;
+
+    this.buildHeroSidebar(height);
+    this.buildShopHeader(contentX);
+    this.buildSlotTabs(contentX, contentWidth);
+    this.buildCompareStrip(contentX, contentWidth);
+    this.buildCatalog(contentX, contentWidth);
 
     this.contentObjects = this.children.list.filter((c) => !before.has(c));
   }
 
-  private buildHeroRail(width: number): void {
+  /**
+   * The left-hand hero list: compact cards stacked vertically, each with a
+   * 6x2 paperdoll of colored/bordered cells only — no per-cell item text.
+   * Item detail for whichever slot is active lives in the compare strip
+   * instead, which is what keeps this legible at sidebar width; the original
+   * ship crammed both the slot label AND the occupant's name into every
+   * ~90px-wide cell across 4 full-size hero cards in a single row, which is
+   * the clutter Kevin flagged against the agreed mockup.
+   */
+  private buildHeroSidebar(height: number): void {
     const heroes = this.battleScene.shopHeroes();
+    const sidebarCenterX = SIDEBAR_X + SIDEBAR_WIDTH / 2;
     if (heroes.length === 0) {
       this.add
-        .text(width / 2, 140, "No hero is available to shop for.", { fontFamily: FONT_BODY, fontSize: "18px", color: CREAM })
-        .setOrigin(0.5)
+        .text(sidebarCenterX, CONTENT_TOP + 40, "No hero is available to shop for.", { fontFamily: FONT_BODY, fontSize: "16px", color: CREAM, wordWrap: { width: SIDEBAR_WIDTH } })
+        .setOrigin(0.5, 0)
         .setDepth(3);
       return;
     }
 
-    const cardWidth = 280;
-    const cardHeight = 260;
-    const top = 92;
-    const { xs } = centeredRowX(heroes.length, cardWidth, 16, width / 2, width - 80);
+    const gap = 14;
+    const availableHeight = height - CONTENT_TOP - CONTENT_BOTTOM_MARGIN;
+    const cardHeight = Math.min(260, (availableHeight - gap * (heroes.length - 1)) / heroes.length);
+    const headerHeight = 42;
 
     heroes.forEach((hero, i) => {
-      const cx = xs[i];
+      const cardTop = CONTENT_TOP + i * (cardHeight + gap);
       const isActiveHero = hero.id === this.selectedHeroId;
+
       const g = this.add.graphics().setDepth(2);
       g.fillStyle(0x2a1d12, 1);
-      g.fillRoundedRect(cx - cardWidth / 2, top, cardWidth, cardHeight, 6);
+      g.fillRoundedRect(SIDEBAR_X, cardTop, SIDEBAR_WIDTH, cardHeight, 6);
       g.lineStyle(2, isActiveHero ? 0xe8c25a : 0x5a4222, 1);
-      g.strokeRoundedRect(cx - cardWidth / 2, top, cardWidth, cardHeight, 6);
+      g.strokeRoundedRect(SIDEBAR_X, cardTop, SIDEBAR_WIDTH, cardHeight, 6);
+
       const headerHit = this.add
-        .rectangle(cx, top + 20, cardWidth, 40, 0xffffff, 0)
+        .rectangle(sidebarCenterX, cardTop + headerHeight / 2, SIDEBAR_WIDTH, headerHeight, 0xffffff, 0)
         .setInteractive({ useHandCursor: true })
         .setDepth(3);
       headerHit.on("pointerdown", () => this.navigateTo(hero.id, this.selectedSlot));
 
+      const classLabel = hero.classId ? getClassDefinition(hero.classId).name : "Adventurer";
       this.add
-        .text(cx - cardWidth / 2 + 14, top + 12, `${hero.name}  ·  Lv ${hero.level}`, {
-          fontFamily: FONT_BODY,
-          fontSize: "15px",
-          color: isActiveHero ? "#fff3d0" : CREAM,
-          fontStyle: "bold",
-        })
+        .text(SIDEBAR_X + 14, cardTop + 6, hero.name, { fontFamily: FONT_BODY, fontSize: "16px", color: isActiveHero ? "#fff3d0" : CREAM, fontStyle: "bold" })
+        .setDepth(3);
+      this.add
+        .text(SIDEBAR_X + 14, cardTop + 25, `${classLabel} · Lv ${hero.level}`, { fontFamily: FONT_BODY, fontSize: "11px", color: "#a89058" })
         .setDepth(3);
 
       // 6x2 paperdoll grid.
-      const gridTop = top + 44;
+      const gridTop = cardTop + headerHeight + 6;
       const gridPad = 12;
       const cols = PAPERDOLL_ROWS[0].length;
       const cellGap = 4;
-      const cellWidth = (cardWidth - gridPad * 2 - cellGap * (cols - 1)) / cols;
-      const cellHeight = 96;
+      const cellWidth = (SIDEBAR_WIDTH - gridPad * 2 - cellGap * (cols - 1)) / cols;
+      const cellHeight = Math.max(28, Math.min(40, (cardHeight - headerHeight - 6 - gridPad - cellGap) / 2));
 
       PAPERDOLL_ROWS.forEach((row, rowIdx) => {
         row.forEach((slot, colIdx) => {
-          const sx = cx - cardWidth / 2 + gridPad + colIdx * (cellWidth + cellGap) + cellWidth / 2;
+          const sx = SIDEBAR_X + gridPad + colIdx * (cellWidth + cellGap) + cellWidth / 2;
           const sy = gridTop + rowIdx * (cellHeight + cellGap) + cellHeight / 2;
           const occupantId = this.occupantOf(hero, slot);
           const isActiveSlot = isActiveHero && slot === this.selectedSlot;
 
           const cellG = this.add.graphics().setDepth(3);
-          cellG.fillStyle(0x1a1108, 1);
+          cellG.fillStyle(isActiveSlot ? 0x3a2c14 : 0x1a1108, 1);
           cellG.fillRoundedRect(sx - cellWidth / 2, sy - cellHeight / 2, cellWidth, cellHeight, 3);
-          cellG.lineStyle(isActiveSlot ? 2 : 1, isActiveSlot ? 0xe8c25a : occupantId ? 0x9a7a3e : 0x5a4222, 1);
+          cellG.lineStyle(isActiveSlot ? 2 : 1, isActiveSlot ? 0xe8c25a : occupantId ? 0x9a7a3e : 0x4a3a24, 1);
           cellG.strokeRoundedRect(sx - cellWidth / 2, sy - cellHeight / 2, cellWidth, cellHeight, 3);
 
           const hit = this.add
@@ -308,48 +342,54 @@ export class GearShopScene extends Phaser.Scene {
           hit.on("pointerdown", () => this.navigateTo(hero.id, slot));
 
           this.add
-            .text(sx, sy - cellHeight / 2 + 12, slotLabel(slot), {
+            .text(sx, sy, slotLabel(slot), {
               fontFamily: FONT_BODY,
-              fontSize: "10px",
-              color: isActiveSlot ? "#fff3d0" : "#a89058",
+              fontSize: "8px",
+              color: isActiveSlot ? "#fff3d0" : occupantId ? "#d8c090" : "#6a5a3e",
               align: "center",
-              wordWrap: { width: cellWidth - 6 },
+              wordWrap: { width: cellWidth - 4 },
             })
-            .setOrigin(0.5, 0)
-            .setDepth(5);
-
-          this.add
-            .text(sx, sy + 6, occupantId ? itemName(occupantId) : "— empty —", {
-              fontFamily: FONT_BODY,
-              fontSize: "10.5px",
-              color: occupantId ? "#f0e6c8" : "#5a4a34",
-              align: "center",
-              wordWrap: { width: cellWidth - 6 },
-            })
-            .setOrigin(0.5, 0)
+            .setOrigin(0.5)
             .setDepth(5);
         });
       });
     });
   }
 
-  private buildSlotChips(width: number): void {
-    const chipWidth = 96;
-    const { xs, itemWidth } = centeredRowX(ALL_ARMORY_SLOTS.length, chipWidth, 8, width / 2, width - 80);
-    const y = 372;
-    ALL_ARMORY_SLOTS.forEach((slot, i) => {
-      const active = slot === this.selectedSlot;
-      createOrnateButton(this, xs[i], y, itemWidth, 34, slotLabel(slot), () => {
-        const hero = this.selectedHero();
-        this.navigateTo(hero?.id ?? this.selectedHeroId ?? "", slot);
-      }, { variant: "tab", fontSize: 11, depth: 4 }).setSelected(active);
+  private buildShopHeader(contentX: number): void {
+    const hero = this.selectedHero();
+    const label = hero ? `Shopping for ${hero.name} — ${slotLabel(this.selectedSlot)}` : "Shopping";
+    this.add
+      .text(contentX, CONTENT_TOP - 8, label, { fontFamily: FONT_DISPLAY, fontSize: "20px", color: "#f0dfa8" })
+      .setOrigin(0, 1)
+      .setDepth(3);
+  }
+
+  /** One shared row of slot tabs (wraps to a second row) for the selected hero — not duplicated per hero like the original ship. */
+  private buildSlotTabs(contentX: number, contentWidth: number): void {
+    const chipWidth = 118;
+    const rowGap = 8;
+    const half = Math.ceil(ALL_ARMORY_SLOTS.length / 2);
+    const rows = [ALL_ARMORY_SLOTS.slice(0, half), ALL_ARMORY_SLOTS.slice(half)];
+    const topY = CONTENT_TOP + 24;
+
+    rows.forEach((rowSlots, rowIdx) => {
+      const { xs, itemWidth } = centeredRowX(rowSlots.length, chipWidth, 8, contentX + contentWidth / 2, contentWidth);
+      const y = topY + rowIdx * (34 + rowGap);
+      rowSlots.forEach((slot, i) => {
+        const active = slot === this.selectedSlot;
+        createOrnateButton(this, xs[i], y, itemWidth, 34, slotLabel(slot), () => {
+          const hero = this.selectedHero();
+          this.navigateTo(hero?.id ?? this.selectedHeroId ?? "", slot);
+        }, { variant: "tab", fontSize: 12, depth: 4 }).setSelected(active);
+      });
     });
   }
 
-  private buildCompareStrip(width: number): void {
-    const panelCenterX = width / 2;
-    const panelTop = 410;
-    const panelWidth = width - 100;
+  private buildCompareStrip(contentX: number, contentWidth: number): void {
+    const panelCenterX = contentX + contentWidth / 2;
+    const panelTop = CONTENT_TOP + 94;
+    const panelWidth = contentWidth;
     const panelHeight = 100;
     drawParchmentPanel(this, panelCenterX, panelTop + panelHeight / 2, panelWidth, panelHeight, 2);
 
@@ -396,10 +436,10 @@ export class GearShopScene extends Phaser.Scene {
     if (sel) this.buildActionButton(panelCenterX + panelWidth / 2 - 110, panelTop + panelHeight / 2, hero, sel, occupantId, 190, 40, 13);
   }
 
-  private buildCatalog(width: number): void {
-    const panelCenterX = width / 2;
-    const panelTop = 528;
-    const panelWidth = width - 100;
+  private buildCatalog(contentX: number, contentWidth: number): void {
+    const panelCenterX = contentX + contentWidth / 2;
+    const panelTop = CONTENT_TOP + 210;
+    const panelWidth = contentWidth;
     const rowHeight = 58;
     const rowGap = 8;
     const listHeight = CATALOG_PAGE_SIZE * (rowHeight + rowGap) - rowGap + 24;

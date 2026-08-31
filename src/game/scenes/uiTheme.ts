@@ -33,6 +33,14 @@ export interface OrnateButtonOptions {
   variant?: ButtonVariant;
   sublabel?: string;
   disabled?: boolean;
+  /**
+   * D-213: an optional hover tooltip — a short parchment card shown above
+   * the button while the pointer is over it, hidden on pointerout. Added
+   * for the cadence pill (its Auto/Prompt/Fresh options had zero in-UI
+   * explanation), but scene-agnostic like the rest of this file so any
+   * future button can use it without a one-off implementation.
+   */
+  tooltip?: string;
 }
 
 export interface OrnateButtonHandle {
@@ -117,6 +125,34 @@ export function createOrnateButton(
     container.add(sub);
   }
 
+  // D-213: a small parchment card floating just above the button, hidden
+  // until hover — added last so it renders on top of this button's own
+  // graphics/label within the container's own paint order.
+  let tooltipBg: Phaser.GameObjects.Graphics | undefined;
+  let tooltipText: Phaser.GameObjects.Text | undefined;
+  if (opts.tooltip) {
+    tooltipText = scene.add
+      .text(0, 0, opts.tooltip, {
+        fontFamily: FONT_BODY,
+        fontSize: "13px",
+        color: "#2a1a10",
+        align: "center",
+        wordWrap: { width: Math.max(180, width) },
+      })
+      .setOrigin(0.5, 1);
+    const tw = tooltipText.width + 16;
+    const th = tooltipText.height + 12;
+    tooltipText.setPosition(0, -height / 2 - 10);
+    tooltipBg = scene.add.graphics();
+    tooltipBg.fillStyle(COLORS.parchmentBase, 0.98);
+    tooltipBg.lineStyle(1, COLORS.parchmentBorder, 1);
+    tooltipBg.fillRoundedRect(-tw / 2, -height / 2 - 10 - th, tw, th, 6);
+    tooltipBg.strokeRoundedRect(-tw / 2, -height / 2 - 10 - th, tw, th, 6);
+    tooltipBg.setVisible(false);
+    tooltipText.setVisible(false);
+    container.add([tooltipBg, tooltipText]);
+  }
+
   let hovered = false;
   let disabled = opts.disabled ?? false;
   let selected = false;
@@ -170,6 +206,11 @@ export function createOrnateButton(
     draw();
     refreshTextColor();
     scene.tweens.add({ targets: container, scale: 1.035, duration: 130, ease: "Sine.easeOut" });
+    if (tooltipBg && tooltipText) {
+      tooltipBg.setVisible(true);
+      tooltipText.setVisible(true);
+      container.setDepth(depth + 100);
+    }
   });
   g.on("pointerout", () => {
     if (disabled) return;
@@ -177,6 +218,11 @@ export function createOrnateButton(
     draw();
     refreshTextColor();
     scene.tweens.add({ targets: container, scale: 1, duration: 130, ease: "Sine.easeOut" });
+    if (tooltipBg && tooltipText) {
+      tooltipBg.setVisible(false);
+      tooltipText.setVisible(false);
+      container.setDepth(depth);
+    }
   });
   g.on("pointerdown", () => {
     if (disabled) return;

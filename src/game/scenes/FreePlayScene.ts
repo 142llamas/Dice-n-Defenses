@@ -12,7 +12,17 @@ import { getCampaignDefinition } from "../data/campaigns";
 import { loadCampaignProgress, isCampaignCompleted } from "../systems/CampaignProgressSystem";
 import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
 import { generateFreePlayWaves } from "../systems/FreePlayWaveGenerator";
-import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
+import {
+  getViewport,
+  onViewportResize,
+  openChoiceList,
+  createOrnateButton,
+  drawScreenBackdrop,
+  createSectionLabel,
+  FONT_DISPLAY,
+  FONT_BODY,
+  type OrnateButtonHandle,
+} from "./uiTheme";
 
 /**
  * FreePlayScene — Phase 11.9 (D-071): a config screen for free-play mode
@@ -27,6 +37,13 @@ import { getViewport, onViewportResize, openChoiceList } from "./uiTheme";
  * THEN hands off to `CharacterCreationScene` with `{ freePlayMapId,
  * freePlayWaves }`, reusing the existing party-builder flow exactly like
  * campaigns do.
+ *
+ * D-21x: reskinned to the shared fantasy/parchment theme (D-123, `uiTheme.ts`)
+ * — same recipe already applied to MainMenuScene/CompendiumScene/
+ * BestiaryScene/CharacterCreationScene — replacing the old flat
+ * `add.rectangle().setStrokeStyle()` buttons with `createOrnateButton`.
+ * Presentation only: every option's selection/unlock/difficulty/wave-count/
+ * minion-source state and the Start handoff below are untouched.
  *
  * Unlock model (D-071, this sub-phase; extended Phase 27/D-180): `TEST_MAP`/
  * `basalt-colossus` are always available. Every other map/boss pair unlocks
@@ -142,8 +159,7 @@ export const EXPANDED_MINIONS: string[] = [
 type MinionSource = "standard" | "expanded";
 
 interface OptionButton {
-  rect: Phaser.GameObjects.Rectangle;
-  label: Phaser.GameObjects.Text;
+  handle: OrnateButtonHandle;
   hint?: Phaser.GameObjects.Text;
   option: GatedOption;
   locked: boolean;
@@ -153,13 +169,11 @@ export class FreePlayScene extends Phaser.Scene {
   private unlockedCampaigns = new Set<string>();
   private mapButtons: OptionButton[] = [];
   private bossButtons: OptionButton[] = [];
-  private waveCountButtons: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; count: number }[] = [];
-  private minionButtons: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; source: MinionSource }[] = [];
-  private difficultyButton!: Phaser.GameObjects.Rectangle;
-  private difficultyLabel!: Phaser.GameObjects.Text;
+  private waveCountButtons: { handle: OrnateButtonHandle; count: number }[] = [];
+  private minionButtons: { handle: OrnateButtonHandle; source: MinionSource }[] = [];
+  private difficultyButton!: OrnateButtonHandle;
   /** D-16x: the shared full-screen list-picker overlay (`openChoiceList`), replacing the old click-to-cycle Difficulty button. */
   private choiceOverlay: Phaser.GameObjects.GameObject[] = [];
-  private startButton!: Phaser.GameObjects.Rectangle;
 
   private selectedMapId = TEST_MAP.id;
   private selectedBossId = "basalt-colossus";
@@ -185,8 +199,6 @@ export class FreePlayScene extends Phaser.Scene {
       ].filter((id) => isCampaignCompleted(progress, id)),
     );
 
-    this.cameras.main.setBackgroundColor("#0e0e14");
-
     this.rebuildLayout();
 
     this.input.keyboard?.on("keydown-ESC", () => this.leave());
@@ -205,25 +217,33 @@ export class FreePlayScene extends Phaser.Scene {
     const before = new Set<Phaser.GameObjects.GameObject>(this.children.list);
     const { width } = getViewport(this);
 
-    this.add
-      .text(width / 2, 40, "Free Play", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "36px",
-        color: "#e8e8f0",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
+    // D-21x: the ornate/parchment theme (D-123), same recipe every other
+    // reskinned menu-adjacent scene uses.
+    drawScreenBackdrop(this);
 
-    this.buildSmallButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
+    this.add
+      .text(width / 2, 42, "Free Play", {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "34px",
+        color: "#f0dfa8",
+        fontStyle: "bold",
+        letterSpacing: 2 as unknown as number,
+      })
+      .setOrigin(0.5)
+      .setShadow(0, 2, "#000000", 6, true, true)
+      .setDepth(1);
+
+    createOrnateButton(this, 120, 42, 160, 44, "Back (Esc)", () => this.leave(), { variant: "tool", depth: 5 });
 
     this.add
       .text(
         width / 2,
-        90,
+        84,
         "Mix and match: pick a map, a finale boss, a wave count, a minion pool, and a difficulty, then Start.",
-        { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#8a8aa0" },
+        { fontFamily: FONT_BODY, fontSize: "15px", color: "#a89058", fontStyle: "italic" },
       )
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(1);
 
     this.buildMapSection(width, 130);
     this.buildBossSection(width, 255);
@@ -250,27 +270,6 @@ export class FreePlayScene extends Phaser.Scene {
   private unlockHintFor(option: GatedOption): string {
     if (option.unlockCampaignId === null) return "";
     return `Complete ${getCampaignDefinition(option.unlockCampaignId).name} to unlock.`;
-  }
-
-  /** Small button+label pair, matching CampaignSelectScene/BestiaryScene's simple rectangle-button style. */
-  private buildSmallButton(
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    text: string,
-    color: number,
-    onClick: () => void,
-  ): { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text } {
-    const rect = this.add
-      .rectangle(x, y, w, h, color)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    const label = this.add
-      .text(x, y, text, { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#e8e8f0" })
-      .setOrigin(0.5);
-    rect.on("pointerdown", onClick);
-    return { rect, label };
   }
 
   /**
@@ -309,12 +308,13 @@ export class FreePlayScene extends Phaser.Scene {
     // Empress" wraps to 3 lines and, at 56px tall, spilled past its own box
     // into the locked-hint line below (or the next section, for an unlocked
     // option). Measure every label's REAL wrapped height first and grow every
-    // button in the row to fit the tallest one needed.
+    // button in the row to fit the tallest one needed. Measured with
+    // `createOrnateButton`'s own "tab" variant style (normal weight, EB
+    // Garamond) so the estimate matches what's actually drawn.
     const measured = options.map((option) => {
       const probe = this.add.text(0, 0, option.name, {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: `${labelFontSize}px`,
-        fontStyle: "bold",
         align: "center",
         wordWrap: { width: w - 8 },
       });
@@ -327,22 +327,29 @@ export class FreePlayScene extends Phaser.Scene {
     return options.map((option, i) => {
       const x = startX + i * (w + gap);
       const locked = !this.isUnlocked(option);
-      const rect = this.add.rectangle(x, y, w, h, 0x2a2a3a).setStrokeStyle(1, 0x4a4a5a);
-      const label = this.add
-        .text(x, y, option.name, {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: `${labelFontSize}px`,
-          color: "#e8e8f0",
-          fontStyle: "bold",
-          align: "center",
-          wordWrap: { width: w - 8 },
-        })
-        .setOrigin(0.5);
+      const handle = createOrnateButton(this, x, y, w, h, option.name, () => onSelect(option.id), {
+        variant: "tab",
+        fontSize: labelFontSize,
+        disabled: locked,
+      });
+
+      // `createOrnateButton` only auto-shrinks a single line to fit its
+      // width; on a crowded row (the boss row runs to 13 options) that would
+      // crush a long name like "The Hollow Empress" down to an unreadably
+      // tiny font that STILL overflows. Reach into the button's own label
+      // Text (added as the container's 2nd child, right after its
+      // background Graphics — see `createOrnateButton`) to reapply this
+      // row's computed font size and real word-wrap, the same
+      // "measure, don't guess" technique this row used before the reskin.
+      const label = handle.container.list[1] as Phaser.GameObjects.Text;
+      label.setFontSize(labelFontSize);
+      label.setWordWrapWidth(w - 8, true);
+
       let hint: Phaser.GameObjects.Text | undefined;
       if (locked) {
         hint = this.add
           .text(x, y + h / 2 + 14, this.unlockHintFor(option), {
-            fontFamily: "system-ui, Arial, sans-serif",
+            fontFamily: FONT_BODY,
             fontSize: "12px",
             color: "#a06a4a",
             align: "center",
@@ -350,23 +357,12 @@ export class FreePlayScene extends Phaser.Scene {
           })
           .setOrigin(0.5);
       }
-      if (!locked) {
-        rect.setInteractive({ useHandCursor: true });
-        rect.on("pointerdown", () => onSelect(option.id));
-      }
-      return { rect, label, hint, option, locked };
+      return { handle, hint, option, locked };
     });
   }
 
   private buildMapSection(width: number, labelY: number): void {
-    this.add
-      .text(width / 2, labelY, "Map", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "16px",
-        color: "#c8c8d8",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
+    createSectionLabel(this, width / 2, labelY, "Map");
     this.mapButtons = this.buildOptionRow(width, labelY + 40, MAP_OPTIONS, (id) => {
       this.selectedMapId = id;
       this.refreshAll();
@@ -374,14 +370,7 @@ export class FreePlayScene extends Phaser.Scene {
   }
 
   private buildBossSection(width: number, labelY: number): void {
-    this.add
-      .text(width / 2, labelY, "Finale Boss", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "16px",
-        color: "#c8c8d8",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
+    createSectionLabel(this, width / 2, labelY, "Finale Boss");
     this.bossButtons = this.buildOptionRow(width, labelY + 40, BOSS_OPTIONS, (id) => {
       this.selectedBossId = id;
       this.refreshAll();
@@ -389,14 +378,7 @@ export class FreePlayScene extends Phaser.Scene {
   }
 
   private buildWaveCountSection(width: number, labelY: number): void {
-    this.add
-      .text(width / 2, labelY, "Wave Count", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "16px",
-        color: "#c8c8d8",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
+    createSectionLabel(this, width / 2, labelY, "Wave Count");
 
     const w = 300;
     const h = 44;
@@ -407,30 +389,25 @@ export class FreePlayScene extends Phaser.Scene {
 
     this.waveCountButtons = WAVE_COUNT_PRESETS.map((preset, i) => {
       const x = startX + i * (w + gap);
-      const rect = this.add
-        .rectangle(x, y, w, h, 0x2a2a3a)
-        .setStrokeStyle(1, 0x4a4a5a)
-        .setInteractive({ useHandCursor: true });
-      const label = this.add
-        .text(x, y, preset.label, { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e8e8f0" })
-        .setOrigin(0.5);
-      rect.on("pointerdown", () => {
-        this.selectedWaveCount = preset.count;
-        this.refreshAll();
-      });
-      return { rect, label, count: preset.count };
+      const handle = createOrnateButton(
+        this,
+        x,
+        y,
+        w,
+        h,
+        preset.label,
+        () => {
+          this.selectedWaveCount = preset.count;
+          this.refreshAll();
+        },
+        { variant: "tab", fontSize: 16 },
+      );
+      return { handle, count: preset.count };
     });
   }
 
   private buildMinionSection(width: number, labelY: number): void {
-    this.add
-      .text(width / 2, labelY, "Minion Source", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "16px",
-        color: "#c8c8d8",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
+    createSectionLabel(this, width / 2, labelY, "Minion Source");
 
     const options: { source: MinionSource; text: string }[] = [
       { source: "standard", text: "Standard (7 minions)" },
@@ -445,70 +422,61 @@ export class FreePlayScene extends Phaser.Scene {
 
     this.minionButtons = options.map((opt, i) => {
       const x = startX + i * (w + gap);
-      const rect = this.add
-        .rectangle(x, y, w, h, 0x2a2a3a)
-        .setStrokeStyle(1, 0x4a4a5a)
-        .setInteractive({ useHandCursor: true });
-      const label = this.add
-        .text(x, y, opt.text, { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#e8e8f0" })
-        .setOrigin(0.5);
-      rect.on("pointerdown", () => {
-        this.selectedMinionSource = opt.source;
-        this.refreshAll();
-      });
-      return { rect, label, source: opt.source };
+      const handle = createOrnateButton(
+        this,
+        x,
+        y,
+        w,
+        h,
+        opt.text,
+        () => {
+          this.selectedMinionSource = opt.source;
+          this.refreshAll();
+        },
+        { variant: "tab", fontSize: 14 },
+      );
+      return { handle, source: opt.source };
     });
   }
 
   private buildDifficultySection(width: number, labelY: number): void {
-    this.add
-      .text(width / 2, labelY, "Difficulty", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "16px",
-        color: "#c8c8d8",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
+    createSectionLabel(this, width / 2, labelY, "Difficulty");
 
     const y = labelY + 40;
-    this.difficultyButton = this.add
-      .rectangle(width / 2, y, 280, 40, 0x2a2a3a)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    this.difficultyLabel = this.add
-      .text(width / 2, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#e8e8f0" })
-      .setOrigin(0.5);
-    this.difficultyButton.on("pointerover", () => this.difficultyButton.setFillStyle(0x3a3a4a));
-    this.difficultyButton.on("pointerout", () => this.difficultyButton.setFillStyle(0x2a2a3a));
-    this.difficultyButton.on("pointerdown", () => {
-      openChoiceList(
-        this,
-        this.choiceOverlay,
-        "Choose Difficulty",
-        DIFFICULTY_IDS.map((id) => ({
-          label: getDifficultyDefinition(id).name,
-          desc: difficultyChoiceDescription(id),
-          highlighted: id === this.selectedDifficultyId,
-          onPick: () => (this.selectedDifficultyId = id),
-        })),
-        () => this.refreshAll(),
-      );
-    });
+    this.difficultyButton = createOrnateButton(
+      this,
+      width / 2,
+      y,
+      280,
+      40,
+      "",
+      () => {
+        openChoiceList(
+          this,
+          this.choiceOverlay,
+          "Choose Difficulty",
+          DIFFICULTY_IDS.map((id) => ({
+            label: getDifficultyDefinition(id).name,
+            desc: difficultyChoiceDescription(id),
+            highlighted: id === this.selectedDifficultyId,
+            onPick: () => (this.selectedDifficultyId = id),
+          })),
+          () => this.refreshAll(),
+        );
+      },
+      { variant: "secondary", fontSize: 16 },
+    );
   }
 
   private buildStartButton(width: number, y: number): void {
-    this.startButton = this.add
-      .rectangle(width / 2, y, 260, 54, 0x4caf72)
-      .setInteractive({ useHandCursor: true });
-    this.add
-      .text(width / 2, y, "Start", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "20px",
-        color: "#0e0e14",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
-    this.startButton.on("pointerdown", () => this.startFreePlay());
+    // Party Creation Overhaul Plan 8's precedent (see
+    // `CharacterCreationScene.buildStartButton`): `OrnateButtonHandle` has no
+    // direct green-fill equivalent for "ready to click" — the "primary"
+    // variant's own larger/brighter styling carries that read instead of a
+    // custom fill color.
+    createOrnateButton(this, width / 2, y, 260, 54, "Start", () => this.startFreePlay(), {
+      variant: "primary",
+    });
   }
 
   private startFreePlay(): void {
@@ -531,34 +499,20 @@ export class FreePlayScene extends Phaser.Scene {
     this.refreshOptionRow(this.bossButtons, this.selectedBossId);
 
     for (const btn of this.waveCountButtons) {
-      const selected = btn.count === this.selectedWaveCount;
-      btn.rect.setFillStyle(selected ? 0x3a5a3a : 0x2a2a3a);
-      btn.rect.setStrokeStyle(1, selected ? 0x6aab7a : 0x4a4a5a);
+      btn.handle.setSelected(btn.count === this.selectedWaveCount);
     }
 
     for (const btn of this.minionButtons) {
-      const selected = btn.source === this.selectedMinionSource;
-      btn.rect.setFillStyle(selected ? 0x3a5a3a : 0x2a2a3a);
-      btn.rect.setStrokeStyle(1, selected ? 0x6aab7a : 0x4a4a5a);
+      btn.handle.setSelected(btn.source === this.selectedMinionSource);
     }
 
-    this.difficultyLabel.setText(`Difficulty: ${getDifficultyDefinition(this.selectedDifficultyId).name}`);
+    this.difficultyButton.setLabel(`Difficulty: ${getDifficultyDefinition(this.selectedDifficultyId).name}`);
   }
 
   private refreshOptionRow(buttons: OptionButton[], selectedId: string): void {
     for (const btn of buttons) {
-      if (btn.locked) {
-        btn.rect.setFillStyle(0x1a1a26);
-        btn.rect.setStrokeStyle(1, 0x2a2a3a);
-        btn.rect.setAlpha(0.55);
-        btn.label.setAlpha(0.55);
-        continue;
-      }
-      const selected = btn.option.id === selectedId;
-      btn.rect.setFillStyle(selected ? 0x3a5a3a : 0x2a2a3a);
-      btn.rect.setStrokeStyle(1, selected ? 0x6aab7a : 0x4a4a5a);
-      btn.rect.setAlpha(1);
-      btn.label.setAlpha(1);
+      if (btn.locked) continue; // stays disabled/dimmed via createOrnateButton, never selectable
+      btn.handle.setSelected(btn.option.id === selectedId);
     }
   }
 }

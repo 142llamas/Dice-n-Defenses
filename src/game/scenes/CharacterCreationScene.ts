@@ -70,8 +70,10 @@ import {
   isTwoHandedWeapon,
   GEAR_SLOT_IDS,
   GEAR_SLOT_LABELS,
+  RARITY_LABELS,
   type GearSlotId,
 } from "../data/equipment";
+import { previewGearSlotChange, formatGearDelta } from "../systems/GearCompareSystem";
 import { FEAT_IDS, getFeat } from "../data/feats";
 import { RACE_IDS, getRaceDefinition } from "../data/races";
 import { BACKGROUND_IDS, getBackgroundDefinition, backgroundAbilityChoices } from "../data/backgrounds";
@@ -429,6 +431,13 @@ interface SlotWidgets {
    * score text.
    */
   pointBuyValueLabels: Record<AbilityScoreId, Phaser.GameObjects.Text>;
+  /**
+   * D-213: a small "+N" badge at each ability row's corner, shown only when
+   * that ability actually has a Background bonus applied — the bonus used
+   * to be baked silently into the score with no visual indicating it was
+   * there.
+   */
+  abilityBonusBadges: Record<AbilityScoreId, Phaser.GameObjects.Text>;
   /** D-147 (piece 3): the six Standard-Array dropdown-trigger row handles — visible/interactive only while this hero's own method (Plan 1.2) is "standardArray". */
   standardArrayRowButtons: OrnateButtonHandle[];
   /** D-147 (piece 3): the twelve Point-Buy +/- handles (one pair per ability) — visible/interactive only while this hero's own method is "pointBuy". */
@@ -466,6 +475,16 @@ export class CharacterCreationScene extends Phaser.Scene {
   private focusedNameSlot: number | null = null;
   /** D-211: toggled by a repeating timer while a name field is focused, to blink its caret. */
   private nameCaretOn = false;
+  /**
+   * D-213: true right after a name field is clicked into focus, before the
+   * first keystroke — Kevin's ask so clicking an already-named field lets
+   * the player just start typing over it, instead of having to manually
+   * delete the existing text first. The first printable key replaces the
+   * whole name instead of appending; Backspace clears it entirely. Cleared
+   * by that first edit-relevant keystroke (an ignored key, e.g. an arrow
+   * key, leaves it armed) or on blur.
+   */
+  private nameSelectAllPending = false;
   private slots: SlotState[] = [];
   private widgets: SlotWidgets[] = [];
   private startHandle!: OrnateButtonHandle;
@@ -540,6 +559,17 @@ export class CharacterCreationScene extends Phaser.Scene {
    * non-null exactly while the overlay is shown.
    */
   private levelPlanOverlay: Phaser.GameObjects.GameObject[] = [];
+  /**
+   * D-213: the Armory-style gear picker (see `openGearPicker`/
+   * `refreshGearPicker`) — a self-contained overlay in the same
+   * destroy-and-rebuild style as `levelPlanOverlay`, kept separate since it
+   * has its own multi-part state (which slot, which paperdoll cell, which
+   * catalog page) that doesn't fit the generic `renderPlanPrompt` shape.
+   */
+  private gearPickerOverlay: Phaser.GameObjects.GameObject[] = [];
+  private gearPickerSlotIndex = 0;
+  private gearPickerGearSlot: GearSlotId = "weapon";
+  private gearPickerCatalogPage = 0;
   private planningSlot: number | null = null;
   private planningDraft: LevelUpPlan = emptyLevelUpPlan();
   private planningSteps: LevelUpChoiceStep[] = [];
@@ -674,12 +704,16 @@ export class CharacterCreationScene extends Phaser.Scene {
       .setShadow(0, 2, "#000000", 6, true, true)
       .setDepth(1);
 
+    // D-213: bumped 15px -> 18px (Kevin's own "too small to read" call) and
+    // rewritten with a little more voice while staying genuine onboarding
+    // instruction, not lore — this is still the only in-line explanation of
+    // how to actually use the screen.
     this.add
       .text(
         width / 2,
-        76,
-        "Type a hero's name directly. Click a class, race, gear, or subclass to choose from a list. In Standard Array mode, click an ability score to pick its value from a dropdown; in Point Buy, use the +/- buttons.",
-        { fontFamily: FONT_BODY, fontSize: "15px", color: "#b8a074", fontStyle: "italic" },
+        78,
+        "Speak a hero's name, then shape them: a class, a people, their gear, their calling. Click any row to choose from a list — in Standard Array, click a score to draw from the dice already rolled; in Point Buy, spend your points as you see fit.",
+        { fontFamily: FONT_BODY, fontSize: "18px", color: "#b8a074", fontStyle: "italic" },
       )
       .setOrigin(0.5)
       .setDepth(1);
@@ -754,12 +788,16 @@ export class CharacterCreationScene extends Phaser.Scene {
       // lock exactly like a fresh campaign entry. Harmless for a loaded
       // classic/Free Play party: `companionBuildsForSlots` stays empty
       // there since the block above only populates it `if (this.campaignId)`.
-      const identityLocked = companionBuildsForSlots[slot] !== undefined;
-      // Party Creation Overhaul Plan 3.2: a returning PC (slot 0) has its
-      // identity locked just like a companion, but its gear/spells/
-      // level-plan/name must stay editable — only a companion's gear is
-      // ever locked to D-194's fixed economy kit.
-      const gearLocked = identityLocked && slot !== 0;
+      // D-213: the PC (slot 0) is EXCLUDED here — Kevin's own explicit call.
+      // D-195/Plan 3.2 originally locked a returning PC's identity too (only
+      // gear/spells/level-plan/name stayed editable), but that's not what he
+      // wants: his own character's class/race/background/stats should always
+      // stay editable, every visit, for the life of the campaign. Only a
+      // companion (slot !== 0) still locks identity to its authored build.
+      const identityLocked = slot !== 0 && companionBuildsForSlots[slot] !== undefined;
+      // `identityLocked` already implies `slot !== 0`, so a companion's gear
+      // stays locked to D-194's fixed economy kit exactly like before.
+      const gearLocked = identityLocked;
       // Party Creation Overhaul Plan 3.4: a companion's (never the PC's —
       // 3.4 doesn't apply to slot 0) ability-score lock lifts once this
       // campaign has been fully cleared once.
@@ -840,18 +878,25 @@ export class CharacterCreationScene extends Phaser.Scene {
       if (this.focusedNameSlot === null) return;
       const slot = this.focusedNameSlot;
       const s = this.slots[slot];
+      // D-213: only consumed by a keystroke that actually edits the name
+      // (Backspace or a printable character) — an ignored key (an arrow key,
+      // a bare modifier) falls through to `else return` below and leaves
+      // "select all" armed for whatever key comes next.
+      const selectAll = this.nameSelectAllPending;
       if (event.key === "Backspace") {
-        s.name = s.name.slice(0, -1);
+        this.nameSelectAllPending = false;
+        s.name = selectAll ? "" : s.name.slice(0, -1);
       } else if (event.key === "Enter" || event.key === "Tab") {
         this.blurNameField();
         event.preventDefault();
         event.stopPropagation();
         return;
-      } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && s.name.length < 24) {
+      } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && (selectAll || s.name.length < 24)) {
         // `event.key.length === 1` covers printable characters (letters,
         // digits, punctuation, space) while excluding named keys ("Shift",
         // "ArrowLeft", "F5", etc.), which all have longer `key` strings.
-        s.name = s.name + event.key;
+        this.nameSelectAllPending = false;
+        s.name = selectAll ? event.key : s.name + event.key;
       } else {
         return;
       }
@@ -943,10 +988,13 @@ export class CharacterCreationScene extends Phaser.Scene {
     // parchment panel (`drawParchmentPanel`, depth 5) instead of a flat dark
     // rectangle — every button below defaults to depth 10, so it naturally
     // renders on top with no extra work. Top edge stays fixed at y105 (the
-    // KI-083 convention every prior row addition preserved); height grew to
-    // 680 (was 650) and centerY to 445 (was 430) to keep pace with the
-    // taller ornate rows below (see `gearY`/`subclassY`/etc.).
-    const background = drawParchmentPanel(this, x, 445, COLUMN_WIDTH, 680, 5);
+    // KI-083 convention every prior row addition preserved).
+    // D-213: height 680/centerY 445 (spanning y105-785) left the Spells row
+    // (spellsY=788) and the Save/Load Character row (libraryY=832) sitting
+    // BELOW the panel's own art — noticed during D-212 but not fixed then.
+    // Grown to height 770/centerY 490 (spans y105-875) so the panel
+    // comfortably covers through Save/Load Character with a small margin.
+    const background = drawParchmentPanel(this, x, 490, COLUMN_WIDTH, 770, 5);
     allObjects.push(background);
 
     // Phase 11.4 (D-077): the old plain "Hero N" label became a clickable
@@ -961,6 +1009,11 @@ export class CharacterCreationScene extends Phaser.Scene {
       32,
       "",
       () => {
+        // D-213: the PC (slot 0) is always human-controlled — Kevin's own
+        // explicit call, matching the same "locked, no visual disable"
+        // convention every other identity-locked button in this file uses
+        // (see the `s.identityLocked` early-returns elsewhere).
+        if (slot === 0) return;
         const s = this.slots[slot];
         s.controlledBy = s.controlledBy === "human" ? "ai" : "human";
         // Party Creation Overhaul Plan 5.1 (D-198): the hard rule — an
@@ -1004,6 +1057,7 @@ export class CharacterCreationScene extends Phaser.Scene {
       () => {
         this.closeDropdown();
         this.focusedNameSlot = slot;
+        this.nameSelectAllPending = true;
         this.refreshNameLabel(slot);
       },
       { variant: "tab", fontSize: 16, font: FONT_BODY },
@@ -1223,6 +1277,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     // shared row position — `pointBuyValueLabels` is Point Buy's own copy.
     const standardArrayHandles = {} as Record<AbilityScoreId, OrnateButtonHandle>;
     const pointBuyValueLabels = {} as Record<AbilityScoreId, Phaser.GameObjects.Text>;
+    const abilityBonusBadges = {} as Record<AbilityScoreId, Phaser.GameObjects.Text>;
     // D-147 (piece 3): kept OUT of `interactiveButtons` — their interactivity
     // is managed by `refreshAbilityScoreControls` (which also has to weigh
     // this hero's own method, Plan 1.2), not the generic active/inactive-slot
@@ -1299,11 +1354,26 @@ export class CharacterCreationScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(10);
 
+      // D-213: a small always-visible "+N" badge at the row's right edge —
+      // hidden (empty text) unless this ability actually carries a
+      // Background bonus, set in `refreshSlot`. Sits above both the
+      // Standard Array button and the Point Buy stepper row (depth 11).
+      const bonusBadge = this.add
+        .text(x + COLUMN_WIDTH / 2 - 32, y - 12, "", {
+          fontFamily: FONT_BODY,
+          fontSize: "12px",
+          color: "#8a5a1a",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(11);
+
       standardArrayHandles[ability] = rowHandle;
       pointBuyValueLabels[ability] = valueLabel;
+      abilityBonusBadges[ability] = bonusBadge;
       standardArrayRowButtons.push(rowHandle);
       pointBuyButtons.push(minusHandle, plusHandle);
-      allObjects.push(rowHandle.container, minusHandle.container, plusHandle.container, valueLabel);
+      allObjects.push(rowHandle.container, minusHandle.container, plusHandle.container, valueLabel, bonusBadge);
     });
 
     // Phase 13.11 (D-096): a free starting-gear pick, cycling "None" plus
@@ -1324,11 +1394,20 @@ export class CharacterCreationScene extends Phaser.Scene {
     // between same-row controls.
     const rowGap = 6;
     const halfWidth = (COLUMN_WIDTH - 20 - rowGap) / 2;
+    // D-213: the Pool button only ever shows in campaign mode with a
+    // non-empty pool (same condition as the `setVisible(false)` call
+    // below) — everywhere else, Gear was still pinned to the half-width
+    // left slot with nothing on its right, reading as off-center (Kevin's
+    // report). `showPool` is fixed for this scene's lifetime (campaignId
+    // never changes; the pool snapshot's length only grows via a session
+    // action, never shrinks back to 0), so this is a one-time layout
+    // decision, not something that needs to react later.
+    const showPool = !!this.campaignId && this.partyInventorySnapshot.length > 0;
     const gearHandle = createOrnateButton(
       this,
-      x - halfWidth / 2 - rowGap / 2,
+      showPool ? x - halfWidth / 2 - rowGap / 2 : x,
       gearY,
-      halfWidth,
+      showPool ? halfWidth : COLUMN_WIDTH - 20,
       32,
       "",
       () => {
@@ -1357,7 +1436,7 @@ export class CharacterCreationScene extends Phaser.Scene {
       () => this.openPoolPicker(slot),
       { variant: "tab" },
     );
-    if (!this.campaignId || this.partyInventorySnapshot.length === 0) poolHandle.container.setVisible(false);
+    if (!showPool) poolHandle.container.setVisible(false);
 
     // Phase 14.2 (D-099): a subclass-picker row. Only actually cycles
     // anything for a level-1-choice class with 2+ modeled subclasses today
@@ -1468,7 +1547,15 @@ export class CharacterCreationScene extends Phaser.Scene {
         s.levelUpPlan.mode = next[s.levelUpPlan.mode];
         this.refreshAll();
       },
-      { variant: "tab" },
+      {
+        variant: "tab",
+        // D-213: this pill's three states had zero in-UI explanation
+        // ("the cadence options are still unclear," Kevin's own note).
+        tooltip:
+          "Auto: level-ups apply from this hero's saved Blueprint (or a sensible default) with no popups. " +
+          "Prompt: a real popup asks at every level-up, with any saved Blueprint pick pre-highlighted. " +
+          "Fresh: every level-up choice is asked fresh, ignoring any saved Blueprint.",
+      },
     );
 
     // D-135: the starting spell-selection wizard — opens a full-screen
@@ -1566,6 +1653,7 @@ export class CharacterCreationScene extends Phaser.Scene {
       abilityMethodHandle,
       standardArrayHandles,
       pointBuyValueLabels,
+      abilityBonusBadges,
       standardArrayRowButtons,
       pointBuyButtons,
       gearHandle,
@@ -1716,8 +1804,13 @@ export class CharacterCreationScene extends Phaser.Scene {
   // would have left. Unverified without a browser — flag if this reads as
   // cramped against the frame.
   private buildStartButton(width: number): void {
-    const leftX = width / 2 - 150;
     const rightX = width / 2 + 150;
+    // D-213: Save Party is hidden entirely in campaign mode (see the
+    // `this.campaignId` check below, Plan 3.7) — Start Battle then has no
+    // right-hand counterpart, so it was sitting 150px left of true center
+    // with nothing to balance it (Kevin's reported "off-center" bug).
+    // Center it on the screen instead whenever Save Party won't show.
+    const leftX = this.campaignId ? width / 2 : width / 2 - 150;
 
     // Party Creation Overhaul Plan 8: `OrnateButtonHandle` has no direct
     // green-fill equivalent for "valid, ready to click" — `refreshAll`
@@ -2241,6 +2334,18 @@ export class CharacterCreationScene extends Phaser.Scene {
     );
   }
 
+  /**
+   * D-213: the bonus (if any) a given ability score is getting from this
+   * hero's chosen Background — used to badge it inline on the ability
+   * rows. No item or spell in this codebase currently modifies a raw
+   * ability score (gear only touches derived stats like AC/attack), so
+   * Background is the only source today; structured as its own method
+   * rather than inlined so a future source is a one-line addition here.
+   */
+  private backgroundBonusFor(slot: number, ability: AbilityScoreId): number {
+    return this.slots[slot].backgroundAbilityChoice?.[ability] ?? 0;
+  }
+
   /** D-206: "+2 Strength, +1 Dexterity" or "+1 to all three" — shared by the ability-bonus picker's own option list and its button's current-choice label. */
   private backgroundAbilityChoiceLabel(choice: Partial<Record<AbilityScoreId, number>>): string {
     const entries = Object.entries(choice) as [AbilityScoreId, number][];
@@ -2259,7 +2364,12 @@ export class CharacterCreationScene extends Phaser.Scene {
     // "reuse an existing component" precedent as every other Plan 5-8 UI
     // addition in this scene.
     const isAiControlled = build.controlledBy === "ai";
-    w.controlHandle.setLabel(`Hero ${slot + 1} — ${isAiControlled ? "AI-Controlled" : "Human-Controlled"}`);
+    // D-213: header naming — the PC is always "Hero 1 (Player)" (never
+    // AI-controlled, see the click-handler guard above); companions are
+    // numbered independently of the PC ("Companion 1" for slot 1, not
+    // "Companion 2"), which is also what lets the Class label below drop
+    // its own separate "(Companion)" tag entirely.
+    w.controlHandle.setLabel(slot === 0 ? "Hero 1 (Player)" : `Companion ${slot} (${isAiControlled ? "AI" : "Player"})`);
     w.controlHandle.setSelected(isAiControlled);
     // D-211: the name field's label isn't re-rendered from `build.name`
     // here — writing to it mid-edit would fight the player's own typing
@@ -2267,14 +2377,13 @@ export class CharacterCreationScene extends Phaser.Scene {
     // `refreshNameLabel`, called separately by whatever actually changes
     // `SlotState.name` (typing, or loading a save/character/blueprint).
     // Nothing to set here.
-    // Party Creation Overhaul Plan 3.2: excludes slot 0 — a returning PC is
-    // also `identityLocked` now, but is never a "(Companion)". Plan 3.4:
-    // once this campaign's been cleared once, a companion's stats unlock —
-    // the tag says so, since otherwise the only signal is the ability-score
-    // buttons quietly starting to work.
+    // D-213: the plain "(Companion)" tag is gone — the header row above
+    // now says "Companion N" on its own, so it was pure duplication. The
+    // "Stats Unlocked" tag stays: that's real information the header
+    // doesn't carry, and otherwise the only signal would be the
+    // ability-score buttons quietly starting to work (Plan 3.4).
     const isUnlockedCompanion = slot !== 0 && this.slots[slot].identityLocked && !this.slots[slot].abilityScoreLocked;
-    const companionTag =
-      slot !== 0 && this.slots[slot].identityLocked ? (isUnlockedCompanion ? " (Companion — Stats Unlocked)" : " (Companion)") : "";
+    const companionTag = isUnlockedCompanion ? " (Stats Unlocked)" : "";
     // Party Creation Overhaul Plan 8: `OrnateButtonHandle.setLabel` already
     // auto-shrinks to fit the button's fixed width (same 9px floor
     // `fitLabelToColumnWidth` used) — the old explicit shrink-to-fit calls
@@ -2313,6 +2422,12 @@ export class CharacterCreationScene extends Phaser.Scene {
       // unlike the button-owned labels above.
       w.pointBuyValueLabels[ability].setText(text);
       this.fitLabelToColumnWidth(w.pointBuyValueLabels[ability], 13, 160);
+      // D-213: show the Background bonus right on the row instead of only
+      // in the separate "Ability Bonus: X" line — that line stays as the
+      // actual picker (a real, player-made choice), this is just a readout.
+      // Hidden while unset (nothing meaningful to show yet).
+      const bonus = isUnset ? 0 : this.backgroundBonusFor(slot, ability);
+      w.abilityBonusBadges[ability].setText(bonus > 0 ? `+${bonus}` : "");
     });
 
     // Playtest fix (Party Creation Overhaul, Plan 0): now its own row
@@ -2366,7 +2481,10 @@ export class CharacterCreationScene extends Phaser.Scene {
     // this preview genuinely reflects ASI-granted feats (e.g. Defense
     // fighting style) once a plan resolves them, not just level-1 gear.
     const previewHero = simulateHeroForPlanning(build, this.slots[slot].levelUpPlan, build.startingLevel ?? 1);
-    w.statsLabel.setText(`HP ${leveledStats.maxHealth}  AC ${previewHero.armorClass}\nMove ${def.movementTiles}`);
+    // D-213: "Move" -> "Speed" (Kevin's own rename ask; matches the race
+    // description's own "Speed: N tiles/turn" wording elsewhere on this
+    // screen, which already used "Speed").
+    w.statsLabel.setText(`HP ${leveledStats.maxHealth}  AC ${previewHero.armorClass}\nSpeed ${def.movementTiles}`);
     w.levelHandle.setLabel(`Starting Level: ${build.startingLevel ?? 1}`);
 
     // Party Creation Overhaul Plan 6.4 (D-199): "which plan" (this button)
@@ -2433,7 +2551,10 @@ export class CharacterCreationScene extends Phaser.Scene {
     if (plan.subclassId) {
       return `Subclass: ${getSubclassDefinition(plan.subclassId).name} (planned)`;
     }
-    return `Subclass: Lv ${classDef.subclassChoiceLevel} in battle (${options.length} opts)`;
+    // D-213: matches the "Ability Bonus: not chosen" phrasing convention
+    // elsewhere on this screen, while still naming the unlock level so it
+    // doesn't read as a dead-end.
+    return `Subclass: None (unlocks at Lvl ${classDef.subclassChoiceLevel})`;
   }
 
   /**
@@ -2496,105 +2617,338 @@ export class CharacterCreationScene extends Phaser.Scene {
   }
 
   /**
-   * D-193 (Party Creation Overhaul Plan 2): the real per-slot starting-gear
-   * picker — every one of the 10 gear slots (`GEAR_SLOT_IDS`) independently
-   * pickable, Kevin's explicit call expanding past this item's original
-   * weapon/chest/third-slot-only scope. No slot is class-gated. Deliberately
-   * built on `renderPlanPrompt` directly rather than `openChoicePicker`
-   * (below): that wrapper tears down the whole overlay right after any
-   * option's `onPick()` returns, which would break a picker-inside-a-picker
-   * — the same multi-step-wizard pattern `openLevelPlanner`'s screens
-   * already use.
-   *
-   * D-194: a campaign companion never reaches this method (the Gear
-   * button's own `identityLocked` guard stops it before this call) — the
-   * only slot that can reach it in campaign mode is the PC, so
-   * `this.campaignId` alone is enough to mean "point-buy applies here."
-   * Free Play/manual Create Party is completely unaffected (no cost
-   * labels, nothing omitted, identical to D-193's original behavior).
+   * D-213: replaces the old plain-list Gear picker with a real Armory-style
+   * paperdoll+catalog overlay — matching `GearShopScene` ("The Armory")'s
+   * visual language, which Kevin already approved and expected this screen
+   * to match. This is a self-contained in-scene overlay (like
+   * `renderPlanPrompt`'s choice overlays), NOT a second Phaser Scene: unlike
+   * the Armory, there's no paused `BattleScene` to sit on top of and no gold
+   * economy to guard with a delayed confirm — a click here just assigns the
+   * item to the slot directly. See `refreshGearPicker` for the actual draw.
    */
   private openGearPicker(slot: number): void {
-    const s = this.slots[slot];
-    const pointBuy = !!this.campaignId;
-    const title = pointBuy
-      ? `Choose Starting Gear — Gear Points: ${this.gearPointsSpent(s)}/${getDifficultyDefinition(this.difficultyId).startingGearPoints}`
-      : "Choose Starting Gear";
-    this.renderPlanPrompt(title, [
-      ...GEAR_SLOT_IDS.map((slotId) => {
-        const pool = startingGearIdsForSlotType(gearSlotType(slotId));
-        const index = s.gearIndices[slotId] ?? 0;
-        const itemName = index > 0 ? getEquipmentDefinition(pool[index - 1]).name : "None";
-        return {
-          label: `${GEAR_SLOT_LABELS[slotId]}: ${itemName}`,
-          onClick: () => this.openGearItemPicker(slot, slotId, pool),
-        };
-      }),
-      {
-        label: "Done",
-        onClick: () => {
-          this.clearLevelPlanOverlay();
-          this.refreshAll();
-        },
-      },
-    ]);
+    this.gearPickerSlotIndex = slot;
+    this.gearPickerGearSlot = "weapon";
+    this.gearPickerCatalogPage = 0;
+    this.refreshGearPicker();
   }
 
   /**
-   * D-193: one slot's item list, reached from `openGearPicker` — picking
-   * (or "None") applies immediately and returns to the 10-row Gear menu.
+   * D-213: destroy-and-rebuild, same convention as every other overlay in
+   * this file. Layout: header + Done, a 5x2 paperdoll of the 10
+   * `GEAR_SLOT_IDS` (row 1: weapon/shield/head/chest/legs, row 2: back/
+   * ring1/ring2/amulet/footwear — no potions, those aren't a pre-battle
+   * concept), then a catalog panel filtered to whichever slot is selected.
    *
-   * D-194: in campaign mode (point-buy — see `openGearPicker`'s own
-   * comment), every item's label gets its point cost appended, and any
-   * item whose cost would net-overspend the PC's budget (accounting for
-   * the points this very slot's own current pick would free up) is
-   * omitted from the list entirely — a swap that overspends never even
-   * appears as an option. "None" is always free and always shown.
+   * D-194: a campaign companion never reaches this (the Gear button's own
+   * `gearLocked` guard stops it before `openGearPicker` is even called) —
+   * the only slot that can reach it in campaign mode is the PC, so
+   * `this.campaignId` alone still means "point-buy applies here," same as
+   * the picker this replaces.
+   *
+   * Deliberately does NOT touch `s.poolGearIds` — matches the exact
+   * pre-existing behavior of the picker this replaces (a catalog pick only
+   * ever writes `s.gearIndices`; the separate "Pool" button/picker owns
+   * `poolGearIds`). A slot currently filled by a pool draw can look odd
+   * here (the paperdoll/catalog "current occupant" reads off `gearIndices`
+   * alone, same as before), which is a pre-existing quirk, not a
+   * regression introduced by this rebuild.
    */
-  private openGearItemPicker(slot: number, slotId: GearSlotId, pool: string[]): void {
+  private refreshGearPicker(): void {
+    clearChoiceOverlay(this.gearPickerOverlay);
+    this.closeDropdown();
+    this.blurNameField();
+    const overlay = this.gearPickerOverlay;
+    const slot = this.gearPickerSlotIndex;
     const s = this.slots[slot];
+    if (!s) return;
+    const build = this.buildFromSlot(slot);
+    const { width: viewportWidth, height: viewportHeight } = getViewport(this);
     const pointBuy = !!this.campaignId;
-    const budget = pointBuy ? getDifficultyDefinition(this.difficultyId).startingGearPoints : Infinity;
-    const currentIndex = s.gearIndices[slotId] ?? 0;
+
+    const dim = this.add
+      .rectangle(viewportWidth / 2, viewportHeight / 2, viewportWidth, viewportHeight, 0x000000, 0.85)
+      .setDepth(60)
+      .setInteractive();
+    overlay.push(dim);
+
+    const closeAndApply = (): void => {
+      clearChoiceOverlay(this.gearPickerOverlay);
+      this.refreshAll();
+    };
+
+    const title = this.add
+      .text(viewportWidth / 2, 46, `${build.name || "Hero"}'s Gear`, {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "26px",
+        color: "#f0dfa8",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(61);
+    overlay.push(title);
+
+    const doneHandle = createOrnateButton(this, viewportWidth - 110, 46, 160, 44, "Done", closeAndApply, {
+      variant: "secondary",
+      depth: 61,
+    });
+    overlay.push(doneHandle.container);
+
+    if (pointBuy) {
+      const pointsText = this.add
+        .text(
+          viewportWidth / 2,
+          80,
+          `Gear Points: ${this.gearPointsSpent(s)}/${getDifficultyDefinition(this.difficultyId).startingGearPoints}`,
+          { fontFamily: FONT_BODY, fontSize: "15px", color: "#b8a074" },
+        )
+        .setOrigin(0.5)
+        .setDepth(61);
+      overlay.push(pointsText);
+    }
+
+    // ----- Paperdoll: 5 cols x 2 rows, the 10 GEAR_SLOT_IDS in their own
+    // established order (no potions — not a pre-battle concept here).
+    const panelCenterX = viewportWidth / 2;
+    const paperdollTop = pointBuy ? 106 : 92;
+    const cellHeight = 108;
+    const cellGap = 8;
+    const gridPad = 16;
+    const cols = 5;
+    const panelWidth = Math.min(760, viewportWidth - 140);
+    const cellWidth = (panelWidth - gridPad * 2 - cellGap * (cols - 1)) / cols;
+    const paperdollPanelHeight = gridPad * 2 + cellHeight * 2 + cellGap;
+    overlay.push(drawParchmentPanel(this, panelCenterX, paperdollTop + paperdollPanelHeight / 2, panelWidth, paperdollPanelHeight, 61));
+
+    const paperdollRows: GearSlotId[][] = [GEAR_SLOT_IDS.slice(0, 5), GEAR_SLOT_IDS.slice(5, 10)];
+    paperdollRows.forEach((row, rowIdx) => {
+      row.forEach((slotId, colIdx) => {
+        const sx = panelCenterX - panelWidth / 2 + gridPad + colIdx * (cellWidth + cellGap) + cellWidth / 2;
+        const sy = paperdollTop + gridPad + rowIdx * (cellHeight + cellGap) + cellHeight / 2;
+        const cellIndex = s.gearIndices[slotId] ?? 0;
+        const cellPool = startingGearIdsForSlotType(gearSlotType(slotId));
+        const occupantId = cellIndex > 0 ? cellPool[cellIndex - 1] : undefined;
+        const isActive = slotId === this.gearPickerGearSlot;
+
+        const cellG = this.add.graphics().setDepth(62);
+        cellG.fillStyle(0x1a1108, 1);
+        cellG.fillRoundedRect(sx - cellWidth / 2, sy - cellHeight / 2, cellWidth, cellHeight, 4);
+        cellG.lineStyle(isActive ? 2 : 1, isActive ? 0xe8c25a : occupantId ? 0x9a7a3e : 0x5a4222, 1);
+        cellG.strokeRoundedRect(sx - cellWidth / 2, sy - cellHeight / 2, cellWidth, cellHeight, 4);
+        overlay.push(cellG);
+
+        const hit = this.add
+          .rectangle(sx, sy, cellWidth, cellHeight, 0xffffff, 0)
+          .setInteractive({ useHandCursor: true })
+          .setDepth(63);
+        hit.on("pointerdown", () => {
+          this.gearPickerGearSlot = slotId;
+          this.gearPickerCatalogPage = 0;
+          this.refreshGearPicker();
+        });
+        overlay.push(hit);
+
+        overlay.push(
+          this.add
+            .text(sx, sy - cellHeight / 2 + 10, GEAR_SLOT_LABELS[slotId], {
+              fontFamily: FONT_BODY,
+              fontSize: "11px",
+              color: isActive ? "#fff3d0" : "#a89058",
+              align: "center",
+              wordWrap: { width: cellWidth - 8 },
+            })
+            .setOrigin(0.5, 0)
+            .setDepth(64),
+        );
+        overlay.push(
+          this.add
+            .text(sx, sy + 6, occupantId ? getEquipmentDefinition(occupantId).name : "— empty —", {
+              fontFamily: FONT_BODY,
+              fontSize: "11px",
+              color: occupantId ? "#f0e6c8" : "#5a4a34",
+              align: "center",
+              wordWrap: { width: cellWidth - 8 },
+            })
+            .setOrigin(0.5, 0)
+            .setDepth(64),
+        );
+      });
+    });
+
+    // ----- Catalog: filtered to the active paperdoll slot.
+    const gearSlot = this.gearPickerGearSlot;
+    const pool = startingGearIdsForSlotType(gearSlotType(gearSlot));
+    const currentIndex = s.gearIndices[gearSlot] ?? 0;
     const currentItemId = currentIndex > 0 ? pool[currentIndex - 1] : undefined;
+    const budget = pointBuy ? getDifficultyDefinition(this.difficultyId).startingGearPoints : Infinity;
     const currentCost = currentItemId ? startingGearPointCost(getEquipmentDefinition(currentItemId).rarity) : 0;
     // Points available for a NEW pick in this slot: the budget minus
     // everything spent elsewhere (i.e. minus everything spent, plus back
-    // whatever this slot itself currently costs).
+    // whatever this slot itself currently costs) — unchanged math from the
+    // picker this replaces.
     const availableForThisSlot = budget - this.gearPointsSpent(s) + currentCost;
-    this.renderPlanPrompt(`Choose ${GEAR_SLOT_LABELS[slotId]}`, [
-      {
-        label: "None",
-        highlighted: (s.gearIndices[slotId] ?? 0) === 0,
-        onClick: () => {
-          delete s.gearIndices[slotId];
-          this.openGearPicker(slot);
+
+    const list: (string | null)[] = [
+      null,
+      ...pool.filter((id) => !pointBuy || startingGearPointCost(getEquipmentDefinition(id).rarity) <= availableForThisSlot),
+    ];
+
+    const catalogTop = paperdollTop + paperdollPanelHeight + 20;
+    const rowHeight = 58;
+    const rowGap = 8;
+    const pageSize = 6;
+    const pageCount = Math.max(1, Math.ceil(list.length / pageSize));
+    const page = Math.min(this.gearPickerCatalogPage, pageCount - 1);
+    const pageItems = list.slice(page * pageSize, page * pageSize + pageSize);
+    const listHeight = pageSize * (rowHeight + rowGap) - rowGap + 24;
+
+    overlay.push(drawParchmentPanel(this, panelCenterX, catalogTop + listHeight / 2, panelWidth, listHeight, 61));
+
+    const previewHero = simulateHeroForPlanning(build, s.levelUpPlan, build.startingLevel ?? 1);
+
+    const applyPick = (id: string | null): void => {
+      if (id === null) {
+        delete s.gearIndices[gearSlot];
+      } else {
+        const i = pool.indexOf(id);
+        s.gearIndices[gearSlot] = i + 1;
+        // D-204: the SRD grip rule — a Two-Handed weapon needs both hands,
+        // so it can't coexist with anything in the other hand slot.
+        // Force-clears the conflicting slot instead of rejecting the pick
+        // (BattleScene's mid-battle equip flow rejects instead — this is
+        // Character Creation's own, more forgiving, pre-battle picker).
+        if (gearSlot === "weapon" && isTwoHandedWeapon(id)) delete s.gearIndices.shield;
+        if (gearSlot === "shield") {
+          const weaponIndex = s.gearIndices.weapon;
+          const weaponId = weaponIndex ? startingGearIdsForSlotType("weapon")[weaponIndex - 1] : undefined;
+          if (weaponId && isTwoHandedWeapon(weaponId)) delete s.gearIndices.weapon;
+        }
+      }
+      this.refreshGearPicker();
+    };
+
+    pageItems.forEach((id, idx) => {
+      const rowY = catalogTop + 12 + idx * (rowHeight + rowGap) + rowHeight / 2;
+      const isCurrent = id === (currentItemId ?? null);
+      const leftX = panelCenterX - panelWidth / 2 + 16;
+      const def = id ? getEquipmentDefinition(id) : undefined;
+      const rarityTag = def && def.rarity !== "common" ? ` · ${RARITY_LABELS[def.rarity]}` : "";
+
+      overlay.push(
+        this.add
+          .text(leftX, rowY - 8, `${def ? def.name : "None"}${rarityTag}`, {
+            fontFamily: FONT_BODY,
+            fontSize: "15px",
+            color: "#2a1a10",
+            fontStyle: isCurrent ? "bold" : "normal",
+          })
+          .setDepth(64),
+      );
+
+      // A one-line delta so every candidate's effect is visible without a
+      // separate compare step (no economic risk to guard against here — a
+      // click IS the equip action, unlike the Armory's delayed Purchase).
+      let subline = "";
+      if (id && !isCurrent) {
+        subline = formatGearDelta(previewGearSlotChange(previewHero, gearSlot, id));
+      } else if (id === null && currentItemId) {
+        subline = `Removes ${getEquipmentDefinition(currentItemId).name}`;
+      } else if (def) {
+        subline = def.description;
+      }
+      overlay.push(
+        this.add
+          .text(leftX, rowY + 12, subline, {
+            fontFamily: FONT_BODY,
+            fontSize: "11px",
+            color: "#6a4a2a",
+            wordWrap: { width: panelWidth - 260 },
+          })
+          .setDepth(64),
+      );
+
+      if (isCurrent) {
+        overlay.push(
+          this.add
+            .text(panelCenterX + panelWidth / 2 - 130, rowY, "Equipped", {
+              fontFamily: FONT_BODY,
+              fontSize: "11px",
+              color: "#fff3d0",
+              backgroundColor: "#2a1a10",
+              padding: { x: 6, y: 2 },
+            })
+            .setOrigin(0, 0.5)
+            .setDepth(64),
+        );
+      } else {
+        if (pointBuy && id) {
+          const cost = startingGearPointCost(getEquipmentDefinition(id).rarity);
+          overlay.push(
+            this.add
+              .text(panelCenterX + panelWidth / 2 - 220, rowY, `${cost} pt${cost === 1 ? "" : "s"}`, {
+                fontFamily: FONT_BODY,
+                fontSize: "12px",
+                color: "#6a4a2a",
+              })
+              .setOrigin(0, 0.5)
+              .setDepth(64),
+          );
+        }
+        const actionHandle = createOrnateButton(
+          this,
+          panelCenterX + panelWidth / 2 - 90,
+          rowY,
+          140,
+          34,
+          id === null ? "Unequip" : "Equip",
+          () => applyPick(id),
+          { variant: "tool", fontSize: 12, depth: 64 },
+        );
+        overlay.push(actionHandle.container);
+      }
+    });
+
+    if (pageCount > 1) {
+      const navY = catalogTop + listHeight + 24;
+      const prevHandle = createOrnateButton(
+        this,
+        panelCenterX - 90,
+        navY,
+        110,
+        34,
+        "< Prev",
+        () => {
+          if (page > 0) {
+            this.gearPickerCatalogPage = page - 1;
+            this.refreshGearPicker();
+          }
         },
-      },
-      ...pool
-        .map((id, i) => ({ id, i, cost: startingGearPointCost(getEquipmentDefinition(id).rarity) }))
-        .filter(({ cost }) => !pointBuy || cost <= availableForThisSlot)
-        .map(({ id, i, cost }) => ({
-          label: pointBuy ? `${getEquipmentDefinition(id).name} (${cost} pt${cost === 1 ? "" : "s"})` : getEquipmentDefinition(id).name,
-          highlighted: (s.gearIndices[slotId] ?? 0) === i + 1,
-          onClick: () => {
-            s.gearIndices[slotId] = i + 1;
-            // D-204: the SRD grip rule — a Two-Handed weapon needs both
-            // hands, so it can't coexist with anything in the other hand
-            // slot. Force-clears the conflicting slot instead of rejecting
-            // the pick (BattleScene's mid-battle equip flow rejects instead —
-            // this is Character Creation's own, more forgiving, pre-battle
-            // picker).
-            if (slotId === "weapon" && isTwoHandedWeapon(id)) delete s.gearIndices.shield;
-            if (slotId === "shield") {
-              const weaponIndex = s.gearIndices.weapon;
-              const weaponId = weaponIndex ? startingGearIdsForSlotType("weapon")[weaponIndex - 1] : undefined;
-              if (weaponId && isTwoHandedWeapon(weaponId)) delete s.gearIndices.weapon;
-            }
-            this.openGearPicker(slot);
-          },
-        })),
-      { label: "◀ Back", onClick: () => this.openGearPicker(slot) },
-    ]);
+        { variant: "tool", fontSize: 12, depth: 64, disabled: page === 0 },
+      );
+      overlay.push(prevHandle.container);
+      overlay.push(
+        this.add
+          .text(panelCenterX, navY, `Page ${page + 1}/${pageCount}`, { fontFamily: FONT_BODY, fontSize: "13px", color: "#f0e6c8" })
+          .setOrigin(0.5)
+          .setDepth(64),
+      );
+      const nextHandle = createOrnateButton(
+        this,
+        panelCenterX + 90,
+        navY,
+        110,
+        34,
+        "Next >",
+        () => {
+          if (page < pageCount - 1) {
+            this.gearPickerCatalogPage = page + 1;
+            this.refreshGearPicker();
+          }
+        },
+        { variant: "tool", fontSize: 12, depth: 64, disabled: page === pageCount - 1 },
+      );
+      overlay.push(nextHandle.container);
+    }
   }
 
   /**
@@ -2706,6 +3060,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     if (this.focusedNameSlot === null) return;
     const slot = this.focusedNameSlot;
     this.focusedNameSlot = null;
+    this.nameSelectAllPending = false;
     this.refreshNameLabel(slot);
   }
 

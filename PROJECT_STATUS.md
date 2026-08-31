@@ -1,5 +1,70 @@
 # Project Status
 
+## The Armory's layout rebuilt to match the agreed mockup — DONE this session, not yet played (D-216)
+
+Kevin said the shipped Armory (D-209) didn't match the interactive mockup
+he'd approved and that he hated it. The real cause: the implementation put
+all 4 heroes' full 12-slot paperdolls in a row across the top plus a
+redundant full-width slot-chip row, squeezing the catalog into a
+6-item-per-page strip at the bottom — very different from the mockup's
+narrow hero sidebar + wide dedicated shopping panel. `GearShopScene.ts` was
+rebuilt to match: a compact color-coded hero list on the left, one shared
+row of slot tabs (not duplicated per hero), and a catalog that grew to 9
+items per page. Pure presentation change — no economy/gear logic touched.
+
+Tests: **1643** (unchanged — this file has no game-rule logic). Typecheck
+clean, production build succeeds (**152 modules**, unchanged — 1 existing
+file edited, no new files). No browser available in this environment — see
+`KNOWN_ISSUES.md` KI-166.
+
+## Campaign menu scenes reskinned to the ornate theme — DONE this session, not yet played (D-215)
+
+The last 7 unreskinned scenes (`ModeEntryScene`, `CampaignSelectScene`,
+`FreePlayScene`, `LoadGameScene`, `CoopLobbyScene`,
+`UnlockMissionPartyScene`, `CompanionRosterScene`) now match the D-123
+wood/bronze/gilt/parchment theme every other screen already has. Pure
+visual pass, built via 7 parallel agents (one per independent file).
+
+Tests: **1643** (unchanged). Typecheck clean, production build succeeds
+(**152 modules**, unchanged — 7 existing files edited, no new files). No
+browser available in this environment — see `KNOWN_ISSUES.md` KI-165.
+
+## Character Creation's Gear picker rebuilt to match The Armory — DONE this session, not yet played (D-214)
+
+Closes Kevin's items 4/17 — his "gear screen doesn't look like what you
+showed me" complaint, which turned out to be about Character Creation's
+own never-updated plain-list Gear picker, not the in-battle Armory (which
+already matched the mockup). Rebuilt as a real 5x2 paperdoll + filtered
+catalog overlay in the game's ornate theme, reusing the Armory's own pure
+compare-math system (`GearCompareSystem`).
+
+Tests: **1643** (unchanged). Typecheck clean, production build succeeds
+(**152 modules**, unchanged). No browser available in this environment —
+see `KNOWN_ISSUES.md` KI-164, the item most worth a real look given Kevin's
+reaction.
+
+## 17-item batch: 2 real bugs + a wide UX polish pass — DONE this session, not yet played (D-213)
+
+Kevin's own numbered feedback list, worked through as one batch. Two items
+turned out to be real bugs on reading the actual code rather than the
+design questions they first looked like: a campaign PC's identity was
+silently locking after the first Start Battle (D-195's deliberate design,
+which Kevin now wants removed for his own character — fixed), and campaign
+companions weren't actually defaulting to AI-controlled (a hardcoded data
+value was overriding the existing D-129 default — fixed). A real (if
+likely harmless) listener leak was found and fixed in `BattleScene`, but
+the reported game-freeze bug itself could NOT be root-caused via static
+review — next session should ask Kevin to reproduce with the browser
+DevTools console open. The rest is a dozen smaller UI/UX fixes (inline
+ability-bonus badges, HUD color contrast, board-frame/HUD-text overlap,
+column header naming, name-field select-all, Start Battle centering,
+cadence-pill tooltip, and more) — see `DECISIONS.md` D-213 for the full
+list.
+
+Tests: **1643** (unchanged apart from a trivial new helper). Typecheck
+clean, production build succeeds (**152 modules**, unchanged). No browser
+available in this environment — see `KNOWN_ISSUES.md` KI-163.
+
 ## Hero-name fields rebuilt canvas-native — DONE this session, not yet played (D-212)
 
 Kevin's follow-up right after D-211's fix landed: even correctly

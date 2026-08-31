@@ -6,7 +6,16 @@ import { deleteSaveSlot, loadSaveFile, saveSaveFile, type SaveSlot } from "../sy
 import { firebaseReady } from "../cloud/firebaseApp";
 import { initAuth, type AuthState } from "../cloud/AuthClient";
 import { deleteSlotFromCloud, syncNow } from "../cloud/CloudSaveSync";
-import { getViewport, onViewportResize } from "./uiTheme";
+import {
+  getViewport,
+  onViewportResize,
+  drawScreenBackdrop,
+  drawParchmentPanel,
+  createOrnateButton,
+  FONT_DISPLAY,
+  FONT_BODY,
+  type OrnateButtonHandle,
+} from "./uiTheme";
 
 /**
  * LoadGameScene — Phase 9 (D-083): lists every locally-saved party build,
@@ -54,8 +63,7 @@ interface LoadGameData {
 
 export class LoadGameScene extends Phaser.Scene {
   private authState: AuthState = { uid: null, isAnonymous: true, displayName: null };
-  private syncButton?: Phaser.GameObjects.Rectangle;
-  private syncLabel?: Phaser.GameObjects.Text;
+  private syncButtonHandle?: OrnateButtonHandle;
   private syncStatusLabel?: Phaser.GameObjects.Text;
   private layoutRoot?: Phaser.GameObjects.Container;
   private filterMode?: "campaign" | "freeplay";
@@ -69,8 +77,6 @@ export class LoadGameScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor("#0e0e14");
-
     // D-154: subscribe once per scene lifetime — `rebuildLayout()` (below)
     // recreates the sync button/labels on every resize, so its refresh
     // reads the live `this.authState` field instead of resubscribing.
@@ -102,17 +108,22 @@ export class LoadGameScene extends Phaser.Scene {
     const before = new Set<Phaser.GameObjects.GameObject>(this.children.list);
     const { width } = getViewport(this);
 
+    drawScreenBackdrop(this);
+
     const title = this.filterMode === "campaign" ? "Load Campaign" : "Load Game";
     this.add
-      .text(width / 2, 40, title, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "36px",
-        color: "#e8e8f0",
+      .text(width / 2, 42, title, {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "34px",
+        color: "#f0dfa8",
         fontStyle: "bold",
+        letterSpacing: 2 as unknown as number,
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setShadow(0, 2, "#000000", 6, true, true)
+      .setDepth(1);
 
-    this.buildButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
+    createOrnateButton(this, 120, 42, 160, 44, "Back (Esc)", () => this.leave(), { variant: "tool", depth: 5 });
 
     const subtitle =
       this.filterMode === "campaign"
@@ -122,11 +133,13 @@ export class LoadGameScene extends Phaser.Scene {
           : "Load a previously saved party, or delete one you no longer need.";
     this.add
       .text(width / 2, 90, subtitle, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "14px",
-        color: "#8a8aa0",
+        fontFamily: FONT_BODY,
+        fontSize: "15px",
+        color: "#a89058",
+        fontStyle: "italic",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(1);
 
     this.buildSyncControl(width);
     this.buildSlotCards(width);
@@ -158,43 +171,29 @@ export class LoadGameScene extends Phaser.Scene {
     const x = width / 2;
     const y = 130;
 
-    this.syncButton = this.add
-      .rectangle(x, y, 240, 36, 0x2a2a3a)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    this.syncLabel = this.add
-      .text(x, y, "", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#c8c8d8" })
-      .setOrigin(0.5);
-    this.syncStatusLabel = this.add
-      .text(x, y + 26, "", { fontFamily: "monospace", fontSize: "12px", color: "#8a8aa0" })
-      .setOrigin(0.5);
-
-    this.syncButton.on("pointerover", () => {
-      if (this.syncButton?.input?.enabled) this.syncButton.setFillStyle(0x3a3a4a);
+    this.syncButtonHandle = createOrnateButton(this, x, y, 240, 36, "", () => this.onSyncWithCloud(), {
+      variant: "tool",
+      depth: 5,
     });
-    this.syncButton.on("pointerout", () => this.syncButton?.setFillStyle(0x2a2a3a));
-    this.syncButton.on("pointerdown", () => this.onSyncWithCloud());
+    this.syncStatusLabel = this.add
+      .text(x, y + 26, "", { fontFamily: FONT_BODY, fontSize: "12px", color: "#a89058" })
+      .setOrigin(0.5)
+      .setDepth(5);
 
     this.refreshSyncControl();
   }
 
   private refreshSyncControl(): void {
-    if (!this.syncButton || !this.syncLabel) return;
+    if (!this.syncButtonHandle) return;
     const canSync = !this.authState.isAnonymous;
-    this.syncLabel.setText(canSync ? "Sync with Cloud" : "Sign in with Google (main menu) to sync");
-    if (canSync) {
-      this.syncButton.setInteractive({ useHandCursor: true });
-      this.syncButton.setAlpha(1);
-    } else {
-      this.syncButton.disableInteractive();
-      this.syncButton.setAlpha(0.5);
-    }
+    this.syncButtonHandle.setLabel(canSync ? "Sync with Cloud" : "Sign in with Google (main menu) to sync");
+    this.syncButtonHandle.setDisabled(!canSync);
   }
 
   private onSyncWithCloud(): void {
     if (this.authState.isAnonymous || !this.authState.uid) return;
-    this.syncLabel?.setText("Syncing…");
-    this.syncButton?.disableInteractive();
+    this.syncButtonHandle?.setLabel("Syncing…");
+    this.syncButtonHandle?.setDisabled(true);
     syncNow(this.authState.uid, loadSaveFile(window.localStorage, SAVE_STORAGE_KEY))
       .then((merged) => {
         saveSaveFile(window.localStorage, SAVE_STORAGE_KEY, merged);
@@ -205,31 +204,6 @@ export class LoadGameScene extends Phaser.Scene {
         this.syncStatusLabel?.setText("Sync failed — see console for details.");
         this.refreshSyncControl();
       });
-  }
-
-  /** Small button+label pair, matching CampaignSelectScene/BestiaryScene's simple rectangle-button style. */
-  private buildButton(
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    text: string,
-    color: number,
-    onClick: () => void,
-  ): { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text } {
-    const rect = this.add
-      .rectangle(x, y, w, h, color)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    const label = this.add
-      .text(x, y, text, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "14px",
-        color: "#e8e8f0",
-      })
-      .setOrigin(0.5);
-    rect.on("pointerdown", onClick);
-    return { rect, label };
   }
 
   /** One clickable card per save slot, stacked vertically below the intro text, or an empty-state line. */
@@ -250,11 +224,13 @@ export class LoadGameScene extends Phaser.Scene {
             : 'No saved parties yet — build one in Create Party and click "Save Party."';
       this.add
         .text(width / 2, 260, emptyMessage, {
-          fontFamily: "system-ui, Arial, sans-serif",
+          fontFamily: FONT_BODY,
           fontSize: "16px",
-          color: "#6a6a80",
+          color: "#a89058",
+          fontStyle: "italic",
         })
-        .setOrigin(0.5);
+        .setOrigin(0.5)
+        .setDepth(1);
       return;
     }
 
@@ -269,36 +245,40 @@ export class LoadGameScene extends Phaser.Scene {
     slots.forEach((slot, i) => {
       const y = startY + i * (cardHeight + gap);
 
-      this.add.rectangle(width / 2, y, cardWidth, cardHeight, 0x1a1a26).setStrokeStyle(1, 0x2a2a3a);
+      drawParchmentPanel(this, width / 2, y, cardWidth, cardHeight, 2);
 
       this.add
         .text(90, y - cardHeight / 2 + 16, slot.name, {
-          fontFamily: "system-ui, Arial, sans-serif",
+          fontFamily: FONT_BODY,
           fontSize: "20px",
-          color: "#e8e8f0",
+          color: "#2a1a10",
           fontStyle: "bold",
         })
-        .setOrigin(0, 0.5);
+        .setOrigin(0, 0.5)
+        .setDepth(3);
 
       this.add
         .text(90, y, this.partySummary(slot), {
-          fontFamily: "system-ui, Arial, sans-serif",
+          fontFamily: FONT_BODY,
           fontSize: "13px",
-          color: "#a0a0b0",
+          color: "#6a4a2a",
           wordWrap: { width: cardWidth - 300 },
         })
-        .setOrigin(0, 0.5);
+        .setOrigin(0, 0.5)
+        .setDepth(3);
 
       this.add
         .text(90, y + cardHeight / 2 - 18, `Party size ${slot.partySize}  ·  ${getDifficultyDefinition(slot.difficultyId).name}`, {
-          fontFamily: "monospace",
+          fontFamily: FONT_BODY,
           fontSize: "13px",
-          color: "#8aa0c0",
+          color: "#6a4a2a",
+          fontStyle: "italic",
         })
-        .setOrigin(0, 0.5);
+        .setOrigin(0, 0.5)
+        .setDepth(3);
 
-      this.buildButton(width - 220, y - 20, 160, 40, "Load", 0x2a3a2e, () => this.loadSlot(slot));
-      this.buildButton(width - 220, y + 26, 160, 40, "Delete", 0x3a2a2a, () => this.deleteSlot(slot.id));
+      createOrnateButton(this, width - 220, y - 20, 160, 40, "Load", () => this.loadSlot(slot), { variant: "tool", depth: 3 });
+      createOrnateButton(this, width - 220, y + 26, 160, 40, "Delete", () => this.deleteSlot(slot.id), { variant: "tool", depth: 3 });
     });
   }
 

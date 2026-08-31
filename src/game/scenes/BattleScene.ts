@@ -1852,22 +1852,29 @@ export class BattleScene extends Phaser.Scene {
     // its own row well clear of the centered banner above, so long histories
     // can never run into it (playtest fix: this used to sit right under the
     // banner and could visually collide with it).
-    this.logText = this.add
-      .text(this.grid.originX, 56, "", {
-        fontFamily: "monospace",
-        fontSize: "11px",
-        color: "#6a6a80",
-      })
-      .setDepth(30);
-
-    // D-158 (KI-034 redesign): the live enemy count, previously baked into
-    // the old packed status line — moved up here next to Integrity/Gold
-    // rather than given a whole new HUD row.
+    // D-213: the left-hand column was Integrity(12) -> log(56) -> enemy
+    // count(74) — the last two landed squarely inside D-210's board frame
+    // (`drawBoardFrame`'s stroke band sits at ~74-82, right below this
+    // column) and got visually cut by it. Reordered/tightened so all three
+    // clear the frame: Integrity -> enemy count -> log, each with its own
+    // clean row above y=74.
     this.enemyCountText = this.add
-      .text(this.grid.originX, 74, "", {
+      .text(this.grid.originX, 30, "", {
         fontFamily: "monospace",
         fontSize: "13px",
         color: "#9a9ab0",
+      })
+      .setDepth(30);
+
+    // A short "recent phases" debug log — kept to the last 3 entries and given
+    // its own row well clear of the centered banner above, so long histories
+    // can never run into it (playtest fix: this used to sit right under the
+    // banner and could visually collide with it).
+    this.logText = this.add
+      .text(this.grid.originX, 48, "", {
+        fontFamily: "monospace",
+        fontSize: "11px",
+        color: "#6a6a80",
       })
       .setDepth(30);
 
@@ -1875,8 +1882,10 @@ export class BattleScene extends Phaser.Scene {
     // wave's composition, so the player can plan a build before it starts.
     // Sits directly under the banner, comfortably clear of the grid below (see
     // the GRID_TOP_MARGIN/GAME_HEIGHT comments in config.ts for the math).
+    // D-213: pulled up from 68 to 60 — 68 landed inside the D-210 board
+    // frame's stroke band, same overlap this whole block fixes.
     this.previewText = this.add
-      .text(GAME_WIDTH / 2, 68, "", {
+      .text(GAME_WIDTH / 2, 60, "", {
         fontFamily: "monospace",
         fontSize: "12px",
         color: "#8aa0c0",
@@ -1986,7 +1995,13 @@ export class BattleScene extends Phaser.Scene {
         .text(0, rosterY + 20, "", {
           fontFamily: "monospace",
           fontSize: "10px",
-          color: "#9a9ab0",
+          // D-213: was "#9a9ab0", a cool gray-blue left over from the
+          // pre-D-210 dark UI — never updated when the roster panel behind
+          // it became the warm wood/bronze `COLORS.woodPanel` fill, and it
+          // read poorly against it. Warm parchment tone instead, dimmer
+          // than `heroSlotNameText`'s "#f0e6c8" so the name still reads as
+          // primary.
+          color: "#d8c8a0",
         })
         .setOrigin(0.5)
         .setDepth(31)
@@ -4760,9 +4775,19 @@ export class BattleScene extends Phaser.Scene {
     // Re-read bindings after a Pause Menu -> Settings -> rebind -> back trip
     // (this scene stays alive, paused, throughout) so a mid-battle rebind
     // takes effect immediately rather than only on the next battle.
-    this.events.on(Phaser.Scenes.Events.RESUME, () => {
+    // D-213: named (not an inline arrow passed straight to `.on`) so the
+    // SHUTDOWN cleanup below can `.off` it by reference — `this.events` is
+    // the scene's OWN emitter, which Phaser's `Systems.shutdown()` does NOT
+    // clear (only `Systems.destroy()` does, which never runs for a scene
+    // reused via `scene.start()`), so without this it stacked one extra
+    // listener per battle started. Harmless in practice (each copy just
+    // redundantly re-reads the same localStorage value), but a real,
+    // confirmed defect against this project's own "no duplicate listeners
+    // on restart" invariant.
+    const onResume = (): void => {
       this.keyBindings = loadKeyBindings(window.localStorage, KEYBINDINGS_STORAGE_KEY);
-    });
+    };
+    this.events.on(Phaser.Scenes.Events.RESUME, onResume);
 
     // KI-030 ("full keyboard-only play"): arrow keys move either the board
     // tile cursor or, while the shop/Gear grid is open and focused (TAB),
@@ -4837,6 +4862,10 @@ export class BattleScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.removeAllListeners();
       this.input.keyboard?.removeAllListeners();
+      // D-213: `this.events` is this scene's own emitter — the two calls
+      // above don't touch it, so its own listeners (like `onResume` above)
+      // need their own explicit removal.
+      this.events.off(Phaser.Scenes.Events.RESUME, onResume);
     });
   }
 
@@ -8474,7 +8503,7 @@ export class BattleScene extends Phaser.Scene {
       }
       box.setFillStyle(COLORS.woodPanel, 0.9);
       // Phase 13.3 (D-089): only a D&D-built hero has a meaningful class level to show.
-      const level = h.classId !== undefined ? ` Lv${h.level}` : "";
+      const level = h.classId !== undefined ? ` Lvl ${h.level}` : "";
       this.heroSlotNameText[i].setText(`${h.name}${level}`).setColor("#f0e6c8");
       const fraction = h.effectiveMaxHealth > 0 ? Phaser.Math.Clamp(h.health / h.effectiveMaxHealth, 0, 1) : 0;
       const barMaxWidth = this.heroSlotHpBarBg[i].width;

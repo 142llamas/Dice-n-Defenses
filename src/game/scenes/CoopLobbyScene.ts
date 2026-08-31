@@ -1,6 +1,16 @@
 import Phaser from "phaser";
 import { firebaseReady } from "../cloud/firebaseApp";
-import { getViewport, onViewportResize, fixDomContainerAlignment } from "./uiTheme";
+import {
+  getViewport,
+  onViewportResize,
+  fixDomContainerAlignment,
+  createOrnateButton,
+  drawScreenBackdrop,
+  spawnAmbientMotes,
+  FONT_DISPLAY,
+  FONT_BODY,
+  type OrnateButtonHandle,
+} from "./uiTheme";
 import { initAuth, type AuthState } from "../cloud/AuthClient";
 import { createSession, joinSession, subscribeToSession, deleteSession, startBattle } from "../cloud/CoopSessionSync";
 import {
@@ -60,14 +70,13 @@ export class CoopLobbyScene extends Phaser.Scene {
   private unsubscribeSession: (() => void) | null = null;
 
   private statusText!: Phaser.GameObjects.Text;
-  private createButton!: Phaser.GameObjects.Rectangle;
-  private joinButton!: Phaser.GameObjects.Rectangle;
+  private createButton!: OrnateButtonHandle;
+  private joinButton!: OrnateButtonHandle;
   private joinCodeInput: Phaser.GameObjects.DOMElement | null = null;
-  private joinSubmitButton: Phaser.GameObjects.Rectangle | null = null;
+  private joinSubmitButton: OrnateButtonHandle | null = null;
   private sessionCodeText: Phaser.GameObjects.Text | null = null;
   private participantsText: Phaser.GameObjects.Text | null = null;
-  private startBattleButton: Phaser.GameObjects.Rectangle | null = null;
-  private startBattleLabel: Phaser.GameObjects.Text | null = null;
+  private startBattleButton: OrnateButtonHandle | null = null;
   private choiceObjects: Phaser.GameObjects.GameObject[] = [];
   private joinObjects: Phaser.GameObjects.GameObject[] = [];
   private sessionObjects: Phaser.GameObjects.GameObject[] = [];
@@ -106,26 +115,27 @@ export class CoopLobbyScene extends Phaser.Scene {
     this.sessionCodeText = null;
     this.participantsText = null;
     this.startBattleButton = null;
-    this.startBattleLabel = null;
     this.choiceObjects = [];
     this.joinObjects = [];
     this.sessionObjects = [];
     this.centeredObjects = [];
 
-    this.cameras.main.setBackgroundColor("#0e0e14");
+    drawScreenBackdrop(this);
+    spawnAmbientMotes(this, 12);
     const cx = getViewport(this).width / 2;
 
     const title = this.add
       .text(cx, 40, "Cooperative Play", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_DISPLAY,
         fontSize: "36px",
-        color: "#e8e8f0",
+        color: "#f0dfa8",
         fontStyle: "bold",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(1);
     this.centeredObjects.push({ obj: title, dx: 0, y: 40 });
 
-    this.buildSmallButton(110, 40, 160, 44, "Back (Esc)", 0x2a2a3a, () => this.leave());
+    createOrnateButton(this, 110, 40, 160, 44, "Back (Esc)", () => this.leave(), { variant: "tool", depth: 10 });
     this.input.keyboard?.on("keydown-ESC", () => this.leave());
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardown());
     onViewportResize(this, () => this.repositionLayout());
@@ -133,22 +143,24 @@ export class CoopLobbyScene extends Phaser.Scene {
     if (!firebaseReady) {
       const notice = this.add
         .text(cx, 200, "Cooperative play needs a configured Firebase project.", {
-          fontFamily: "system-ui, Arial, sans-serif",
+          fontFamily: FONT_BODY,
           fontSize: "16px",
           color: "#e0a860",
         })
-        .setOrigin(0.5);
+        .setOrigin(0.5)
+        .setDepth(1);
       this.centeredObjects.push({ obj: notice, dx: 0, y: 200 });
       return;
     }
 
     this.statusText = this.add
       .text(cx, 130, "Connecting…", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "16px",
-        color: "#8a8aa0",
+        color: "#b8a074",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(1);
     this.centeredObjects.push({ obj: this.statusText, dx: 0, y: 130 });
 
     initAuth((state) => {
@@ -194,59 +206,38 @@ export class CoopLobbyScene extends Phaser.Scene {
     this.scene.start("MainMenuScene");
   }
 
-  /** Small button+label pair, matching this project's simple rectangle-button style. */
-  private buildSmallButton(
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    text: string,
-    color: number,
-    onClick: () => void,
-  ): { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text } {
-    const rect = this.add
-      .rectangle(x, y, w, h, color)
-      .setStrokeStyle(1, 0x4a4a5a)
-      .setInteractive({ useHandCursor: true });
-    const label = this.add
-      .text(x, y, text, { fontFamily: "system-ui, Arial, sans-serif", fontSize: "14px", color: "#e8e8f0" })
-      .setOrigin(0.5);
-    rect.on("pointerover", () => rect.setFillStyle(color === 0x4caf72 ? 0x66c98c : 0x3a3a4a));
-    rect.on("pointerout", () => rect.setFillStyle(color));
-    rect.on("pointerdown", onClick);
-    return { rect, label };
-  }
-
   private buildChoiceSection(cx: number): void {
     const y = 220;
-    const { rect: createRect, label: createLabel } = this.buildSmallButton(
+    const createHandle = createOrnateButton(
+      this,
       cx - 170,
       y,
       300,
       54,
       "Create Session",
-      0x4caf72,
       () => this.onCreateSession(),
+      { variant: "secondary", depth: 10 },
     );
-    this.createButton = createRect;
-    this.centeredObjects.push({ obj: createRect, dx: -170, y }, { obj: createLabel, dx: -170, y });
+    this.createButton = createHandle;
+    this.centeredObjects.push({ obj: createHandle.container, dx: -170, y });
 
-    const { rect: joinRect, label: joinLabel } = this.buildSmallButton(
+    const joinHandle = createOrnateButton(
+      this,
       cx + 170,
       y,
       300,
       54,
       "Join Session",
-      0x2a2a3a,
       () => {
         this.mode = "join";
         this.refresh();
       },
+      { variant: "secondary", depth: 10 },
     );
-    this.joinButton = joinRect;
-    this.centeredObjects.push({ obj: joinRect, dx: 170, y }, { obj: joinLabel, dx: 170, y });
+    this.joinButton = joinHandle;
+    this.centeredObjects.push({ obj: joinHandle.container, dx: 170, y });
 
-    this.choiceObjects = [createRect, createLabel, joinRect, joinLabel];
+    this.choiceObjects = [createHandle.container, joinHandle.container];
   }
 
   private buildJoinSection(cx: number): void {
@@ -255,9 +246,9 @@ export class CoopLobbyScene extends Phaser.Scene {
       .dom(cx - 100, y)
       .createFromHTML(
         `<input type="text" maxlength="${SESSION_CODE_LENGTH}" placeholder="CODE" style="
-          width: 160px; height: 44px; font-size: 22px; font-family: monospace;
+          width: 160px; height: 44px; font-size: 22px; font-family: 'Courier New', monospace;
           text-align: center; letter-spacing: 4px; text-transform: uppercase;
-          background: #1a1a24; color: #e8e8f0; border: 1px solid #4a4a5a;
+          background: #e8d8ae; color: #2a1a10; border: 2px solid #9a7a3e;
           border-radius: 4px; outline: none; box-sizing: border-box;
         " />`,
       )
@@ -273,13 +264,14 @@ export class CoopLobbyScene extends Phaser.Scene {
     this.joinCodeInput = inputDom;
     this.centeredObjects.push({ obj: inputDom, dx: -100, y });
 
-    const { rect, label } = this.buildSmallButton(cx + 110, y, 160, 44, "Join", 0x4caf72, () =>
-      this.onSubmitJoinCode(),
-    );
-    this.joinSubmitButton = rect;
-    this.centeredObjects.push({ obj: rect, dx: 110, y }, { obj: label, dx: 110, y });
+    const submitHandle = createOrnateButton(this, cx + 110, y, 160, 44, "Join", () => this.onSubmitJoinCode(), {
+      variant: "tool",
+      depth: 10,
+    });
+    this.joinSubmitButton = submitHandle;
+    this.centeredObjects.push({ obj: submitHandle.container, dx: 110, y });
 
-    this.joinObjects = [inputDom, rect, label];
+    this.joinObjects = [inputDom, submitHandle.container];
   }
 
   private buildSessionSection(cx: number): void {
@@ -287,42 +279,39 @@ export class CoopLobbyScene extends Phaser.Scene {
       .text(cx, 260, "", {
         fontFamily: "monospace",
         fontSize: "48px",
-        color: "#e8e8f0",
+        color: "#e8c25a",
         fontStyle: "bold",
         letterSpacing: 6,
       } as Phaser.Types.GameObjects.Text.TextStyle)
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(1);
     this.centeredObjects.push({ obj: this.sessionCodeText, dx: 0, y: 260 });
 
     this.participantsText = this.add
       .text(cx, 340, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
+        fontFamily: FONT_BODY,
         fontSize: "18px",
-        color: "#c8c8d8",
+        color: "#e8d8ae",
         align: "center",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(1);
     this.centeredObjects.push({ obj: this.participantsText, dx: 0, y: 340 });
 
-    const { rect: startRect, label: startLabel } = this.buildSmallButton(
-      cx,
-      400,
-      260,
-      48,
-      "Start Battle",
-      0x4caf72,
-      () => this.onStartBattle(),
-    );
-    this.startBattleButton = startRect;
-    this.startBattleLabel = startLabel;
-    this.centeredObjects.push({ obj: startRect, dx: 0, y: 400 }, { obj: startLabel, dx: 0, y: 400 });
+    const startHandle = createOrnateButton(this, cx, 400, 260, 48, "Start Battle", () => this.onStartBattle(), {
+      variant: "secondary",
+      depth: 10,
+    });
+    this.startBattleButton = startHandle;
+    this.centeredObjects.push({ obj: startHandle.container, dx: 0, y: 400 });
 
-    const { rect, label } = this.buildSmallButton(cx, 460, 220, 44, "Leave", 0x8a3a3a, () =>
-      this.onLeaveSession(),
-    );
-    this.centeredObjects.push({ obj: rect, dx: 0, y: 460 }, { obj: label, dx: 0, y: 460 });
+    const leaveHandle = createOrnateButton(this, cx, 460, 220, 44, "Leave", () => this.onLeaveSession(), {
+      variant: "tool",
+      depth: 10,
+    });
+    this.centeredObjects.push({ obj: leaveHandle.container, dx: 0, y: 460 });
 
-    this.sessionObjects = [this.sessionCodeText, this.participantsText, startRect, startLabel, rect, label];
+    this.sessionObjects = [this.sessionCodeText, this.participantsText, startHandle.container, leaveHandle.container];
   }
 
   private currentParticipant(joinedAt: number): { uid: string; displayName: string | null; joinedAt: number } {
@@ -475,15 +464,9 @@ export class CoopLobbyScene extends Phaser.Scene {
     );
 
     const enabled = signedIn && !this.busy;
-    if (enabled) {
-      this.createButton?.setInteractive({ useHandCursor: true });
-      this.joinButton?.setInteractive({ useHandCursor: true });
-      this.joinSubmitButton?.setInteractive({ useHandCursor: true });
-    } else {
-      this.createButton?.disableInteractive();
-      this.joinButton?.disableInteractive();
-      this.joinSubmitButton?.disableInteractive();
-    }
+    this.createButton?.setDisabled(!enabled);
+    this.joinButton?.setDisabled(!enabled);
+    this.joinSubmitButton?.setDisabled(!enabled);
 
     if (this.mode === "in-session" && this.session) {
       this.sessionCodeText?.setText(this.session.id);
@@ -505,10 +488,9 @@ export class CoopLobbyScene extends Phaser.Scene {
       // click).
       const isHost = this.session.hostUid === this.authState.uid;
       const full = isSessionFull(this.session);
-      this.startBattleButton?.setVisible(isHost && full);
-      this.startBattleLabel?.setVisible(isHost && full).setText(this.busy ? "Starting…" : "Start Battle");
-      if (isHost && full && enabled) this.startBattleButton?.setInteractive({ useHandCursor: true });
-      else this.startBattleButton?.disableInteractive();
+      this.startBattleButton?.container.setVisible(isHost && full);
+      this.startBattleButton?.setLabel(this.busy ? "Starting…" : "Start Battle");
+      this.startBattleButton?.setDisabled(!(isHost && full && enabled));
     }
   }
 }
