@@ -369,6 +369,57 @@ export function createSectionLabel(scene: Phaser.Scene, x: number, y: number, te
 }
 
 /**
+ * D-211: corrects a real, root-caused misalignment between Phaser's DOM
+ * Element container (`game.domContainer`, used by every real HTML
+ * `<input>` this project has — `CharacterCreationScene`'s 4 hero-name
+ * fields, `CoopLobbyScene`'s join-code field) and the actual canvas.
+ *
+ * Phaser's own `ScaleManager.refresh()` keeps `domContainer` aligned with
+ * the canvas by copying the CANVAS's own `style.marginLeft`/`marginTop`
+ * onto it (`node_modules/phaser/src/scale/ScaleManager.js`) — this is how
+ * Phaser's built-in `Scale.CENTER_BOTH`/etc. centers BOTH elements
+ * together, since that centering itself works by setting the canvas's
+ * margin. This project deliberately uses `autoCenter: NO_CENTER` instead
+ * (see `main.ts`) and lets an external CSS flexbox (`#game-root` in
+ * `index.html`) center the canvas — a real fix for a real double-centering
+ * bug hit before. But flexbox centering never touches the canvas's margin
+ * at all, so the value Phaser copies onto `domContainer` is always empty —
+ * `domContainer` (an unpositioned `position: absolute` div with no
+ * `top`/`left` of its own, per `CreateDOMContainer.js`) never tracks the
+ * canvas's real, flex-computed position. The result is a CONSTANT
+ * (non-drifting) offset, present from the very first frame — exactly what
+ * Kevin's screenshot showed (the hero-name fields rendering up near the
+ * subtitle instead of inside their column) and not the runtime-desync
+ * theory an earlier version of this fix assumed.
+ *
+ * The fix measures both elements' REAL on-screen position directly
+ * (`getBoundingClientRect()`, which forces a synchronous layout so it's
+ * always current) rather than reasoning about which CSS mechanism produced
+ * it, and nudges `domContainer`'s margin by the exact delta needed to make
+ * its top-left corner match the canvas's. `transform-origin: left top` on
+ * `domContainer` (Phaser's own default) means its scale transform doesn't
+ * move that corner, so a margin correction made AFTER `scene.scale.refresh()`
+ * stays correct through the transform.
+ *
+ * Call once in `create()` (after `scene.scale.refresh()`) AND register via
+ * `onViewportResize` — a real window resize re-runs Phaser's own
+ * `ScaleManager.refresh()` internally, which recopies the (still-empty)
+ * canvas margin and undoes this correction.
+ */
+export function fixDomContainerAlignment(scene: Phaser.Scene): void {
+  const game = scene.sys.game;
+  const canvas = game.canvas;
+  const dom = game.domContainer;
+  if (!canvas || !dom) return;
+  const canvasRect = canvas.getBoundingClientRect();
+  const domRect = dom.getBoundingClientRect();
+  const currentMarginLeft = parseFloat(dom.style.marginLeft) || 0;
+  const currentMarginTop = parseFloat(dom.style.marginTop) || 0;
+  dom.style.marginLeft = `${currentMarginLeft + (canvasRect.left - domRect.left)}px`;
+  dom.style.marginTop = `${currentMarginTop + (canvasRect.top - domRect.top)}px`;
+}
+
+/**
  * D-154: the start of a shared responsive-layout convention. Reads the
  * scene's OWN live canvas size rather than the fixed `GAME_WIDTH`/
  * `GAME_HEIGHT` constants. D-157 briefly flipped the game to

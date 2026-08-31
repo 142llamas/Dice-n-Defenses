@@ -16,14 +16,21 @@ Fixed:
 - The "unspent Background ability bonus" validation message now names the
   actual control to click ("the button next to Background").
 
-Mitigated, unconfirmed:
-- Added the same `this.scale.refresh()` call D-162 used on Main Menu to
-  Character Creation's `create()`, targeting the recurring "hero name
-  fields render way out of place" report — D-162's own finding was that a
-  canvas/`ScaleManager` desync leaves DOM elements (like these 4 name
-  `<input>`s) positioned correctly while everything else on screen isn't,
-  which matches the symptom. Not independently root-caused or confirmed —
-  see `KNOWN_ISSUES.md` KI-161.
+Fixed, root-caused via Phaser's own source:
+- The 4 hero-name `<input>` fields (and `CoopLobbyScene`'s join-code field)
+  rendered near the top of the screen instead of inside their own column —
+  a real, static positioning bug, not a runtime desync (Kevin corrected an
+  earlier wrong guess: "the name plates don't drift, they just start in
+  that position"). Root cause, found in Phaser's own `ScaleManager.js`:
+  Phaser keeps its DOM element container aligned with the canvas by
+  copying the canvas's CSS margin onto it, which only works when Phaser
+  itself centers the canvas — this project centers via an external CSS
+  flexbox instead (`autoCenter: NO_CENTER`), so that margin is always
+  empty and the DOM container never tracked the real canvas position. New
+  `fixDomContainerAlignment()` (`uiTheme.ts`) measures both elements'
+  actual on-screen position and corrects the DOM container's margin to
+  match — applied to both DOM-element scenes. Still needs Kevin's own look
+  to confirm the pixel-perfect result — see `KNOWN_ISSUES.md` KI-161.
 
 Tests: 1643 (unchanged — presentation-only). Typecheck clean, production
 build succeeds (152 modules, unchanged).

@@ -12018,47 +12018,73 @@ what that meant. Now reads `"Hero N still needs to pick an Ability Bonus
 matching the existing `"...unassigned ability scores (Standard Array)"`
 message's own style one branch above it.
 
-**Hero-name-field positioning — not independently root-caused, but a
-targeted extension of an existing, already-approved mitigation.** Kevin's
-screenshot shows the 4 name fields (real DOM `<input>` elements, D-147)
-rendering well above their intended `y=165` slot, floating near the
-subtitle text instead of inside their own column between the Human/AI
-toggle and Class button — matching his own earlier playtest note ("Names
-of characters are still way out of place... They also disappeared after a
-while") almost verbatim, and never fixed by any session since. Static
-reading can't prove a root cause (same limitation D-162 hit investigating
-a related canvas-squish report), but D-162's own finding is directly
-relevant: after that squish bug, "the canvas squishes... except DOM
-elements (the hero-name `<input>`s), which stay correct" — meaning a
-`ScaleManager`/canvas desync leaves DOM elements positioned against the
-REAL scale while canvas-drawn content (everything else) renders against a
-stale one, which would look exactly like "the name fields are floating in
-the wrong place relative to their column." D-162 mitigated this in
-`MainMenuScene.create()` with `this.scale.refresh()` (re-syncs
-`ScaleManager`'s tracked size against the real canvas/parent element) but
-never extended it anywhere else, and Kevin never confirmed whether it
-actually worked. `CharacterCreationScene` — the scene with the most DOM
-elements in the project — never had it. Added the identical call at the
-top of `create()`. **Explicitly flagged, not claimed as a confirmed fix**:
-this is the same "best-effort mitigation" honesty D-162 used, extended to
-a second scene on the strength of matching symptoms, not a new diagnosis.
-If it doesn't help, the next step is a live repro (inspect the `<input>`
-node's actual `getBoundingClientRect()` against the canvas element's own
-CSS box right after the bug shows), not a third blind guess.
+**Hero-name-field positioning — root-caused for real, in Phaser's own
+source, after Kevin corrected an earlier wrong theory.** Kevin's screenshot
+shows the 4 name fields (real DOM `<input>` elements, D-147) rendering well
+above their intended `y=165` slot, floating near the subtitle text instead
+of inside their own column between the Human/AI toggle and Class button —
+matching his own earlier playtest note ("Names of characters are still way
+out of place... They also disappeared after a while") almost verbatim,
+never fixed by any session since. The first pass at this fix (this same
+session) guessed it was a runtime desync, borrowing D-162's "canvas
+squishes but DOM elements stay correct" finding — Kevin corrected that
+directly: **"The name plates don't drift, they just start in that position
+as seen in the screenshot."** That ruled out a desync theory (which implies
+something changing over time) and pointed at a static, always-present bug
+instead — worth actually reading Phaser's own source for, not guessing
+again.
+
+Read `node_modules/phaser/src/scale/ScaleManager.js`'s `refresh()` and
+`node_modules/phaser/src/dom/CreateDOMContainer.js` directly. Found the
+real mechanism: Phaser keeps its DOM Element container
+(`game.domContainer`, the shared `<div>` every `this.add.dom(...)` element
+lives inside) aligned with the canvas by copying the CANVAS's own
+`style.marginLeft`/`marginTop` onto the container —
+`domStyle.marginLeft = canvasStyle.marginLeft;` — because Phaser's own
+`autoCenter` modes (`CENTER_BOTH` etc.) center the canvas BY SETTING that
+exact margin, so copying it keeps both elements moving together. This
+project deliberately uses `autoCenter: NO_CENTER` (see `main.ts`) and lets
+an external CSS flexbox (`#game-root` in `index.html`) center the canvas
+instead — a real, working fix for a real double-centering bug hit before.
+But flexbox centering never touches the canvas's `margin` at all, so the
+value Phaser copies onto `domContainer` is always empty. `domContainer`
+itself is a `position: absolute` div with no `top`/`left` of its own
+(`CreateDOMContainer.js`), so nothing else keeps it aligned to the
+flex-computed canvas position either. The result: a CONSTANT, non-drifting
+offset present from the very first frame — exactly what Kevin described,
+and exactly why the drift/desync theory was wrong.
+
+**Fix**: new `fixDomContainerAlignment(scene)` (`uiTheme.ts`) measures both
+the canvas's and `domContainer`'s REAL on-screen position via
+`getBoundingClientRect()` (forces a synchronous layout, so it's always
+current regardless of which CSS mechanism produced the position) and nudges
+`domContainer`'s margin by the exact delta needed to make its top-left
+corner match the canvas's. `transform-origin: left top` (Phaser's own
+default on this element) means its scale transform doesn't move that
+corner, so a margin correction made after `scene.scale.refresh()` stays
+correct through the transform. Called from both `CharacterCreationScene`
+and `CoopLobbyScene` (this project's only two DOM-element scenes — the
+latter's join-code field carries the identical KI-062 "should position
+correctly" gap) right after `scene.scale.refresh()`, and re-registered via
+`onViewportResize` since a real window resize re-runs Phaser's own
+`ScaleManager.refresh()` internally, which would otherwise recopy the
+still-empty canvas margin and undo the correction.
+
+This is a real, source-verified mechanism, not a guess — but the actual
+pixel-perfect result still can't be seen without a browser, so it still
+needs Kevin's confirmation like everything else in this session.
 
 Tests: **1643** (unchanged — presentation-only positioning/text changes,
 no new pure-system logic). Typecheck clean, all 1643 pass, production
-build succeeds (**152 modules**, unchanged — no new file). No browser
-available in this environment — every change above needs Kevin's own look
-to confirm, especially the `scale.refresh()` mitigation, which by its own
-nature can't be verified without seeing whether the name fields actually
-land in the right place now.
+build succeeds (**152 modules**, unchanged — no new file).
 
 **Important files:**
-- `src/game/scenes/CharacterCreationScene.ts` — `create()`'s new
-  `this.scale.refresh()` call, `abilityMethodHandle`'s `y` (280 -> 300),
-  `pointsLeftY` (302 -> 324), `bgRowGap` (6 -> 10), the unspent-background
-  status message.
+- `src/game/scenes/uiTheme.ts` — new `fixDomContainerAlignment()`.
+- `src/game/scenes/CharacterCreationScene.ts` — `create()`'s
+  `scale.refresh()`/`fixDomContainerAlignment()`/`onViewportResize()` calls,
+  `abilityMethodHandle`'s `y` (280 -> 300), `pointsLeftY` (302 -> 324),
+  `bgRowGap` (6 -> 10), the unspent-background status message.
+- `src/game/scenes/CoopLobbyScene.ts` — the same three `create()` calls.
 - `DECISIONS.md` — this entry.
 - `KNOWN_ISSUES.md` — KI-161 (new).
 - `CHANGELOG.md`, `PROJECT_STATUS.md`, `PHASE_HANDOFF.md` — updated.

@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { firebaseReady } from "../cloud/firebaseApp";
-import { getViewport, onViewportResize } from "./uiTheme";
+import { getViewport, onViewportResize, fixDomContainerAlignment } from "./uiTheme";
 import { initAuth, type AuthState } from "../cloud/AuthClient";
 import { createSession, joinSession, subscribeToSession, deleteSession, startBattle } from "../cloud/CoopSessionSync";
 import {
@@ -86,6 +86,15 @@ export class CoopLobbyScene extends Phaser.Scene {
   }
 
   create(): void {
+    // D-211: same root-caused DOM-container alignment fix as
+    // `CharacterCreationScene` — this scene's join-code field (KI-062) is
+    // this project's other real DOM `<input>`, subject to the identical
+    // `ScaleManager`/flexbox-centering mismatch. See `fixDomContainerAlignment`'s
+    // own doc comment in `uiTheme.ts` for the mechanism.
+    this.scale.refresh();
+    fixDomContainerAlignment(this);
+    onViewportResize(this, () => fixDomContainerAlignment(this));
+
     this.mode = "choose";
     this.authState = { uid: null, isAnonymous: true, displayName: null };
     this.session = null;

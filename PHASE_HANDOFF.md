@@ -3,8 +3,8 @@
 ## Version and phase
 
 - **Version:** 0.2.0-dev, unchanged. This session built **D-211**: three
-  small, provable Character Creation spacing/text fixes plus one
-  unconfirmed mitigation, from a Kevin screenshot of "Build Your Party."
+  small, provable Character Creation spacing/text fixes, plus a real,
+  source-verified fix for a long-standing hero-name-field positioning bug.
   This is a standalone fix session, not part of any phased gameplan — the
   2026-08-28 playtest batch (Phases 1-5, D-203 through D-210) closed last
   session with no pre-set next task.
@@ -13,65 +13,82 @@
 - Tests: **1643** (unchanged from last handoff — presentation-only change,
   no new pure-system logic, no new test file). Typecheck clean, all 1643
   pass, production build succeeds (**152 modules**, unchanged — no new
-  file, only edits to `CharacterCreationScene.ts`).
+  file, only edits to `CharacterCreationScene.ts`, `CoopLobbyScene.ts`, and
+  `uiTheme.ts`).
 
-## Why this task
+## Why this task, and how the fix was actually found
 
-Kevin sent a screenshot of the "Build Your Party" screen flagging three
-things: the hero-name fields are "still awful"/"out of place" (a repeat of
-an old playtest note — see below), general "poor spacing" naming the
-Standard Array row specifically, and confusion about the "Hero N still has
-an unspent Background ability bonus" message. Earlier in the same
-conversation, transcribing an old screenshot of Kevin's original
-2026-08-28 playtest notes turned up item 9 verbatim: *"Names of characters
-are still way out of place. They are there by default so something is
-really wrong with how they render. They also disappeared after a while."*
-That note was never part of the D-203–D-210 batch (it wasn't one of the
-phases scoped out of it) and has never been addressed by any session —
-this is the first session to actually investigate it.
+Kevin sent a screenshot of "Build Your Party" flagging three things: the
+hero-name fields are "still awful"/"out of place" (a repeat of an old
+playtest note, never actually addressed by any prior session), general
+"poor spacing" naming the Standard Array row specifically, and confusion
+about the "Hero N still has an unspent Background ability bonus" message.
+
+The name-field fix took two passes. The **first pass guessed wrong**: it
+borrowed D-162's finding (a related canvas-squish report where DOM
+elements stayed correctly positioned while the canvas around them didn't)
+and assumed the same runtime desync was at play, mitigating with
+`this.scale.refresh()` alone. **Kevin corrected this directly: "The name
+plates don't drift, they just start in that position as seen in the
+screenshot."** That ruled out any theory involving something changing over
+time, and prompted actually reading Phaser's own source
+(`node_modules/phaser/src/scale/ScaleManager.js`,
+`node_modules/phaser/src/dom/CreateDOMContainer.js`) instead of guessing a
+second time.
+
+**The real mechanism**: Phaser keeps its shared DOM Element container
+(`game.domContainer`) aligned with the canvas by copying the CANVAS's own
+CSS `margin-left`/`margin-top` onto it — this is how Phaser's built-in
+`autoCenter` modes (`CENTER_BOTH`, etc.) keep both in sync, since that
+centering itself works by setting the canvas's margin. This project
+deliberately uses `autoCenter: NO_CENTER` and lets an external CSS
+flexbox (`#game-root` in `index.html`) center the canvas instead — a real,
+working fix for a real double-centering bug hit before (see `main.ts`'s
+own comment). But flexbox centering never touches the canvas's margin at
+all, so the value Phaser copies onto `domContainer` is always empty, and
+nothing else keeps the container aligned to the canvas's actual
+flex-computed position. The result is a CONSTANT, non-drifting offset,
+present from the very first frame — exactly what Kevin described.
 
 ## What happened this session (D-211)
 
-All changes are in `src/game/scenes/CharacterCreationScene.ts`:
+1. **Fixed a real, provable overlap** — the Standard Array/Point Buy pill
+   overlapped the Background/Ability-Bonus row above it by 12px (D-206
+   added that row without adjusting the pill's position). Moved the pill
+   to `y=300` and `pointsLeftY` to `324`, both fitting inside the existing
+   gap without shifting anything else in the column.
+2. **Widened `bgRowGap`** (6px → 10px) — the Background/Ability-Bonus
+   buttons' borders were reading as a stray vertical line between the two
+   labels.
+3. **Clarified the ability-bonus validation message** — now names the
+   actual control: *"Hero N still needs to pick an Ability Bonus (the
+   button next to Background)."*
+4. **Root-caused and fixed the hero-name-field positioning bug for real.**
+   New `fixDomContainerAlignment(scene)` in `uiTheme.ts` measures both the
+   canvas's and `domContainer`'s actual on-screen position via
+   `getBoundingClientRect()` and nudges the container's margin by the
+   exact delta needed to align their top-left corners.
+   `transform-origin: left top` (Phaser's own default) means the
+   container's scale transform doesn't move that corner, so a margin
+   correction made right after `scene.scale.refresh()` stays correct.
+   Applied to **both** DOM-element scenes in the project —
+   `CharacterCreationScene` (the 4 hero-name fields) and `CoopLobbyScene`
+   (the join-code field, KI-062's own unconfirmed positioning gap) — each
+   calling it in `create()` and re-registering it via `onViewportResize`
+   (a real window resize re-runs Phaser's own internal `refresh()`, which
+   would otherwise undo the correction).
 
-1. **Fixed a real, provable overlap.** D-206 (Backgrounds) added the
-   Background/Ability-Bonus row at `y=266` (bottom edge 282) but never
-   adjusted the Standard Array/Point Buy pill below it (`abilityMethodHandle`,
-   still at its pre-D-206 `y=280`, top edge 270) — a 12px overlap, exactly
-   matching what Kevin's screenshot showed. Moved the pill to `y=300` and
-   `pointsLeftY` (the Point Buy "Points Left" readout) to `324`, both
-   computed to fit inside the existing 266-to-344 gap without needing to
-   shift `abilityRowsTop` — so nothing below it (gear, subclass, starting
-   level, plan levels, spells, the character library row) moved, and the
-   column didn't grow past the parchment panel's existing bottom edge.
-2. **Widened `bgRowGap`** (the Background/Ability-Bonus half-width split)
-   from 6px to 10px — at 6px the two buttons' bronze borders read as a
-   stray vertical line between the two labels.
-3. **Clarified the ability-bonus validation message** — `"Hero N still has
-   an unspent Background ability bonus"` → `"Hero N still needs to pick an
-   Ability Bonus (the button next to Background)"`, naming the actual
-   control, matching the style of the message one branch above it.
-4. **Extended D-162's `scale.refresh()` mitigation to this scene, unconfirmed.**
-   The hero-name fields are real DOM `<input>` elements (D-147). D-162
-   (a prior session, investigating a reported horizontal canvas squish on
-   Main Menu) found that after that bug, "the canvas squishes... except DOM
-   elements (the hero-name `<input>`s), which stay correct" — meaning a
-   `ScaleManager`/canvas desync leaves DOM elements positioned against the
-   REAL scale while everything else renders against a stale one. That's
-   exactly what "name fields floating above their column, near the
-   subtitle" would look like. D-162 mitigated it with `this.scale.refresh()`
-   in `MainMenuScene.create()` only, and Kevin never confirmed whether it
-   worked. Added the identical call to `CharacterCreationScene.create()` —
-   the scene with the most DOM elements in the project. **This is explicitly
-   not a confirmed fix** — static reading can't prove the root cause, and
-   no browser is available here to verify it helped.
+This is a real, source-verified mechanism, not a guess — but the actual
+pixel-perfect on-screen result still can't be seen without a browser.
 
 ## Important files
 
-- `src/game/scenes/CharacterCreationScene.ts` — `create()`'s new
-  `this.scale.refresh()` call, `abilityMethodHandle`'s `y` (280 → 300),
-  `pointsLeftY` (302 → 324), `bgRowGap` (6 → 10), the unspent-background
-  status message text.
+- `src/game/scenes/uiTheme.ts` — new `fixDomContainerAlignment()`.
+- `src/game/scenes/CharacterCreationScene.ts` — `create()`'s
+  `scale.refresh()`/`fixDomContainerAlignment()`/`onViewportResize()`
+  calls, `abilityMethodHandle`'s `y` (280 → 300), `pointsLeftY`
+  (302 → 324), `bgRowGap` (6 → 10), the unspent-background status message.
+- `src/game/scenes/CoopLobbyScene.ts` — the same three `create()` calls.
 - `DECISIONS.md` — D-211.
 - `KNOWN_ISSUES.md` — KI-161 (new, full confirmation checklist).
 - `CHANGELOG.md` — new `[Unreleased]` section (stacked above D-210's).
@@ -88,20 +105,17 @@ All changes are in `src/game/scenes/CharacterCreationScene.ts`:
 ## Manual tests completed
 
 None — no browser available in this environment. Every change in this
-session needs Kevin's own look, especially the `scale.refresh()`
-mitigation, which by its own nature can't be verified without seeing
-whether the name fields actually land in the right place now — see
-**KI-161** for the full checklist.
+session needs Kevin's own look, especially whether the hero-name fields
+(and `CoopLobbyScene`'s join-code field) now actually land inside their
+own column — see **KI-161** for the full checklist, including what detail
+to note if it's STILL wrong (exactly where it lands relative to the
+column would point at what's off in the margin math).
 
 ## Known issues
 
-- **KI-161** (D-211, this session) needs Kevin's confirmation — especially
-  whether the name-field mitigation actually helped. If it didn't, the next
-  step is a live repro (what does the `<input>`'s actual on-screen position
-  look like relative to the canvas right when the bug shows, and does
-  anything in particular precede it — e.g. coming from a battle, resizing
-  the window, reloading vs. navigating from Main Menu), not a third blind
-  guess.
+- **KI-161** (D-211, this session) needs Kevin's confirmation — the
+  hero-name-field fix is source-verified (a real mechanism found in
+  Phaser's own code, not a guess) but still visually unconfirmed.
 - **KI-160** (D-210), **KI-159** (D-209), **KI-158** (D-208), **KI-157**
   (D-207), **KI-156** (D-206), **KI-155** (D-205), **KI-154** (D-204),
   **KI-153** (D-203) — the entire 2026-08-28 playtest batch — still need
@@ -125,16 +139,19 @@ whether the name fields actually land in the right place now — see
 - Extending the wood/bronze/gilt theme to the parts of `BattleScene`
   explicitly left out of D-210's scope (title text, debug/info text,
   full-screen modal overlays) — not requested, no mockup covered them.
-- If the `scale.refresh()` mitigation in this session does NOT fix the
-  hero-name-field positioning, a live repro is the next step (see "Known
-  issues" above) — don't attempt a second blind fix in this area.
+- If `fixDomContainerAlignment` does NOT fully fix the hero-name-field
+  positioning, the next step is checking exactly where it lands relative
+  to the column (see "Manual tests completed" above) — the mechanism is
+  now well understood, so a residual offset likely means a units/timing
+  detail in the margin math, not a wrong theory.
 
 ## Next chat instructions
 
 1. **Kevin's own browser pass first**, if he's had a chance to play —
-   specifically confirm whether the name fields now render in the right
-   place (KI-161), and whether the rest of the 2026-08-28 playtest batch
-   (KI-153 through KI-160) still needs a look.
+   specifically confirm whether the name fields (and the co-op join-code
+   field) now render in the right place (KI-161), and whether the rest of
+   the 2026-08-28 playtest batch (KI-153 through KI-160) still needs a
+   look.
 2. **No pre-set next task remains** — this was a standalone fix session.
    Ask Kevin what's next, or check `KNOWN_ISSUES.md`/`SOURCE_OF_TRUTH.md`
    for open items if he has no specific request.
@@ -149,6 +166,7 @@ whether the name fields actually land in the right place now — see
 ## Suggested git steps (not run here; use GitHub Desktop)
 
 This session touched: `src/game/scenes/CharacterCreationScene.ts`,
+`src/game/scenes/CoopLobbyScene.ts`, `src/game/scenes/uiTheme.ts`,
 `DECISIONS.md`, `KNOWN_ISSUES.md`, `CHANGELOG.md`, `PROJECT_STATUS.md`,
 this file. No new files. No Firebase-relevant change.
 

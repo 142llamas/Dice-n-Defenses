@@ -14,11 +14,17 @@ render out of place" report.
   reading as a stray vertical line between the two labels.
 - Clarified the "unspent Background ability bonus" validation message to
   name the actual control ("the button next to Background").
-- **Unconfirmed**: added `this.scale.refresh()` to this scene's `create()`
-  — the same mitigation D-162 used for a related canvas-squish report on
-  Main Menu — on the theory the hero-name-field mispositioning is the same
-  class of `ScaleManager`/canvas desync. Not independently root-caused; see
-  `KNOWN_ISSUES.md` KI-161 for what to check.
+- **Root-caused for real**: the hero-name fields' mispositioning is a
+  static bug (Kevin confirmed it doesn't drift, ruling out an earlier
+  desync guess), traced directly in Phaser's own `ScaleManager.js` source —
+  its DOM-container-alignment logic only works when Phaser itself centers
+  the canvas, and this project centers via an external CSS flexbox
+  instead, so the DOM container never tracked the real canvas position.
+  Fixed with a new `fixDomContainerAlignment()` helper (`uiTheme.ts`),
+  applied to both `CharacterCreationScene` and `CoopLobbyScene` (this
+  project's only two DOM-element scenes). Real mechanism, not a guess —
+  still needs Kevin's own look to confirm the pixel-perfect result; see
+  `KNOWN_ISSUES.md` KI-161.
 
 Tests: **1643** (unchanged — presentation-only). Typecheck clean, all 1643
 pass, production build succeeds (**152 modules**, unchanged — no new

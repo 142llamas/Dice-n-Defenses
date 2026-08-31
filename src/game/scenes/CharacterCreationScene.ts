@@ -24,6 +24,7 @@ import { RandomService } from "../systems/RandomService";
 import {
   getViewport,
   onViewportResize,
+  fixDomContainerAlignment,
   createOrnateButton,
   renderChoiceOverlay,
   clearChoiceOverlay,
@@ -618,16 +619,17 @@ export class CharacterCreationScene extends Phaser.Scene {
   }
 
   create(): void {
-    // D-162 precedent (see `MainMenuScene.create()`): re-syncs the
-    // ScaleManager's tracked size against the real canvas/parent element on
-    // every entry. This scene has the most real DOM `<input>` elements (the
-    // 4 hero-name fields) of any scene — D-162's own finding was that a
-    // canvas/ScaleManager desync leaves DOM elements positioned correctly
-    // while the CANVAS content around them is squished/shifted, which would
-    // read exactly like "the name fields are floating in the wrong place."
-    // Cheap and harmless if the scale state was already correct; unconfirmed
-    // like D-162's own mitigation — flag to Kevin whether this helps.
+    // D-211: root-caused fix for the hero-name `<input>` fields rendering
+    // out of place from the very first frame (not a runtime desync — see
+    // `fixDomContainerAlignment`'s own doc comment in `uiTheme.ts` for the
+    // real mechanism, found by reading Phaser's own `ScaleManager` source).
+    // `scale.refresh()` first (recomputes the correct display scale/margin
+    // baseline Phaser tracks), then the alignment correction on top of it.
+    // Re-applied on every real resize too, since a resize re-runs Phaser's
+    // own internal `refresh()` and would otherwise undo the correction.
     this.scale.refresh();
+    fixDomContainerAlignment(this);
+    onViewportResize(this, () => fixDomContainerAlignment(this));
 
     this.slots = [];
     this.widgets = [];

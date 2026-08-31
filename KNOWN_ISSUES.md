@@ -45,22 +45,36 @@ screenshot of "Build Your Party" — **(headless-verified, not yet played)**.
   validation message now reads "Hero N still needs to pick an Ability Bonus
   (the button next to Background)" instead of the old, less actionable
   "still has an unspent Background ability bonus."
-- **The big one, unconfirmed**: check where the 4 hero-name fields actually
-  render. Kevin's screenshot showed them floating up near the subtitle text
-  at the top of the screen instead of inside their own column, between the
+- **The big one**: check where the 4 hero-name fields actually render.
+  Kevin's screenshot showed them floating up near the subtitle text at the
+  top of the screen instead of inside their own column, between the
   Human/AI toggle and the Class button — the same "names are way out of
   place" bug from an old playtest note, never fixed by any session before
-  this one. This session added a `this.scale.refresh()` call (the same
-  mitigation D-162 used for a related canvas-squish report on Main Menu) to
-  `CharacterCreationScene.create()`, on the theory that this is the same
-  class of `ScaleManager`/canvas desync D-162 found — but this is genuinely
-  unverified; no browser is available in this environment to see whether it
-  helped. If the name fields are STILL out of place after this, say so
-  explicitly rather than assuming it's fixed — the next step would be a live
-  repro (what does the `<input>`'s actual on-screen position look like
-  relative to the canvas right when the bug shows, and does anything in
-  particular precede it — e.g. coming from a battle, resizing the window,
-  reloading vs. navigating from Main Menu).
+  this one. Kevin also confirmed this is a STATIC bug (the fields start in
+  the wrong spot immediately, not something that drifts over time), which
+  led to actually reading Phaser's own source (`ScaleManager.js`,
+  `CreateDOMContainer.js`) instead of guessing: Phaser keeps its DOM
+  element container aligned with the canvas by copying the canvas's own
+  CSS margin onto it, which only works if Phaser itself centered the
+  canvas (`autoCenter: CENTER_BOTH` etc.) — this project uses
+  `autoCenter: NO_CENTER` plus an external CSS flexbox instead (a
+  deliberate, working fix for a real double-centering bug hit before), so
+  that margin is always empty and the DOM container never tracks the
+  canvas's real position. Fixed with a new `fixDomContainerAlignment()`
+  helper (`uiTheme.ts`) that measures both elements' actual on-screen
+  position directly and corrects the DOM container's margin to match —
+  applied to both `CharacterCreationScene` and `CoopLobbyScene` (this
+  project's only two DOM-element scenes). This is a real, source-verified
+  mechanism, not a guess, but the pixel-perfect result still hasn't been
+  seen in a browser. Confirm the 4 hero-name fields now render INSIDE their
+  own column, in the gap between the Human/AI toggle and Class button — if
+  they're still wrong, note exactly where they land relative to their
+  column (e.g. "shifted right by about one column's width," "still at the
+  very top") since that detail would point at what's still off in the
+  margin math.
+- While there, also check `CoopLobbyScene`'s join-code field (create/join a
+  co-op session) — same fix applied there, same "should position correctly"
+  gap KI-062 already listed but never confirmed either way.
 
 ### KI-160 — D-210: BattleScene visual reskin (Phase 5's second item)
 The battle screen's chrome (background, HUD buttons, roster panel, action
