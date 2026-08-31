@@ -29,6 +29,58 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
+### KI-162 — D-212: the 4 hero-name fields rebuilt as canvas-native (no more real DOM `<input>`)
+Replaces D-147's real HTML `<input>` elements with a hand-rolled text field
+using the same ornate-button visuals as every other row in the column —
+**(headless-verified, not yet played)**. Kevin's own follow-up after D-211
+fixed the positioning bug: he noticed a visible snap-into-place flash on
+scene load and asked for a design that doesn't need its own separate
+positioning system at all.
+- Open Character Creation — confirm each hero column's name field visually
+  matches the other ornate buttons in the column (same wood-panel/bronze
+  look), showing "Hero Name" (or the loaded default name) when not
+  focused.
+- Click a name field — confirm it visually highlights (gilt border/
+  brighter fill, same "selected" look other rows use), and confirm typing
+  actually appends characters, Backspace removes the last one, and a
+  blinking `|` caret shows at the end while focused.
+- Type past 24 characters — confirm it stops accepting more (same cap the
+  old `maxlength` enforced).
+- Press Enter or Tab while typing — confirm it stops editing (caret
+  disappears) without navigating anywhere else.
+- Press Escape while typing a name — confirm it JUST stops editing that
+  field (same as Enter/Tab) and does NOT also navigate back to Main Menu;
+  then press Escape again with NO field focused — confirm THAT does
+  navigate back, unchanged.
+- While typing one hero's name, click a DIFFERENT hero's name field —
+  confirm focus moves cleanly (no leftover caret on the first one).
+- While typing a name, click somewhere else entirely (a Class button, an
+  empty part of the screen) — confirm the name field stops editing/loses
+  its highlight, and the OTHER click's own action still happens normally
+  (e.g. the Class picker still opens).
+- While typing a name, open a picker overlay a different way (e.g. click
+  Plan Levels) — confirm the in-progress edit cleanly stops (no stray
+  caret persisting behind the overlay), and confirm the overlay itself
+  fully covers the name field visually (no leftover text peeking through,
+  the D-160 bug this replaces).
+- Toggle a hero Human → AI-Controlled and back — confirm the name field
+  still works identically (this toggle was never tied to name-field
+  behavior, shouldn't be affected).
+- In campaign mode, open a companion's build — confirm the name field is
+  still EDITABLE for a locked companion (only class/race/gear are locked,
+  matching pre-D-212 behavior) — click it and confirm typing still works.
+- Shrink Party Size while a later hero's name field is focused (if
+  reachable) — confirm the field cleanly loses focus rather than leaving a
+  blinking caret on a now-dimmed, inactive slot.
+- Save a party, reload it (Load Game or a per-character library load) —
+  confirm the loaded name displays correctly.
+- General "does this feel as good as typing into a real text box" pass —
+  cursor positioning is always at the end (no click-to-position-cursor
+  mid-string, no arrow-key cursor movement, no text selection/copy-paste)
+  since this is a simplified hand-built field, not a full text editor;
+  flag if that reads as a real regression for a 24-character hero name
+  versus a cosmetic trade-off Kevin already agreed to.
+
 ### KI-161 — D-211: Character Creation spacing fixes + the hero-name-field positioning bug — **RESOLVED, confirmed by Kevin**
 All five items below are confirmed working on the deployed site as of the
 end of this session. Kept as historical record (see `DECISIONS.md` D-211

@@ -12212,3 +12212,113 @@ directly, which is the real, permanent fix, not debug scaffolding.
 Tests: **1643** (unchanged). Typecheck clean, all 1643 pass, production
 build succeeds (**152 modules**, unchanged — diagnostic removal is a pure
 deletion, no new file).
+
+### D-212 — Character Creation: the 4 hero-name fields are now canvas-native, not real DOM `<input>` elements
+
+Kevin's follow-up, right after D-211 closed the name-field positioning
+bug: even fixed, he noticed a visible snap-into-place flash on scene load
+(the per-frame correction needs a frame to converge) and asked, reasonably,
+whether there's a better way to "link them to the other visual aspects of
+the game" — he didn't like a DOM-based field needing its own separate
+positioning system in the first place. Answered with a design question
+(canvas-native fake input vs. keeping DOM): recommended converting the 4
+hero-name fields specifically, since they're short/capped/cosmetic with a
+sensible default already in place, while keeping `CoopLobbyScene`'s
+join-code field as a real DOM `<input>` (pasting a code a teammate sent you
+is a much stronger case for native clipboard support). Kevin agreed
+("sounds good... build it").
+
+**What shipped**: `SlotWidgets.nameInput`/`.nameInputNode` (D-147's DOM
+element + its raw `<input>` node) replaced by a single `nameHandle:
+OrnateButtonHandle` — the exact same `createOrnateButton` primitive every
+other row in the column already uses, so the name field now visually
+matches the theme automatically and is positioned/scaled by the same
+system as everything else (no `domContainer`, no `fixDomContainerAlignment`,
+no snap). New scene state: `focusedNameSlot: number | null` (which slot,
+if any, is being typed into — same single-focus shape as `openDropdown`)
+and `nameCaretOn: boolean` (blinked by a 500ms repeating timer).
+
+- **Click to focus**: the button's own `onClick` closes any open dropdown,
+  sets `focusedNameSlot`, and calls the new `refreshNameLabel(slot)`.
+- **Typing**: a scene-wide `keydown` listener (`create()`) — active only
+  while a slot is focused — handles Backspace, appends printable
+  characters (`event.key.length === 1`, excluding Ctrl/Meta/Alt-modified
+  keys so shortcuts like Ctrl+A don't insert a literal "a") up to the same
+  24-character cap the old `maxlength` enforced, and Enter/Tab blur the
+  field. Every handled key calls `event.preventDefault()`/
+  `stopPropagation()`.
+- **Escape**: the existing `keydown-ESC` handler (`buildBackButton`, D-160)
+  now checks `focusedNameSlot` first — blurs the field instead of
+  navigating to Main Menu while the player is mid-edit.
+- **Click away to blur**: a scene-wide `pointerdown` listener checks
+  `currentlyOver` against the focused button's own `container` (matching
+  by `obj.parentContainer`, since `OrnateButtonHandle` doesn't expose its
+  inner `Graphics` object directly) — blurs on any click that isn't the
+  focused field itself, mirroring `openAbilityDropdown`'s click-away
+  catcher but as a global check instead of a dedicated invisible rectangle
+  (needs to coexist with every other button's own click, not replace it).
+- **Display**: `refreshNameLabel(slot)` sets the button's label to the
+  typed name plus a blinking `|` while focused, or the name (or a "Hero
+  Name" placeholder, in normal button-text color — no dimmed-placeholder
+  styling was worth adding to `createOrnateButton` for this one case) when
+  not. Called from `refreshAll()` for every slot (safe now, unlike the old
+  DOM approach — see below), plus explicitly wherever `SlotState.name`
+  changes programmatically (loading a save/character/blueprint) or focus
+  changes.
+- **`refreshSlot` still deliberately skips the name field** — same
+  reasoning as before (D-147), just re-explained: writing a `build`
+  snapshot into it mid-edit would fight live typing. `refreshNameLabel` is
+  safe to call from `refreshAll()` precisely because it reads the LIVE
+  `SlotState.name`, not a snapshot, so it never overwrites what the player
+  is currently typing.
+- **D-160's whole `setNameInputsVisible()` workaround is gone.** It
+  existed only because DOM elements ignored Phaser's normal depth sorting
+  and stayed visibly on top of every full-screen picker overlay. Canvas-
+  native buttons don't have that problem — `renderChoiceOverlay`'s dim
+  backdrop (depth 60) already draws over the name field (depth 10) for
+  free. `renderPlanPrompt` now calls the existing `blurNameField()` instead
+  (stops any in-progress typing before a wizard takes over input, same
+  spirit as its existing `closeDropdown()` call right above it).
+- `setSlotActive`'s old explicit `widgets.nameInputNode.disabled = !active`
+  line is gone too — `nameHandle` is now included in `interactiveButtons`
+  like every other row, so `setDisabled` already reaches it. A companion's
+  identity-locked slot still allows editing the name specifically (that
+  was never tied to `identityLocked`, only to whether the SLOT itself is
+  in use) — unchanged behavior, just reached through the shared path now.
+- New: a focused slot that becomes inactive (party size shrinks below it)
+  is explicitly blurred in `refreshAll()` — the old DOM approach never had
+  this gap since a real `<input>` losing browser focus naturally stopped
+  accepting keystrokes; a canvas-native field's "focus" is just scene
+  state, so a stale value needed a specific check.
+
+**Deliberately out of scope**: the OTHER two DOM `<input>` uses in this
+file (the Save-Blueprint-name and Save-Character-name overlay text
+fields) and `CoopLobbyScene`'s join-code field are untouched — none are
+"nameplates" Kevin was reacting to, and the join-code field specifically
+benefits from real paste support in a way a hero name doesn't.
+
+**Trade-off, discussed with Kevin before building**: no native OS
+copy/paste UI, no IME composition for non-Latin scripts, no mobile virtual
+keyboard — acceptable for a short, capped, cosmetic field with sensible
+defaults already in place.
+
+Tests: **1643** (unchanged — presentation-only, no new pure-system logic).
+Typecheck clean, all 1643 pass, production build succeeds (**152
+modules**, unchanged — no new file). Not yet verified by Kevin in a
+browser — flag if the click-to-focus/typing/blink/blur behavior doesn't
+feel right, or if the visual match to the rest of the column's ornate
+buttons isn't close enough.
+
+**Important files:**
+- `src/game/scenes/CharacterCreationScene.ts` — `SlotWidgets.nameHandle`
+  (replaces `.nameInput`/`.nameInputNode`), the new `focusedNameSlot`/
+  `nameCaretOn` fields, `nameHandle`'s creation in `buildSlotUi`, the new
+  `blurNameField()`/`refreshNameLabel()` methods, the `keydown`/
+  `pointerdown`/caret-timer registrations in `create()`, `keydown-ESC`'s
+  new focus check, `refreshAll()`'s new `refreshNameLabel` pass and
+  focus-on-inactive-slot guard, `setSlotActive`'s simplified disable path,
+  `renderPlanPrompt`'s `blurNameField()` call, and the deleted
+  `setNameInputsVisible()` (plus its two call sites).
+- `DECISIONS.md` — this entry.
+- `KNOWN_ISSUES.md` — KI-162 (new).
+- `CHANGELOG.md`, `PROJECT_STATUS.md`, `PHASE_HANDOFF.md` — updated.

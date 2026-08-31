@@ -2,125 +2,98 @@
 
 ## Version and phase
 
-- **Version:** 0.2.0-dev, unchanged. This session built and **fully
-  closed** **D-211**: four Character Creation spacing/text fixes plus a
-  long-standing hero-name-field positioning bug ("names are way out of
-  place," never fixed by any prior session). Everything is confirmed
-  working by Kevin on the deployed site. This was a standalone fix
-  session, not part of any phased gameplan — the 2026-08-28 playtest batch
-  (Phases 1-5, D-203 through D-210) closed three sessions ago with no
-  pre-set next task, and still stands as the next thing to check if Kevin
-  wants to keep playtesting.
+- **Version:** 0.2.0-dev, unchanged. This session built and closed
+  **D-211** (Character Creation spacing fixes + the hero-name-field
+  positioning bug — all confirmed working by Kevin), then built **D-212**
+  as a direct follow-up: the 4 hero-name fields are now canvas-native
+  instead of real DOM `<input>` elements, at Kevin's own request after he
+  noticed a load-time snap even once D-211's fix was working. D-212 is
+  **not yet played** — headless-verified only.
 - **Date:** August 31, 2026 (continuing the same standing-instruction
   session as every previous handoff since it was set).
-- Tests: **1643** (unchanged from last handoff — presentation-only change,
-  no new pure-system logic, no new test file). Typecheck clean, all 1643
+- Tests: **1643** (unchanged — presentation-only changes throughout, no
+  new pure-system logic, no new test file). Typecheck clean, all 1643
   pass, production build succeeds (**152 modules**, unchanged — no new
-  file; edits only to `CharacterCreationScene.ts`, `CoopLobbyScene.ts`, and
-  `uiTheme.ts`, and the temporary diagnostic code added mid-session was
-  fully removed again before the session ended).
+  file across either D-211 or D-212).
 
-## Everything in this session is DONE — no loose thread to pick up on D-211 itself
+## The two decisions this session, in order
 
-Unlike most recent handoffs, there's no "needs Kevin's confirmation"
-caveat left over from this one. All five items shipped this session are
-confirmed working:
+1. **D-211** (fully closed, confirmed): four Character Creation spacing/
+   text fixes plus a three-attempt saga to fix the hero-name fields'
+   positioning bug. All five items are confirmed working by Kevin on the
+   deployed site. See `DECISIONS.md` D-211 for the full story if this
+   class of bug (a real DOM element inside a Phaser scene going out of
+   sync with the canvas) ever comes up again — it's a genuinely useful
+   playbook.
+2. **D-212** (just built, not yet played): right after confirming D-211's
+   fix worked, Kevin noticed the name fields still visibly snap into place
+   for a frame on scene load, and asked a good architectural question —
+   why do these need their own separate positioning system at all, when
+   nothing else in the game does? Answer: they don't. Rebuilt the 4
+   hero-name fields as canvas-native controls (the same `createOrnateButton`
+   primitive every other row already uses) instead of real DOM `<input>`
+   elements. This eliminates the whole class of bug D-211 spent three
+   attempts fixing, at the cost of losing native browser text-editing
+   niceties (real OS copy/paste UI, IME composition, mobile virtual
+   keyboard) — a trade-off discussed with Kevin before building, given the
+   field's short/capped/cosmetic nature.
 
-1. Standard Array/Point Buy pill no longer overlaps the Background/
-   Ability-Bonus row above it.
-2. The Background/Ability-Bonus row's gap no longer reads as a stray
-   vertical line.
-3. The ability-bonus validation message names the actual control to
-   click.
-4. "Team Level" no longer covers the "Save Character/Load Character" row.
-5. The 4 hero-name `<input>` fields render inside their own column,
-   confirmed by Kevin including after a zoom test.
+## What happened this session — D-212 detail
 
-See "What happened this session" below for the full story of item 5 in
-particular — it took three attempts and is worth reading before touching
-`fixDomContainerAlignment`/DOM-element positioning again in this project.
-
-## What happened this session (D-211)
-
-**Confirmed working throughout, no issues:**
-1. Fixed a real 12px overlap between the Standard Array/Point Buy pill and
-   the Background/Ability-Bonus row above it (D-206 added that row without
-   adjusting the pill's position) — `abilityMethodHandle`'s `y` (280→300),
-   `pointsLeftY` (302→324).
-2. Widened `bgRowGap` (6px→10px).
-3. Clarified the ability-bonus validation message to name the actual
-   control.
-4. Fixed a second, independently-discovered bug: `buildBottomControls`'s
-   "Team Level" button (`y=840`) fully covered the per-column "Save
-   Character/Load Character" row (`libraryY=832`, bottom edge 848) by a
-   proven 30px, broken since D-206 (found while investigating a screenshot
-   Kevin sent — from the DEPLOYED site, which turned out not to reflect
-   this session's own work yet, a mid-session false alarm about "made it
-   worse" that nonetheless surfaced this real, separate bug). Shifted the
-   whole shared bottom control block down, unevenly, to preserve ~15px of
-   clearance above the screen's outer frame (a uniform shift would have
-   left only ~5px — this exact frame-adjacent zone broke once before, see
-   KI-141/D-159, so this was checked with Kevin before shipping the
-   tighter option).
-
-**Took three attempts, now closed:**
-5. Hero-name-field positioning. **Attempt 1** (wrong): assumed a runtime
-   desync borrowed from D-162's canvas-squish finding, mitigated with
-   `this.scale.refresh()` alone — Kevin corrected this directly: "the name
-   plates don't drift, they just start in that position." **Attempt 2**
-   (right formula, incomplete application): reading Phaser's own
-   `ScaleManager.js` source found the real mechanism — Phaser keeps its
-   DOM element container aligned with the canvas by copying the canvas's
-   CSS margin onto it, which only works when Phaser itself centers the
-   canvas; this project centers via an external CSS flexbox instead, so
-   that margin is always empty. Built `fixDomContainerAlignment()`
-   (`uiTheme.ts`), applied once at `create()` plus on resize events —
-   deployed, Kevin confirmed **no visible effect**. A diagnostic panel
-   (rebuilt once after a too-small first version — Kevin's attempt to
-   browser-zoom in to read it revealed canvas content doesn't visibly
-   resize with zoom while DOM content does, itself a useful clue) then
-   supplied real numbers: `canvas rect L467 T70 W1200 H1012` vs
-   `domContainer rect L447 T-17 W1200 H1012` — same size (the fix's scale
-   math was always right), offset 20px left/87px up, with a genuinely
-   nonzero PARTIAL correction already applied. This proved the fix's
-   correction FORMULA was correct — it just went stale against live
-   browser zoom/resize churn. **Attempt 3** (the fix): `fixDomContainerAlignment`
-   now reruns every single frame (`update()`, both `CharacterCreationScene`
-   and `CoopLobbyScene`) instead of relying on event timing —
-   self-healing regardless of what causes the drift. Deployed, and Kevin
-   confirmed the fields are now correctly aligned. The temporary
-   diagnostic panel (`domDebugBg`/`domDebugText`/`updateDomDebugText()`)
-   was removed once confirmed; `update()`'s `fixDomContainerAlignment`
-   call itself stayed as the permanent fix.
-
-Also confirmed, not a bug: the game's apparent on-screen size doesn't
-change with browser zoom at all — expected under `Scale.FIT` (the canvas
-always resizes to exactly fill the available space regardless of what
-triggered the resize, zoom included).
+- `SlotWidgets.nameInput`/`.nameInputNode` (a `Phaser.GameObjects.DOMElement`
+  + its raw `<input>` node) replaced by `nameHandle: OrnateButtonHandle`.
+- New scene state: `focusedNameSlot: number | null`, `nameCaretOn: boolean`
+  (blinked by a 500ms repeating `this.time.addEvent`).
+- Click → focus (closes any open dropdown, sets `focusedNameSlot`, calls
+  `refreshNameLabel`). A scene-wide `keydown` listener (registered in
+  `create()`) handles Backspace/printable-character-append (24-char cap,
+  same as the old `maxlength`)/Enter+Tab-to-blur while a slot is focused.
+  `keydown-ESC` (the existing Back-navigation handler) now checks
+  `focusedNameSlot` first and just blurs instead of leaving the whole
+  screen. A scene-wide `pointerdown` listener blurs on any click that
+  isn't the focused field itself (matched via `obj.parentContainer`,
+  since `OrnateButtonHandle` doesn't expose its inner `Graphics` object).
+- `refreshNameLabel(slot)` draws the typed name (+ blinking `|` while
+  focused) or a "Hero Name" placeholder when empty and unfocused. Called
+  from `refreshAll()` for every slot every time (safe — unlike `refreshSlot`,
+  which still deliberately skips the name field, `refreshNameLabel` reads
+  the LIVE `SlotState.name` rather than a `build` snapshot, so it can never
+  fight in-progress typing) and explicitly wherever `SlotState.name`
+  changes programmatically (loading a save/character/blueprint).
+- D-160's `setNameInputsVisible()` workaround (hiding DOM inputs behind
+  every full-screen picker overlay, since they ignored normal depth
+  sorting) is deleted entirely — canvas-native fields respect depth
+  sorting for free, so an overlay just covers them automatically.
+  `renderPlanPrompt` now calls `blurNameField()` instead.
+- `setSlotActive`'s old explicit `nameInputNode.disabled = !active` line
+  is gone — `nameHandle` is in `interactiveButtons` like every other row
+  now, so the shared disable pass already reaches it. A locked companion's
+  name is still editable (that was never tied to `identityLocked`) —
+  unchanged behavior, reached through the shared path.
+- New edge case the old approach never needed: a focused slot that becomes
+  inactive (party size shrinks below it) is now explicitly blurred in
+  `refreshAll()` (a real DOM `<input>` losing browser focus naturally
+  stopped accepting keystrokes; a canvas-native field's "focus" is just
+  scene state, so this needed an explicit check).
 
 ## Important files
 
-- `src/game/scenes/uiTheme.ts` — `fixDomContainerAlignment()` (the
-  correction formula, unchanged since attempt 2 — only its call frequency
-  needed to change in attempt 3).
-- `src/game/scenes/CharacterCreationScene.ts` — `create()`'s
-  `scale.refresh()`/`fixDomContainerAlignment()`/`onViewportResize()`
-  calls, `abilityMethodHandle`'s `y`, `pointsLeftY`, `bgRowGap`, the
-  unspent-background status message, `buildBottomControls`'/
-  `buildStartButton`'s Y-coordinate shifts, and `update()` (now permanent —
-  calls `fixDomContainerAlignment` every frame; no diagnostic code remains).
-- `src/game/scenes/CoopLobbyScene.ts` — the same `create()` calls plus a
-  permanent `update()` calling `fixDomContainerAlignment` every frame
-  (its join-code field is presumed fixed by the same mechanism — not
-  independently confirmed by Kevin, since he was checking Character
-  Creation specifically).
-- `DECISIONS.md` — D-211 (six same-session amendments — read them in order
-  for the full "wrong guess → source-verified-but-incomplete fix →
-  diagnostic → real fix" arc if this class of bug ever recurs).
-- `KNOWN_ISSUES.md` — KI-161, now marked **RESOLVED, confirmed by Kevin**.
-- `CHANGELOG.md` — `[Unreleased]` section for D-211, all items marked
-  confirmed.
-- `PROJECT_STATUS.md` — top section, all items marked confirmed.
+- `src/game/scenes/CharacterCreationScene.ts` — see D-212's own
+  "Important files" list in `DECISIONS.md` for the full touch-point list
+  (widget fields, `buildSlotUi`, the new focus/blur/label methods, the
+  `create()` listener registrations, `keydown-ESC`, `refreshAll`,
+  `setSlotActive`, `renderPlanPrompt`, and the deleted
+  `setNameInputsVisible`).
+- `src/game/scenes/uiTheme.ts` — `fixDomContainerAlignment()`, still used
+  by `CoopLobbyScene` (its join-code field stayed a real DOM `<input>`)
+  and no longer by `CharacterCreationScene` at all.
+- `DECISIONS.md` — D-211 (six same-session amendments, fully resolved),
+  D-212 (new).
+- `KNOWN_ISSUES.md` — KI-161 (D-211, RESOLVED), KI-162 (D-212, new — full
+  confirmation checklist for the canvas-native name field).
+- `CHANGELOG.md` — two `[Unreleased]` sections, D-212 stacked above D-211.
+- `PROJECT_STATUS.md` — two sections, D-212 on top (not yet played),
+  D-211 below it (confirmed).
 - `PHASE_HANDOFF.md` — this file, fully rewritten.
 
 ## Commands verified
@@ -131,22 +104,23 @@ triggered the resize, zoom included).
 
 ## Manual tests completed
 
-Kevin deployed and checked "Build Your Party" directly (not this
-environment's own testing — no browser available here) across multiple
-rounds this session, confirming: the Standard Array/Background-gap/
-validation-message fixes, the Team-Level overlap fix, and (after three
-attempts) the hero-name-field positioning fix, including via his own
-zoom-in/zoom-out test. Everything in D-211 is now confirmed.
+D-211 is fully confirmed by Kevin on the deployed site (see `KNOWN_ISSUES.md`
+KI-161, RESOLVED). D-212 has NOT been played yet — see KI-162's full
+checklist: does the field visually match the rest of the column, does
+click/type/blur/caret all feel right, does a locked companion's name stay
+editable, does Escape stop editing without navigating away, etc.
 
 ## Known issues
 
-- **KI-161** (D-211, this session) — **RESOLVED**, all items confirmed by
-  Kevin. No further action needed on it.
+- **KI-162** (D-212, this session) needs Kevin's playtest confirmation —
+  the canvas-native name field is a real behavior change (not just a bug
+  fix), so this deserves an actual look before considering it done.
+- **KI-161** (D-211) — **RESOLVED**, confirmed by Kevin.
 - **KI-160** (D-210), **KI-159** (D-209), **KI-158** (D-208), **KI-157**
   (D-207), **KI-156** (D-206), **KI-155** (D-205), **KI-154** (D-204),
   **KI-153** (D-203) — the entire 2026-08-28 playtest batch — still need
-  confirmation, unchanged since last handoff. This is now the oldest
-  unconfirmed batch in the project and a reasonable next playtest target.
+  confirmation, unchanged since last handoff. Still the oldest unconfirmed
+  batch in the project.
 - **KI-152**, **KI-151** and every KI-141-through-KI-150 group remain
   unconfirmed from prior sessions, unchanged.
 - Every pre-existing "Still need Kevin's playtest confirmation" item
@@ -157,10 +131,20 @@ zoom-in/zoom-out test. Everything in D-211 is now confirmed.
 
 ## Deferred items
 
-- `CoopLobbyScene`'s join-code field wasn't independently confirmed fixed
-  — if Kevin plays a co-op session and the field is still misplaced, that
-  would be surprising (identical mechanism, identical fix) and worth a
-  fresh look rather than assuming it's the same bug.
+- `CoopLobbyScene`'s join-code field is untouched (deliberately kept as a
+  real DOM `<input>`) — still carries KI-062's own never-independently-
+  confirmed "should position correctly" gap, now via `fixDomContainerAlignment`
+  alone (no canvas-native alternative built for it, nor requested).
+- The other two DOM `<input>` uses in `CharacterCreationScene.ts` (the
+  Save-Blueprint-name and Save-Character-name overlay text fields) are
+  untouched — out of scope for D-212 (Kevin's complaint was specifically
+  about the "nameplates," not these transient modal fields). If Kevin
+  ever raises a similar complaint about THOSE, the same canvas-native
+  approach applies directly — no new design needed, just the same pattern.
+- If KI-162's playtest turns up something wrong with the canvas-native
+  field (typing feels off, focus/blur has an edge case, visual mismatch),
+  the whole mechanism is self-contained in `CharacterCreationScene.ts` —
+  no `uiTheme.ts`/Phaser-internals digging needed this time, unlike D-211.
 - Re-chasing KI-152's repro — still nothing concrete to investigate.
 - The coop equip-mode ownership gate (D-208's flagged gap) — Kevin has
   already given a direction for it (own-characters-only shop/equip/sell,
@@ -172,59 +156,48 @@ zoom-in/zoom-out test. Everything in D-211 is now confirmed.
   full-screen modal overlays) — not requested, no mockup covered them.
 - The per-column content (Gear/Pool through Save/Load Character) appears
   to extend roughly 60px past the parchment panel's own drawn background
-  (`drawParchmentPanel`, height 680 centered at y=445, bottom edge 785) —
-  noticed while investigating the Team-Level overlap but NOT fixed this
-  session. Kevin's own recent screenshots show no obvious visible seam
-  there, so may be a non-issue in practice — worth a glance next time this
-  screen comes up, not urgent.
-- **If a similar "DOM element positioned wrong" bug ever comes up again**
-  (another real HTML `<input>` in a new scene, say), the playbook from
-  this session is: don't assume a runtime desync; check whether the
-  position is static-wrong-from-frame-one or actually drifts; if static,
-  suspect `fixDomContainerAlignment` needs to be wired into that scene's
-  own `create()`/`update()` (it's a reusable `uiTheme.ts` helper, not
-  scene-specific) rather than re-deriving the fix from scratch.
+  — noticed while investigating D-211's Team-Level overlap but NOT fixed.
+  Kevin's own recent screenshots show no obvious visible seam there, so
+  may be a non-issue in practice — worth a glance next time this screen
+  comes up, not urgent.
 
 ## Next chat instructions
 
-1. **No pre-set next task remains** — D-211 is fully closed. Ask Kevin
-   what's next, or suggest the 2026-08-28 playtest batch (KI-153 through
-   KI-160) as the oldest still-unconfirmed work if he has no specific
-   request.
-2. **Backlog, explicitly deferred by Kevin:** BG3-style roll viewer and
+1. **Get Kevin's confirmation on D-212** (the canvas-native name field) —
+   see KI-162's checklist. This is a real behavior/UX change, not just a
+   positioning fix, so it's worth an actual look before moving on.
+2. Once confirmed, no other pre-set task remains — ask Kevin what's next,
+   or suggest the 2026-08-28 playtest batch (KI-153 through KI-160) as the
+   oldest still-unconfirmed work if he has no specific request.
+3. **Backlog, explicitly deferred by Kevin:** BG3-style roll viewer and
    Bestiary enemy images — both "after artwork is added."
-3. If a new engagement starts, give it its own `D-NNN`/`KI-NNN` (next
-   available: **D-212**/**KI-162**).
-4. **If the coop equip-mode ownership gate is ever built**, the direction
+4. If a new engagement starts, give it its own `D-NNN`/`KI-NNN` (next
+   available: **D-213**/**KI-163**).
+5. **If the coop equip-mode ownership gate is ever built**, the direction
    is already agreed with Kevin — don't re-litigate it (see "Deferred
    items" above).
-5. Reminder for the standard workflow: Kevin manages Git via GitHub
+6. Reminder for the standard workflow: Kevin manages Git via GitHub
    Desktop and deploys via GitHub Actions on push to `main` — a screenshot
    he sends might be from a stale deployed build if recent work hasn't
-   been pushed yet (this happened once this session and caused a real,
-   if brief, false alarm) — worth confirming which build a screenshot
-   reflects before diagnosing from it.
+   been pushed yet (this happened once already this session).
 
 ## Suggested git steps (not run here; use GitHub Desktop)
 
 This session touched: `src/game/scenes/CharacterCreationScene.ts`,
 `src/game/scenes/CoopLobbyScene.ts`, `src/game/scenes/uiTheme.ts`,
 `DECISIONS.md`, `KNOWN_ISSUES.md`, `CHANGELOG.md`, `PROJECT_STATUS.md`,
-this file. No new files. No Firebase-relevant change. Kevin has already
-committed/pushed/deployed the working state confirmed above — no
-outstanding push needed from this session unless the next chat makes
-further changes.
+this file. No new files. No Firebase-relevant change. D-211's work is
+already deployed and confirmed; D-212 (this turn's canvas-native name
+field) still needs to be pushed before Kevin can check it.
 
 ## Handoff package contents
 
 - [x] Source files (see "Important files" above)
 - [x] package.json / package-lock.json (unchanged)
 - [x] README.md (unchanged)
-- [x] DECISIONS.md (updated — D-211 appended, amended six times same
-      session, fully resolved)
-- [x] KNOWN_ISSUES.md (updated — KI-161 added, now marked RESOLVED)
-- [x] CHANGELOG.md (updated — Unreleased section for D-211, all items
-      confirmed)
+- [x] DECISIONS.md (updated — D-211 fully resolved, D-212 appended)
+- [x] KNOWN_ISSUES.md (updated — KI-161 RESOLVED, KI-162 added)
+- [x] CHANGELOG.md (updated — two Unreleased sections, D-212 on top)
 - [x] CONTENT_SOURCES.md (unchanged — no new content)
 - [x] ASSET_PLAN.md (unchanged)
 - [x] SOURCE_OF_TRUTH.md (unchanged)
@@ -233,8 +206,7 @@ further changes.
 - [x] CAMPAIGN_STORY_DESIGN.md (unchanged)
 - [x] PARTY_CREATION_OVERHAUL_PLAN.md (unchanged — that roadmap closed
       earlier)
-- [x] PROJECT_STATUS.md (updated — D-211 section on top, all items
-      confirmed)
+- [x] PROJECT_STATUS.md (updated — D-212 section on top, D-211 below it)
 - [x] PHASE_HANDOFF.md (this file, fully rewritten)
 - [x] Tests: **1643** (unchanged)
 - [x] No node_modules, dist, secrets, or service-account credentials

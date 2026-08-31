@@ -398,10 +398,18 @@ interface SlotState {
 interface SlotWidgets {
   /** Party Creation Overhaul Plan 8: the Human/AI toggle, now an ornate button — its handle owns both the plaque and the label together. */
   controlHandle: OrnateButtonHandle;
-  /** D-147 (piece 2): a real DOM `<input>`, not a Text label — its own value is read live on each "input" event, not re-set by `refreshSlot`. */
-  nameInput: Phaser.GameObjects.DOMElement;
-  /** The raw `<input>` node inside `nameInput`, kept separately so `setSlotActive` can toggle `.disabled` — a Phaser `Rectangle`'s `disableInteractive` doesn't apply to a real HTML element. */
-  nameInputNode: HTMLInputElement;
+  /**
+   * D-211: a canvas-native "fake" text field, NOT a real DOM `<input>`
+   * (D-147's original approach) — same `createOrnateButton` primitive as
+   * every other row in this column, so it matches the theme and never
+   * needs its own separate positioning/scaling system. Click to focus
+   * (`focusedNameSlot`), then typed keys are captured by the scene's own
+   * `keydown` listener and appended to `SlotState.name` directly; the
+   * displayed label (placeholder, typed text, or typed text + blinking
+   * caret while focused) is refreshed via `refreshNameLabel`. See that
+   * method's own comment for why a real DOM element was dropped.
+   */
+  nameHandle: OrnateButtonHandle;
   classHandle: OrnateButtonHandle;
   raceHandle: OrnateButtonHandle;
   /** D-206: opens the Background picker. */
@@ -449,6 +457,15 @@ interface SlotWidgets {
 }
 
 export class CharacterCreationScene extends Phaser.Scene {
+  /**
+   * D-211: which hero slot's canvas-native name field is currently being
+   * typed into, or `null` when none is. At most one at a time — same
+   * single-focus shape as `openDropdown` below. See `focusNameField`/
+   * `blurNameField`/`refreshNameLabel`.
+   */
+  private focusedNameSlot: number | null = null;
+  /** D-211: toggled by a repeating timer while a name field is focused, to blink its caret. */
+  private nameCaretOn = false;
   private slots: SlotState[] = [];
   private widgets: SlotWidgets[] = [];
   private startHandle!: OrnateButtonHandle;
@@ -810,6 +827,66 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.refreshAll();
 
     onViewportResize(this, () => this.repositionLayout());
+
+    // D-211: text-editing input for the canvas-native name fields.
+    // `keydown-ESC` (in `buildBackButton`) handles Escape separately since
+    // it's already its own dedicated event; every other editing key comes
+    // through this generic listener instead. `preventDefault`/
+    // `stopPropagation` on a handled key stop it reaching anything else
+    // (browser default action, or another `keydown` listener elsewhere in
+    // this scene — there isn't one today, but this keeps typing safe if
+    // one's ever added).
+    this.input.keyboard?.on("keydown", (event: KeyboardEvent) => {
+      if (this.focusedNameSlot === null) return;
+      const slot = this.focusedNameSlot;
+      const s = this.slots[slot];
+      if (event.key === "Backspace") {
+        s.name = s.name.slice(0, -1);
+      } else if (event.key === "Enter" || event.key === "Tab") {
+        this.blurNameField();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && s.name.length < 24) {
+        // `event.key.length === 1` covers printable characters (letters,
+        // digits, punctuation, space) while excluding named keys ("Shift",
+        // "ArrowLeft", "F5", etc.), which all have longer `key` strings.
+        s.name = s.name + event.key;
+      } else {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      this.refreshNameLabel(slot);
+      this.refreshAll();
+    });
+
+    // D-211: clicking anywhere that isn't the focused name field's own
+    // button blurs it — mirrors `openAbilityDropdown`'s full-canvas
+    // click-away catcher, but as a global listener (checked against
+    // `currentlyOver`) instead of a dedicated invisible rectangle, since it
+    // needs to fire alongside every other button's own click, not instead
+    // of it.
+    this.input.on(Phaser.Input.Events.POINTER_DOWN, (_pointer: Phaser.Input.Pointer, currentlyOver: Phaser.GameObjects.GameObject[]) => {
+      if (this.focusedNameSlot === null) return;
+      const focusedContainer = this.widgets[this.focusedNameSlot]?.nameHandle.container;
+      const hitFocused = currentlyOver.some((obj) => obj.parentContainer === focusedContainer);
+      if (!hitFocused) this.blurNameField();
+    });
+
+    // D-211: a simple blinking caret while a name field is focused — cheap,
+    // and only visually active for the one focused field at a time
+    // (`refreshNameLabel` reads `nameCaretOn` for whichever slot is
+    // currently focused; every other slot's label ignores it).
+    this.time.addEvent({
+      delay: 500,
+      loop: true,
+      callback: () => {
+        if (this.focusedNameSlot === null) return;
+        this.nameCaretOn = !this.nameCaretOn;
+        this.refreshNameLabel(this.focusedNameSlot);
+      },
+    });
   }
 
   /**
@@ -903,45 +980,34 @@ export class CharacterCreationScene extends Phaser.Scene {
     allObjects.push(controlHandle.container);
     interactiveButtons.push(controlHandle);
 
-    // D-147 (piece 2): a real DOM `<input>` (this project's second use of one
-    // — see `CoopLobbyScene`'s join-code field, KI-062, for the first and
-    // `main.ts`'s `dom.createContainer` config both rely on). The starting
-    // value is set as a JS property, not baked into the HTML string, so a
-    // loaded save's name can't break/inject into the markup. Typing updates
-    // `s.name` live and re-runs `refreshAll` (for duplicate/blank-name
-    // validation) but never writes back INTO the input itself, so the
-    // player's cursor position/selection is never disturbed mid-edit.
-    // Party Creation Overhaul Plan 8: cosmetic-only colors so the field sits
-    // on the new parchment backdrop instead of the old dark panel — no
-    // behavior change.
-    const nameInput = this.add
-      .dom(
-        x,
-        165,
-      )
-      .createFromHTML(
-        `<input type="text" maxlength="24" placeholder="Hero Name" style="
-          width: ${COLUMN_WIDTH - 20}px; height: 34px; font-size: 16px;
-          font-family: 'EB Garamond', Georgia, 'Times New Roman', serif; font-weight: bold;
-          text-align: center; background: #e8d8ae; color: #2a1a10;
-          border: 1px solid #5a3a20; border-radius: 4px; outline: none;
-          box-sizing: border-box;
-        " />`,
-      )
-      .setOrigin(0.5)
-      .setDepth(10);
-    const nameNode = nameInput.node.querySelector("input") as HTMLInputElement;
-    nameNode.value = this.slots[slot].name;
-    nameNode.addEventListener("input", () => {
-      this.slots[slot].name = nameNode.value;
-      this.refreshAll();
-    });
-    nameNode.addEventListener("keydown", (e: KeyboardEvent) => e.stopPropagation());
-    // Party Creation Overhaul Plan 1.1: a click landing on a real DOM
-    // `<input>` doesn't reach the dropdown's own full-canvas Phaser catcher
-    // rectangle (DOM elements sit outside Phaser's pointer pipeline) — close
-    // explicitly on focus so a stray dropdown never gets left open/orphaned.
-    nameNode.addEventListener("focus", () => this.closeDropdown());
+    // D-211: a canvas-native "fake" text field — replaces D-147's real DOM
+    // `<input>`. The DOM approach needed its own separate positioning
+    // system (`domContainer`'s CSS margin/scale, kept in sync with the
+    // canvas via `fixDomContainerAlignment`) that took three attempts this
+    // project to get right and still produced a visible snap-into-place on
+    // scene load; a canvas-native field uses the exact same
+    // `createOrnateButton` primitive as every other row in this column, so
+    // it's positioned/scaled by the same system as everything else and
+    // never needs special-casing again (including the D-160 "hide behind a
+    // full-screen overlay" workaround `setNameInputsVisible` used to need —
+    // normal Phaser depth sorting just handles it now). Click focuses this
+    // slot (`focusedNameSlot`); typed keys are captured by the scene-wide
+    // `keydown` listener set up in `create()` and appended to `s.name`
+    // directly (see `refreshNameLabel`).
+    const nameHandle = createOrnateButton(
+      this,
+      x,
+      165,
+      COLUMN_WIDTH - 20,
+      34,
+      "",
+      () => {
+        this.closeDropdown();
+        this.focusedNameSlot = slot;
+        this.refreshNameLabel(slot);
+      },
+      { variant: "tab", fontSize: 16, font: FONT_BODY },
+    );
 
     const classHandle = createOrnateButton(
       this,
@@ -1456,7 +1522,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     );
 
     allObjects.push(
-      nameInput,
+      nameHandle.container,
       classHandle.container,
       raceHandle.container,
       backgroundHandle.container,
@@ -1474,6 +1540,7 @@ export class CharacterCreationScene extends Phaser.Scene {
       pointsLeftLabel,
     );
     interactiveButtons.push(
+      nameHandle,
       classHandle,
       raceHandle,
       backgroundHandle,
@@ -1491,8 +1558,7 @@ export class CharacterCreationScene extends Phaser.Scene {
 
     return {
       controlHandle,
-      nameInput,
-      nameInputNode: nameNode,
+      nameHandle,
       classHandle,
       raceHandle,
       backgroundHandle,
@@ -1814,7 +1880,15 @@ export class CharacterCreationScene extends Phaser.Scene {
       variant: "tool",
       depth: 5,
     }).container.setName("back-button-anchor");
-    this.input.keyboard?.on("keydown-ESC", () => this.leaveToMainMenu());
+    this.input.keyboard?.on("keydown-ESC", () => {
+      // D-211: Escape while typing a name should stop editing it, not
+      // navigate away and discard the rest of the screen's state.
+      if (this.focusedNameSlot !== null) {
+        this.blurNameField();
+        return;
+      }
+      this.leaveToMainMenu();
+    });
   }
 
   private leaveToMainMenu(): void {
@@ -2040,10 +2114,10 @@ export class CharacterCreationScene extends Phaser.Scene {
     // Party Creation Overhaul Plan 8: was `.setInteractive()`/`.disableInteractive()`
     // on a raw Rectangle — `OrnateButtonHandle.setDisabled()` does the same
     // click-block plus its own dimmed-plaque redraw.
+    // D-211: the name field is now a real `OrnateButtonHandle` (canvas-
+    // native, not a DOM `<input>`), so it's included in `interactiveButtons`
+    // above like every other row — no separate disable step needed anymore.
     widgets.interactiveButtons.forEach((b) => b.setDisabled(!active));
-    // D-147 (piece 2): the name row is a real HTML `<input>`, not a Phaser
-    // button — `setDisabled()` above doesn't reach it.
-    widgets.nameInputNode.disabled = !active;
   }
 
   /**
@@ -2074,7 +2148,17 @@ export class CharacterCreationScene extends Phaser.Scene {
   private refreshAll(): void {
     const builds = this.buildsFromSlots();
     builds.forEach((build, slot) => this.refreshSlot(slot, build));
+    // D-211: unlike `refreshSlot` (which skips the name field to avoid
+    // fighting live typing), `refreshNameLabel` reads straight from the
+    // live `SlotState.name` rather than a `build` snapshot, so it's safe —
+    // and necessary, to show the initial default name on first render and
+    // pick up any programmatic change (loading a save/character/blueprint).
+    this.widgets.forEach((_, slot) => this.refreshNameLabel(slot));
     this.widgets.forEach((w, slot) => this.setSlotActive(w, slot < this.partySize));
+    // D-211: a focused name field whose slot just became inactive (party
+    // size shrunk below it) would otherwise keep showing its blinking
+    // caret on a now-dimmed/disabled row.
+    if (this.focusedNameSlot !== null && this.focusedNameSlot >= this.partySize) this.blurNameField();
     this.refreshAbilityScoreControls();
 
     // Party Creation Overhaul Plan 3.6: unconditional now that the button
@@ -2177,9 +2261,12 @@ export class CharacterCreationScene extends Phaser.Scene {
     const isAiControlled = build.controlledBy === "ai";
     w.controlHandle.setLabel(`Hero ${slot + 1} — ${isAiControlled ? "AI-Controlled" : "Human-Controlled"}`);
     w.controlHandle.setSelected(isAiControlled);
-    // D-147 (piece 2): the name field is a live-typed DOM `<input>`, not a
-    // Text label re-rendered from `build.name` — writing to it here would
-    // fight the player's own typing/cursor position. Nothing to set.
+    // D-211: the name field's label isn't re-rendered from `build.name`
+    // here — writing to it mid-edit would fight the player's own typing
+    // (and stomp the caret `refreshNameLabel` draws while focused). See
+    // `refreshNameLabel`, called separately by whatever actually changes
+    // `SlotState.name` (typing, or loading a save/character/blueprint).
+    // Nothing to set here.
     // Party Creation Overhaul Plan 3.2: excludes slot 0 — a returning PC is
     // also `identityLocked` now, but is never a "(Companion)". Plan 3.4:
     // once this campaign's been cleared once, a companion's stats unlock —
@@ -2610,6 +2697,41 @@ export class CharacterCreationScene extends Phaser.Scene {
   }
 
   /**
+   * D-211: unfocuses the currently-edited name field, if any. Safe to call
+   * when none is focused. Called on Escape, Enter, Tab, clicking anything
+   * else (see the scene-wide `pointerdown` listener in `create()`), or
+   * whenever another overlay/dropdown is about to take over input.
+   */
+  private blurNameField(): void {
+    if (this.focusedNameSlot === null) return;
+    const slot = this.focusedNameSlot;
+    this.focusedNameSlot = null;
+    this.refreshNameLabel(slot);
+  }
+
+  /**
+   * D-211: redraws one slot's name-field label — the typed name (with a
+   * blinking `|` caret appended while focused) or, when empty and not
+   * focused, a dim "Hero Name" placeholder. `refreshSlot` deliberately
+   * doesn't touch this (same reasoning D-147's original DOM `<input>` used:
+   * a re-render mid-edit could disturb what the player is actively typing),
+   * so every OTHER place that changes `SlotState.name` programmatically
+   * (loading a save/character/blueprint) must call this explicitly.
+   */
+  private refreshNameLabel(slot: number): void {
+    const s = this.slots[slot];
+    const handle = this.widgets[slot]?.nameHandle;
+    if (!s || !handle) return;
+    const focused = this.focusedNameSlot === slot;
+    if (focused) {
+      handle.setLabel(s.name + (this.nameCaretOn ? "|" : ""));
+    } else {
+      handle.setLabel(s.name || "Hero Name");
+    }
+    handle.setSelected(focused);
+  }
+
+  /**
    * Party Creation Overhaul Plan 1.1: a small dropdown anchored just below
    * one Standard Array row, offering the 6 standard values (15/14/13/12/10/8)
    * plus "—" (unset). No existing `uiTheme.ts` component fits — `
@@ -2714,19 +2836,6 @@ export class CharacterCreationScene extends Phaser.Scene {
 
   private clearLevelPlanOverlay(): void {
     clearChoiceOverlay(this.levelPlanOverlay);
-    this.setNameInputsVisible(true);
-  }
-
-  /**
-   * The 4 hero-name fields are real HTML `<input>` DOM elements (Phaser's
-   * DOM plugin renders them in a layer above the canvas, outside normal
-   * depth sorting), so they'd otherwise stay visible on top of every
-   * full-screen picker/wizard overlay `renderPlanPrompt` draws.
-   */
-  private setNameInputsVisible(visible: boolean): void {
-    for (const w of this.widgets) {
-      w.nameInputNode.style.visibility = visible ? "visible" : "hidden";
-    }
   }
 
   /**
@@ -3020,10 +3129,9 @@ export class CharacterCreationScene extends Phaser.Scene {
           // uses. Not identity/gear/ability-locked: a library-loaded
           // character is always freely editable afterward.
           this.slots[slot] = this.slotStateFromBuild(entry.build, false, false, undefined, false);
-          // The name field is a real DOM <input> whose value isn't re-set by
-          // `refreshSlot` (see `SlotWidgets.nameInput`'s own doc comment) —
-          // sync it explicitly.
-          this.widgets[slot].nameInputNode.value = this.slots[slot].name;
+          // The name field's displayed label isn't re-set by `refreshSlot`
+          // (see `refreshNameLabel`'s own doc comment) — sync it explicitly.
+          this.refreshNameLabel(slot);
           this.clearLevelPlanOverlay();
           this.refreshAll();
         },
@@ -3601,7 +3709,11 @@ export class CharacterCreationScene extends Phaser.Scene {
     // full-screen overlay open at once" impossible by construction, rather
     // than relying on z-order/depth alone.
     this.closeDropdown();
-    this.setNameInputsVisible(false);
+    // D-211: name fields are canvas-native now, so `renderChoiceOverlay`'s
+    // own depth (60) already draws over them via normal Phaser depth
+    // sorting — no separate hide/show step needed (the old real-DOM
+    // `<input>` approach couldn't rely on depth sorting at all).
+    this.blurNameField();
     renderChoiceOverlay(this, this.levelPlanOverlay, title, choices);
   }
 }

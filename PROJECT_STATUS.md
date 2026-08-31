@@ -1,5 +1,32 @@
 # Project Status
 
+## Hero-name fields rebuilt canvas-native — DONE this session, not yet played (D-212)
+
+Kevin's follow-up right after D-211's fix landed: even correctly
+positioned, the name fields' load-time snap felt off, and he asked whether
+they could be "linked to the other visual aspects of the game" instead of
+needing their own separate system. They can — replaced D-147's real HTML
+`<input>` elements with a canvas-native field using the same ornate-button
+primitive every other row in Character Creation already uses.
+
+- Click to focus, type to edit (Backspace, 24-char cap, a blinking `|`
+  caret), Enter/Tab/Escape/clicking elsewhere all cleanly stop editing.
+- Visually matches the rest of the column automatically (same wood-panel/
+  bronze look, same "selected" highlight while focused) — no more separate
+  styling to keep in sync with the theme.
+- The D-160 "hide DOM inputs behind every overlay" workaround is gone —
+  canvas-native fields respect normal Phaser depth sorting, so an overlay
+  covers them for free.
+- Trade-off, agreed with Kevin first: no native OS copy/paste, IME
+  composition, or mobile virtual keyboard for this field. The co-op
+  join-code field keeps its real DOM `<input>` — pasting a shared code
+  benefits far more from that than typing a hero name does.
+
+Tests: **1643** (unchanged — presentation-only). Typecheck clean, all 1643
+pass, production build succeeds (**152 modules**, unchanged — no new
+file). No browser available in this environment — see `KNOWN_ISSUES.md`
+KI-162 for the full confirmation checklist.
+
 ## Character Creation spacing fixes + the hero-name-field positioning bug — DONE and CONFIRMED (D-211)
 
 From a Kevin screenshot of "Build Your Party." All five fixes below are

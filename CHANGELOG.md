@@ -2,6 +2,31 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Hero-name fields rebuilt canvas-native (D-212)
+
+Kevin's follow-up right after D-211: even fixed, the name fields' load-time
+snap felt off, and he asked for a design that doesn't need a separate
+positioning system at all. See `DECISIONS.md` D-212 for the full writeup.
+
+Changed:
+- The 4 hero-name fields in Character Creation are no longer real HTML
+  `<input>` elements — they're now a canvas-native field using the same
+  ornate-button visuals as every other row in the column, so they match
+  the theme automatically and are positioned by the same system as
+  everything else (no separate DOM layer, no snap-into-place).
+- Click to focus, type to edit (Backspace, 24-char cap, a blinking caret),
+  Enter/Tab/Escape/clicking elsewhere all stop editing.
+- The D-160 workaround for DOM elements ignoring normal depth sorting
+  (`setNameInputsVisible`, hiding the fields behind every picker overlay)
+  is gone — canvas-native fields are covered by an overlay automatically.
+- Trade-off, agreed with Kevin beforehand: no native OS copy/paste, IME
+  composition, or mobile virtual keyboard for this field specifically —
+  the co-op join-code field keeps its real DOM `<input>` since pasting a
+  shared code benefits much more from that.
+
+Tests: 1643 (unchanged — presentation-only). Typecheck clean, production
+build succeeds (152 modules, unchanged).
+
 ## [Unreleased] — 0.2.0-dev — Character Creation spacing fixes + the hero-name-field positioning bug (D-211)
 
 From a Kevin screenshot of "Build Your Party." All items below are
