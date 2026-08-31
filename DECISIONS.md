@@ -12151,17 +12151,46 @@ and `visualViewport.scale` alongside the canvas/domContainer/first-input
 rects, so a single screenshot at ANY zoom level (no zooming required to
 read it) carries everything needed for the next diagnosis pass.
 
+**Fourth amendment, same session: Kevin's diagnostic screenshot solved it —
+the fix's MATH was right all along, only its TIMING was wrong.** The
+panel's real numbers: `canvas rect L467 T70 W1200 H1012` vs `domContainer
+rect L447 T-17 W1200 H1012` — same width/height (the scale transform was
+always correct) but offset 20px left and 87px up, with a genuinely
+nonzero, partial correction already applied (`margin 40.1562px /
+33.8889px` — not the empty margin a totally-uncorrected container would
+show). This confirms `fixDomContainerAlignment` DOES run and DOES compute
+a real correction — it just goes stale: a one-time call in `create()` plus
+reapplication on `Phaser.Scale.Events.RESIZE` (via `onViewportResize`)
+isn't enough to stay synced against live browser zoom/resize churn (this
+matches Kevin's own zoom-test finding exactly — the drift he saw is this
+staleness, not a wrong formula).
+
+**Fix**: call `fixDomContainerAlignment(this)` every frame, from a new
+`update()` method in both `CharacterCreationScene` and `CoopLobbyScene`,
+instead of relying on event timing. Self-healing — any drift, from
+whatever cause, is corrected by the very next frame. Cheap for two
+non-battle scenes (a handful of `getBoundingClientRect()` calls at 60fps).
+The diagnostic panel already proved the correction formula reaches the
+right answer given accurate current measurements, so this should actually
+close the bug — but it's still unverified without a browser, so treat it
+as "should be fixed" until Kevin confirms, not "confirmed fixed."
+
 **Important files:**
-- `src/game/scenes/uiTheme.ts` — new `fixDomContainerAlignment()`.
+- `src/game/scenes/uiTheme.ts` — `fixDomContainerAlignment()` (formula
+  confirmed correct via Kevin's diagnostic numbers).
 - `src/game/scenes/CharacterCreationScene.ts` — `create()`'s
   `scale.refresh()`/`fixDomContainerAlignment()`/`onViewportResize()` calls,
   `abilityMethodHandle`'s `y` (280 -> 300), `pointsLeftY` (302 -> 324),
   `bgRowGap` (6 -> 10), the unspent-background status message,
-  `buildBottomControls`'/`buildStartButton`'s Y-coordinate shifts, the new
-  `domDebugBg`/`domDebugText` fields, `update()`, and
-  `updateDomDebugText()` (all tagged "D-211 TEMP DIAGNOSTIC" — remove once
-  the name-field bug is actually found and fixed).
-- `src/game/scenes/CoopLobbyScene.ts` — the same three `create()` calls.
+  `buildBottomControls`'/`buildStartButton`'s Y-coordinate shifts, the
+  `domDebugBg`/`domDebugText` fields and `updateDomDebugText()` (tagged
+  "D-211 TEMP DIAGNOSTIC" — remove once the name-field bug is confirmed
+  fixed), and the new `update()` method (calls `fixDomContainerAlignment`
+  every frame — this call itself is the real fix, likely permanent; only
+  the diagnostic-panel half of `update()` is temporary).
+- `src/game/scenes/CoopLobbyScene.ts` — the same `create()` calls plus a
+  matching new `update()` calling `fixDomContainerAlignment` every frame
+  (no diagnostic panel there — untested, presumed to share the same fix).
 - `DECISIONS.md` — this entry.
 - `KNOWN_ISSUES.md` — KI-161 (new).
 - `CHANGELOG.md`, `PROJECT_STATUS.md`, `PHASE_HANDOFF.md` — updated.

@@ -162,6 +162,19 @@ export class CoopLobbyScene extends Phaser.Scene {
     this.refresh();
   }
 
+  /**
+   * D-211: a one-time correction plus resize-event reapplication went stale
+   * against live browser zoom/resize churn in `CharacterCreationScene`
+   * (confirmed via a Kevin screenshot — the fix's math was right, but its
+   * timing wasn't) — re-running it every frame instead is self-healing
+   * regardless of what caused the drift. Same fix applied here since this
+   * scene's join-code field is subject to the identical mechanism. Cheap
+   * for a non-battle scene.
+   */
+  update(): void {
+    fixDomContainerAlignment(this);
+  }
+
   // D-154: moves every registered object back to `viewportWidth / 2 + dx` at
   // its own fixed `y` — safe to call anytime (including on the DOM `<input>`,
   // which keeps its typed value and focus since it's never rebuilt).

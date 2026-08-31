@@ -67,13 +67,26 @@ screenshot of "Build Your Party" — **(headless-verified, not yet played)**.
   box, search `CharacterCreationScene.ts` for "D-211 TEMP DIAGNOSTIC") that
   updates every frame and includes window size/devicePixelRatio/
   visualViewport scale alongside the canvas/DOM-container/first-input
-  rects — no zooming needed to read it this time. **Kevin: please
-  screenshot "Build Your Party" once more with that panel visible (it's
-  large and near the top of the screen, hard to miss) — the next fix
-  attempt needs those real numbers instead of more guessing.** Once the
-  bug is actually fixed and confirmed, the whole diagnostic (the panel,
-  its two fields, and the `update()` method) should be removed — none of
-  it is meant to ship.
+  rects — no zooming needed to read it this time, and Kevin's screenshot
+  of it gave real numbers: `canvas rect L467 T70 W1200 H1012` vs
+  `domContainer rect L447 T-17 W1200 H1012` (same size, offset 20px left/
+  87px up) with a genuinely nonzero, partial `margin 40.16px/33.89px`
+  already applied. That confirms the fix's MATH was correct all along — it
+  just goes stale, since a one-time correction plus resize-event
+  reapplication isn't enough against live browser zoom/resize churn.
+  **Third attempt**: `fixDomContainerAlignment` now reruns every frame
+  (`update()`, both `CharacterCreationScene` and `CoopLobbyScene`) instead
+  of relying on event timing — self-healing regardless of what causes the
+  drift. This SHOULD close the bug (the formula is proven correct against
+  real measurements), but is still unverified without a browser — confirm
+  the 4 hero-name fields now render INSIDE their own column, staying
+  correct even after resizing the window or changing browser zoom (Kevin's
+  own zoom test is a good way to re-check: zoom in/out and confirm the
+  fields DON'T shift anymore). Once confirmed, remove the diagnostic panel
+  (`domDebugBg`/`domDebugText`/`updateDomDebugText()`, tagged "D-211 TEMP
+  DIAGNOSTIC") — but the `update()` method's `fixDomContainerAlignment`
+  call itself should likely stay (it's the actual fix, not the
+  diagnostic).
 - While there, also check `CoopLobbyScene`'s join-code field (create/join a
   co-op session) — same fix applied there, same "should position correctly"
   gap KI-062 already listed but never confirmed either way.

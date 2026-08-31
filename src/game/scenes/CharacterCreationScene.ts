@@ -836,8 +836,23 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.updateDomDebugText();
   }
 
-  /** D-211 TEMP DIAGNOSTIC — see the comment in `create()`. Runs every frame so a screenshot at any zoom level is current. */
+  /**
+   * D-211: Kevin's diagnostic screenshot proved the fix's MATH is right
+   * (`domContainer`'s size always matches the canvas's — only its margin
+   * lags) but a one-time correction (`create()`) plus resize-event
+   * reapplication (`onViewportResize`) goes stale against live browser
+   * zoom/resize churn — the margin was a real, nonzero, PARTIAL correction
+   * from an earlier state, not zero. Re-running the correction every frame
+   * instead of relying on event timing makes it self-healing: any drift is
+   * gone by the very next frame, regardless of what caused it. Cheap (a
+   * few `getBoundingClientRect()` calls) for a non-battle scene. Remove
+   * this call (but very likely keep the `updateDomDebugText()` one, tagged
+   * "D-211 TEMP DIAGNOSTIC") once the bug is confirmed fixed — at that
+   * point `fixDomContainerAlignment` may be safe to call ONLY on resize
+   * again, but confirm that holds before dropping the per-frame call.
+   */
   update(): void {
+    fixDomContainerAlignment(this);
     this.updateDomDebugText();
   }
 

@@ -1,12 +1,14 @@
 # Project Status
 
-## Character Creation spacing fixes — DONE this session; name-field bug STILL OPEN (D-211)
+## Character Creation spacing fixes — DONE this session; name-field bug LIKELY closed, unverified (D-211)
 
 From a Kevin screenshot of "Build Your Party": four spacing/text fixes,
 confirmed working after deploy. The recurring "hero name fields render out
-of place" report is NOT fixed yet — two attempts this session, both
-confirmed unsuccessful; a diagnostic is now in place waiting on real
-numbers from Kevin's browser.
+of place" report took three attempts — the first two confirmed
+unsuccessful, but Kevin's diagnostic-panel screenshot proved the
+correction formula was right and only its timing was wrong; the third
+attempt (reapply every frame) should close it but still needs his
+confirmation once deployed.
 
 - Fixed a real overlap: the Standard Array/Point Buy pill's top edge sat
   12px inside the Background/Ability-Bonus row above it (D-206 added that
@@ -24,19 +26,18 @@ numbers from Kevin's browser.
   to protect the validation text's clearance above the screen's outer
   frame. Kevin deployed and confirmed this fix, plus the Standard Array/
   Background-gap/validation-message fixes above, all landed correctly.
-- **Hero-name-field positioning: STILL BROKEN after two attempts.** A
-  source-verified theory (Phaser's `ScaleManager.js` DOM-container margin
-  logic doesn't work with this project's external-CSS-flexbox centering)
-  produced `fixDomContainerAlignment()` (`uiTheme.ts`) — deployed, and
-  Kevin confirmed it had no visible effect. His attempt to browser-zoom in
-  to read the (too-small) first diagnostic turned up a real clue: canvas
-  content doesn't visibly resize with zoom, but the hero-name fields DO
-  shift with it (up-left zooming in, down-right zooming out) — the DOM
-  container isn't staying synced to the canvas across a zoom/resize event.
-  Rebuilt the diagnostic into a large, always-current, readable panel
-  (`CharacterCreationScene.ts`, tagged "D-211 TEMP DIAGNOSTIC") including
-  window/zoom info — waiting on one more screenshot from Kevin with that
-  panel visible. See `KNOWN_ISSUES.md` KI-161.
+- **Hero-name-field positioning: likely closed on the third attempt,
+  unverified.** Kevin's diagnostic-panel screenshot gave real numbers
+  (`canvas rect L467 T70` vs `domContainer rect L447 T-17`, same size,
+  offset 20px left/87px up, with a genuinely nonzero partial correction
+  already applied) proving `fixDomContainerAlignment()`'s correction
+  MATH was right all along — it just went stale against live browser
+  zoom/resize churn (a one-time call plus resize-event reapplication
+  wasn't enough). Now reruns every frame (`update()`, both
+  `CharacterCreationScene` and `CoopLobbyScene`) instead — self-healing
+  regardless of what caused the drift. Formula proven correct against real
+  measurements, but still needs Kevin's own confirmation once deployed.
+  See `KNOWN_ISSUES.md` KI-161.
 
 Tests: **1643** (unchanged — presentation-only). Typecheck clean, all 1643
 pass, production build succeeds (**152 modules**, unchanged — no new

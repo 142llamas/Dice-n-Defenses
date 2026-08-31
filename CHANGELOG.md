@@ -25,26 +25,23 @@ Fixed, confirmed by Kevin on the deployed site:
   needed, the two text rows below absorb less to protect their clearance
   above the screen's outer frame. Confirmed working after deploy.
 
-Still broken, two attempts so far:
+Attempted three times, latest believed to close it (unverified):
 - The 4 hero-name `<input>` fields (and `CoopLobbyScene`'s join-code field)
-  still render near the top of the screen instead of inside their own
-  column — a real, static positioning bug, not a runtime desync (Kevin
-  corrected an earlier wrong guess: "the name plates don't drift, they
-  just start in that position"). A source-verified theory (Phaser's
-  `ScaleManager.js` copies the canvas's CSS margin onto its DOM element
-  container, which only works when Phaser itself centers the canvas —
-  this project centers via an external CSS flexbox instead) led to a new
-  `fixDomContainerAlignment()` helper (`uiTheme.ts`) — deployed, and
-  confirmed by Kevin to have had NO visible effect. Kevin's attempt to
-  browser-zoom in to read the (too-small) first diagnostic attempt
-  revealed a real clue: canvas content doesn't visibly resize with browser
-  zoom, but the hero-name fields DO shift with it — the DOM container
-  isn't staying synced to the canvas across a zoom/resize event. The
-  diagnostic (tagged "D-211 TEMP DIAGNOSTIC" in
-  `CharacterCreationScene.ts`, remove once resolved) is now a large,
-  always-current, readable panel including window/zoom info, so the next
-  attempt is based on actual browser numbers — see `KNOWN_ISSUES.md`
-  KI-161.
+  render near the top of the screen instead of inside their own column —
+  a real, static positioning bug, not a runtime desync (Kevin corrected an
+  earlier wrong guess: "the name plates don't drift, they just start in
+  that position"). A source-verified theory (Phaser's `ScaleManager.js`
+  copies the canvas's CSS margin onto its DOM element container, which
+  only works when Phaser itself centers the canvas) produced
+  `fixDomContainerAlignment()` (`uiTheme.ts`) — deployed, confirmed by
+  Kevin to have had no visible effect. A readable diagnostic panel (his
+  attempt to zoom in on a too-small first version revealed the canvas
+  doesn't visibly resize with browser zoom while the name fields do —
+  itself a useful clue) then supplied real numbers: the fix's correction
+  MATH was right, it just went stale against live zoom/resize churn.
+  `fixDomContainerAlignment` now reruns every frame instead of on a
+  one-time/resize-event basis (self-healing) — should close the bug, but
+  still needs Kevin's confirmation. See `KNOWN_ISSUES.md` KI-161.
 
 Tests: 1643 (unchanged — presentation-only). Typecheck clean, production
 build succeeds (152 modules, unchanged).
