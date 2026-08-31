@@ -75,6 +75,23 @@ screenshot of "Build Your Party" — **(headless-verified, not yet played)**.
 - While there, also check `CoopLobbyScene`'s join-code field (create/join a
   co-op session) — same fix applied there, same "should position correctly"
   gap KI-062 already listed but never confirmed either way.
+- **Second, unrelated bug found and fixed in the same session**: the "Team
+  Level: N (all heroes)" bar was fully covering the per-column "Save
+  Character/Load Character" row underneath it (a proven 30px overlap,
+  broken since D-206, not caused by anything above) — confirmed from a
+  Kevin screenshot of the DEPLOYED site (which didn't even have this
+  session's other fixes yet). Fixed by shifting the whole shared bottom
+  block down, but the shift wasn't uniform — Team Level/Party Size/
+  Difficulty/Start Battle/Save Party all moved the full amount needed
+  (they had no gap left to compress), while the save-status line and the
+  validation text below them absorbed less, to protect their clearance
+  above the screen's outer frame (down to ~15px from ~35px, not the ~5px a
+  uniform shift would have left — this exact frame-adjacent zone broke
+  once before, see KI-141/D-159). Confirm: the Save/Load Character row is
+  now fully visible and clickable for EVERY hero column (not just some),
+  Team Level sits cleanly below it with a real gap, and the bottom of the
+  screen (Start Battle, Save New Party, the save-status text, and the red
+  validation message) doesn't crowd or clip against the outer frame.
 
 ### KI-160 — D-210: BattleScene visual reskin (Phase 5's second item)
 The battle screen's chrome (background, HUD buttons, roster panel, action

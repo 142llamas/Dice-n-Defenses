@@ -25,6 +25,12 @@ render out of place" report.
   project's only two DOM-element scenes). Real mechanism, not a guess —
   still needs Kevin's own look to confirm the pixel-perfect result; see
   `KNOWN_ISSUES.md` KI-161.
+- **Second, unrelated bug found and fixed the same session**: the "Team
+  Level" bar fully covered the per-column "Save Character/Load Character"
+  row beneath it (a proven 30px overlap, broken since D-206) — confirmed
+  via a Kevin screenshot of the deployed site. Fixed by shifting the whole
+  shared bottom control block down, unevenly, to protect the validation
+  text's clearance above the screen's outer frame.
 
 Tests: **1643** (unchanged — presentation-only). Typecheck clean, all 1643
 pass, production build succeeds (**152 modules**, unchanged — no new

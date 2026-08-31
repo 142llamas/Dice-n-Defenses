@@ -12078,12 +12078,51 @@ Tests: **1643** (unchanged — presentation-only positioning/text changes,
 no new pure-system logic). Typecheck clean, all 1643 pass, production
 build succeeds (**152 modules**, unchanged — no new file).
 
+**Amendment, same session: a second, independent bug found while re-checking
+the screenshot Kevin sent of this fix.** He sent it from the DEPLOYED site
+(dice-n-defenses.web.app) — none of the above had been committed/pushed/
+deployed yet at that point, so it could not have reflected this session's
+fix at all, and the layout shown was the pre-D-211 state. While confirming
+that, a second, genuinely pre-existing bug turned up: `buildBottomControls`'
+"Team Level" button (`y=840`) and the per-column "Save/Load Character" row
+(`libraryY=832`, bottom edge 848) overlap by a proven 30px — Team Level
+fully covers that row. This has been broken since D-206 pushed the column's
+Background row in without re-checking the column's total height against
+`buildBottomControls`'/`buildStartButton`'s own fixed Y values below it;
+nothing in this session caused it.
+
+The fix needs the whole shared bottom block (Team Level, Party Size/
+Difficulty, Start Battle, Save Party, the save-status line, the validation
+text) to move down, but the block was already edge-to-edge tight against
+itself (Team Level to Party Size/Difficulty: 6px gap; that to Start Battle/
+Save Party: 1px) — no slack there to compress. Asked Kevin directly given
+the frame-clearance risk this touches (`KNOWN_ISSUES.md` KI-141 already
+flagged this exact zone once, and D-159 had to revert a change that broke
+it for real): a straight +38px shift to every row would leave the
+validation text only ~5px clear of the screen's outer frame. His call:
+ship it anyway. Landed on a smaller, uneven shift instead of a flat +38
+everywhere — Team Level/Party Size/Difficulty/Start Battle/Save Party all
+shift the full +38 (no compressible gap between them), but the two text
+rows below (save-status, validation) have real gap slack around them and
+absorb only +28/+20 respectively, preserving **~15px** of clearance above
+the frame (down from ~35px before, but not the ~5px a flat shift would
+have left).
+
+New Y values: Team Level 840→878, Party Size/Difficulty 890→928, Start
+Battle/Save Party 940→978, save-status line 990→1018, validation text
+1020→1040.
+
+Tests: **1643** (unchanged). Typecheck clean, all 1643 pass, production
+build succeeds (**152 modules**, unchanged). Still unverified in a browser —
+flag if the bottom of this screen reads as cramped against the frame.
+
 **Important files:**
 - `src/game/scenes/uiTheme.ts` — new `fixDomContainerAlignment()`.
 - `src/game/scenes/CharacterCreationScene.ts` — `create()`'s
   `scale.refresh()`/`fixDomContainerAlignment()`/`onViewportResize()` calls,
   `abilityMethodHandle`'s `y` (280 -> 300), `pointsLeftY` (302 -> 324),
-  `bgRowGap` (6 -> 10), the unspent-background status message.
+  `bgRowGap` (6 -> 10), the unspent-background status message,
+  `buildBottomControls`'/`buildStartButton`'s Y-coordinate shifts.
 - `src/game/scenes/CoopLobbyScene.ts` — the same three `create()` calls.
 - `DECISIONS.md` — this entry.
 - `KNOWN_ISSUES.md` — KI-161 (new).

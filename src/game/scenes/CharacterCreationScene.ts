@@ -1514,8 +1514,16 @@ export class CharacterCreationScene extends Phaser.Scene {
   private buildBottomControls(width: number): void {
     // Party Creation Overhaul Plan 8: shifted +30 (810->840/860->890) to
     // keep pace with the taller ornate column above.
-    this.buildTeamLevelControl(width, 840);
-    const y = 890;
+    // Playtest fix (D-211): shifted +38 (840->878/890->928). D-206 pushed
+    // the per-column "Save/Load Character" row down to y=832 (bottom edge
+    // 848) without this block's own numbers being re-checked against it —
+    // Team Level at the old y=840 sat 30px INSIDE that row, fully covering
+    // it (confirmed in a Kevin screenshot). `buildStartButton`'s row and
+    // the save-status/validation text below it shift too, but by a smaller
+    // amount each (see that method's own comment) — the two text rows'
+    // gaps had more slack to compress than these two buttons do.
+    this.buildTeamLevelControl(width, 878);
+    const y = 928;
     const leftX = width / 2 - 150;
     const rightX = width / 2 + 150;
 
@@ -1616,6 +1624,16 @@ export class CharacterCreationScene extends Phaser.Scene {
   // (700->740); D-129: another +90px (740->830); D-133: another +40px
   // (830->870); D-135: another +40px (870->910), same reason as
   // buildBottomControls' own shift.
+  // Playtest fix (D-211): Start Battle/Save Party shifted +38 (940->978),
+  // matching `buildBottomControls`' own +38 shift immediately above them
+  // (no slack between these rows to compress — see that method's comment).
+  // The save-status line (990->1018, +28) and validation text (1020->1040,
+  // +20) shift LESS — both are small text rows with real gap slack around
+  // them, compressed rather than fully carried, keeping the validation
+  // text's own bottom edge ~15px clear of the screen's outer frame (was
+  // ~35px before this shift) rather than the ~5px a full +38 everywhere
+  // would have left. Unverified without a browser — flag if this reads as
+  // cramped against the frame.
   private buildStartButton(width: number): void {
     const leftX = width / 2 - 150;
     const rightX = width / 2 + 150;
@@ -1628,7 +1646,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.startHandle = createOrnateButton(
       this,
       leftX,
-      940,
+      978,
       260,
       54,
       "Start Battle",
@@ -1701,12 +1719,12 @@ export class CharacterCreationScene extends Phaser.Scene {
       { variant: "primary" },
     );
 
-    this.savePartyHandle = createOrnateButton(this, rightX, 940, 260, 54, "", () => this.onSaveParty(), {
+    this.savePartyHandle = createOrnateButton(this, rightX, 978, 260, 54, "", () => this.onSaveParty(), {
       variant: "secondary",
     });
 
     this.saveStatusLabel = this.add
-      .text(rightX, 990, "", { fontFamily: FONT_BODY, fontSize: "13px", color: "#b8a074" })
+      .text(rightX, 1018, "", { fontFamily: FONT_BODY, fontSize: "13px", color: "#b8a074" })
       .setOrigin(0.5)
       .setDepth(1);
 
@@ -1719,7 +1737,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     }
 
     this.statusText = this.add
-      .text(width / 2, 1020, "", {
+      .text(width / 2, 1040, "", {
         fontFamily: FONT_BODY,
         fontSize: "13px",
         color: "#c86a5a",

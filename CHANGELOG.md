@@ -31,6 +31,13 @@ Fixed, root-caused via Phaser's own source:
   actual on-screen position and corrects the DOM container's margin to
   match — applied to both DOM-element scenes. Still needs Kevin's own look
   to confirm the pixel-perfect result — see `KNOWN_ISSUES.md` KI-161.
+- A second, unrelated bug found the same session (confirmed via a
+  screenshot of the deployed site, broken since D-206): the "Team Level"
+  bar fully covered the per-column "Save Character/Load Character" row
+  beneath it, a proven 30px overlap. Fixed by moving the whole shared
+  bottom control block down, unevenly — the buttons move the full amount
+  needed, the two text rows below absorb less to protect their clearance
+  above the screen's outer frame.
 
 Tests: 1643 (unchanged — presentation-only). Typecheck clean, production
 build succeeds (152 modules, unchanged).
