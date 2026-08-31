@@ -56,17 +56,24 @@ screenshot of "Build Your Party" — **(headless-verified, not yet played)**.
   applied to both `CharacterCreationScene` and `CoopLobbyScene`) — that
   mechanism is real (verified in Phaser's source) but had NO visible effect
   on the actual bug, meaning either the fix has its own error or the true
-  cause is something else the source-reading didn't surface. Rather than
-  guess a third mechanism, a **temporary on-screen diagnostic** was added
-  (search `CharacterCreationScene.ts` for "D-211 TEMP DIAGNOSTIC") — a
-  small magenta text line at the very bottom of the screen dumping the
-  real measured position of the canvas, the DOM container, and the first
-  name `<input>`, plus the DOM container's actual `margin`/`transform` CSS
-  values. **Kevin: please screenshot "Build Your Party" once more,
-  including that bottom line of text (may be small — zoom in if needed, or
-  paste the exact text) — the next fix attempt needs those real numbers
-  instead of more guessing.** Once the bug is actually fixed and confirmed,
-  remove that diagnostic text (it's not meant to ship).
+  cause is something else the source-reading didn't surface. A first
+  diagnostic attempt (a small magenta text line) was too small to read —
+  Kevin's attempt to browser-zoom in to read it turned up a real clue
+  instead: the CANVAS content doesn't visibly change size with browser
+  zoom at all, but the hero-name fields DO shift (up-left zooming in,
+  down-right zooming out), meaning the DOM container isn't staying in sync
+  with the canvas across a zoom/resize event. The diagnostic is now a
+  large, always-current, readable panel (white text on a black backing
+  box, search `CharacterCreationScene.ts` for "D-211 TEMP DIAGNOSTIC") that
+  updates every frame and includes window size/devicePixelRatio/
+  visualViewport scale alongside the canvas/DOM-container/first-input
+  rects — no zooming needed to read it this time. **Kevin: please
+  screenshot "Build Your Party" once more with that panel visible (it's
+  large and near the top of the screen, hard to miss) — the next fix
+  attempt needs those real numbers instead of more guessing.** Once the
+  bug is actually fixed and confirmed, the whole diagnostic (the panel,
+  its two fields, and the `update()` method) should be removed — none of
+  it is meant to ship.
 - While there, also check `CoopLobbyScene`'s join-code field (create/join a
   co-op session) — same fix applied there, same "should position correctly"
   gap KI-062 already listed but never confirmed either way.

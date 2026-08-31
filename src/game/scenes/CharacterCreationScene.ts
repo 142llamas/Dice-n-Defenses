@@ -449,6 +449,9 @@ interface SlotWidgets {
 }
 
 export class CharacterCreationScene extends Phaser.Scene {
+  /** D-211 TEMP DIAGNOSTIC — remove both fields once the hero-name-field bug is fixed. */
+  private domDebugBg?: Phaser.GameObjects.Graphics;
+  private domDebugText?: Phaser.GameObjects.Text;
   private slots: SlotState[] = [];
   private widgets: SlotWidgets[] = [];
   private startHandle!: OrnateButtonHandle;
@@ -812,28 +815,58 @@ export class CharacterCreationScene extends Phaser.Scene {
     onViewportResize(this, () => this.repositionLayout());
 
     // D-211 TEMP DIAGNOSTIC — `fixDomContainerAlignment` had no visible
-    // effect on the hero-name-field position per Kevin's own screenshot, so
-    // rather than guess a third mechanism blind, dump the real numbers
-    // on-screen so the next round is based on measured data. Re-runs the
-    // fix here too (after the DOM `<input>` elements actually exist, unlike
-    // the earlier call at the top of `create()`) in case creation-order
-    // timing matters. REMOVE once the real bug is found and confirmed fixed.
-    fixDomContainerAlignment(this);
-    {
-      const game = this.sys.game;
-      const canvasRect = game.canvas.getBoundingClientRect();
-      const domRect = game.domContainer?.getBoundingClientRect();
-      const domStyle = game.domContainer?.style;
-      const inputRect = this.widgets[0]?.nameInputNode?.getBoundingClientRect();
-      const line =
-        `canvas L${canvasRect.left.toFixed(0)} T${canvasRect.top.toFixed(0)} W${canvasRect.width.toFixed(0)}  |  ` +
-        (domRect
-          ? `dom L${domRect.left.toFixed(0)} T${domRect.top.toFixed(0)} W${domRect.width.toFixed(0)}`
-          : "dom MISSING") +
-        `  |  margin ${domStyle?.marginLeft || "0px"}/${domStyle?.marginTop || "0px"}  transform ${domStyle?.transform || "none"}  |  ` +
-        (inputRect ? `input0 L${inputRect.left.toFixed(0)} T${inputRect.top.toFixed(0)}` : "input0 MISSING");
-      this.add.text(6, 1072, line, { fontFamily: "monospace", fontSize: "10px", color: "#ff33ff" }).setDepth(999);
-    }
+    // effect on the hero-name-field position per Kevin's own screenshot.
+    // The first version of this diagnostic (a small 10px line) was too
+    // small to read and Kevin's attempt to browser-zoom in to read it
+    // revealed something important: the CANVAS content doesn't visibly
+    // change with browser zoom (Phaser's own Scale.FIT resize-on-zoom
+    // logic compensates for it) but the hero-name `<input>` fields DO shift
+    // with zoom (up-left when zooming in, down-right when zooming out) —
+    // meaning `domContainer`'s real position is NOT being kept in sync the
+    // way the canvas is. `updateDomDebugText()` (below, called every frame
+    // via `update()`) now renders a large, always-current readable panel
+    // instead of a one-shot tiny line, including window/zoom-related
+    // numbers, so a single screenshot at ANY zoom level has everything
+    // needed. REMOVE `domDebugBg`/`domDebugText`/`updateDomDebugText`/
+    // `update()` once the real bug is found and confirmed fixed.
+    this.domDebugBg = this.add.graphics().setDepth(998);
+    this.domDebugText = this.add
+      .text(20, 95, "", { fontFamily: "monospace", fontSize: "16px", color: "#ffffff", lineSpacing: 6 })
+      .setDepth(999);
+    this.updateDomDebugText();
+  }
+
+  /** D-211 TEMP DIAGNOSTIC — see the comment in `create()`. Runs every frame so a screenshot at any zoom level is current. */
+  update(): void {
+    this.updateDomDebugText();
+  }
+
+  /** D-211 TEMP DIAGNOSTIC — see the comment in `create()`. */
+  private updateDomDebugText(): void {
+    if (!this.domDebugText || !this.domDebugBg) return;
+    const game = this.sys.game;
+    const canvasRect = game.canvas.getBoundingClientRect();
+    const domRect = game.domContainer?.getBoundingClientRect();
+    const domStyle = game.domContainer?.style;
+    const inputRect = this.widgets[0]?.nameInputNode?.getBoundingClientRect();
+    const vv = window.visualViewport;
+    const lines = [
+      "D-211 DIAGNOSTIC — screenshot this panel, then it can be removed",
+      `window: ${window.innerWidth}x${window.innerHeight}  devicePixelRatio: ${window.devicePixelRatio}`,
+      vv ? `visualViewport: ${vv.width.toFixed(0)}x${vv.height.toFixed(0)} scale=${vv.scale.toFixed(2)}` : "visualViewport: n/a",
+      `canvas rect: L${canvasRect.left.toFixed(0)} T${canvasRect.top.toFixed(0)} W${canvasRect.width.toFixed(0)} H${canvasRect.height.toFixed(0)}`,
+      domRect
+        ? `domContainer rect: L${domRect.left.toFixed(0)} T${domRect.top.toFixed(0)} W${domRect.width.toFixed(0)} H${domRect.height.toFixed(0)}`
+        : "domContainer rect: MISSING",
+      `domContainer style: margin ${domStyle?.marginLeft || "0px"} / ${domStyle?.marginTop || "0px"}`,
+      `domContainer transform: ${domStyle?.transform || "none"}`,
+      inputRect
+        ? `nameInput[0] rect: L${inputRect.left.toFixed(0)} T${inputRect.top.toFixed(0)} W${inputRect.width.toFixed(0)}`
+        : "nameInput[0] rect: MISSING",
+    ];
+    this.domDebugText.setText(lines);
+    const bounds = this.domDebugText.getBounds();
+    this.domDebugBg.clear().fillStyle(0x000000, 0.8).fillRect(bounds.x - 10, bounds.y - 10, bounds.width + 20, bounds.height + 20);
   }
 
   /**

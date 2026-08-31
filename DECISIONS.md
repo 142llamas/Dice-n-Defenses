@@ -12131,6 +12131,26 @@ Tests: **1643** (unchanged). Typecheck clean, all 1643 pass, production
 build succeeds (**152 modules**, unchanged). Still unverified in a browser —
 flag if the bottom of this screen reads as cramped against the frame.
 
+**Third amendment, same session: Kevin's zoom experiment turned up a
+concrete new clue.** He tried browser-zooming in to read the (too-small,
+first version of the) diagnostic text and reported: the CANVAS content
+doesn't visibly change size with browser zoom at all (Phaser's own
+`Scale.FIT` resize-on-zoom logic evidently compensates for it), but the
+hero-name `<input>` fields DO move with zoom — up-left when zooming in,
+down-right when zooming out. That means `domContainer`'s real screen
+position is NOT staying in sync with the canvas across a live zoom/resize
+event, even though `fixDomContainerAlignment` is re-registered via
+`onViewportResize` to reapply on every resize — a genuinely useful,
+concrete data point, even though the original diagnostic attempt (too
+small to read) didn't work as intended. Rebuilt the diagnostic from a tiny
+one-shot 10px line into a large, always-current panel
+(`updateDomDebugText()`, called every frame via a new `update()` method,
+`domDebugBg`/`domDebugText` fields) — white text on a black backing box,
+now also including `window.innerWidth/innerHeight`, `devicePixelRatio`,
+and `visualViewport.scale` alongside the canvas/domContainer/first-input
+rects, so a single screenshot at ANY zoom level (no zooming required to
+read it) carries everything needed for the next diagnosis pass.
+
 **Important files:**
 - `src/game/scenes/uiTheme.ts` — new `fixDomContainerAlignment()`.
 - `src/game/scenes/CharacterCreationScene.ts` — `create()`'s
@@ -12138,8 +12158,9 @@ flag if the bottom of this screen reads as cramped against the frame.
   `abilityMethodHandle`'s `y` (280 -> 300), `pointsLeftY` (302 -> 324),
   `bgRowGap` (6 -> 10), the unspent-background status message,
   `buildBottomControls`'/`buildStartButton`'s Y-coordinate shifts, the new
-  "D-211 TEMP DIAGNOSTIC" on-screen debug text at the end of `create()`
-  (remove once the name-field bug is actually found and fixed).
+  `domDebugBg`/`domDebugText` fields, `update()`, and
+  `updateDomDebugText()` (all tagged "D-211 TEMP DIAGNOSTIC" — remove once
+  the name-field bug is actually found and fixed).
 - `src/game/scenes/CoopLobbyScene.ts` — the same three `create()` calls.
 - `DECISIONS.md` — this entry.
 - `KNOWN_ISSUES.md` — KI-161 (new).

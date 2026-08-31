@@ -28,12 +28,15 @@ numbers from Kevin's browser.
   source-verified theory (Phaser's `ScaleManager.js` DOM-container margin
   logic doesn't work with this project's external-CSS-flexbox centering)
   produced `fixDomContainerAlignment()` (`uiTheme.ts`) — deployed, and
-  Kevin confirmed it had no visible effect. Rather than guess a third
-  mechanism, added a temporary on-screen diagnostic
-  (`CharacterCreationScene.ts`, tagged "D-211 TEMP DIAGNOSTIC") that dumps
-  the real measured canvas/DOM-container/input positions on-screen —
-  waiting on one more screenshot from Kevin with those numbers visible.
-  See `KNOWN_ISSUES.md` KI-161.
+  Kevin confirmed it had no visible effect. His attempt to browser-zoom in
+  to read the (too-small) first diagnostic turned up a real clue: canvas
+  content doesn't visibly resize with zoom, but the hero-name fields DO
+  shift with it (up-left zooming in, down-right zooming out) — the DOM
+  container isn't staying synced to the canvas across a zoom/resize event.
+  Rebuilt the diagnostic into a large, always-current, readable panel
+  (`CharacterCreationScene.ts`, tagged "D-211 TEMP DIAGNOSTIC") including
+  window/zoom info — waiting on one more screenshot from Kevin with that
+  panel visible. See `KNOWN_ISSUES.md` KI-161.
 
 Tests: **1643** (unchanged — presentation-only). Typecheck clean, all 1643
 pass, production build succeeds (**152 modules**, unchanged — no new

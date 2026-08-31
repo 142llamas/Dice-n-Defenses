@@ -35,11 +35,16 @@ Still broken, two attempts so far:
   container, which only works when Phaser itself centers the canvas —
   this project centers via an external CSS flexbox instead) led to a new
   `fixDomContainerAlignment()` helper (`uiTheme.ts`) — deployed, and
-  confirmed by Kevin to have had NO visible effect. A temporary on-screen
+  confirmed by Kevin to have had NO visible effect. Kevin's attempt to
+  browser-zoom in to read the (too-small) first diagnostic attempt
+  revealed a real clue: canvas content doesn't visibly resize with browser
+  zoom, but the hero-name fields DO shift with it — the DOM container
+  isn't staying synced to the canvas across a zoom/resize event. The
   diagnostic (tagged "D-211 TEMP DIAGNOSTIC" in
-  `CharacterCreationScene.ts`, remove once resolved) now dumps the real
-  measured canvas/DOM-container/input positions so the next attempt is
-  based on actual browser numbers — see `KNOWN_ISSUES.md` KI-161.
+  `CharacterCreationScene.ts`, remove once resolved) is now a large,
+  always-current, readable panel including window/zoom info, so the next
+  attempt is based on actual browser numbers — see `KNOWN_ISSUES.md`
+  KI-161.
 
 Tests: 1643 (unchanged — presentation-only). Typecheck clean, production
 build succeeds (152 modules, unchanged).
