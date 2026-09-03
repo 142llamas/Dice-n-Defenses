@@ -135,6 +135,15 @@ export class BestiaryScene extends Phaser.Scene {
 
     createOrnateButton(this, 120, 42, 160, 44, "Back (Esc)", () => this.leave(), { variant: "tool", depth: 5 });
 
+    // D-217 (item 6): mirrors CompendiumScene's new direct link — "Back"
+    // still goes straight to Main Menu (unchanged), this jumps sideways to
+    // the other half of the Knowledge Base instead.
+    createOrnateButton(this, width - 150, 42, 160, 44, "Compendium", () => this.scene.start("CompendiumScene"), {
+      variant: "tool",
+      depth: 5,
+      tooltip: "Jump directly to the Compendium",
+    });
+
     this.add
       .text(
         width / 2,

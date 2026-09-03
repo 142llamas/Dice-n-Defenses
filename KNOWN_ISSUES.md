@@ -29,6 +29,213 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
+### KI-176 — D-227: Map Builder gained author-designed enemy waves
+**(headless-verified, not yet played)**. This is a brand-new multi-screen UI
+(nothing like it existed before this session), so it needs a real
+click-through, not just a glance:
+- Map Builder — click the new "Waves" button next to Terrain/Markers. Add a
+  wave, Edit it, Add a Group, confirm the two-step enemy picker (role
+  category, then a specific enemy) opens and closes cleanly, and that
+  Count/Start Turn/Repeat Every steppers and the Spawn Point picker all work
+  and persist after re-opening the group.
+- Confirm Remove (on both a wave and a spawn group) and the Done/Back
+  buttons navigate correctly back through Group edit → Wave detail → Waves
+  list without leaving stray overlay content on screen.
+- Playtest a map with a custom wave designed — confirm the actual battle
+  spawns exactly what was authored (right enemy, right turn, right spawn
+  point), not the old generated minion-pool-plus-boss list.
+- Publish a map with a custom wave, then find it in Browse Shared Maps —
+  confirm Wave Count/Minion Source are hidden with the explanatory note, and
+  that Starting the map plays the author's own waves (Difficulty should
+  still visibly change enemy count/HP as usual).
+- Confirm a map with NO custom waves (an old map, or one where Waves was
+  never opened) still plays exactly as before this session.
+
+### KI-175 — D-226: Free Play gained a 4th Run Length preset, "Quick" (Lvl 1→5, 2 waves)
+**(headless-verified, not yet played)**.
+- Free Play — confirm the Run Length row now shows 4 buttons (Quick/Short/
+  Medium/Long) that all fit cleanly on screen without crowding or
+  overlapping (the row grew from 3 to 4 buttons this session, so the
+  buttons shrank a bit to compensate — flag if any label reads cramped or
+  wraps awkwardly).
+- Pick Quick and Start — confirm the party starts at level 1, jumps straight
+  to level 5 after clearing the first (only non-finale) wave, and fights
+  the boss on wave 2 entirely at level 5 with no further level-up.
+- Confirm Quick still respects the Finale Boss/Minion Source/Difficulty
+  pickers exactly like every other Run Length.
+
+### KI-174 — D-225: the last 4 flat-styled overlays reskinned (Cast a Spell grid, Rest popup, end screen, Character Sheet Hotkeys grid)
+**(headless-verified, not yet played)** — same "does it look right" caveat
+D-221's own reskin needed.
+- In battle, select a caster hero and open its Spellbook ("Cast a Spell") —
+  confirm the grid now reads as parchment cards (Cinzel title, ornate
+  buttons) instead of flat blue rectangles, each spell's name near the top
+  of its card and its full description wrapped below, still clickable
+  anywhere on the card. If the hero knows enough spells to paginate, confirm
+  Prev/Next still work and dim correctly at either end.
+- Clear a wave with a Rest available — confirm "Rest before the next wave?"
+  now shows a parchment panel with 2-3 ornate choice cards (Short/Long
+  Rest/Continue), each with its full description still readable underneath
+  the button.
+- Win or lose a battle — confirm the end screen shows a parchment panel
+  behind the Victory!/Defeat message and the "Return to Menu" button is now
+  a real ornate button (not a flat rectangle); confirm the victory message
+  is still green and the defeat message still red.
+- Open a hero's Character Sheet (in-battle) → Hotkeys tab — confirm the
+  "assignable actions & spells" grid now uses ornate cards, and a slot
+  already pinned to a hotkey still visually stands out from the rest (gilt/
+  selected look instead of the old green tint).
+
+### KI-173 — D-224: D-223's 5 remaining gaps closed (Free Play Run Length, threat-budget, boss-scaling, campaign's inert picker replaced, campaignLevel backfill)
+**(headless-verified, not yet played)** — closes the whole D-223 arc; needs a
+real Free Play run at each Run Length AND a fresh campaign chapter, not a
+quick glance, since every threat-budget/boss-scaling number is still
+first-pass/untuned.
+- Free Play — confirm the old "Wave Count" section now reads "Run Length"
+  (Short/Medium/Long), each button also showing its level cap (Lvl 10/15/20).
+  Start a run at each Run Length and confirm the party starts at level 1 and
+  automatically levels up between waves, reaching the shown cap by the
+  second-to-last wave (one full regular wave at the cap before the boss,
+  same cadence as campaign).
+- In Character Creation for that same Free Play run, confirm the per-hero
+  "Starting Level" button (and the "Team Level" button below the columns)
+  now read "Starts at Level 1 (Run Length)" and are disabled/unclickable —
+  and confirm the HP/AC/Speed stat preview and the Spells button's summary
+  both reflect level 1, not whatever the picker used to be set to.
+- In a CAMPAIGN chapter, confirm the same two controls now read "Campaign
+  Level: N" (disabled) instead of "Starting Level"/"Team Level", and that N
+  matches your actual current campaign level.
+- Play a Free Play run through to its finale boss on a harder difficulty
+  (Hard/Nightmare) — confirm the finale wave feels noticeably harder than
+  before (more enemies than the old flat count multiplier alone would give,
+  possibly some "elite" reskinned/tougher versions of regular enemies, maybe
+  an extra spawn lane active) and that the boss itself is visibly tougher
+  than fighting it on Easy/Normal at the same Run Length. Compare a Short-Run
+  boss fight to a Long-Run boss fight on the SAME difficulty — the Long-Run
+  boss (fought at a higher level cap) should be noticeably tougher.
+- In a campaign's Chapter 4 (a named boss chapter), confirm that boss also
+  feels tougher than it did before this session, scaled to that chapter's
+  own level band.
+- Confirm Co-op, Test Mode, and classic "Create Party" Free Play (no Run
+  Length picker — reached via MapBuilder Playtest or a shared map link) all
+  feel completely UNCHANGED: uniform per-wave leveling, no elite enemies, no
+  extra lanes, exactly as before this session.
+- If you have an existing mid-campaign save from BEFORE this session, load
+  it and confirm your party's level did NOT reset to 1 — it should reflect
+  whatever chapter you'd actually reached (the one-time backfill).
+
+### KI-172 — D-223: progression redesign, Campaign slice only (Free Play/threat-budget/boss-scaling NOT wired yet)
+Only the CAMPAIGN half of the redesign is reachable in-game this session —
+see D-223's own "explicitly NOT done" list for the real gaps (Free Play's
+Run Length UI, threat-budget application, boss-scaling application,
+Character Creation's now-inert Starting Level picker in campaign mode).
+**(headless-verified, not yet played)** — needs a real campaign playthrough,
+not a quick glance.
+- Start a BRAND-NEW campaign (or use "Reset Campaign Progress" first) and
+  play the Prologue — confirm your party stays at level 1 the whole
+  mission (no level-up popups at all).
+- Enter Emberford Reach Chapter 1 (or any region's Chapter 1) — confirm
+  levels advance automatically as waves clear, reaching level 5 by the time
+  you clear the second-to-last wave, with the LAST wave (the chapter's own
+  finale/miniboss) fought entirely at level 5 — no further level-up during
+  that last wave.
+- Confirm every ASI/subclass/spell-pick/spell-swap choice that a level along
+  the way grants still shows its normal popup (or resolves silently for an
+  "auto"-mode/AI-controlled hero) — including a hero that jumps MULTIPLE
+  levels in one wave-clear event (if the milestone data spans more than one
+  level at that wave), which should now show a prompt for EACH level's own
+  choice, not just the last one.
+- Clear Chapter 1 and confirm the loading Chapter 2 party truly starts at
+  level 6 (not level 1, and not still level 5) — this is `campaignLevel`
+  read back and re-applied to every hero (PC and companions) at battle
+  start, overriding whatever Character Creation's own (now-inert) Starting
+  Level picker shows.
+- Lose or quit mid-chapter after some in-battle level-ups happened, then
+  re-enter that SAME chapter — confirm the party's level did NOT advance
+  (campaignLevel only writes back on an actual chapter-clear/victory, not
+  eagerly).
+- Bench a companion, then reactivate them several chapters later — confirm
+  they're fielded at the CURRENT campaignLevel (not whatever level they were
+  last active at, and not level 1).
+- Try "Reset Campaign Progress" on Campaign Select — confirm a fresh
+  campaign afterward starts back at level 1.
+- Confirm Free Play, Co-op, Test Mode, and manual "Create Party" all feel
+  completely UNCHANGED from before this session — every hero still levels
+  up automatically every single wave cleared, same as always (this
+  redesign doesn't touch those modes at all yet).
+- Confirm difficulty (Easy/Normal/Hard/Nightmare) still only affects enemy
+  count/HP/Rest charges/campaign gear points exactly as before — no elite
+  enemies, no extra spawn lanes, no cadence changes yet (that system is
+  built and tested in isolation but not wired into any real battle).
+- General "does the level-up pacing feel right" gut check for a real
+  Campaign chapter — every number here (milestone spread, whatever else)
+  is explicitly first-pass/untuned.
+
+### KI-171 — D-221/D-222: level-up menu reskin + spell-replacement flow redesign
+Two related in-battle UI changes — the level-up/ASI/subclass/spell-pick
+popup's visual style, and how replacing a known spell now works —
+**(headless-verified, not yet played)**.
+- Level up a hero far enough to trigger an ASI/feat choice, a subclass
+  choice, and a Spell Mastery/Signature Spells/Mystic Arcanum pick — confirm
+  each popup now reads as a parchment card (Cinzel title, wood-panel ornate
+  buttons) instead of the old flat blue rectangles, and that a
+  "highlighted"/pre-suggested choice (gold star, e.g. from a saved Level
+  Plan in Prompt mode) shows a clear gilt-border "selected" look.
+- Trigger a cantrip or prepared-spell swap (Long Rest or level-up, on a
+  class that isn't Wizard/Cleric/Druid's full-relist path) — click a known
+  spell and confirm it shows a "▸ Replacing: {name}" indicator and stays on
+  screen while the eligible replacement list appears directly beneath it
+  (not a separate full-screen navigation). Click a replacement — confirm it
+  commits immediately and you land back on the SAME overview (updated),
+  able to pick a different spell to replace or click Continue.
+- Click the marked "▸ Replacing" row again (without picking a replacement)
+  — confirm it deselects/collapses the sub-list with nothing changed.
+- In Character Creation's "Plan Levels" wizard, reach a future level's
+  spell-swap step — confirm the same redesigned single-screen flow appears
+  there too (not the old two-screen drop/learn hop), and that "Skip (decide
+  later)" vs. "Continue" labels correctly based on whether a swap is
+  currently planned for that level.
+- Confirm the Long-Rest full-relist screen (Wizard/Cleric/Druid's prepared
+  list) still works exactly as before functionally — only its visual style
+  should have changed.
+- General "does this look and feel right" pass on both changes.
+
+### KI-170 — D-219/D-220: Compendium Subclasses tab + click-to-pin detail info
+**(headless-verified, not yet played)**.
+- Compendium → Subclasses — confirm the same class-selector row Classes has
+  now appears here too, and clicking a class shows only ITS 2 subclasses
+  (not all 24 across every class). Confirm navigating from Classes (with a
+  class already selected) to Subclasses lands directly on that same class's
+  subclasses.
+- On Feats (or Equipment/Spells/etc.) — click a row with real detail text
+  and confirm it "pins" into a strip at the bottom of the panel (bold, a
+  "▸" marker) and STAYS visible after moving the mouse away, unlike the old
+  hover-only behavior. Confirm hovering still shows the old floating
+  tooltip too (both should work).
+- Click a DIFFERENT row — confirm the pin moves to the new row and the old
+  one un-marks. Click the same pinned row again — confirm it un-pins back
+  to the placeholder text.
+- Switch tabs or change page — confirm the pin resets to the placeholder
+  ("Click an entry above to pin its full description here."), not a stale
+  pin from the previous screen.
+- Spot-check a few of the LONGEST descriptions in Spells/Equipment — confirm
+  the fixed-height strip fits them reasonably (flag if any reads cramped).
+
+### KI-169 — D-217/D-218: Main Menu icon-only corner controls + Compendium/Bestiary cross-nav
+**(headless-verified, not yet played)**.
+- Main Menu — confirm Settings (top-right) and Account/Sign-in (below it)
+  are now small icon buttons (cog, person silhouette) instead of full text
+  buttons, and Exit Game (bottom-left) is a small door-icon button. Hover
+  each and confirm the full explanation shows as a tooltip (Account's
+  should reflect your actual sign-in state).
+- Confirm the game title doesn't visually collide with the shrunk corner
+  icons at any point (it has more room now, not less, so this should only
+  improve).
+- Compendium — confirm a new "Bestiary" button appears in the top-right of
+  the header (opposite "Back (Esc)") and jumps straight to the Bestiary.
+  Confirm Bestiary has the mirror "Compendium" button. Confirm "Back (Esc)"
+  from either still goes straight to Main Menu, unchanged.
+
 ### KI-166 — D-216: The Armory's layout rebuilt to match the agreed mockup
 Kevin said the shipped Armory (D-209) didn't match the mockup he'd approved
 and that he hated it — **(headless-verified, not yet played)**. The layout

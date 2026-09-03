@@ -1,17 +1,25 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
-import { centeredRowX, getViewport, onViewportResize, openChoiceList } from "./uiTheme";
+import { centeredRowX, clearChoiceOverlay, getViewport, onViewportResize, openChoiceList, renderChoiceOverlay } from "./uiTheme";
 import { GridSystem, type GridPosition } from "../systems/GridSystem";
 import { GameMap, type TileRole } from "../systems/GameMap";
 import type { ParsedMap, TileType } from "../data/testMap";
+import { ENEMY_DEFINITIONS, getEnemyDefinition, type EnemyRole } from "../data/enemies";
 import {
   MIN_MAP_COLS,
   MAX_MAP_COLS,
   MIN_MAP_ROWS,
   MAX_MAP_ROWS,
+  MAX_CUSTOM_WAVES,
+  MAX_SPAWN_GROUPS_PER_WAVE,
+  addSpawnGroup,
+  addWave,
   createBlankDraft,
   isValidMapName,
   paintTile,
+  removeSpawnGroup,
+  removeWave,
+  updateSpawnGroup,
   validateDraft,
   type MarkerRole,
   type PaletteSelection,
@@ -124,6 +132,15 @@ export class MapBuilderScene extends Phaser.Scene {
   private heightLabel!: Phaser.GameObjects.Text;
   /** D-16x: the shared full-screen list-picker overlay (`openChoiceList`), replacing the old click-to-cycle Width/Height buttons. */
   private choiceOverlay: Phaser.GameObjects.GameObject[] = [];
+  /**
+   * Author-designed waves: a SEPARATE full-screen overlay array from
+   * `choiceOverlay` above, one screen at a time (Waves list -> Wave detail
+   * -> Group edit), rebuilt on every navigation step. Kept separate so a
+   * leaf `openChoiceList` pick (enemy/spawn-point) can layer on top of
+   * whichever wave-editor screen is currently showing without clearing it.
+   */
+  private waveEditorOverlay: Phaser.GameObjects.GameObject[] = [];
+  private wavesTabLabel!: Phaser.GameObjects.Text;
 
   private tabButtons: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; tab: PaletteTab }[] = [];
   private swatchButtons: Phaser.GameObjects.Rectangle[] = [];
@@ -375,7 +392,10 @@ export class MapBuilderScene extends Phaser.Scene {
     ];
     const w = 180;
     const gap = 10;
-    const totalWidth = tabs.length * w + (tabs.length - 1) * gap;
+    // +1 slot for the "Waves" launcher below — a standalone button, not a
+    // third `PaletteTab` state (it opens a full-screen overlay rather than
+    // swapping the swatch row), so it's built separately from `tabButtons`.
+    const totalWidth = (tabs.length + 1) * w + tabs.length * gap;
     const dx0 = -totalWidth / 2 + w / 2;
     const startX = cx + dx0;
 
@@ -389,6 +409,14 @@ export class MapBuilderScene extends Phaser.Scene {
       this.centeredObjects.push({ obj: rect, dx, y }, { obj: label, dx, y });
       return { rect, label, tab: t.tab };
     });
+
+    const wavesDx = dx0 + tabs.length * (w + gap);
+    const wavesX = startX + tabs.length * (w + gap);
+    const { rect: wavesRect, label: wavesLabel } = this.buildSmallButton(wavesX, y, w, 34, "Waves", 0x2a2a3a, () =>
+      this.openWavesOverlay(),
+    );
+    this.wavesTabLabel = wavesLabel;
+    this.centeredObjects.push({ obj: wavesRect, dx: wavesDx, y }, { obj: wavesLabel, dx: wavesDx, y });
   }
 
   private renderPaletteSwatches(): void {
@@ -590,11 +618,11 @@ export class MapBuilderScene extends Phaser.Scene {
 
   private onPlaytest(): void {
     if (!validateDraft(this.draft).ok) return;
-    const waves = generateFreePlayWaves({
-      waveCount: 4,
-      minionPool: STANDARD_MINIONS,
-      bossEnemyId: PLAYTEST_BOSS_ID,
-    });
+    const customWaves = this.draft.customWaves ?? [];
+    const waves =
+      customWaves.length > 0
+        ? customWaves
+        : generateFreePlayWaves({ waveCount: 4, minionPool: STANDARD_MINIONS, bossEnemyId: PLAYTEST_BOSS_ID });
     this.scene.start("CharacterCreationScene", {
       customMapData: this.draft,
       freePlayWaves: waves,
@@ -691,6 +719,340 @@ export class MapBuilderScene extends Phaser.Scene {
     }
     this.widthLabel.setText(`Width: ${this.draft.cols} tiles`);
     this.heightLabel.setText(`Height: ${this.draft.rows} tiles`);
+    this.refreshWavesTabLabel();
     this.refreshValidation();
+  }
+
+  private refreshWavesTabLabel(): void {
+    const n = (this.draft.customWaves ?? []).length;
+    this.wavesTabLabel?.setText(n > 0 ? `Waves (${n})` : "Waves");
+  }
+
+  // ----- Author-designed waves ----------------------------------------------
+  //
+  // A separate full-screen overlay flow (`waveEditorOverlay`), one screen at
+  // a time: Waves list -> Wave detail (spawn groups) -> Group edit. Every
+  // screen fully clears-and-rebuilds `waveEditorOverlay` on every navigation
+  // step, same destroy-and-recreate style already used by `renderGrid`/
+  // `renderPaletteSwatches` elsewhere in this file. Leaf single-pick lists
+  // (enemy/spawn-point) layer `openChoiceList` on top via the separate
+  // `choiceOverlay` array so they don't clear whichever wave-editor screen
+  // is currently showing underneath.
+
+  private openWavesOverlay(): void {
+    this.renderWavesListScreen();
+  }
+
+  /** A plain full-screen dim backdrop + title, matching `renderChoiceOverlay`'s own depth convention (60/61) so leaf pickers layered on top stack correctly. */
+  private buildOverlayChrome(title: string): void {
+    const { width, height } = getViewport(this);
+    const dim = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.85).setDepth(60).setInteractive();
+    const titleText = this.add
+      .text(width / 2, 60, title, {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "26px",
+        color: "#f0e070",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(61);
+    this.waveEditorOverlay.push(dim, titleText);
+  }
+
+  private buildOverlayButton(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    text: string,
+    color: number,
+    onClick: () => void,
+  ): void {
+    const rect = this.add
+      .rectangle(x, y, w, h, color)
+      .setStrokeStyle(1, 0x4a4a5a)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(61);
+    const label = this.add
+      .text(x, y, text, { fontFamily: "system-ui, Arial, sans-serif", fontSize: "13px", color: "#e8e8f0" })
+      .setOrigin(0.5)
+      .setDepth(62);
+    rect.on("pointerdown", onClick);
+    this.waveEditorOverlay.push(rect, label);
+  }
+
+  private buildOverlayText(
+    x: number,
+    y: number,
+    text: string,
+    style: Partial<Phaser.Types.GameObjects.Text.TextStyle> = {},
+    originX = 0,
+    originY = 0.5,
+  ): void {
+    const t = this.add
+      .text(x, y, text, {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "14px",
+        color: "#c8c8d8",
+        ...style,
+      })
+      .setOrigin(originX, originY)
+      .setDepth(62);
+    this.waveEditorOverlay.push(t);
+  }
+
+  /** One label + −/+ stepper pair, clamped to [min, max]; returns the y for the next row. */
+  private buildStepperRow(
+    cx: number,
+    y: number,
+    label: string,
+    value: number,
+    min: number,
+    max: number,
+    onChange: (next: number) => void,
+  ): number {
+    this.buildOverlayText(cx - 260, y, label, { fontSize: "16px" });
+    this.buildOverlayButton(cx + 30, y, 34, 34, "−", 0x2a2a3a, () => {
+      if (value > min) onChange(value - 1);
+    });
+    this.buildOverlayText(cx + 90, y, `${value}`, { fontSize: "16px", color: "#e8e8f0", fontStyle: "bold" }, 0.5, 0.5);
+    this.buildOverlayButton(cx + 150, y, 34, 34, "+", 0x2a2a3a, () => {
+      if (value < max) onChange(value + 1);
+    });
+    return y + 70;
+  }
+
+  private renderWavesListScreen(): void {
+    clearChoiceOverlay(this.waveEditorOverlay);
+    const { width } = getViewport(this);
+    this.buildOverlayChrome("Custom Waves");
+    const waves = this.draft.customWaves ?? [];
+
+    if (waves.length === 0) {
+      this.buildOverlayText(
+        width / 2,
+        130,
+        "No custom waves yet — Playtest and Publish use the standard generated wave list until you add one.",
+        { fontSize: "14px", color: "#8a8aa0", align: "center", wordWrap: { width: width - 200 } },
+        0.5,
+        0.5,
+      );
+    }
+
+    const rowY0 = 180;
+    const rowH = 54;
+    waves.forEach((wave, i) => {
+      const y = rowY0 + i * rowH;
+      this.buildOverlayText(
+        width / 2 - 420,
+        y,
+        `Wave ${i + 1} — ${wave.spawns.length} group${wave.spawns.length === 1 ? "" : "s"}, turn limit ${wave.turnLimit ?? "—"}`,
+        { fontSize: "15px", fontStyle: "bold" },
+      );
+      this.buildOverlayButton(width / 2 + 260, y, 100, 34, "Edit", 0x2a2a3a, () => this.openWaveDetailScreen(i));
+      this.buildOverlayButton(width / 2 + 380, y, 100, 34, "Remove", 0x6a3a3a, () => {
+        this.draft = removeWave(this.draft, i);
+        this.renderWavesListScreen();
+        this.refreshValidation();
+      });
+    });
+
+    const addY = rowY0 + waves.length * rowH + 30;
+    const atCap = waves.length >= MAX_CUSTOM_WAVES;
+    this.buildOverlayButton(
+      width / 2 - 110,
+      addY,
+      200,
+      44,
+      atCap ? `Add Wave (max ${MAX_CUSTOM_WAVES})` : "Add Wave",
+      atCap ? 0x2a2a2a : 0x2a2a3a,
+      () => {
+        if (atCap) return;
+        this.draft = addWave(this.draft);
+        this.renderWavesListScreen();
+      },
+    );
+    this.buildOverlayButton(width / 2 + 110, addY, 200, 44, "Done", 0x4caf72, () => {
+      clearChoiceOverlay(this.waveEditorOverlay);
+      this.refreshWavesTabLabel();
+      this.refreshValidation();
+    });
+  }
+
+  private openWaveDetailScreen(waveIndex: number): void {
+    clearChoiceOverlay(this.waveEditorOverlay);
+    const { width } = getViewport(this);
+    const wave = (this.draft.customWaves ?? [])[waveIndex];
+    if (!wave) {
+      this.renderWavesListScreen();
+      return;
+    }
+    this.buildOverlayChrome(`Editing Wave ${waveIndex + 1}`);
+
+    if (wave.spawns.length === 0) {
+      this.buildOverlayText(
+        width / 2,
+        130,
+        "No enemies yet — Add Group to place one.",
+        { fontSize: "14px", color: "#8a8aa0", align: "center" },
+        0.5,
+        0.5,
+      );
+    }
+
+    const rowY0 = 180;
+    const rowH = 54;
+    wave.spawns.forEach((group, i) => {
+      const y = rowY0 + i * rowH;
+      this.buildOverlayText(
+        width / 2 - 420,
+        y,
+        `${group.count}× ${safeEnemyName(group.enemyId)}, turn ${group.startTurn} (+${group.intervalTurns}), Spawn ${(group.spawnIndex ?? 0) + 1}`,
+        { fontSize: "15px", fontStyle: "bold" },
+      );
+      this.buildOverlayButton(width / 2 + 260, y, 100, 34, "Edit", 0x2a2a3a, () => this.openGroupEditScreen(waveIndex, i));
+      this.buildOverlayButton(width / 2 + 380, y, 100, 34, "Remove", 0x6a3a3a, () => {
+        this.draft = removeSpawnGroup(this.draft, waveIndex, i);
+        this.openWaveDetailScreen(waveIndex);
+        this.refreshValidation();
+      });
+    });
+
+    const addY = rowY0 + wave.spawns.length * rowH + 30;
+    const atCap = wave.spawns.length >= MAX_SPAWN_GROUPS_PER_WAVE;
+    this.buildOverlayButton(
+      width / 2 - 110,
+      addY,
+      200,
+      44,
+      atCap ? `Add Group (max ${MAX_SPAWN_GROUPS_PER_WAVE})` : "Add Group",
+      atCap ? 0x2a2a2a : 0x2a2a3a,
+      () => {
+        if (atCap) return;
+        this.openEnemyCategoryPicker((enemyId) => {
+          this.draft = addSpawnGroup(this.draft, waveIndex, enemyId);
+          const newIndex = (this.draft.customWaves ?? [])[waveIndex]!.spawns.length - 1;
+          this.openGroupEditScreen(waveIndex, newIndex);
+        });
+      },
+    );
+    this.buildOverlayButton(width / 2 + 110, addY, 200, 44, "Back", 0x2a2a3a, () => this.renderWavesListScreen());
+  }
+
+  private openGroupEditScreen(waveIndex: number, groupIndex: number): void {
+    clearChoiceOverlay(this.waveEditorOverlay);
+    const { width } = getViewport(this);
+    const wave = (this.draft.customWaves ?? [])[waveIndex];
+    const group = wave?.spawns[groupIndex];
+    if (!wave || !group) {
+      this.openWaveDetailScreen(waveIndex);
+      return;
+    }
+    this.buildOverlayChrome(`Wave ${waveIndex + 1} — Spawn Group ${groupIndex + 1}`);
+
+    const cx = width / 2;
+    let y = 200;
+    const rowGap = 70;
+
+    this.buildOverlayText(cx - 260, y, "Enemy", { fontSize: "16px" });
+    this.buildOverlayButton(cx + 60, y, 260, 44, safeEnemyName(group.enemyId), 0x2a2a3a, () => {
+      this.openEnemyCategoryPicker((enemyId) => {
+        this.draft = updateSpawnGroup(this.draft, waveIndex, groupIndex, { enemyId });
+        this.openGroupEditScreen(waveIndex, groupIndex);
+      });
+    });
+    y += rowGap;
+
+    y = this.buildStepperRow(cx, y, "Count", group.count, 1, 20, (next) => {
+      this.draft = updateSpawnGroup(this.draft, waveIndex, groupIndex, { count: next });
+      this.openGroupEditScreen(waveIndex, groupIndex);
+    });
+    y = this.buildStepperRow(cx, y, "Start Turn", group.startTurn, 1, 20, (next) => {
+      this.draft = updateSpawnGroup(this.draft, waveIndex, groupIndex, { startTurn: next });
+      this.openGroupEditScreen(waveIndex, groupIndex);
+    });
+    y = this.buildStepperRow(cx, y, "Repeat Every", group.intervalTurns, 1, 10, (next) => {
+      this.draft = updateSpawnGroup(this.draft, waveIndex, groupIndex, { intervalTurns: next });
+      this.openGroupEditScreen(waveIndex, groupIndex);
+    });
+
+    const spawns = this.draft.spawns;
+    this.buildOverlayText(cx - 260, y, "Spawn Point", { fontSize: "16px" });
+    this.buildOverlayButton(
+      cx + 60,
+      y,
+      260,
+      44,
+      spawns.length > 0 ? `Spawn ${(group.spawnIndex ?? 0) + 1}` : "No spawns placed",
+      0x2a2a3a,
+      () => {
+        if (spawns.length === 0) return;
+        openChoiceList(
+          this,
+          this.choiceOverlay,
+          "Choose Spawn Point",
+          spawns.map((pos, i) => ({
+            label: `Spawn ${i + 1} (${pos.x}, ${pos.y})`,
+            highlighted: i === (group.spawnIndex ?? 0),
+            onPick: () => {
+              this.draft = updateSpawnGroup(this.draft, waveIndex, groupIndex, { spawnIndex: i });
+            },
+          })),
+          () => this.openGroupEditScreen(waveIndex, groupIndex),
+        );
+      },
+    );
+    y += rowGap;
+
+    this.buildOverlayButton(cx, y + 20, 200, 44, "Done", 0x4caf72, () => this.openWaveDetailScreen(waveIndex));
+  }
+
+  /**
+   * Two-step enemy picker (role category, then a specific enemy within it)
+   * rather than one flat 71-entry list — `renderChoiceOverlay` lays choices
+   * out in an unbounded, non-scrolling grid (see `uiTheme.ts`), so a single
+   * flat list risks rows running off the bottom of the canvas as the roster
+   * grows. Built with `renderChoiceOverlay`/`clearChoiceOverlay` directly
+   * (NOT `openChoiceList`) because the category step's own `onClick` opens a
+   * SECOND list on the same `choiceOverlay` array — `openChoiceList`'s
+   * wrapper clears the overlay again right after `onPick` returns, which
+   * would immediately wipe out that second list.
+   */
+  private openEnemyCategoryPicker(onPick: (enemyId: string) => void): void {
+    const categories: { role: EnemyRole; label: string }[] = [
+      { role: "minion", label: "Minion" },
+      { role: "miniboss", label: "Miniboss" },
+      { role: "boss", label: "Boss" },
+      { role: "legendary", label: "Legendary" },
+    ];
+    renderChoiceOverlay(this, this.choiceOverlay, "Enemy Category", [
+      ...categories.map((c) => ({ label: c.label, onClick: () => this.openEnemyPickerForRole(c.role, onPick) })),
+      { label: "Cancel", onClick: () => clearChoiceOverlay(this.choiceOverlay) },
+    ]);
+  }
+
+  private openEnemyPickerForRole(role: EnemyRole, onPick: (enemyId: string) => void): void {
+    const options = Object.values(ENEMY_DEFINITIONS)
+      .filter((e) => (e.role ?? "minion") === role)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    renderChoiceOverlay(this, this.choiceOverlay, "Choose Enemy", [
+      ...options.map((e) => ({
+        label: e.name,
+        onClick: () => {
+          clearChoiceOverlay(this.choiceOverlay);
+          onPick(e.id);
+        },
+      })),
+      { label: "Back", onClick: () => this.openEnemyCategoryPicker(onPick) },
+    ]);
+  }
+}
+
+/** Defensive: the picker only ever offers real ids, but a group's `enemyId` could be stale after data changes. */
+function safeEnemyName(enemyId: string): string {
+  try {
+    return getEnemyDefinition(enemyId).name;
+  } catch {
+    return enemyId;
   }
 }

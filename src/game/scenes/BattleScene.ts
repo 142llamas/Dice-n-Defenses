@@ -11,6 +11,7 @@ import {
   TUTORIAL_STORAGE_KEY,
   BESTIARY_STORAGE_KEY,
   CAMPAIGN_PROGRESS_STORAGE_KEY,
+  CAMPAIGN_LEVEL_STORAGE_KEY,
   WORLD_FLAG_STORAGE_KEY,
   COMPANION_ROSTER_STORAGE_KEY,
   SAVE_STORAGE_KEY,
@@ -52,7 +53,7 @@ import { ProgressionSystem } from "../systems/ProgressionSystem";
 import { RestSystem } from "../systems/RestSystem";
 import { firstAvailableHeroAction, listHeroActions, hotkeyDisplayLabel } from "../systems/HeroActionRegistry";
 import { createTooltipController, attachHoverTooltip, type TooltipController } from "./tooltip";
-import { centeredRowX, drawScreenBackdrop, FONT_DISPLAY, FONT_BODY } from "./uiTheme";
+import { centeredRowX, drawScreenBackdrop, createOrnateButton, drawParchmentPanel, FONT_DISPLAY, FONT_BODY } from "./uiTheme";
 import { showDialogue, type DialogueBoxController, type DialogueLine } from "./dialogueBox";
 import { asiFeatureGrantedAtLevel, subclassGrantedAtLevel } from "../systems/CharacterSystem";
 import { subclassesForClass, getSubclassDefinition } from "../data/subclasses";
@@ -103,12 +104,26 @@ import {
   getCampaignDefinition,
   getCampaignMap,
   getChapter,
+  chapterLevelMilestones,
   isChapteredCampaign,
   totalChapters,
   NAMELESS_THRONE_CAMPAIGN_ID,
+  REGION_CAMPAIGN_IDS,
   type ChapterDefinition,
   type CampaignDefinition,
 } from "../data/campaigns";
+import { LevelMilestoneSystem } from "../systems/LevelMilestoneSystem";
+import {
+  DEFAULT_CAMPAIGN_LEVEL_STATE,
+  loadCampaignLevel,
+  saveCampaignLevel,
+  raiseCampaignLevel,
+  highestReachedCampaignLevel,
+  type CampaignLevelState,
+} from "../systems/CampaignLevelSystem";
+import { levelMilestonesForRunLength, getRunLengthDefinition, type RunLengthId } from "../data/levelMilestones";
+import { applyThreatBudget } from "../systems/ThreatBudgetSystem";
+import { statMultiplierForBoss } from "../data/bossScaling";
 import { COMPANIONS, getCompanionDefinition, type CompanionDefinition } from "../data/companions";
 import { COMPANION_RECRUITMENT_DIALOGUE, COMPANION_MIRROR_REACTION_DIALOGUE } from "../data/companionDialogue";
 import {
@@ -743,6 +758,30 @@ export class BattleScene extends Phaser.Scene {
   private campaignProgress: CampaignProgress = DEFAULT_CAMPAIGN_PROGRESS;
 
   /**
+   * D-217 (item 3c): the persistent, SHARED campaign level (1-20), loaded
+   * once in `create()`. Read to fast-forward every campaign hero to this
+   * level at battle start (overriding whatever per-hero `startingLevel` was
+   * baked into `heroDefinitions` — campaign mode is no longer a manual
+   * per-hero pick) and to seed `levelMilestoneSystem`'s own starting point;
+   * written back (via `raiseCampaignLevel`/`saveCampaignLevel`) at
+   * chapter-clear, not eagerly at every in-battle milestone, so a
+   * mid-chapter loss/quit never locks in a level gain. Unused (stays at its
+   * default) outside campaign mode.
+   */
+  private campaignLevelState: CampaignLevelState = DEFAULT_CAMPAIGN_LEVEL_STATE;
+
+  /**
+   * D-217 (item 3a): non-null for Free Play/Campaign — the milestone-cadence
+   * leveling track for THIS battle (a campaign chapter's own
+   * `chapterLevelMilestones`, or a Free Play Run Length's track), replacing
+   * `progression`'s uniform D-174 cadence for these two modes only. Null for
+   * Co-op/Test Mode/classic Create-Party/MapBuilder-or-shared-map Free Play,
+   * which keep using `progression` exactly as before — see
+   * `LevelMilestoneSystem`'s own module comment for the full scoping story.
+   */
+  private levelMilestoneSystem: LevelMilestoneSystem | null = null;
+
+  /**
    * KI-098 item 13 (CAMPAIGN_STORY_DESIGN.md §4): persisted per-choice story
    * flags, loaded once in `create()`. Only the "spared this miniboss" flags
    * are written yet (see `pendingSparableKill`'s resolution below) — same
@@ -884,6 +923,17 @@ export class BattleScene extends Phaser.Scene {
    */
   private freePlayWaves: WaveDefinition[] | null = null;
   /**
+   * D-217 (item 3a): the Run Length picked in `FreePlayScene` — drives this
+   * battle's own `LevelMilestoneSystem` the same way a campaign's chapter
+   * milestone track does, and names the boss enemy id for threat-budget/
+   * boss-scaling. `null` for a campaign battle, a classic/Coop/Test-Mode
+   * party, or a MapBuilder-draft/shared-map Free Play run (none of which
+   * went through `FreePlayScene`'s own Run Length picker) — all of those
+   * keep the old uniform per-wave `ProgressionSystem` cadence unchanged.
+   */
+  private freePlayRunLengthId: RunLengthId | null = null;
+  private freePlayBossEnemyId: string | null = null;
+  /**
    * Phase 11.10 (D-085): an optional, fully-formed `ParsedMap` handed in
    * directly (a map-builder draft being playtested, or a fetched
    * `SharedMapRecord` decoded via `fromSharedMapRecord`) — bypasses the
@@ -938,6 +988,8 @@ export class BattleScene extends Phaser.Scene {
     chapterIndex?: number;
     freePlayMapId?: string;
     freePlayWaves?: WaveDefinition[];
+    freePlayRunLengthId?: RunLengthId;
+    freePlayBossEnemyId?: string;
     customMapData?: ParsedMap;
     coopSession?: { code: string; localUid: string; heroOwners: Record<string, string>; partnerName: string };
     testMode?: boolean;
@@ -955,6 +1007,8 @@ export class BattleScene extends Phaser.Scene {
     this.chapterIndex = data?.chapterIndex ?? 0;
     this.freePlayMapId = data?.freePlayMapId ?? null;
     this.freePlayWaves = data?.freePlayWaves ?? null;
+    this.freePlayRunLengthId = data?.freePlayRunLengthId ?? null;
+    this.freePlayBossEnemyId = data?.freePlayBossEnemyId ?? null;
     this.customMapData = data?.customMapData ?? null;
     this.coopSession = data?.coopSession ?? null;
     this.testMode = data?.testMode ?? false;
@@ -1048,6 +1102,22 @@ export class BattleScene extends Phaser.Scene {
     this.keyBindings = loadKeyBindings(window.localStorage, KEYBINDINGS_STORAGE_KEY);
     this.bestiaryProgress = loadBestiaryProgress(window.localStorage, BESTIARY_STORAGE_KEY);
     this.campaignProgress = loadCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY);
+    this.campaignLevelState = loadCampaignLevel(window.localStorage, CAMPAIGN_LEVEL_STORAGE_KEY);
+    // D-223 gap 5: a best-effort backfill for a save that predates
+    // `campaignLevel` entirely — see `highestReachedCampaignLevel`'s own doc
+    // comment. `raiseCampaignLevel` already no-ops (same object reference)
+    // when there's nothing to backfill (a fresh save, or one already at/past
+    // this level), so this is a cheap no-op on every battle start except the
+    // one-time real fix.
+    const backfilledLevel = raiseCampaignLevel(
+      this.campaignLevelState,
+      highestReachedCampaignLevel(this.campaignProgress, REGION_CAMPAIGN_IDS),
+    );
+    if (backfilledLevel !== this.campaignLevelState) {
+      this.campaignLevelState = backfilledLevel;
+      saveCampaignLevel(window.localStorage, CAMPAIGN_LEVEL_STORAGE_KEY, this.campaignLevelState);
+    }
+    this.levelMilestoneSystem = null;
     this.worldFlags = loadWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY);
     this.companionRoster = loadCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY);
 
@@ -1113,9 +1183,40 @@ export class BattleScene extends Phaser.Scene {
     const difficulty = getDifficultyDefinition(this.difficultyId);
     const heroCount = this.heroDefinitions.length;
     this.random = RandomService.seeded();
+
+    // D-223 gap 2/3: a milestone-governed battle (campaign, or a Free Play
+    // run that went through `FreePlayScene`'s own Run Length picker) runs its
+    // wave list through the new threat-budget/boss-scaling transforms —
+    // every other path (Co-op/Test Mode/classic Create-Party/MapBuilder-or-
+    // shared-map Free Play) is completely unaffected, unchanged from before
+    // this session. `freePlayRunLength` is only non-null for the latter half
+    // of that "milestone-governed" set — see `this.freePlayRunLengthId`'s own
+    // doc comment for why a MapBuilder/shared-map run never sets it.
+    const freePlayRunLength =
+      !campaign && this.freePlayRunLengthId ? getRunLengthDefinition(this.freePlayRunLengthId) : null;
+    const scalingTargetLevel = campaign ? this.currentChapter!.levelRange[1] : (freePlayRunLength?.levelCap ?? null);
+    const scalingBossEnemyId = campaign ? this.currentChapter?.bossEnemyId : (this.freePlayBossEnemyId ?? undefined);
+    if (scalingTargetLevel !== null) {
+      // `applyThreatBudget` bakes `tier.enemyCountMultiplier` into each
+      // group's own `count` (see its own doc comment) — `WaveSystem` must
+      // NOT also apply it live below, or every group would be double-scaled.
+      waveList = waveList.map((wave) =>
+        applyThreatBudget(wave, difficulty, this.random, this.map.data.spawns.length, scalingBossEnemyId),
+      );
+      if (scalingBossEnemyId) {
+        const bossStats = statMultiplierForBoss(scalingBossEnemyId, scalingTargetLevel);
+        waveList = waveList.map((wave) => ({
+          ...wave,
+          spawns: wave.spawns.map((group) => (group.enemyId === scalingBossEnemyId ? { ...group, statMultiplier: bossStats } : group)),
+        }));
+      }
+      this.currentWaves = waveList;
+    }
+
     this.waveSystem = new WaveSystem(this.map, this.pathfinding, waveList, {
       startingIntegrity: STRONGHOLD_START,
-      enemyCountMultiplier: difficulty.enemyCountMultiplier * partySizeScalingFactor(heroCount),
+      enemyCountMultiplier:
+        scalingTargetLevel !== null ? partySizeScalingFactor(heroCount) : difficulty.enemyCountMultiplier * partySizeScalingFactor(heroCount),
       enemyHpMultiplier: difficulty.enemyHpMultiplier * partySizeScalingFactor(heroCount),
       random: this.random,
     });
@@ -1144,6 +1245,20 @@ export class BattleScene extends Phaser.Scene {
     this.economy = new EconomySystem(startingGoldByOwner);
     this.buildSystem = new BuildSystem(this.map, this.pathfinding);
     this.progression = new ProgressionSystem();
+    // D-217 (item 3a/3c): a campaign battle levels via the chapter's own
+    // milestone track, starting from the persistent shared campaignLevel —
+    // NOT `progression`'s uniform per-wave cadence. A Free Play run that
+    // picked a Run Length in `FreePlayScene` levels via that preset's own
+    // milestone track instead, always starting at level 1 (see
+    // `buildHeroes()`'s own startingLevel override just above). Every other
+    // path (Co-op/Test Mode/classic Create-Party/MapBuilder-or-shared-map
+    // Free Play) keeps `progression`'s old uniform per-wave cadence,
+    // completely unchanged.
+    this.levelMilestoneSystem = campaign
+      ? new LevelMilestoneSystem(chapterLevelMilestones(campaign, this.chapterIndex), this.campaignLevelState.campaignLevel)
+      : freePlayRunLength
+        ? new LevelMilestoneSystem(levelMilestonesForRunLength(this.freePlayRunLengthId!), 1)
+        : null;
     this.restSystem = new RestSystem({
       shortRestCharges: difficulty.shortRestCharges,
       longRestCharges: difficulty.longRestCharges,
@@ -1363,9 +1478,6 @@ export class BattleScene extends Phaser.Scene {
       case "gold":
         this.grantRegionBonusGold(option.goldAmount!);
         return;
-      case "xp":
-        this.grantRegionBonusXp(option.bonusHealth!);
-        return;
       case "equipment":
         this.grantRegionBonusEquipment(option.equipmentId!);
         return;
@@ -1379,13 +1491,6 @@ export class BattleScene extends Phaser.Scene {
     this.economy.award(this.economyOwnerFor(), amount);
     this.updateGoldHud();
     this.logCombat(`Region bonus: +${amount} starting gold!`);
-  }
-
-  private grantRegionBonusXp(amount: number): void {
-    for (const hero of this.heroes) {
-      if (hero.isAlive()) hero.grantBonusHealth(amount);
-    }
-    this.logCombat(`Region bonus: +${amount} max HP for every hero!`);
   }
 
   /**
@@ -1671,7 +1776,7 @@ export class BattleScene extends Phaser.Scene {
     // from the session's `heroOwners` — "human" for whichever heroes THIS
     // client's uid owns, "remote" for the partner's (never "ai": coop v1
     // assigns every hero in the party to one of the two participants).
-    const definitions = this.coopSession
+    const withCoopControl = this.coopSession
       ? baseDefinitions.map((def) => ({
           ...def,
           controlledBy: (canActOnHero(this.coopSession!.heroOwners, def.id, this.coopSession!.localUid)
@@ -1679,6 +1784,22 @@ export class BattleScene extends Phaser.Scene {
             : "remote") as HeroDefinition["controlledBy"],
         }))
       : baseDefinitions;
+    // D-217 (item 3c): a campaign hero — PC and every companion alike —
+    // always starts a battle at the persistent shared campaignLevel, NOT
+    // whatever per-hero `startingLevel` Character Creation's own build
+    // carried (that manual picker is a Free Play/Create Party-only concept
+    // now; this override makes campaign mode's real source of truth
+    // authoritative here regardless of what the build data says).
+    // D-217 (item 3a): a Free Play run that went through `FreePlayScene`'s
+    // own Run Length picker always starts at level 1 too, same reasoning —
+    // "every run starts at level 1" is the whole point of separating level
+    // from run length, so the per-hero Starting Level picker can't silently
+    // disagree with the milestone track that's about to govern this battle.
+    const definitions = this.campaignId
+      ? withCoopControl.map((def) => ({ ...def, startingLevel: this.campaignLevelState.campaignLevel }))
+      : this.freePlayRunLengthId
+        ? withCoopControl.map((def) => ({ ...def, startingLevel: 1 }))
+        : withCoopControl;
     definitions.forEach((def, i) => {
       const start = starts[i] ?? starts[0];
       const hero = new Hero(def, start);
@@ -3087,8 +3208,17 @@ export class BattleScene extends Phaser.Scene {
         if (this.waveSystem.isLastWave()) proceed();
         else this.showRestChoice(proceed);
       };
-      if (this.progression.hasPendingLevelUp(this.wavesCleared)) {
-        const { asiHeroes, subclassHeroes, spellPickHeroes, spellSwapHeroes, plainHeroes } = this.applyClassLevelUps();
+      // D-217 (item 3a): a campaign battle (or, once wired, a Free Play run)
+      // checks its own `levelMilestoneSystem` instead of `progression`.
+      const milestones = this.levelMilestoneSystem;
+      const hasPendingLevelUp = milestones
+        ? milestones.hasPendingLevelUp(this.wavesCleared)
+        : this.progression.hasPendingLevelUp(this.wavesCleared);
+      if (hasPendingLevelUp) {
+        const { asiHeroes, subclassHeroes, spellPickHeroes, spellSwapHeroes, plainHeroes } = milestones
+          ? this.applyClassLevelUpsToLevel(milestones.pendingTargetLevel(this.wavesCleared)!)
+          : this.applyClassLevelUps();
+        milestones?.acknowledgeLevelUp(this.wavesCleared);
         // D-125/D-130/D-136: plain ack -> subclass -> ASI -> spell-mastery-
         // family pick -> level-up spell swap -> rest, same deferred-queue
         // chaining `showAsiChoiceQueue`/`showSubclassChoiceQueue` already use.
@@ -3201,7 +3331,6 @@ export class BattleScene extends Phaser.Scene {
     const needsSpellPick: SpellPickRequest[] = [];
     const needsSpellSwap: Hero[] = [];
     const plainHeroes: Hero[] = [];
-    const arcanumTiers = [6, 7, 8, 9];
     for (const hero of this.livingHeroes()) {
       const beforeLevel = hero.level;
       const beforeAttacks = hero.attacksPerAction;
@@ -3224,92 +3353,19 @@ export class BattleScene extends Phaser.Scene {
             hero.level,
           ),
         );
-        // D-16x: an "auto" plan only skips the prompt when the resolver
-        // actually applied an explicit plan entry — an "auto" hero with no
-        // entry for this level still gets queued exactly like a
-        // "prompt"/"fresh"/unset hero would, instead of a silently invented
-        // default (see D-16x in DECISIONS.md and LevelUpPlanSystem.ts).
-        // D-198 (Party Creation Overhaul Plan 5.1): the ONE exception —
-        // `hero.controlledBy === "ai"` never queues a real choice popup,
-        // full stop, regardless of what `plan`/`plan.mode` say (Character
-        // Creation now forces an AI-controlled slot's mode to "auto" as a
-        // hard rule, but this checks `controlledBy` directly too, as a
-        // defense-in-depth backstop for an older save or a mid-battle
-        // control-mode edge case). An explicit plan entry still wins when
-        // one exists; only the leftover unresolved case falls back to
-        // `autoResolve*` instead of ever reaching `needsAsi`/`needsSubclass`/
-        // `needsSpellPick`/`needsSpellSwap`.
         const plan = this.heroLevelUpPlans.get(hero.id);
         const autoMode = plan?.mode === "auto";
         const isAiControlled = hero.controlledBy === "ai";
-        let hasChoice = false;
-        if (hero.classId) {
-          const classDef = getClassDefinition(hero.classId);
-          if (asiFeatureGrantedAtLevel(classDef, hero.level)) {
-            hasChoice = true;
-            if (!(autoMode && resolveAsiForLevel(hero, hero.level, plan))) {
-              if (isAiControlled) autoResolveAsiForLevel(hero);
-              else needsAsi.push({ hero, level: hero.level });
-            }
-          }
-          if (
-            !hero.subclassId &&
-            subclassGrantedAtLevel(classDef, hero.level) &&
-            subclassesForClass(hero.classId).length > 0
-          ) {
-            hasChoice = true;
-            if (!(autoMode && resolveSubclassForClass(hero, hero.classId, plan))) {
-              if (isAiControlled) autoResolveSubclassForClass(hero, hero.classId);
-              else needsSubclass.push(hero);
-            }
-          }
-          if (hero.needsSpellMasteryPick()) {
-            hasChoice = true;
-            const request: SpellPickRequest = { hero, kind: "mastery" };
-            if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) {
-              if (isAiControlled) autoResolveSpellPickForRequest(hero, request);
-              else needsSpellPick.push(request);
-            }
-          } else if (hero.needsSignatureSpellsPick()) {
-            hasChoice = true;
-            const request: SpellPickRequest = { hero, kind: "signature" };
-            if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) {
-              if (isAiControlled) autoResolveSpellPickForRequest(hero, request);
-              else needsSpellPick.push(request);
-            }
-          } else {
-            const tier = arcanumTiers.find((t) => hero.needsMysticArcanumPick(t));
-            if (tier !== undefined) {
-              hasChoice = true;
-              const request: SpellPickRequest = { hero, kind: "arcanum", tier };
-              if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) {
-                if (isAiControlled) autoResolveSpellPickForRequest(hero, request);
-                else needsSpellPick.push(request);
-              }
-            }
-          }
-          // D-136: a level-up is ALSO the trigger for Sorcerer/Bard/Warlock's
-          // replace-one prepared-spell swap, and for every cantrip-having
-          // class but Wizard's replace-one cantrip swap. Unlike the three
-          // checks above, this recurred at EVERY level-up for a caster's
-          // whole career with no plannable slot for it (D-136's original
-          // reasoning) — D-199 (Party Creation Overhaul Plan 6.5) reverses
-          // that narrowly, per Kevin's own correction: a level-up-triggered
-          // swap is now plannable (the separate Long-Rest full-relist
-          // mechanic stays exactly as D-136 left it, untouched). "auto" mode
-          // now attempts `resolveSpellSwapStepsForLevel` first — an explicit,
-          // FULLY-covering plan entry (both kinds, if the level needs both)
-          // resolves silently; anything less falls through to the same
-          // "skip silently" (auto/AI) or real popup (otherwise) behavior as
-          // before this decision. D-198: an AI hero skips silently too, even
-          // if its plan somehow isn't "auto" — same backstop as the three
-          // checks above.
-          if (spellSwapStepsForClass(hero.classId, hero.level, "levelUp").length > 0) {
-            hasChoice = true;
-            const explicitlyResolved = autoMode && resolveSpellSwapStepsForLevel(hero, hero.level, plan);
-            if (!explicitlyResolved && !autoMode && !isAiControlled) needsSpellSwap.push(hero);
-          }
-        }
+        const hasChoice = this.detectLevelUpChoiceForHero(
+          hero,
+          plan,
+          isAiControlled,
+          autoMode,
+          needsAsi,
+          needsSubclass,
+          needsSpellPick,
+          needsSpellSwap,
+        );
         if (!hasChoice) plainHeroes.push(hero);
       }
     }
@@ -3322,6 +3378,181 @@ export class BattleScene extends Phaser.Scene {
       spellSwapHeroes: needsSpellSwap,
       plainHeroes,
     };
+  }
+
+  /**
+   * D-217 (item 3a): the milestone-cadence counterpart to
+   * `applyClassLevelUps` — loops each living hero's `hero.levelUpClass()`
+   * until it reaches `targetLevel` instead of calling it exactly once, since
+   * a single `LevelMilestoneSystem` milestone can imply a jump of several
+   * levels at once (e.g. Free Play's Short run needs 9 level-ups spread
+   * across only 3 non-finale waves). `detectLevelUpChoiceForHero` runs once
+   * per `levelUpClass()` call — exactly the granularity each choice-trigger
+   * check needs, since a class's ASI/subclass/spell-pick levels are fixed,
+   * specific levels, not "however many levels happened this event" — so a
+   * hero jumping from level 4 to 7 still gets prompted for whatever levels
+   * 5 and 6 grant along the way, not just level 7's. `hasChoiceAnywhere`
+   * tracks whether ANY level in the whole jump had a choice, so a hero only
+   * gets the plain "reaches level N!" ack when NOTHING along the way needed
+   * a real prompt.
+   *
+   * Free Play/Campaign only (see `LevelMilestoneSystem`'s own module
+   * comment for the full mode-scoping story) — does NOT call
+   * `this.progression.acknowledgeLevelUp()` (that tracker isn't used by
+   * these modes at all); the caller advances its own `LevelMilestoneSystem`
+   * instance instead. Co-op/Test Mode/classic Create-Party keep calling
+   * `applyClassLevelUps` unchanged.
+   */
+  private applyClassLevelUpsToLevel(targetLevel: number): {
+    asiHeroes: { hero: Hero; level: number }[];
+    subclassHeroes: Hero[];
+    spellPickHeroes: SpellPickRequest[];
+    spellSwapHeroes: Hero[];
+    plainHeroes: Hero[];
+  } {
+    const needsAsi: { hero: Hero; level: number }[] = [];
+    const needsSubclass: Hero[] = [];
+    const needsSpellPick: SpellPickRequest[] = [];
+    const needsSpellSwap: Hero[] = [];
+    const plainHeroes: Hero[] = [];
+    for (const hero of this.livingHeroes()) {
+      const beforeLevel = hero.level;
+      const beforeAttacks = hero.attacksPerAction;
+      const beforeStats: LevelUpStatSnapshot = {
+        maxHealth: hero.effectiveMaxHealth,
+        armorClass: hero.armorClass,
+        attackBonus: hero.effectiveAttackBonus,
+      };
+      const plan = this.heroLevelUpPlans.get(hero.id);
+      const autoMode = plan?.mode === "auto";
+      const isAiControlled = hero.controlledBy === "ai";
+      let hasChoiceAnywhere = false;
+      while (hero.level < targetLevel) {
+        hero.levelUpClass();
+        const hasChoice = this.detectLevelUpChoiceForHero(
+          hero,
+          plan,
+          isAiControlled,
+          autoMode,
+          needsAsi,
+          needsSubclass,
+          needsSpellPick,
+          needsSpellSwap,
+        );
+        hasChoiceAnywhere = hasChoiceAnywhere || hasChoice;
+      }
+      if (hero.level > beforeLevel) {
+        let msg = `${hero.name} reaches level ${hero.level}!`;
+        if (hero.attacksPerAction > beforeAttacks) msg += ` (now attacks ${hero.attacksPerAction}x per turn)`;
+        this.logCombat(msg);
+        this.levelUpDeltaByHeroId.set(
+          hero.id,
+          levelUpDeltaSummary(
+            beforeStats,
+            { maxHealth: hero.effectiveMaxHealth, armorClass: hero.armorClass, attackBonus: hero.effectiveAttackBonus },
+            hero.classId,
+            hero.level,
+          ),
+        );
+        if (!hasChoiceAnywhere) plainHeroes.push(hero);
+      }
+    }
+    this.syncHeroTokens();
+    return {
+      asiHeroes: needsAsi,
+      subclassHeroes: needsSubclass,
+      spellPickHeroes: needsSpellPick,
+      spellSwapHeroes: needsSpellSwap,
+      plainHeroes,
+    };
+  }
+
+  /**
+   * D-217 (item 3a): the per-LEVEL choice-detection logic shared by
+   * `applyClassLevelUps` (called once per hero, D-174's uniform cadence)
+   * and `applyClassLevelUpsToLevel` (called once per intermediate level
+   * within a multi-level milestone jump) — checks whatever `hero`'s CURRENT
+   * level grants (ASI/feat, subclass, Spell Mastery/Signature Spells/Mystic
+   * Arcanum, a level-up-triggered spell swap), resolving it silently for an
+   * "auto"-mode plan or an AI-controlled hero, or pushing it into the given
+   * queue array otherwise. Returns true if this level had ANY choice.
+   * Pulled out verbatim from the single-level function's own inline body —
+   * a mechanical extraction, not a behavior change.
+   */
+  private detectLevelUpChoiceForHero(
+    hero: Hero,
+    plan: LevelUpPlan | undefined,
+    isAiControlled: boolean,
+    autoMode: boolean,
+    needsAsi: { hero: Hero; level: number }[],
+    needsSubclass: Hero[],
+    needsSpellPick: SpellPickRequest[],
+    needsSpellSwap: Hero[],
+  ): boolean {
+    if (!hero.classId) return false;
+    let hasChoice = false;
+    const classDef = getClassDefinition(hero.classId);
+    if (asiFeatureGrantedAtLevel(classDef, hero.level)) {
+      hasChoice = true;
+      // D-16x: an "auto" plan only skips the prompt when the resolver
+      // actually applied an explicit plan entry — an "auto" hero with no
+      // entry for this level still gets queued exactly like a
+      // "prompt"/"fresh"/unset hero would, instead of a silently invented
+      // default (see D-16x in DECISIONS.md and LevelUpPlanSystem.ts).
+      // D-198 (Party Creation Overhaul Plan 5.1): the ONE exception —
+      // `hero.controlledBy === "ai"` never queues a real choice popup,
+      // full stop, regardless of what `plan`/`plan.mode` say.
+      if (!(autoMode && resolveAsiForLevel(hero, hero.level, plan))) {
+        if (isAiControlled) autoResolveAsiForLevel(hero);
+        else needsAsi.push({ hero, level: hero.level });
+      }
+    }
+    if (!hero.subclassId && subclassGrantedAtLevel(classDef, hero.level) && subclassesForClass(hero.classId).length > 0) {
+      hasChoice = true;
+      if (!(autoMode && resolveSubclassForClass(hero, hero.classId, plan))) {
+        if (isAiControlled) autoResolveSubclassForClass(hero, hero.classId);
+        else needsSubclass.push(hero);
+      }
+    }
+    if (hero.needsSpellMasteryPick()) {
+      hasChoice = true;
+      const request: SpellPickRequest = { hero, kind: "mastery" };
+      if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) {
+        if (isAiControlled) autoResolveSpellPickForRequest(hero, request);
+        else needsSpellPick.push(request);
+      }
+    } else if (hero.needsSignatureSpellsPick()) {
+      hasChoice = true;
+      const request: SpellPickRequest = { hero, kind: "signature" };
+      if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) {
+        if (isAiControlled) autoResolveSpellPickForRequest(hero, request);
+        else needsSpellPick.push(request);
+      }
+    } else {
+      const arcanumTiers = [6, 7, 8, 9];
+      const tier = arcanumTiers.find((t) => hero.needsMysticArcanumPick(t));
+      if (tier !== undefined) {
+        hasChoice = true;
+        const request: SpellPickRequest = { hero, kind: "arcanum", tier };
+        if (!(autoMode && resolveSpellPickForRequest(hero, request, plan))) {
+          if (isAiControlled) autoResolveSpellPickForRequest(hero, request);
+          else needsSpellPick.push(request);
+        }
+      }
+    }
+    // D-136: a level-up is ALSO the trigger for Sorcerer/Bard/Warlock's
+    // replace-one prepared-spell swap, and for every cantrip-having class
+    // but Wizard's replace-one cantrip swap. D-199 (Party Creation Overhaul
+    // Plan 6.5): a level-up-triggered swap is plannable — "auto" mode
+    // attempts `resolveSpellSwapStepsForLevel` first; an explicit,
+    // FULLY-covering plan entry resolves silently, anything less falls
+    // through to "skip silently" (auto/AI) or a real popup (otherwise).
+    if (spellSwapStepsForClass(hero.classId, hero.level, "levelUp").length > 0) {
+      hasChoice = true;
+      const explicitlyResolved = autoMode && resolveSpellSwapStepsForLevel(hero, hero.level, plan);
+      if (!explicitlyResolved && !autoMode && !isAiControlled) needsSpellSwap.push(hero);
+    }
+    return hasChoice;
   }
 
   // KI-033 fix: shrink the banner's font size, using its real measured
@@ -6446,10 +6677,11 @@ export class BattleScene extends Phaser.Scene {
     this.clearSpellbookOverlay();
     const castable = hero.knownSpellAbilityIds().filter((id) => hero.canCastSpell(id));
     const dim = this.add
-      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.55)
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65)
       .setDepth(40)
       .setInteractive();
     dim.on("pointerdown", () => this.setInteraction({ kind: "heroSelected", heroId: hero.id }));
+    this.spellbookOverlay.push(dim);
 
     const columns = 4;
     const rows = 3;
@@ -6457,16 +6689,6 @@ export class BattleScene extends Phaser.Scene {
     const pageCount = Math.max(1, Math.ceil(castable.length / perPage));
     this.spellbookPage = Math.min(this.spellbookPage, pageCount - 1);
     const pageLabel = pageCount > 1 ? ` (page ${this.spellbookPage + 1}/${pageCount})` : "";
-    const title = this.add
-      .text(GAME_WIDTH / 2, 130, `${hero.name} — Cast a Spell${pageLabel}`, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "28px",
-        color: "#8ad0f0",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5)
-      .setDepth(41);
-    this.spellbookOverlay.push(dim, title);
 
     const width = 260;
     const height = 130;
@@ -6474,7 +6696,30 @@ export class BattleScene extends Phaser.Scene {
     const rowGap = 16;
     const gridWidth = columns * width + (columns - 1) * colGap;
     const startX = GAME_WIDTH / 2 - gridWidth / 2 + width / 2;
-    const startY = 200;
+    const startY = 210;
+    const navY = startY + rows * (height + rowGap) + 30;
+
+    const panel = drawParchmentPanel(
+      this,
+      GAME_WIDTH / 2,
+      (130 + (pageCount > 1 ? navY + 20 : navY - 14)) / 2,
+      GAME_WIDTH - 60,
+      (pageCount > 1 ? navY + 20 : navY - 14) - 130,
+      40,
+    );
+    this.spellbookOverlay.push(panel);
+
+    const title = this.add
+      .text(GAME_WIDTH / 2, 150, `${hero.name} — Cast a Spell${pageLabel}`, {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "26px",
+        color: "#3a2a10",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(42);
+    this.spellbookOverlay.push(title);
+
     const pageItems = castable.slice(this.spellbookPage * perPage, this.spellbookPage * perPage + perPage);
     pageItems.forEach((id, i) => {
       const ability = getAbility(id);
@@ -6490,70 +6735,59 @@ export class BattleScene extends Phaser.Scene {
       const row = Math.floor(i / columns);
       const x = startX + col * (width + colGap);
       const y = startY + row * (height + rowGap);
-      const btn = this.add
-        .rectangle(x, y, width, height, 0x3a5a8a)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(41);
-      const name = this.add
-        .text(x, y - height / 2 + 22, `${ability.name} · ${costLabel}`, {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "13px",
-          color: "#e8e8f0",
-          fontStyle: "bold",
-          align: "center",
-          wordWrap: { width: width - 16 },
-        })
-        .setOrigin(0.5)
-        .setDepth(42);
+      const handle = createOrnateButton(this, x, y, width, height, `${ability.name} · ${costLabel}`, () => this.chooseSpell(hero, id), {
+        variant: "secondary",
+        fontSize: 13,
+        depth: 41,
+      });
+      const label = handle.container.list[1] as Phaser.GameObjects.Text;
+      label.setPosition(0, -height / 2 + 22);
+      label.setWordWrapWidth(width - 16, true);
       const desc = this.add
         .text(x, y + 16, ability.description, {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "10px",
-          color: "#c8c8d8",
+          fontFamily: FONT_BODY,
+          fontSize: "11px",
+          color: "#3a2a10",
           align: "center",
-          wordWrap: { width: width - 16 },
+          wordWrap: { width: width - 20 },
         })
         .setOrigin(0.5)
         .setDepth(42);
-      btn.on("pointerover", () => btn.setFillStyle(0x4a6a9a));
-      btn.on("pointerout", () => btn.setFillStyle(0x3a5a8a));
-      btn.on("pointerdown", () => this.chooseSpell(hero, id));
-      this.spellbookOverlay.push(btn, name, desc);
+      this.spellbookOverlay.push(handle.container, desc);
     });
 
     if (pageCount > 1) {
-      const navY = startY + rows * (height + rowGap) + 30;
-      const prev = this.add
-        .text(GAME_WIDTH / 2 - 80, navY, "◀ Prev", {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "18px",
-          color: this.spellbookPage > 0 ? "#8ad0f0" : "#555560",
-        })
-        .setOrigin(0.5)
-        .setDepth(41)
-        .setInteractive({ useHandCursor: this.spellbookPage > 0 });
-      prev.on("pointerdown", () => {
-        if (this.spellbookPage > 0) {
-          this.spellbookPage -= 1;
-          this.renderSpellbookOverlay(hero);
-        }
-      });
-      const next = this.add
-        .text(GAME_WIDTH / 2 + 80, navY, "Next ▶", {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "18px",
-          color: this.spellbookPage < pageCount - 1 ? "#8ad0f0" : "#555560",
-        })
-        .setOrigin(0.5)
-        .setDepth(41)
-        .setInteractive({ useHandCursor: this.spellbookPage < pageCount - 1 });
-      next.on("pointerdown", () => {
-        if (this.spellbookPage < pageCount - 1) {
-          this.spellbookPage += 1;
-          this.renderSpellbookOverlay(hero);
-        }
-      });
-      this.spellbookOverlay.push(prev, next);
+      const prev = createOrnateButton(
+        this,
+        GAME_WIDTH / 2 - 90,
+        navY,
+        140,
+        36,
+        "◀ Prev",
+        () => {
+          if (this.spellbookPage > 0) {
+            this.spellbookPage -= 1;
+            this.renderSpellbookOverlay(hero);
+          }
+        },
+        { variant: "tool", depth: 41, disabled: this.spellbookPage === 0 },
+      );
+      const next = createOrnateButton(
+        this,
+        GAME_WIDTH / 2 + 90,
+        navY,
+        140,
+        36,
+        "Next ▶",
+        () => {
+          if (this.spellbookPage < pageCount - 1) {
+            this.spellbookPage += 1;
+            this.renderSpellbookOverlay(hero);
+          }
+        },
+        { variant: "tool", depth: 41, disabled: this.spellbookPage === pageCount - 1 },
+      );
+      this.spellbookOverlay.push(prev.container, next.container);
     }
   }
 
@@ -7019,6 +7253,18 @@ export class BattleScene extends Phaser.Scene {
    */
   private markCampaignCompletedIfAny(): void {
     if (!this.campaignId) return;
+    // D-217 (item 3c): campaignLevel writes back at chapter-clear (victory),
+    // not eagerly at every in-battle milestone — a mid-chapter loss/quit
+    // never locks in a level gain. Independent of the completedIds/
+    // completedChapters bookkeeping below, so it runs regardless of whether
+    // this was the final chapter.
+    if (this.levelMilestoneSystem) {
+      const raised = raiseCampaignLevel(this.campaignLevelState, this.levelMilestoneSystem.currentLevel);
+      if (raised !== this.campaignLevelState) {
+        this.campaignLevelState = raised;
+        saveCampaignLevel(window.localStorage, CAMPAIGN_LEVEL_STORAGE_KEY, raised);
+      }
+    }
     const campaign = getCampaignDefinition(this.campaignId);
     if (isChapteredCampaign(campaign)) {
       const isFinalChapter = this.chapterIndex === totalChapters(campaign) - 1;
@@ -8582,16 +8828,7 @@ export class BattleScene extends Phaser.Scene {
     const dim = this.add
       .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65)
       .setDepth(40);
-    const title = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 140, "Rest before the next wave?", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "32px",
-        color: "#8ad0f0",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5)
-      .setDepth(41);
-    this.restOverlay.push(dim, title);
+    this.restOverlay.push(dim);
 
     const choices: Array<{ label: string; desc: string; onClick: () => void }> = [];
     if (this.restSystem.canTakeShortRest()) {
@@ -8616,36 +8853,41 @@ export class BattleScene extends Phaser.Scene {
 
     const spacing = 260;
     const startX = GAME_WIDTH / 2 - ((choices.length - 1) * spacing) / 2;
+    const cardY = GAME_HEIGHT / 2 - 10;
+    const panel = drawParchmentPanel(this, GAME_WIDTH / 2, cardY - 84, GAME_WIDTH - 80, 260, 40);
+    this.restOverlay.push(panel);
+
+    const title = this.add
+      .text(GAME_WIDTH / 2, cardY - 190, "Rest before the next wave?", {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "28px",
+        color: "#3a2a10",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(42);
+    this.restOverlay.push(title);
+
     choices.forEach((choice, i) => {
       const x = startX + i * spacing;
-      const y = GAME_HEIGHT / 2 - 10;
-      const btn = this.add
-        .rectangle(x, y, 240, 110, 0x3a5a8a)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(41);
-      const name = this.add
-        .text(x, y - 30, choice.label, {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "18px",
-          color: "#e8e8f0",
-          fontStyle: "bold",
-        })
-        .setOrigin(0.5)
-        .setDepth(42);
+      const handle = createOrnateButton(this, x, cardY, 240, 110, choice.label, () => choice.onClick(), {
+        variant: "secondary",
+        fontSize: 17,
+        depth: 41,
+      });
+      const label = handle.container.list[1] as Phaser.GameObjects.Text;
+      label.setPosition(0, -30);
       const desc = this.add
-        .text(x, y + 20, choice.desc, {
-          fontFamily: "system-ui, Arial, sans-serif",
+        .text(x, cardY + 20, choice.desc, {
+          fontFamily: FONT_BODY,
           fontSize: "12px",
-          color: "#c8c8d8",
+          color: "#3a2a10",
           align: "center",
           wordWrap: { width: 210 },
         })
         .setOrigin(0.5)
         .setDepth(42);
-      btn.on("pointerover", () => btn.setFillStyle(0x4a6a9a));
-      btn.on("pointerout", () => btn.setFillStyle(0x3a5a8a));
-      btn.on("pointerdown", () => choice.onClick());
-      this.restOverlay.push(btn, name, desc);
+      this.restOverlay.push(handle.container, desc);
     });
   }
 
@@ -8971,7 +9213,7 @@ export class BattleScene extends Phaser.Scene {
     if (kind === "prepared" && hero.classId && preparedSwapIsFullRelist(hero.classId)) {
       this.showSpellPrepRelistScreen(hero, kind);
     } else {
-      this.showSpellPrepDropScreen(hero, kind);
+      this.showSpellPrepSwapScreen(hero, kind);
     }
   }
 
@@ -9026,14 +9268,6 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * The "replace exactly one" flow (every cantrip swap; Paladin/Ranger's
-   * PREPARED list, moot in practice — see D-136): screen A picks which
-   * currently-known entry to drop (or bails out via "Keep current"), screen
-   * B (`showSpellPrepLearnScreen`) picks its replacement from the eligible
-   * pool minus what's already known. Nothing is committed until the Learn
-   * screen's own click, so "◀ Back" from there is a free undo.
-   */
-  /**
    * D-199 (Party Creation Overhaul Plan 6.5): this hero's planned drop/learn
    * choice for `kind` at its CURRENT level, if this is a level-up swap
    * (Long Rest swaps have no blueprint concept — `LevelUpPlan.spellSwaps`
@@ -9049,60 +9283,155 @@ export class BattleScene extends Phaser.Scene {
     return this.heroLevelUpPlans.get(hero.id)?.spellSwaps[hero.level]?.find((c) => c.kind === kind);
   }
 
-  private showSpellPrepDropScreen(hero: Hero, kind: SpellSwapStepKind): void {
+  /**
+   * D-217 (item 2): the "replace exactly one" flow (every cantrip swap;
+   * Paladin/Ranger's PREPARED list, moot in practice — see D-136), redesigned
+   * per Kevin's own described flow: click the currently-known spell to
+   * replace — it stays on screen with a "▸ Replacing:" indicator and the
+   * eligible replacement pool appears directly beneath it — pick one to
+   * commit immediately (or click the marked row again to cancel), then
+   * you're back on this same overview to make another swap or hit Continue.
+   * Replaces the old two-screen `showSpellPrepDropScreen`/
+   * `showSpellPrepLearnScreen` hop (screen A → full navigation to screen B →
+   * "◀ Back" to undo) with one persistent screen, re-rendered in place on
+   * every click — same idiom `showSpellPrepRelistScreen` already used for
+   * the full-relist case.
+   */
+  private showSpellPrepSwapScreen(hero: Hero, kind: SpellSwapStepKind, selectedDropId?: string): void {
+    this.clearAsiOverlay();
     const current = this.spellPrepCurrent(hero, kind);
     const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
     const planned = this.plannedSpellSwapChoice(hero, kind);
-    const choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }> = current.map((id) => {
+    const replacementPool = selectedDropId
+      ? this.spellPrepPool(hero, kind).filter((id) => !current.includes(id))
+      : [];
+
+    const dim = this.add
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65)
+      .setDepth(40);
+    this.asiOverlay.push(dim);
+
+    const cx = GAME_WIDTH / 2;
+    const colWidth = 480;
+    const rowHeight = 36;
+    const rowGap = 8;
+    const topY = 140;
+
+    const titleText = this.add
+      .text(cx, topY, `${hero.name} — ${this.spellPrepTriggerLabel()}: Replace a ${label}`, {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "24px",
+        color: "#3a2a10",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(42);
+    this.asiOverlay.push(titleText);
+
+    let y = topY + 46;
+    current.forEach((id) => {
       const spell = getSpell(id);
-      return {
-        label: spell.name,
-        desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
-        onClick: () => this.showSpellPrepLearnScreen(hero, kind, id),
-        highlighted: planned?.dropId === id,
-      };
-    });
-    choices.push({
-      label: "Keep current — no swap",
-      desc: `Skip this ${label.toLowerCase()} swap and move on.`,
-      onClick: () => this.advanceSpellPrepStep(hero),
-    });
-    this.renderAsiPrompt(`${hero.name} — ${this.spellPrepTriggerLabel()}: Replace a ${label}`, choices);
-  }
+      const isSelected = id === selectedDropId;
+      const isSuggested = !isSelected && planned?.dropId === id;
+      const rowLabel = isSelected ? `▸ Replacing: ${spell.name}` : isSuggested ? `★ ${spell.name}` : spell.name;
+      const rowDesc = isSelected ? undefined : spell.level === 0 ? "Cantrip" : `Level ${spell.level}`;
+      const rowHandle = createOrnateButton(
+        this,
+        cx,
+        y,
+        colWidth,
+        rowHeight,
+        rowLabel,
+        () => this.showSpellPrepSwapScreen(hero, kind, isSelected ? undefined : id),
+        { variant: "secondary", sublabel: rowDesc, depth: 42, fontSize: 15 },
+      );
+      if (isSelected || isSuggested) rowHandle.setSelected(true);
+      this.asiOverlay.push(rowHandle.container);
+      y += rowHeight + rowGap;
 
-  private showSpellPrepLearnScreen(hero: Hero, kind: SpellSwapStepKind, dropId: string): void {
-    const current = this.spellPrepCurrent(hero, kind);
-    const pool = this.spellPrepPool(hero, kind).filter((id) => !current.includes(id));
-    if (pool.length === 0) {
-      // Nothing eligible to learn instead — same auto-skip idiom the Spell
-      // Mastery/Signature Spells/Mystic Arcanum screens already use when
-      // there's genuinely nothing to pick from.
-      this.advanceSpellPrepStep(hero);
-      return;
-    }
-    const dropLabel = getSpell(dropId).name;
-    const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
-    const planned = this.plannedSpellSwapChoice(hero, kind);
-    const plannedLearnId = planned?.dropId === dropId ? planned.learnId : undefined;
+      if (!isSelected) return;
 
-    const choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }> = pool.map((id) => {
-      const spell = getSpell(id);
-      return {
-        label: spell.name,
-        desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
-        onClick: () => {
-          const next = current.filter((existingId) => existingId !== dropId).concat(id);
-          if (kind === "cantrips") hero.chooseCantrips(next);
-          else hero.choosePreparedSpells(next);
-          this.logCombat(`${hero.name} swaps ${dropLabel} for ${spell.name}`);
-          this.advanceSpellPrepStep(hero);
-        },
-        highlighted: plannedLearnId === id,
-      };
+      const hint = this.add
+        .text(cx, y + 8, "Replace with:", {
+          fontFamily: FONT_BODY,
+          fontSize: "14px",
+          color: "#5a4a34",
+          fontStyle: "italic",
+        })
+        .setOrigin(0.5)
+        .setDepth(42);
+      this.asiOverlay.push(hint);
+      y += rowHeight + rowGap;
+
+      if (replacementPool.length === 0) {
+        // Nothing eligible to learn instead — same auto-skip idiom the Spell
+        // Mastery/Signature Spells/Mystic Arcanum screens already use when
+        // there's genuinely nothing to pick from.
+        const none = this.add
+          .text(cx, y, "Nothing eligible to learn instead.", {
+            fontFamily: FONT_BODY,
+            fontSize: "14px",
+            color: "#5a4a34",
+          })
+          .setOrigin(0.5)
+          .setDepth(42);
+        this.asiOverlay.push(none);
+        y += rowHeight + rowGap;
+        return;
+      }
+
+      replacementPool.forEach((learnId) => {
+        const learnSpell = getSpell(learnId);
+        const isPlanned = planned?.dropId === id && planned.learnId === learnId;
+        const learnHandle = createOrnateButton(
+          this,
+          cx,
+          y,
+          colWidth - 30,
+          rowHeight,
+          isPlanned ? `★ ${learnSpell.name}` : learnSpell.name,
+          () => {
+            const next = current.filter((existingId) => existingId !== id).concat(learnId);
+            if (kind === "cantrips") hero.chooseCantrips(next);
+            else hero.choosePreparedSpells(next);
+            this.logCombat(`${hero.name} swaps ${spell.name} for ${learnSpell.name}`);
+            this.showSpellPrepSwapScreen(hero, kind);
+          },
+          {
+            variant: "tool",
+            sublabel: learnSpell.level === 0 ? "Cantrip" : `Level ${learnSpell.level}`,
+            depth: 42,
+            fontSize: 14,
+          },
+        );
+        if (isPlanned) learnHandle.setSelected(true);
+        this.asiOverlay.push(learnHandle.container);
+        y += rowHeight + rowGap;
+      });
     });
-    choices.push({ label: "◀ Back", onClick: () => this.showSpellPrepDropScreen(hero, kind) });
 
-    this.renderAsiPrompt(`${hero.name} — ${this.spellPrepTriggerLabel()}: Learn a New ${label}`, choices);
+    const continueHandle = createOrnateButton(this, cx, y + 6, colWidth, 40, "Continue", () => this.advanceSpellPrepStep(hero), {
+      variant: "secondary",
+      depth: 42,
+    });
+    this.asiOverlay.push(continueHandle.container);
+
+    // Drawn last but rendered behind everything above (depth 41 < 42) —
+    // Phaser sorts the display list by depth, not insertion order, so
+    // sizing the panel from the actual laid-out content bounds (rather than
+    // a separate up-front height estimate) is safe here.
+    const bottomY = y + 6 + 40;
+    const panelTop = topY - 34;
+    const panelBottom = bottomY + 24;
+    const panel = drawParchmentPanel(
+      this,
+      cx,
+      (panelTop + panelBottom) / 2,
+      colWidth + 100,
+      panelBottom - panelTop,
+      41,
+    );
+    this.asiOverlay.push(panel);
   }
 
   /**
@@ -9328,6 +9657,14 @@ export class BattleScene extends Phaser.Scene {
    * this through; a hero with no plan (or mode "fresh") never sets it, so
    * this is a pure additive rendering feature.
    */
+  /**
+   * D-217 (item 1): reworked to use the same ornate/parchment building
+   * blocks as the rest of the game (`uiTheme.ts`) instead of plain flat-blue
+   * rectangles — this was the one screen in the game still using default
+   * Phaser shapes and `system-ui` text. The choice-grid layout math (button
+   * sizing, row wrapping, centering) is unchanged; only the drawing itself
+   * changed, so none of this function's ~15 call sites needed to change.
+   */
   private renderAsiPrompt(
     title: string,
     choices: Array<{ label: string; desc?: string; onClick: () => void; highlighted?: boolean }>,
@@ -9336,16 +9673,7 @@ export class BattleScene extends Phaser.Scene {
     const dim = this.add
       .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65)
       .setDepth(40);
-    const titleText = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 160, title, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "28px",
-        color: "#f0e070",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5)
-      .setDepth(41);
-    this.asiOverlay.push(dim, titleText);
+    this.asiOverlay.push(dim);
 
     const hasDesc = choices.some((c) => c.desc);
     const usableWidth = GAME_WIDTH - 40;
@@ -9356,6 +9684,31 @@ export class BattleScene extends Phaser.Scene {
     const rows = Math.ceil(choices.length / maxPerRow);
     const rowStartY = GAME_HEIGHT / 2 - 20 - ((rows - 1) * (height + 16)) / 2;
 
+    const titleY = GAME_HEIGHT / 2 - 160;
+    const gridBottom = rowStartY + (rows - 1) * (height + 16) + height / 2;
+    const panelTop = titleY - 36;
+    const panelBottom = gridBottom + 28;
+    const panel = drawParchmentPanel(
+      this,
+      GAME_WIDTH / 2,
+      (panelTop + panelBottom) / 2,
+      GAME_WIDTH - 80,
+      panelBottom - panelTop,
+      41,
+    );
+    this.asiOverlay.push(panel);
+
+    const titleText = this.add
+      .text(GAME_WIDTH / 2, titleY, title, {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "28px",
+        color: "#3a2a10",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(42);
+    this.asiOverlay.push(titleText);
+
     choices.forEach((choice, i) => {
       const row = Math.floor(i / maxPerRow);
       const col = i % maxPerRow;
@@ -9363,39 +9716,14 @@ export class BattleScene extends Phaser.Scene {
       const rowStartX = GAME_WIDTH / 2 - ((itemsInRow - 1) * spacing) / 2;
       const x = rowStartX + col * spacing;
       const y = rowStartY + row * (height + 16);
-      const btn = this.add
-        .rectangle(x, y, width, height, 0x3a5a8a)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(41);
-      if (choice.highlighted) btn.setStrokeStyle(3, 0xf0c040);
-      const name = this.add
-        .text(x, y - (choice.desc ? 20 : 0), choice.highlighted ? `★ ${choice.label}` : choice.label, {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "14px",
-          color: choice.highlighted ? "#ffe58a" : "#e8e8f0",
-          fontStyle: "bold",
-          align: "center",
-          wordWrap: { width: width - 16 },
-        })
-        .setOrigin(0.5)
-        .setDepth(42);
-      this.asiOverlay.push(btn, name);
-      if (choice.desc) {
-        const desc = this.add
-          .text(x, y + 18, choice.desc, {
-            fontFamily: "system-ui, Arial, sans-serif",
-            fontSize: "11px",
-            color: "#c8c8d8",
-            align: "center",
-            wordWrap: { width: width - 16 },
-          })
-          .setOrigin(0.5)
-          .setDepth(42);
-        this.asiOverlay.push(desc);
-      }
-      btn.on("pointerover", () => btn.setFillStyle(0x4a6a9a));
-      btn.on("pointerout", () => btn.setFillStyle(0x3a5a8a));
-      btn.on("pointerdown", () => choice.onClick());
+      const label = choice.highlighted ? `★ ${choice.label}` : choice.label;
+      const handle = createOrnateButton(this, x, y, width, height, label, choice.onClick, {
+        variant: "secondary",
+        sublabel: choice.desc,
+        depth: 42,
+      });
+      if (choice.highlighted) handle.setSelected(true);
+      this.asiOverlay.push(handle.container);
     });
   }
 
@@ -9989,12 +10317,13 @@ export class BattleScene extends Phaser.Scene {
 
   private showEndScreen(message: string, colorHex: string): void {
     const dim = this.add
-      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.6)
+      .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65)
       .setDepth(40);
+    const panel = drawParchmentPanel(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20, 640, 220, 40);
     const title = this.add
       .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60, message, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "44px",
+        fontFamily: FONT_DISPLAY,
+        fontSize: "40px",
         color: colorHex,
         fontStyle: "bold",
       })
@@ -10007,31 +10336,19 @@ export class BattleScene extends Phaser.Scene {
     // left players stuck looking at the win/lose screen with no visible way
     // out. A real button is now the primary path; Esc still works too.
     const buttonY = GAME_HEIGHT / 2 + 20;
-    const menuButton = this.add
-      .rectangle(GAME_WIDTH / 2, buttonY, 260, 56, 0x3a5a8a)
-      .setInteractive({ useHandCursor: true })
-      .setDepth(41);
-    const menuLabel = this.add
-      .text(GAME_WIDTH / 2, buttonY, "Return to Menu", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "22px",
-        color: "#e8e8f0",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5)
-      .setDepth(41);
-    menuButton.on("pointerover", () => menuButton.setFillStyle(0x4a6a9a));
-    menuButton.on("pointerout", () => menuButton.setFillStyle(0x3a5a8a));
-    menuButton.on("pointerdown", () => this.scene.start("MainMenuScene"));
+    const menuHandle = createOrnateButton(this, GAME_WIDTH / 2, buttonY, 260, 56, "Return to Menu", () => this.scene.start("MainMenuScene"), {
+      variant: "primary",
+      depth: 41,
+    });
 
     const hint = this.add
-      .text(GAME_WIDTH / 2, buttonY + 46, "or press Esc  ·  then START to play again", {
-        fontFamily: "system-ui, Arial, sans-serif",
+      .text(GAME_WIDTH / 2, buttonY + 56, "or press Esc  ·  then START to play again", {
+        fontFamily: FONT_BODY,
         fontSize: "16px",
-        color: "#c8c8d8",
+        color: "#a89058",
       })
       .setOrigin(0.5)
       .setDepth(41);
-    this.endOverlay.push(dim, title, menuButton, menuLabel, hint);
+    this.endOverlay.push(dim, panel, title, menuHandle.container, hint);
   }
 }

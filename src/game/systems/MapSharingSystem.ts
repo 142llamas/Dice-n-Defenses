@@ -1,5 +1,7 @@
 import type { ParsedMap } from "../data/testMap";
 import { encodeMapRows, parseMapRows } from "../data/testMap";
+import type { WaveDefinition } from "../data/waves";
+import { ENEMY_DEFINITIONS } from "../data/enemies";
 
 /**
  * MapSharingSystem — Phase 11.10 (D-085): the pure transform layer between a
@@ -31,6 +33,8 @@ export interface SharedMapRecord {
   cols: number;
   rows: number;
   tileRows: string[];
+  /** Author-designed enemy waves (Map Builder); `[]` when the author didn't design any — see `ParsedMap.customWaves`. */
+  customWaves: WaveDefinition[];
 }
 
 export function hasReachedPublishLimit(publishedCount: number): boolean {
@@ -53,9 +57,33 @@ export function toSharedMapRecord(
     cols: draft.cols,
     rows: draft.rows,
     tileRows: encodeMapRows(draft),
+    customWaves: draft.customWaves ?? [],
   };
 }
 
+/**
+ * Defensive load-time filtering (same "good enough" stance `isValidTileRows`
+ * already takes toward tile data — firestore.rules checks shape/size, not
+ * enemy-id legality): drops any spawn group whose `enemyId` doesn't exist,
+ * or whose `spawnIndex` no longer points at a real spawn on this map, then
+ * drops any wave left with zero spawn groups. Guards a hand-crafted
+ * Firestore document without needing rules to know the enemy roster.
+ */
+function sanitizeCustomWaves(waves: WaveDefinition[], spawnCount: number): WaveDefinition[] {
+  return waves
+    .map((wave) => ({
+      ...wave,
+      spawns: wave.spawns.filter(
+        (group) => group.enemyId in ENEMY_DEFINITIONS && (group.spawnIndex ?? 0) < spawnCount,
+      ),
+    }))
+    .filter((wave) => wave.spawns.length > 0);
+}
+
 export function fromSharedMapRecord(record: SharedMapRecord): ParsedMap {
-  return parseMapRows(record.id, record.name, record.tileRows);
+  const parsed = parseMapRows(record.id, record.name, record.tileRows);
+  return {
+    ...parsed,
+    customWaves: sanitizeCustomWaves(record.customWaves ?? [], parsed.spawns.length),
+  };
 }

@@ -537,27 +537,25 @@ export class CharacterSheetScene extends Phaser.Scene {
       const x = startX + col * (cardW + colGap);
       const y = startY + row * (height + rowGap);
       const isPinned = hotkeys.includes(entry.id);
-      const btn = this.add
-        .rectangle(x, y, cardW, height, isPinned ? 0x4a6a3a : 0x3a5a8a)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(3);
-      const label = this.add
-        .text(x, y, entry.label, {
-          fontFamily: FONT_BODY,
-          fontSize: "13px",
-          color: "#f0e6c8",
-          align: "center",
-          wordWrap: { width: cardW - 16 },
-        })
-        .setOrigin(0.5)
-        .setDepth(4);
-      btn.on("pointerdown", () => {
-        if (this.armedHotkeySlot === null) return;
-        this.hero.setActionHotkey(this.armedHotkeySlot, entry.id);
-        this.armedHotkeySlot = null;
-        this.renderTab();
-      });
-      this.contentObjects.push(btn, label);
+      const handle = createOrnateButton(
+        this,
+        x,
+        y,
+        cardW,
+        height,
+        entry.label,
+        () => {
+          if (this.armedHotkeySlot === null) return;
+          this.hero.setActionHotkey(this.armedHotkeySlot, entry.id);
+          this.armedHotkeySlot = null;
+          this.renderTab();
+        },
+        { variant: "tab", fontSize: 13, depth: 3 },
+      );
+      handle.setSelected(isPinned);
+      const label = handle.container.list[1] as Phaser.GameObjects.Text;
+      label.setWordWrapWidth(cardW - 16, true);
+      this.contentObjects.push(handle.container);
     });
   }
 }

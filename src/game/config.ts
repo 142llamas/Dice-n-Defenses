@@ -61,6 +61,11 @@ export const BESTIARY_STORAGE_KEY = "fantasy-td:bestiary";
 // BESTIARY_STORAGE_KEY (a campaign completion and an enemy encounter are
 // different concerns despite sharing the same persistence mechanism).
 export const CAMPAIGN_PROGRESS_STORAGE_KEY = "fantasy-td:campaign-progress";
+// D-217 (item 3c): the persistent SHARED campaign level (1-20), one number
+// for the whole roster — its own key/system rather than folded into
+// CAMPAIGN_PROGRESS_STORAGE_KEY, same "different concerns, same mechanism"
+// reasoning as that key's own comment above.
+export const CAMPAIGN_LEVEL_STORAGE_KEY = "fantasy-td:campaign-level";
 // Phase 9 (D-083): locally-saved party builds (see systems/SaveSystem.ts) —
 // same local-only storage treatment, its own key since a save slot's shape
 // (a whole party + party size + difficulty) is unrelated to the other three.

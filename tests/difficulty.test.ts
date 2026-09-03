@@ -86,6 +86,41 @@ describe("difficulty tiers — campaign gear economy (D-194)", () => {
   });
 });
 
+describe("difficulty tiers — threat budget (D-217, item 3b)", () => {
+  it("gives every tier a valid, capped elite fraction and a positive lane cap/cadence multiplier", () => {
+    for (const id of DIFFICULTY_IDS) {
+      const tier = getDifficultyDefinition(id);
+      expect(tier.eliteFraction).toBeGreaterThanOrEqual(0);
+      expect(tier.eliteFraction).toBeLessThanOrEqual(tier.eliteFractionCap);
+      expect(tier.eliteFractionCap).toBeLessThanOrEqual(1);
+      expect(tier.extraLaneChance).toBeGreaterThanOrEqual(0);
+      expect(tier.extraLaneChance).toBeLessThanOrEqual(1);
+      expect(tier.maxSimultaneousLanes).toBeGreaterThanOrEqual(1);
+      expect(tier.cadenceMultiplier).toBeGreaterThan(0);
+    }
+  });
+
+  it("gives a harder tier no less elite/lane/cadence pressure than an easier one", () => {
+    const easy = getDifficultyDefinition("easy");
+    const normal = getDifficultyDefinition("normal");
+    const hard = getDifficultyDefinition("hard");
+    const nightmare = getDifficultyDefinition("nightmare");
+    for (const [a, b] of [
+      [easy, normal],
+      [normal, hard],
+      [hard, nightmare],
+    ] as const) {
+      expect(b.eliteFraction).toBeGreaterThanOrEqual(a.eliteFraction);
+      expect(b.eliteStatMultiplier.hp).toBeGreaterThanOrEqual(a.eliteStatMultiplier.hp);
+      expect(b.eliteStatMultiplier.damage).toBeGreaterThanOrEqual(a.eliteStatMultiplier.damage);
+      expect(b.extraLaneChance).toBeGreaterThanOrEqual(a.extraLaneChance);
+      expect(b.maxSimultaneousLanes).toBeGreaterThanOrEqual(a.maxSimultaneousLanes);
+      // Lower cadenceMultiplier = shorter intervals = MORE pressure.
+      expect(b.cadenceMultiplier).toBeLessThanOrEqual(a.cadenceMultiplier);
+    }
+  });
+});
+
 describe("partySizeScalingFactor", () => {
   it("returns exactly 1x at the balanced party size (4)", () => {
     expect(partySizeScalingFactor(BALANCED_PARTY_SIZE)).toBe(1);

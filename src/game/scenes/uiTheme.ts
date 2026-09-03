@@ -41,11 +41,26 @@ export interface OrnateButtonOptions {
    * future button can use it without a one-off implementation.
    */
   tooltip?: string;
+  /**
+   * D-217 (item 7, icon-only corner controls): an optional placeholder glyph
+   * drawn in place of the text label — Kevin has no real icon art yet, so
+   * this is "real drawing code stands in for real art" (same precedent
+   * `MainMenuScene.buildCrest`'s hand-drawn tower-and-shield emblem already
+   * set) rather than an image asset. The callback draws into a Graphics
+   * object local to this button, centered at (0,0); `size` is the button's
+   * shorter dimension so the drawing code can scale itself, and `color` is
+   * this button's current state color (idle/hover/disabled), matching the
+   * label text's own state-color logic so an icon button reads consistently
+   * with a text button next to it.
+   */
+  icon?: (g: Phaser.GameObjects.Graphics, size: number, color: number) => void;
 }
 
 export interface OrnateButtonHandle {
   container: Phaser.GameObjects.Container;
   setLabel(text: string): void;
+  /** D-217: updates this button's hover tooltip text (no-op if the button wasn't created with one). Used by icon-only buttons whose full explanation lives only in the tooltip, e.g. the account control's dynamic sign-in/sign-out label. */
+  setTooltip(text: string): void;
   setSelected(selected: boolean): void;
   setDisabled(disabled: boolean): void;
   destroy(): void;
@@ -85,7 +100,7 @@ export function createOrnateButton(
   const container = scene.add.container(x, y).setDepth(depth);
   const g = scene.add.graphics();
   const text = scene.add
-    .text(0, opts.sublabel ? -8 : 0, label, {
+    .text(0, opts.sublabel ? -8 : 0, opts.icon ? "" : label, {
       fontFamily: font,
       fontSize: `${fontSize}px`,
       color: "#f0e6c8",
@@ -94,6 +109,11 @@ export function createOrnateButton(
     })
     .setOrigin(0.5);
   container.add([g, text]);
+  let iconG: Phaser.GameObjects.Graphics | undefined;
+  if (opts.icon) {
+    iconG = scene.add.graphics();
+    container.add(iconG);
+  }
 
   // Playtest fix: `centeredRowX` shrinks the BOX to fit a crowded row (10+
   // Compendium tabs, 12 classes), but the label text itself never shrank to
@@ -187,6 +207,12 @@ export function createOrnateButton(
       drawDiamond(g, -w / 2 + 12, 0, 3.5, capColor);
       drawDiamond(g, w / 2 - 12, 0, 3.5, capColor);
     }
+
+    if (opts.icon && iconG) {
+      iconG.clear();
+      const iconColor = disabled ? 0x7a6a4a : selected || hovered ? 0xfff3d0 : 0xf0e6c8;
+      opts.icon(iconG, Math.min(w, h) * 0.62, iconColor);
+    }
   };
   draw();
 
@@ -237,6 +263,18 @@ export function createOrnateButton(
     setLabel: (t: string) => {
       text.setText(t);
       fitLabelToWidth();
+    },
+    setTooltip: (t: string) => {
+      if (!tooltipText || !tooltipBg) return;
+      tooltipText.setText(t);
+      const tw = tooltipText.width + 16;
+      const th = tooltipText.height + 12;
+      tooltipText.setPosition(0, -height / 2 - 10);
+      tooltipBg.clear();
+      tooltipBg.fillStyle(COLORS.parchmentBase, 0.98);
+      tooltipBg.lineStyle(1, COLORS.parchmentBorder, 1);
+      tooltipBg.fillRoundedRect(-tw / 2, -height / 2 - 10 - th, tw, th, 6);
+      tooltipBg.strokeRoundedRect(-tw / 2, -height / 2 - 10 - th, tw, th, 6);
     },
     setSelected: (s: boolean) => {
       selected = s;

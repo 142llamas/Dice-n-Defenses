@@ -1,4 +1,6 @@
 import type { WaveDefinition } from "./waves";
+import type { LevelMilestoneTrack } from "../systems/LevelMilestoneSystem";
+import { generateLevelMilestones } from "./levelMilestones";
 import { PROLOGUE_MAP } from "./prologueMap";
 import { EMBERFORD_MAP } from "./emberfordMap";
 import { SALTMERE_MAP } from "./saltmereMap";
@@ -64,6 +66,28 @@ export interface CampaignDefinition {
    * "is this campaign chaptered."
    */
   chapters?: ChapterDefinition[];
+  /**
+   * D-217 (item 3c/3d): overrides the level band a FLAT (non-chaptered)
+   * campaign's synthesized single chapter targets — `getChapter` defaults
+   * this to `[1, 20]` when absent, which is right for the six ordinary
+   * `SIDE_MISSIONS` (whose leveling is moot anyway, see `isSideMission`
+   * below) but wrong for the Prologue (a short level-1 intro that shouldn't
+   * ramp the player up at all — `[1, 1]`) and the Nameless Throne capstone
+   * (fought entirely at the level the player should already be by the time
+   * every region is cleared — `[20, 20]`). A CHAPTERED campaign ignores
+   * this entirely; each of its `ChapterDefinition`s carries its own
+   * `levelRange` instead.
+   */
+  levelRange?: readonly [number, number];
+  /**
+   * D-217 (item 3d): true for a Pool-A companion side mission (see
+   * `data/companions.ts`'s `sideMissionId`) — grants no character XP/levels
+   * at all, its only reward is unlocking the companion. Structurally
+   * enforced by `chapterLevelMilestones` returning an empty track
+   * regardless of `levelRange`/waves, rather than a policy flag scattered
+   * through leveling code. Default false (a main mission).
+   */
+  isSideMission?: boolean;
 }
 
 /**
@@ -84,6 +108,17 @@ export interface ChapterDefinition {
   /** Minimal chapter-boundary storytelling (CAMPAIGN_STORY_DESIGN.md §7's "no need for a full dialogue engine yet") — shown before/after the chapter's waves. No rendering exists for these yet; declared for content to fill in once that UI does. */
   introText?: string;
   outroText?: string;
+  /**
+   * D-217 (item 3c): an optional hand-authored milestone track for THIS
+   * chapter's own wave list. Omitted (every chapter today) derives a
+   * default even spread from `levelRange`/`waves.length` via
+   * `chapterLevelMilestones` — the same `generateLevelMilestones` Free
+   * Play's Run Length presets use, just parameterized on this chapter's own
+   * band instead of always starting at level 1. Ignored entirely for a
+   * side mission (`CampaignDefinition.isSideMission`), which always grants
+   * an empty track regardless of this field.
+   */
+  levelMilestones?: LevelMilestoneTrack;
 }
 
 /**
@@ -114,7 +149,7 @@ export function getChapter(def: CampaignDefinition, chapterIndex: number): Chapt
     return {
       id: def.id,
       name: def.name,
-      levelRange: [1, 20],
+      levelRange: def.levelRange ?? [1, 20],
       waves: def.waves,
       bossEnemyId: def.bossEnemyId,
       lootPoolIds: def.lootPoolIds,
@@ -125,6 +160,22 @@ export function getChapter(def: CampaignDefinition, chapterIndex: number): Chapt
     throw new Error(`Campaign "${def.id}" has no chapter at index ${chapterIndex}.`);
   }
   return chapter;
+}
+
+/**
+ * D-217 (item 3c/3d): the level-up milestone track for chapter
+ * `chapterIndex` of `def` — a side mission always gets an empty track (no
+ * XP/levels, structurally, regardless of what its waves/levelRange say);
+ * otherwise an explicit `ChapterDefinition.levelMilestones` wins, and
+ * absent that, a default even spread is derived from the chapter's own
+ * `levelRange`/`waves.length` via `generateLevelMilestones` — the same
+ * generator Free Play's Run Length presets use.
+ */
+export function chapterLevelMilestones(def: CampaignDefinition, chapterIndex: number): LevelMilestoneTrack {
+  if (def.isSideMission) return [];
+  const chapter = getChapter(def, chapterIndex);
+  if (chapter.levelMilestones) return chapter.levelMilestones;
+  return generateLevelMilestones(chapter.waves.length, chapter.levelRange[1], chapter.levelRange[0]);
 }
 
 // ----- The Proving Ground (D-184: the one-time prologue mission) ----------
@@ -1543,6 +1594,9 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     waves: PROLOGUE_WAVES,
     bossEnemyId: "brute",
     lootPoolIds: [...POTION_ORDER],
+    // D-217: a short level-1 intro — every new campaign starts at
+    // campaignLevel 1, and this mission shouldn't ramp that up at all.
+    levelRange: [1, 1],
   },
   {
     id: "emberford-reach",
@@ -1861,6 +1915,10 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     // returning miniboss is actually incoming).
     bossEnemyId: "ashen-sovereign",
     lootPoolIds: NAMELESS_THRONE_LOOT_POOL,
+    // D-217: gated behind clearing all 6 regions, so the player should
+    // already be at campaignLevel 20 by the time they reach it — fought
+    // entirely at the cap, no further ramp.
+    levelRange: [20, 20],
   },
 ];
 
@@ -2051,6 +2109,7 @@ export const SIDE_MISSIONS: CampaignDefinition[] = [
     waves: BRAND_ASHCAIRN_WAVES,
     bossEnemyId: "warcaptain",
     lootPoolIds: SIDE_MISSION_LOOT_POOL,
+    isSideMission: true,
   },
   {
     id: "side-wren-calloway",
@@ -2061,6 +2120,7 @@ export const SIDE_MISSIONS: CampaignDefinition[] = [
     waves: WREN_CALLOWAY_WAVES,
     bossEnemyId: "gilded-carrier",
     lootPoolIds: SIDE_MISSION_LOOT_POOL,
+    isSideMission: true,
   },
   {
     id: "side-perrin-holt",
@@ -2071,6 +2131,7 @@ export const SIDE_MISSIONS: CampaignDefinition[] = [
     waves: PERRIN_HOLT_WAVES,
     bossEnemyId: "blightcaller",
     lootPoolIds: SIDE_MISSION_LOOT_POOL,
+    isSideMission: true,
   },
   {
     id: "side-mira-quill",
@@ -2081,6 +2142,7 @@ export const SIDE_MISSIONS: CampaignDefinition[] = [
     waves: MIRA_QUILL_WAVES,
     bossEnemyId: "frost-warden",
     lootPoolIds: SIDE_MISSION_LOOT_POOL,
+    isSideMission: true,
   },
   {
     id: "side-cass-ferrow",
@@ -2091,6 +2153,7 @@ export const SIDE_MISSIONS: CampaignDefinition[] = [
     waves: CASS_FERROW_WAVES,
     bossEnemyId: "ironhide",
     lootPoolIds: SIDE_MISSION_LOOT_POOL,
+    isSideMission: true,
   },
   {
     id: "side-ellery-vance",
@@ -2101,6 +2164,7 @@ export const SIDE_MISSIONS: CampaignDefinition[] = [
     waves: ELLERY_VANCE_WAVES,
     bossEnemyId: "razorwing",
     lootPoolIds: SIDE_MISSION_LOOT_POOL,
+    isSideMission: true,
   },
 ];
 

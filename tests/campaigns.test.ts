@@ -8,6 +8,7 @@ import {
   getCampaignDefinition,
   getCampaignMap,
   getChapter,
+  chapterLevelMilestones,
   isChapteredCampaign,
   totalChapters,
   type CampaignDefinition,
@@ -382,6 +383,11 @@ describe("Prologue (D-184)", () => {
     expect(prologue.lootPoolIds).toBeDefined();
     expect(prologue.lootPoolIds!.length).toBeGreaterThan(0);
   });
+
+  it("D-217: grants no level-ups — a short level-1 intro shouldn't ramp the player up at all", () => {
+    const prologue = getCampaignDefinition(PROLOGUE_CAMPAIGN_ID);
+    expect(chapterLevelMilestones(prologue, 0)).toEqual([]);
+  });
 });
 
 /**
@@ -431,6 +437,11 @@ describe("The Nameless Throne (D-188 capstone)", () => {
     }
     expect(capstone.lootPoolIds).toBeDefined();
     expect(capstone.lootPoolIds!.length).toBeGreaterThan(0);
+  });
+
+  it("D-217: grants no level-ups — gated behind all 6 regions, the player should already be at the level cap", () => {
+    const capstone = getCampaignDefinition(NAMELESS_THRONE_CAMPAIGN_ID);
+    expect(chapterLevelMilestones(capstone, 0)).toEqual([]);
   });
 });
 
@@ -495,5 +506,68 @@ describe("Side missions (KI-098 item 13)", () => {
     });
     expect(new Set(SIDE_MISSIONS.map((m) => m.name)).size).toBe(SIDE_MISSIONS.length);
     expect(new Set(SIDE_MISSIONS.map((m) => m.description)).size).toBe(SIDE_MISSIONS.length);
+  });
+
+  it("D-217 (item 3d): every mission is marked isSideMission and grants no level-ups, structurally, regardless of its own waves/levelRange", () => {
+    SIDE_MISSIONS.forEach((mission) => {
+      expect(mission.isSideMission).toBe(true);
+      expect(chapterLevelMilestones(mission, 0)).toEqual([]);
+    });
+  });
+
+  it("D-217: every companion referenced by a sideMissionId points at a mission actually marked isSideMission, and vice versa", () => {
+    const poolA = COMPANIONS.filter((c) => !c.homeRegionId);
+    const sideMissionIds = new Set(poolA.map((c) => c.sideMissionId));
+    SIDE_MISSIONS.forEach((mission) => {
+      expect(sideMissionIds.has(mission.id)).toBe(true);
+      expect(mission.isSideMission).toBe(true);
+    });
+    CAMPAIGNS.forEach((c) => {
+      if (sideMissionIds.has(c.id)) {
+        // No CAMPAIGNS entry currently shares an id with a side mission
+        // (asserted above too), so this only guards against future drift.
+        expect(c.isSideMission).toBe(true);
+      } else {
+        expect(c.isSideMission).toBeFalsy();
+      }
+    });
+  });
+});
+
+/**
+ * D-217 (item 3a/3c): every REGION chapter's default (unauthored)
+ * `levelMilestones` track — derived from its own `levelRange`/`waves.length`
+ * via `chapterLevelMilestones` — reaches exactly that chapter's target level
+ * after clearing its second-to-last wave, same guarantee
+ * `tests/levelMilestones.test.ts` already covers for Free Play's Run Length
+ * presets, now exercised across all 24 real region chapters.
+ */
+describe("Level milestones (D-217, item 3c)", () => {
+  it("reaches exactly levelRange[1] after the second-to-last wave, for every chapter of every region", () => {
+    REGIONS.forEach((region) => {
+      for (let i = 0; i < totalChapters(region); i++) {
+        const chapter = getChapter(region, i);
+        const track = chapterLevelMilestones(region, i);
+        expect(track.length).toBeGreaterThan(0);
+        const last = track[track.length - 1];
+        expect(last.afterWave).toBe(chapter.waves.length - 1);
+        expect(last.level).toBe(chapter.levelRange[1]);
+        expect(track.every((m) => m.afterWave < chapter.waves.length)).toBe(true);
+      }
+    });
+  });
+
+  it("never regresses within one chapter's track, and never implies a level below levelRange[0]", () => {
+    REGIONS.forEach((region) => {
+      for (let i = 0; i < totalChapters(region); i++) {
+        const chapter = getChapter(region, i);
+        const track = chapterLevelMilestones(region, i);
+        for (const m of track) expect(m.level).toBeGreaterThanOrEqual(chapter.levelRange[0]);
+        for (let j = 1; j < track.length; j++) {
+          expect(track[j].level).toBeGreaterThan(track[j - 1].level);
+          expect(track[j].afterWave).toBeGreaterThan(track[j - 1].afterWave);
+        }
+      }
+    });
   });
 });

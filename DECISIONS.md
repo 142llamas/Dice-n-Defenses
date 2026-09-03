@@ -12610,3 +12610,679 @@ layout reads the way the mockup did before this closes out.
 
 **Important files**: `src/game/scenes/GearShopScene.ts` — layout rework
 only, no other files touched.
+
+### D-217 — Main Menu's Settings/Sign-in/Exit-Game controls, icon-only
+
+Kevin's own ask: shrink the three corner text buttons into small icon
+representations to save space, with the full explanation moved to hover
+text — placeholder appearance is fine, real icon art comes later.
+
+`uiTheme.ts`'s `createOrnateButton` gained an optional `icon` draw-callback
+(`(g: Graphics, size: number, color: number) => void`) and a `setTooltip`
+handle method. When `icon` is supplied the button renders no label text at
+all; the callback draws a placeholder glyph — same "real drawing code
+stands in for real art" treatment `MainMenuScene.buildCrest`'s hand-drawn
+tower-and-shield emblem already established, not an image asset. `setTooltip`
+exists because the account button's label used to update dynamically
+(sign-in/sign-out state) via `setLabel` — that dynamic text now lives in the
+tooltip instead, updated live.
+
+`MainMenuScene.ts`'s `buildSettingsControl`/`buildAccountControl`/
+`buildExitControl` all shrank from 260x44 (or 190x36) text buttons to 44x44
+icon buttons, same corner positions, with a cog/person-silhouette/door-and-
+arrow glyph respectively (`drawGearIcon`/`drawPersonIcon`/`drawExitIcon`,
+local to `MainMenuScene.ts` — only 3 icons needed today, not worth a shared
+icon library yet). `computeCornerControlsRegion` (`systems/mainMenuLayout.ts`,
+the pure function guarding the title from overlapping these controls)
+shrank its bounding box from 260 to 44 wide, keeping the same right-edge
+anchor (`viewportWidth - 40`) — `tests/mainMenuLayout.test.ts` updated to match.
+
+Verified: `npm run typecheck` clean, **1696/1696** tests pass, production
+build succeeds. Headless-verified only — needs Kevin's browser pass to
+confirm the icons read clearly and don't collide with the Save/Sync-with-
+Cloud controls already in that corner.
+
+**Important files**: `src/game/scenes/uiTheme.ts` (icon option + setTooltip,
+reusable by any future button), `src/game/scenes/MainMenuScene.ts`,
+`src/game/systems/mainMenuLayout.ts`, `tests/mainMenuLayout.test.ts`.
+
+### D-218 — Compendium and Bestiary get a direct cross-navigation button
+
+Kevin's own ask: keep "Back (Esc)" going to Main Menu, but add a direct way
+to jump between the Compendium and the Bestiary without detouring through
+Main Menu/`KnowledgeBaseScene` first.
+
+Added one ornate button to the previously-empty right side of each scene's
+header row (mirroring "Back (Esc)"'s position on the left): `CompendiumScene`
+gets a "Bestiary" button (`scene.start("BestiaryScene")`), `BestiaryScene`
+gets a "Compendium" button (`scene.start("CompendiumScene")`), both with a
+one-line hover tooltip. "Back (Esc)" and its Esc keybinding are completely
+unchanged in both scenes — deliberately NOT retargeted to `KnowledgeBaseScene`,
+per Kevin's literal wording. Neither scene resets its own category/page state
+except in `create()`, so jumping via these buttons always lands on Classes
+tab/page 1 or Bestiary's default view — same "restart never accumulates
+state" behavior (KI-030) as every other menu transition, not a new decision.
+
+Verified: `npm run typecheck` clean, **1696/1696** tests pass (no test file
+covers either scene — pure Phaser rendering, no game-rule logic), production
+build succeeds. Headless-verified only — needs Kevin's browser pass.
+
+**Important files**: `src/game/scenes/CompendiumScene.ts`,
+`src/game/scenes/BestiaryScene.ts`.
+
+### D-219 — Compendium's Subclasses tab reuses the Classes tab's own class selector
+
+Kevin's own ask: let the Subclasses tab work the same way Classes does, so
+picking a class shows just that class's own subclasses.
+
+`renderCategory()`'s `"subclasses"` case now also calls `buildClassSelector()`
+before rendering (mirroring the existing `"classes"` case) — that selector
+was already category-agnostic (its click handler just sets `this.classId`
+and re-dispatches through `renderCategory`), so no changes were needed there.
+`renderSubclassesDetail()` was rewritten to filter `subclassesForClass(
+this.classId)` (already existed in `data/subclasses.ts`, already unit-tested
+— every one of the 12 classes has exactly 2) instead of listing all 24
+subclasses alphabetized across every class at once; the old cross-class
+browse view is gone entirely, replaced by pick-a-class-first, per Kevin's
+literal ask (no dual-mode toggle added). Since `this.classId` persists across
+tab switches, a player already looking at a class on the Classes tab lands
+directly on that class's two subclasses when they click Subclasses — no new
+state needed for that continuity.
+
+Verified: `npm run typecheck` clean, **1696/1696** tests pass (`tests/subclasses.test.ts`
+already covers the data side), production build succeeds. Headless-verified
+only — needs Kevin's browser pass.
+
+**Important files**: `src/game/scenes/CompendiumScene.ts`.
+
+### D-220 — Compendium: click-to-pin detail info alongside hover, across every itemized tab
+
+Kevin's own ask: Feats (and Skills/Backgrounds/Spells/Equipment/Potions/
+Buildings/Traps/Status Effects) only show their real information on hover,
+and that's not the right way to do it — useful detail is hidden behind a
+hover state instead of being visible/persistent.
+
+All itemized categories (the 9 Kevin named, plus Classes/Subclasses/Races —
+12 total) already funneled through one shared `renderRowList()` with a
+uniform `DetailRow{text, tooltip?, isGroupHeader?}` shape, so the fix is a
+single change to that one function rather than 9 separate ones. Reserved a
+fixed-height (`DETAIL_STRIP_HEIGHT = 150`) "pin" strip at the bottom of the
+existing parchment panel, above Prev/Next — subtracted from the pagination
+math so it doesn't crowd the row list above it. Clicking any row with a
+`tooltip` now pins its full text into that strip (bold + a "▸" marker, a
+color distinct from a group header's own styling) in ADDITION to the
+existing hover behavior — hover still works for a quick glance; the fix is
+that the text no longer disappears the instant the pointer moves away, which
+was the actual complaint. Reset to a placeholder ("Click an entry above to
+pin its full description here.") on every render (tab switch/page change/
+selector change), so a stale pin from an off-screen row never lingers.
+
+Because all 12 renderers already emit the same row shape, zero edits were
+needed in any individual `render*Detail()` function — Classes/Subclasses/
+Races get this for free too, a deliberate, justified over-delivery relative
+to Kevin's literal 9-tab list (threading a flag to exclude 3 of 12 callers
+from a shared function would've been more code for no benefit).
+
+Verified: `npm run typecheck` clean, **1696/1696** tests pass, production
+build succeeds. Headless-verified only — needs Kevin's browser pass,
+specifically whether the fixed 150px strip fits the longest descriptions in
+each category comfortably (deliberately not dynamically sized, since that
+would make the row list reflow on every click).
+
+**Important files**: `src/game/scenes/CompendiumScene.ts`.
+
+### D-221 — In-battle level-up/spell-pick popups reskinned to match the rest of the game
+
+Kevin's own report: "Level up menu is still blue boxes" — should be visually
+updated to match the ornate/parchment theme (`uiTheme.ts`, D-123) the rest of
+the game already has.
+
+`BattleScene.renderAsiPrompt()` — the single shared renderer behind every
+level-up-adjacent modal (ASI/feat choice, subclass choice, spell-pick choice,
+the "reaches level N!" ack, the D-181 region-bonus picker, the D-182/D-185
+story-choice overlays, and both spell-swap screens before D-222 replaced
+them) — was still drawing plain flat-blue (`0x3a5a8a`) rectangles with
+`system-ui` text; it was the one screen in the game that never got the D-123
+pass. Reworked to use the same building blocks as everywhere else:
+`drawParchmentPanel` behind the choice grid instead of a flat rectangle,
+`FONT_DISPLAY` (Cinzel) for the title in the game's gold-on-wood style, and
+`createOrnateButton` for each choice instead of a hand-rolled rectangle +
+text + hover (its existing `sublabel`/`disabled` options already covered
+everything the old code did). The pre-suggested/"highlighted" choice (gold
+star + gold stroke) now uses `createOrnateButton`'s existing `setSelected(true)`
+treatment instead of a bespoke stroke. The dim black scrim behind the whole
+modal is unchanged (still needed so the battle board stays visible-but-
+unfocused underneath). Because every one of `renderAsiPrompt`'s ~15 call
+sites passes the same `{label, desc, onClick, highlighted}[]` shape, this
+was a single, low-risk, purely-visual swap — no call site changed.
+
+Verified: `npm run typecheck` clean, **1696/1696** tests pass, production
+build succeeds. Headless-verified only — this is explicitly a "does it look
+right" change, needs Kevin's browser pass.
+
+**Important files**: `src/game/scenes/BattleScene.ts` (`renderAsiPrompt` only).
+
+### D-222 — Spell-replacement flow redesigned: one persistent screen instead of two
+
+Kevin's own described flow: click the spell to be replaced, it stays on
+screen with an indicator that it's the one being replaced, the eligible
+replacement options appear directly beneath it, then back to the same
+overview screen (to pick a different spell to replace, or just continue).
+
+The "replace exactly one" flow (every cantrip swap; Paladin/Ranger's prepared
+list) used to be two full-screen navigations: click a known spell → jump to
+a whole separate screen listing the replacement pool → pick one (commits and
+auto-advances) or "◀ Back" (undoes, back to screen one). Replaced in both
+places it existed:
+- `BattleScene`'s in-battle version (`showSpellPrepDropScreen`/
+  `showSpellPrepLearnScreen` → one new `showSpellPrepSwapScreen(hero, kind,
+  selectedDropId?)`), which writes straight to the live `Hero` as before.
+- `CharacterCreationScene`'s blueprint-wizard mirror of the same pattern
+  (`showPlanSpellSwapStep`/`showPlanSpellSwapLearnStep` → merged into one
+  `showPlanSpellSwapStep(step, selectedDropId?)`), which writes into
+  `planningDraft.spellSwaps[level]` instead.
+
+Both draw directly (not through `renderAsiPrompt`/`renderChoiceOverlay`,
+neither of which supports a two-tier "row + its own expand-in-place
+sub-list" layout): the known-spell list renders as a column of ornate
+buttons; clicking one marks it ("▸ Replacing: {name}", highlighted) and
+expands the eligible replacement pool directly beneath it; picking a
+replacement commits immediately and the screen re-renders with the
+selection cleared — landing back on the same overview, so a second swap can
+be reviewed/made in the same visit if the player wants to reconsider,
+without a forced "one swap per visit" limit the old two-screen hop had.
+Clicking the already-selected row again deselects without committing. A
+"Continue" button (`BattleScene`) — or a state-aware "Skip (decide later)"/
+"Continue" button reusing the wizard's existing `planSkipChoice` semantics
+(`CharacterCreationScene`) — always advances regardless of whether a change
+was made.
+
+The existing full-relist screen (`showSpellPrepRelistScreen`, Wizard/Cleric/
+Druid's Long-Rest prepared list) already matched the "stays on one screen"
+spirit and needed no functional rework — only D-221's visual reskin applies
+to it, since it also goes through `renderAsiPrompt`.
+
+Verified: `npm run typecheck` clean, **1696/1696** tests pass (the spell-swap
+step-sequencing logic itself, `spellSwapStepsForClass`/`preparedSwapIsFullRelist`,
+is unchanged and was already covered — this is pure UI restructuring on top
+of it), production build succeeds. Headless-verified only — needs Kevin's
+browser pass to confirm the interaction feels like what he described.
+
+**Important files**: `src/game/scenes/BattleScene.ts`,
+`src/game/scenes/CharacterCreationScene.ts`.
+
+### D-223 — Progression redesign: Run Length/campaignLevel replace D-174's uniform per-wave cadence for Free Play and Campaign — supersedes D-174 (LOCKED) for those two modes; Phase B (scene wiring) partially complete
+
+Kevin's own ask, the largest item in this session's 7-item batch: separate
+character progression from run length and difficulty. Free Play: every run
+starts at level 1, the player independently picks Run Length (Short/Medium/
+Long → level caps 10/15/20, reusing the existing 4/7/10 wave-count presets)
+and Difficulty; levels advance automatically between designated waves, with
+one full regular wave at the level cap before the boss. Difficulty no longer
+touches level/XP at all — it shapes enemy-wave PRESSURE via a threat-budget
+system (quantity/quality/elite frequency/spawn cadence/simultaneous lanes/
+composition, with explicit safeguards against a disproportionate result).
+Campaign: a persistent, SHARED `campaignLevel` (1-20, one number for the
+whole roster — PC and every companion alike) replaces per-hero manual
+leveling; main missions define their own level-up milestones in data,
+independent of wave count; side missions grant no XP/levels at all, only a
+companion unlock, and a newly-fielded companion always uses the current
+`campaignLevel`.
+
+**D-174 override, confirmed explicitly by Kevin.** D-174 locked leveling to
+"1 level per hero per wave, uniform across every mode" — this decision
+overrides that LOCKED constraint for Free Play and Campaign specifically,
+asked directly and confirmed before any code was written (see
+`floating-seeking-patterson` plan, this session). D-174 itself is
+superseded, not deleted or reversed elsewhere — `ProgressionSystem.ts` is
+completely unchanged and still governs Co-op, Test Mode, and the
+campaign-less classic "Create Party" path, none of which this redesign
+touches (no Run Length/level-cap concept exists there, and nothing in
+Kevin's wording asked for one).
+
+**What "remove the current overworld stat-bonus progression" (item 3c)
+turned out to mean.** No such system existed in code — campaign heroes
+already leveled via the same uniform per-wave cadence as everywhere else.
+Confirmed directly with Kevin: the concrete thing to remove is D-181's
+region-bonus "xp" category, which granted flat permanent bonus max-HP
+(`Hero.grantBonusHealth`) as a workaround for having no real XP/level system
+to hook a level-up into. Removed outright, not replaced with a different
+permanent stat-bump category (a replacement bonus that still grants a
+permanent level/stat bump would just be the same workaround under a new
+name) — each region's pool gained a SECOND gold-amount tier in its place,
+keeping every pool at 6 options/3 categories (`RegionBonusCategory` narrowed
+from 4 values to 3).
+
+**Phase A — pure data/systems, ALL DONE, ALL unit-tested:**
+- `systems/LevelMilestoneSystem.ts` (new): a `LevelMilestoneTrack`
+  (`{afterWave, level}[]`) replaces `ProgressionSystem`'s "1 level per wave"
+  for in-scope modes — `currentLevel`/`pendingTargetLevel`/`hasPendingLevelUp`/
+  `acknowledgeLevelUp`. A single milestone can imply a multi-level jump (Free
+  Play Short needs 9 level-ups across only 3 non-finale waves).
+- `data/levelMilestones.ts` (new): `RUN_LENGTH_DEFINITIONS` (Short/Medium/Long
+  → 4/7/10 waves, 10/15/20 level cap) and `generateLevelMilestones(waveCount,
+  levelCap, startingLevel = 1)` — distributes the level span evenly across
+  waves `1..(waveCount-1)`, guaranteeing the cap is reached after the
+  second-to-last wave (Kevin's own "one regular wave at the final level
+  before the boss" ask). `startingLevel` is a later addition (see below) so
+  Campaign chapters can reuse the exact same generator with their own band.
+- `systems/ThreatBudgetSystem.ts` (new): `applyThreatBudget(wave, tier,
+  random, spawnPointCount, bossEnemyId?)` — a pure post-processing transform
+  over any `WaveDefinition`. Bakes `enemyCountMultiplier` into each group's
+  count (callers then pass `enemyCountMultiplier: 1` to `WaveSystem`, since
+  it's already applied); splits a group into regular/elite sub-groups per
+  `eliteFraction` (capped by `eliteFractionCap`, never converting a group's
+  LAST regular unit); multiplies `intervalTurns` by `cadenceMultiplier`
+  (floored at 1 turn, `startTurn`/`turnLimit` never touched — the concrete
+  "intensity, not duration" mechanism); a chance to duplicate a small
+  non-boss group onto a spare spawn lane, capped by `maxSimultaneousLanes`.
+  `data/difficulty.ts`'s `DifficultyDefinition` gained the 6 new fields this
+  reads (`eliteFraction`/`eliteFractionCap`/`eliteStatMultiplier`/
+  `extraLaneChance`/`maxSimultaneousLanes`/`cadenceMultiplier`) — additive,
+  every existing field/test unchanged.
+- `data/waves.ts`: new optional `WaveSpawnGroup.statMultiplier?: {hp, damage,
+  attackBonusAdd?}`, consumed in `WaveSystem.spawnDueEnemies` combined
+  multiplicatively with the tier's own `enemyHpMultiplier` — absent is
+  today's exact behavior. Shared by elite substitution above AND boss
+  scaling below (one new `WaveSystem` concept, not two).
+- `data/bossScaling.ts` (new): today the SAME boss id is reused with
+  IDENTICAL stats across different level bands (e.g. `cinderlord` at both
+  Emberford Ch2 `[6,10]` and Ch4 `[16,20]`) — no level-aware boss scaling
+  existed anywhere. `statMultiplierForBoss(enemyId, targetLevel, baseLevel=1)`
+  applies ONE shared growth curve (`BOSS_SCALING_CURVE`, first-pass/untuned
+  like every other multiplier in this project) to every boss's current
+  stats as its "level 1" baseline — one continuous function serves both Free
+  Play's 3 caps and Campaign's 4 chapter bands. An escape hatch
+  (`BOSS_LEVEL_OVERRIDES`) allows later hand-tuning a specific boss/level
+  pair. **Not yet applied anywhere** — see Phase B gaps below.
+- `systems/CampaignLevelSystem.ts` (new): `CampaignLevelState{campaignLevel}`,
+  `loadCampaignLevel`/`saveCampaignLevel` (`CAMPAIGN_LEVEL_STORAGE_KEY`, new
+  in `config.ts`), `raiseCampaignLevel` (monotonic, same same-object-reference
+  no-op discipline as `CampaignProgressSystem`'s own mark* functions). Kept
+  separate from `CampaignProgressSystem`, mirroring that module's own stated
+  reasoning for staying separate from `BestiarySystem`.
+- `data/campaigns.ts`: new optional `ChapterDefinition.levelMilestones` (an
+  explicit hand-authored override, unused by any chapter today) and
+  `CampaignDefinition.isSideMission`/`levelRange` (the latter overrides a
+  FLAT campaign's synthesized `[1, 20]` band — set to `[1, 1]` on the
+  Prologue, so a short level-1 intro doesn't ramp the player up at all, and
+  `[20, 20]` on the Nameless Throne capstone, since clearing all 6 regions
+  should already have the player at the cap). New `chapterLevelMilestones(def,
+  chapterIndex)`: a side mission always returns `[]` (structurally
+  guaranteeing "no XP/levels," not a policy branch); otherwise an explicit
+  `levelMilestones` wins, else a default even spread is DERIVED from the
+  chapter's own `levelRange`/`waves.length` via `generateLevelMilestones` —
+  this is why no per-chapter data had to be hand-authored across all 24 real
+  region chapters, only the two special-cased flat campaigns and the 6
+  `SIDE_MISSIONS` (`isSideMission: true` added to each). Also confirmed the
+  entire pool-A-companion side-mission ↔ `CompanionDefinition.sideMissionId`
+  cross-reference stays intact.
+
+**Phase B — scene wiring, PARTIAL. Campaign is fully wired end-to-end; Free
+Play, threat-budget application, and boss-scaling application are NOT yet
+connected to any gameplay path** (their Phase A systems exist and are
+tested in isolation, but nothing calls them yet):
+- `BattleScene.applyClassLevelUps` — untouched, still called for Co-op/Test
+  Mode/classic Create-Party/MapBuilder-or-shared-map Free Play exactly as
+  before. Its per-level choice-detection body (ASI/subclass/spell-pick/
+  spell-swap checks) was extracted verbatim into a new shared private method,
+  `detectLevelUpChoiceForHero` — a mechanical, behavior-preserving
+  refactor, not a logic change.
+- New `applyClassLevelUpsToLevel(targetLevel)`: the milestone-cadence
+  counterpart — loops `hero.levelUpClass()` until `targetLevel` instead of
+  calling it once, calling `detectLevelUpChoiceForHero` after EVERY
+  intermediate level reached (not just the final one), so a hero jumping
+  from level 4 to 7 still gets prompted for whatever levels 5 and 6 grant
+  along the way. This was the single riskiest piece of engineering flagged
+  in the plan — BattleScene has zero test coverage, so this needed to be
+  additive rather than an in-place rewrite of the existing, working
+  single-level function.
+- `BattleScene.create()`: a campaign battle now constructs a
+  `LevelMilestoneSystem` from `chapterLevelMilestones(campaign, chapterIndex)`,
+  seeded from `campaignLevelState.campaignLevel` (loaded once, alongside
+  `campaignProgress`). The wave-clear chokepoint (`afterWaveCleared`) branches
+  on whether this battle has one: if so, `applyClassLevelUpsToLevel`/
+  `LevelMilestoneSystem.acknowledgeLevelUp` instead of `applyClassLevelUps`/
+  `progression.acknowledgeLevelUp`.
+- Every campaign hero (PC AND every companion, in `buildHeroes()`) has its
+  `startingLevel` OVERRIDDEN to `campaignLevelState.campaignLevel` at battle
+  construction, regardless of whatever per-hero `startingLevel` Character
+  Creation's own build carried. This single override is what makes "newly
+  unlocked companions use the current campaignLevel" (item 3d) work
+  automatically, with no separate `CompanionRosterSystem` change needed —
+  whichever companion is next fielded in ANY future campaign battle gets
+  whatever `campaignLevel` is by then.
+- `campaignLevel` writes back (`raiseCampaignLevel`+`saveCampaignLevel`) in
+  `markCampaignCompletedIfAny`, i.e. at chapter-clear (victory) — not
+  eagerly at every in-battle milestone, so a mid-chapter loss/quit never
+  locks in a level gain. `CampaignSelectScene`'s "Reset Campaign Progress"
+  button now also resets `campaignLevel` to 1 alongside everything else it
+  already wipes.
+
+**Explicitly NOT done this session (real gaps, not oversights):**
+1. **Free Play's Run Length UI is not wired.** `FreePlayScene` still offers
+   only its old wave-count-only picker; nothing there constructs a
+   `LevelMilestoneSystem` or passes one to `BattleScene`, so a Free Play run
+   still uses `ProgressionSystem`'s old uniform per-wave cadence unchanged.
+   `data/levelMilestones.ts`'s `RUN_LENGTH_DEFINITIONS`/
+   `levelMilestonesForRunLength` exist and are tested but unused by any
+   scene yet.
+2. **`ThreatBudgetSystem.applyThreatBudget` is not called anywhere** — no
+   wave list, campaign or Free Play, is threat-budget-transformed before
+   reaching `WaveSystem`. Difficulty still only does what it did before this
+   session (`enemyCountMultiplier`/`enemyHpMultiplier` applied live in
+   `WaveSystem`, plus the D-088/D-194 Rest-charge/gear-point fields) — the
+   new elite/lane/cadence fields on `DifficultyDefinition` are real,
+   validated data with no consumer yet.
+3. **`bossScaling.statMultiplierForBoss` is not called anywhere** — every
+   boss still fights at its single hand-authored stat block regardless of
+   what level the party is actually at.
+4. **`CharacterCreationScene`'s manual "Choose Starting Level"/"Choose Team
+   Level" buttons are still visible and clickable in campaign mode** — they
+   no longer have any EFFECT (item 3.3's `BattleScene`-level override wins
+   regardless of what they're set to), but nothing hides them or replaces
+   them with a read-only "Campaign Level: N" display, so a campaign player
+   can still interact with a picker that silently does nothing. A real,
+   if non-corrupting, UX confusion gap.
+5. No best-effort `campaignLevel` backfill for an existing in-progress
+   campaign save — an old save with no stored `campaignLevel` key defaults
+   to 1 on first load (`CampaignLevelSystem`'s own defensive-load
+   convention), which is a real regression for anyone already mid-campaign.
+
+Verified: `npm run typecheck` clean, **1696/1696** tests pass (all of Phase
+A's new pure systems have real unit coverage:
+`tests/levelMilestoneSystem.test.ts`, `tests/levelMilestones.test.ts`,
+`tests/threatBudgetSystem.test.ts`, `tests/bossScaling.test.ts`,
+`tests/campaignLevelSystem.test.ts`, plus additive cases in
+`tests/difficulty.test.ts`/`tests/waves.test.ts`/`tests/campaigns.test.ts`,
+and `tests/regionBonusSystem.test.ts` updated for the 3-category pool
+shape), production build succeeds (155 modules — `ThreatBudgetSystem.ts`/
+`bossScaling.ts` aren't in the production bundle yet, confirming they're
+genuinely not wired into any reachable code path, consistent with the gaps
+above). The Phase B wiring that DOES exist (Campaign) is scene/`BattleScene`
+code with zero test coverage per this project's own architecture (no
+game-rule logic belongs in scenes) — needs Kevin's own playtest of at least
+one full campaign chapter to confirm the level-cadence actually fires and
+feels right, since every number here is explicitly first-pass and untuned.
+
+**Important files**: `src/game/systems/LevelMilestoneSystem.ts`,
+`src/game/systems/ThreatBudgetSystem.ts`, `src/game/systems/CampaignLevelSystem.ts`,
+`src/game/data/levelMilestones.ts`, `src/game/data/bossScaling.ts`,
+`src/game/data/difficulty.ts`, `src/game/data/waves.ts`,
+`src/game/data/campaigns.ts`, `src/game/data/regionBonuses.ts`,
+`src/game/systems/WaveSystem.ts`, `src/game/scenes/BattleScene.ts`,
+`src/game/scenes/CampaignSelectScene.ts`, `src/game/config.ts`.
+
+### D-224 — D-223 Phase B closed out: Free Play's Run Length wired, threat-budget/boss-scaling applied, Character Creation's inert campaign picker replaced, campaignLevel backfilled
+
+Kevin's own "continue item 3" ask — the 5 explicit gaps D-223 left open, all
+closed this session. No design changes from D-223's own spec; this is pure
+wiring of already-built, already-tested Phase A systems (`LevelMilestoneSystem`,
+`ThreatBudgetSystem`, `bossScaling.ts`, `CampaignLevelSystem`) into the two
+real gameplay paths (`FreePlayScene`→`BattleScene`, and `BattleScene.create()`
+itself) that hadn't called them yet.
+
+**Gap 1 — Free Play's Run Length UI.** `FreePlayScene`'s old "Wave Count"
+section (Short/Medium/Long → 4/7/10 waves, no level concept) is now "Run
+Length" — same 3 presets, same button positions, now ALSO showing/selecting
+the level cap (`data/levelMilestones.ts`'s `RUN_LENGTH_DEFINITIONS`:
+10/15/20). `selectedRunLengthId`/`buildRunLengthSection` replace
+`selectedWaveCount`/`buildWaveCountSection`; `WAVE_COUNT_PRESETS` is gone
+(nothing else referenced it — confirmed via search before deleting).
+`startFreePlay()` now also passes `freePlayRunLengthId`/`freePlayBossEnemyId`
+through `CharacterCreationScene`'s existing `freePlayMapId`/`freePlayWaves`
+passthrough pattern (new optional fields, same relay-hop shape) into
+`BattleScene`. `BattleScene.create()` now constructs a `LevelMilestoneSystem`
+from `levelMilestonesForRunLength(id)` (seeded at level 1) whenever
+`!campaign && this.freePlayRunLengthId` — mirroring the campaign branch
+already built last session — and `buildHeroes()` overrides every hero's
+`startingLevel` to 1 in that case (same override shape as campaign's
+`campaignLevel` override, one line away in the same ternary chain). A
+MapBuilder-draft or shared-map Free Play run never sets `freePlayRunLengthId`
+(only `FreePlayScene` itself does), so it keeps the old uniform per-wave
+`ProgressionSystem` cadence completely unchanged, same as Co-op/Test
+Mode/classic Create-Party — exactly the boundary D-223 specified.
+
+**Gap 2/3 — threat-budget and boss-scaling, applied together.** Both only
+apply when `scalingTargetLevel !== null` (campaign: `this.currentChapter!.levelRange[1]`;
+Free Play: the Run Length's `levelCap`; everything else: `null`, no-op,
+unchanged). `waveList` is remapped through `applyThreatBudget(wave, difficulty,
+this.random, this.map.data.spawns.length, bossEnemyId)` for every wave — the
+elite-split/extra-lane/cadence-multiplier machinery `ThreatBudgetSystem` already
+had unit-tested. Per `ThreatBudgetSystem`'s own doc comment, this BAKES
+`difficulty.enemyCountMultiplier` into each group's own `count`, so
+`WaveSystem`'s own `enemyCountMultiplier` option is conditionally `1 *
+partySizeScalingFactor(heroCount)` instead of `difficulty.enemyCountMultiplier
+* partySizeScalingFactor(heroCount)` whenever this branch is active — otherwise
+every group would be double-scaled. `enemyHpMultiplier` is untouched (stays
+live in `WaveSystem`, multiplied again against a group's own
+`statMultiplier.hp` — deliberately asymmetric, per `ThreatBudgetSystem`'s own
+design). Boss scaling then merges `statMultiplierForBoss(bossEnemyId,
+targetLevel)` onto whichever spawn group's `enemyId` matches the resolved
+`bossEnemyId` — `this.currentChapter?.bossEnemyId` for campaign (`undefined`
+for a chapter with no named boss, e.g. most chapters 2/3 — threat-budget still
+applies to the whole wave, just with no boss exclusion/scaling), or
+`this.freePlayBossEnemyId` for Free Play (always set — `FreePlayScene`'s own
+Finale Boss picker is mandatory). Ordering matters: threat-budget runs first
+(so its own "never elite-split the boss's group" rule sees the untouched
+`enemyId`), then boss-scaling's plain assignment (never a merge — the boss
+group's `statMultiplier` is still `undefined` coming out of threat-budget,
+confirmed by `ThreatBudgetSystem`'s own test).
+
+**Gap 4 — Character Creation's inert campaign picker.** The per-hero
+"Starting Level"/team-wide "Team Level" buttons no longer sit there doing
+nothing in campaign mode (or, now, a Free Play Run Length run) — both are
+relabeled to a disabled, read-only "Campaign Level: N" (loaded once in
+`create()` via a new `campaignLevelState` field, same treatment as the
+existing `campaignCompleted` read) or "Starts at Level 1 (Run Length)" and
+`setDisabled(true)`'d (uiTheme's `OrnateButtonHandle.setDisabled` already
+toggles real interactivity, not just a visual dim). While already inside
+`refreshSlotUi` for this fix, also corrected a related, previously-unflagged
+preview bug: the HP/AC/Speed stat line and the Spells-button summary were
+still computed off `build.startingLevel` even in campaign mode, which
+`BattleScene` overrides anyway — both now read a new `effectiveStartingLevel`
+(campaignLevel, or 1 for a Run Length run, or the real picker value
+otherwise), so the preview never shows stats for a level the hero won't
+actually start the battle at.
+
+**Gap 5 — campaignLevel backfill.** New `CampaignLevelSystem.
+highestReachedCampaignLevel(progress, regionCampaignIds)`: for each of the 6
+region campaigns, reads `CampaignProgressSystem.getHighestCompletedChapter`
+and maps it to that chapter's own `levelRange[1]` (the level `campaignLevel`
+would already have been raised to at that chapter's real clear), taking the
+max across all 6 regions since `campaignLevel` is one shared number
+regardless of play order. `BattleScene.create()` calls this right after
+loading `campaignLevelState`/`campaignProgress`, feeding the result through
+the EXISTING `raiseCampaignLevel` (which already no-ops, same object
+reference, when there's nothing to raise) — a fresh save with no completed
+chapters costs one no-op computation per battle start; an existing
+mid-campaign save missing the `campaignLevel` key gets it correctly
+backfilled the very next battle it loads, with a real `saveCampaignLevel`
+write only in that one case.
+
+Verified: `npm run typecheck` clean, **1700/1700** tests pass (4 new —
+`highestReachedCampaignLevel`'s own coverage in
+`tests/campaignLevelSystem.test.ts`: fresh-progress no-op, one completed
+chapter, max-across-regions, and a campaign id outside the given list being
+ignored), production build succeeds (**157 modules**, up from 155 —
+`ThreatBudgetSystem.ts`/`bossScaling.ts` are now genuinely reachable,
+confirming both gaps are for real wired in, not just typechecking). All of
+this is `BattleScene`/`FreePlayScene`/`CharacterCreationScene` scene-layer
+wiring with zero test coverage for the scene layer itself (per this
+project's own architecture rule) — needs Kevin's own playtest of a Free Play
+run at each Run Length AND a fresh campaign chapter to confirm the numbers
+feel right; every threat-budget/boss-scaling multiplier is still explicitly
+first-pass/untuned, unchanged from D-223's own caveat.
+
+**Important files**: `src/game/scenes/FreePlayScene.ts`,
+`src/game/scenes/CharacterCreationScene.ts`, `src/game/scenes/BattleScene.ts`,
+`src/game/systems/CampaignLevelSystem.ts`.
+
+### D-225 — The last 4 flat-styled overlays reskinned to the D-123 ornate/parchment theme
+
+Kevin's own "continue the reskinning of the overlays that haven't been
+changed yet" ask. D-221 (last session) reskinned `renderAsiPrompt` — the
+level-up/ASI/subclass/spell-pick modal — but 3 OTHER `BattleScene` overlays
+were built independently (their own hand-rolled `add.rectangle()` +
+`setFillStyle` hover, not `renderAsiPrompt`) and were missed by that pass,
+plus one card grid in `CharacterSheetScene` (already mostly D-123'd, but this
+one grid was never touched). Found by grepping the codebase for the old flat
+palette (`0x3a5a8a` and the old cyan-accent `#8ad0f0` title color) — every
+other hit was either this session's own new code or the Shop/Test-Mode grid's
+already-on-theme `COLORS.bronze`/`COLORS.woodPanel` (D-210), confirmed by
+reading each hit in context before touching it.
+
+- **`BattleScene.renderSpellbookOverlay`** (in-battle "Cast a Spell" grid):
+  the flat-blue card grid is now `createOrnateButton` per spell (reaching
+  into `container.list[1]` to reposition/rewrap the label near the card's
+  top edge, same technique `FreePlayScene.buildOptionRow` already
+  established for a crowded row), title in `FONT_DISPLAY`/Cinzel, a
+  `drawParchmentPanel` behind the whole grid, and the Prev/Next page nav
+  rebuilt as small ornate "tool" buttons (auto-disabling at either end via
+  `disabled`, instead of a manually-recolored text label).
+- **`BattleScene.showRestChoice`** (the "Rest before the next wave?" popup):
+  same treatment — parchment panel, Cinzel title, `createOrnateButton` per
+  choice with the description text kept as a separate wrapped `Text` below
+  the button (matches the spellbook grid's own name/desc split, since
+  `createOrnateButton`'s own `sublabel` option doesn't word-wrap and these
+  descriptions run 1-2 sentences).
+- **`BattleScene.showEndScreen`** (the Victory/Defeat screen): parchment
+  panel behind the message + button, "Return to Menu" now a `createOrnateButton`
+  ("primary" variant) instead of a hand-rolled rectangle; the message's own
+  per-outcome color (`"#9be0b4"` victory green / `"#e07a7a"` defeat red) is
+  unchanged, just recolored onto `FONT_DISPLAY` instead of `system-ui`.
+- **`CharacterSheetScene`'s Hotkeys tab** (the "assignable actions & spells"
+  card grid): the one remaining flat-rectangle grid in an otherwise-already-
+  ornate scene — swapped for `createOrnateButton`, using its existing
+  `setSelected` treatment for "already pinned to a hotkey slot" instead of a
+  bespoke green fill color.
+
+Pure presentation — no interaction logic, click targets, or game-rule code
+touched in any of the 4 spots; every existing test that exercises the
+underlying systems these overlays call into is unaffected.
+
+Verified: `npm run typecheck` clean, **1700/1700** tests pass (unchanged —
+this is scene-only visual code with no test coverage per this project's own
+architecture), production build succeeds. Headless-verified only — needs
+Kevin's browser pass, same as D-221's own reskin did.
+
+**Important files**: `src/game/scenes/BattleScene.ts`
+(`renderSpellbookOverlay`, `showRestChoice`, `showEndScreen`),
+`src/game/scenes/CharacterSheetScene.ts` (Hotkeys tab grid).
+
+### D-226 — Free Play Run Length gained a 4th preset: "Quick" (level 1→5)
+
+Kevin's own ask, right after D-224 shipped: an even faster option than
+Short, going from level 1 to 5. `data/levelMilestones.ts`'s `RunLengthId`
+gained `"quick"`, `RUN_LENGTH_IDS` is now `["quick", "short", "medium",
+"long"]` (Quick first, fastest-to-slowest reading order), and
+`RUN_LENGTH_DEFINITIONS.quick = { waveCount: 2, levelCap: 5 }` — same
+first-pass/untuned caveat as the other 3 presets' own wave counts. 2 waves
+is the shortest shape a Run Length can take at all (1 ramp wave, reaching
+the cap after it, then the finale fought entirely at that cap) —
+`generateLevelMilestones(2, 5, 1)` produces a single milestone, a straight
+1→5 jump after clearing wave 1, before the wave-2 boss.
+
+`FreePlayScene.buildRunLengthSection`'s button width was fixed at 300px for
+3 buttons (totaling 940px, comfortably under `GAME_WIDTH`); a 4th button at
+that same fixed width would total 1260px, leaving only ~10px of margin on a
+1280-wide viewport. Changed to compute width the same "shrink to fit"
+way `buildOptionRow` (the Map/Boss rows) already does —
+`Math.min(300, (width - 100 - 3*gap) / 4)` — rather than leave the fixed
+300 and risk overflow on a narrower viewport. No other consumer of
+`RunLengthId`/`RUN_LENGTH_DEFINITIONS` needed a change — `BattleScene`'s
+`levelMilestonesForRunLength`/`getRunLengthDefinition` calls and
+`CharacterCreationScene`'s passthrough are all already generic over
+whichever id `FreePlayScene` sends.
+
+Verified: `npm run typecheck` clean, **1700/1700** tests pass (2 existing
+`tests/levelMilestones.test.ts` cases extended to cover Quick — the exact
+preset values, and the strictly-increasing-wave-count/level-cap chain now
+starting from Quick — plus the file's other 3 generic `for (const id of
+RUN_LENGTH_IDS)` tests automatically exercise Quick with no changes needed),
+production build succeeds (157 modules, unchanged — a data-only addition,
+no new files). Headless-verified only — needs Kevin's own look at the Free
+Play screen (4 buttons fitting cleanly) and a Quick run played end-to-end.
+
+**Important files**: `src/game/data/levelMilestones.ts`,
+`src/game/scenes/FreePlayScene.ts`, `tests/levelMilestones.test.ts`.
+
+### D-227 — Map Builder: author-designed enemy waves (pick enemies, timing, spawn point)
+
+Kevin's own ask: Map Builder previously painted terrain/markers only — both
+Playtest and playing a browsed shared map always called
+`generateFreePlayWaves` with a hardcoded minion pool and a single fixed
+boss id, so the author had zero control over what actually attacks.
+`ParsedMap` gains an optional `customWaves?: WaveDefinition[]` — the exact
+same shape every hand-authored wave list (`data/waves.ts`, campaign
+chapters) already uses, so no new runtime concept was needed. Absent/empty
+means unchanged prior behavior; once the author adds ≥1 wave with ≥1 spawn
+group, it REPLACES `generateFreePlayWaves` entirely for that map (both
+Playtest and Browse-and-play).
+
+Scope deliberately matches exactly what was asked — enemies + wave/turn
+timing + spawn point. Turn limit and completion/time-bonus gold stay
+auto-computed per new wave (mirroring `FreePlayWaveGenerator`'s own gentle
+curve), not author-editable this pass. The enemy picker offers the FULL
+71-enemy roster (`ENEMY_DEFINITIONS`), including miniboss/boss/legendary-role
+enemies, with no restriction.
+
+**New pure functions**, `systems/MapBuilderSystem.ts`: `addWave`/`removeWave`/
+`addSpawnGroup`/`removeSpawnGroup`/`updateSpawnGroup`, capped at
+`MAX_CUSTOM_WAVES` (8) and `MAX_SPAWN_GROUPS_PER_WAVE` (4) — both caps
+mirrored exactly in `firestore.rules`. `validateDraft` gained 3 new
+reasons, only checked when `customWaves` is non-empty (every existing
+map/test unaffected): a wave with zero spawn groups, an unknown `enemyId`,
+or a `spawnIndex` pointing at a spawn tile that doesn't exist.
+
+**UI**, `scenes/MapBuilderScene.ts`: a third "Waves" button next to the
+Terrain/Markers tabs — NOT a third `PaletteTab` state, a launcher that opens
+a full-screen overlay flow (Waves list -> Wave detail -> Group edit), reusing
+this scene's own existing plain-rectangle button style (this scene hasn't
+been through the ornate/parchment reskin other scenes got). The enemy picker
+is two-step (role category, then a specific enemy) rather than one flat
+71-entry list, because `renderChoiceOverlay` lays choices out in an
+unbounded, non-scrolling grid (confirmed by reading it) — a flat list risks
+rows running off the bottom of the canvas as the roster grows; each role
+category alone stays safely within bounds. The category step is built with
+`renderChoiceOverlay`/`clearChoiceOverlay` directly rather than
+`openChoiceList`, because `openChoiceList`'s wrapper clears its overlay
+array again immediately after `onPick` returns — calling `openChoiceList`
+a second time from inside the first's `onPick` (to open the enemy-within-
+category list) would have that second clear wipe out the list just opened.
+Count/Start Turn/Repeat Every use the same +/− stepper idiom as
+`CharacterCreationScene`'s Point Buy ability-score controls.
+
+**Sharing**: `SharedMapRecord` (`systems/MapSharingSystem.ts`) gained
+`customWaves: WaveDefinition[]` (always present, `[]` when none authored).
+`fromSharedMapRecord` defensively filters on load — drops any spawn group
+with an unknown `enemyId` or an out-of-range `spawnIndex`, then drops any
+wave left with zero groups — the same "good enough" stance `isValidTileRows`
+already takes toward tile data (rules check shape/size, not enemy-id
+legality). `firestore.rules`' `isValidSharedMap` validates the new field
+(`isValidCustomWaves`/`isValidWaveDef`/`isValidSpawnGroups`/
+`isValidSpawnGroup`, same explicit per-index style `isValidTileRows`/
+`isValidParty` already use — no loop construct in rules).
+`BrowseSharedMapsScene.startWithSelectedMap` uses a map's `customWaves`
+directly when present (bypassing `generateFreePlayWaves`), hiding the Wave
+Count/Minion Source sections behind a note since they're moot for such a
+map — Difficulty still applies generically to whatever wave list
+`BattleScene` receives, unchanged.
+
+Verified: `npm run typecheck` clean, **1711/1711** tests pass (12 new cases
+across `tests/mapBuilder.test.ts`'s new `addWave`/`removeWave`/
+`addSpawnGroup`/`removeSpawnGroup`/`updateSpawnGroup` and
+`validateDraft`-author-waves describe blocks, plus 2 new
+`tests/mapSharing.test.ts` cases for the `customWaves` round-trip and
+load-time sanitization; one pre-existing `mapSharing.test.ts` assertion
+updated for the new always-present field), production build succeeds (157
+modules, unchanged — no new files). `npm run dev` + an HTTP check confirms
+the server boots. Headless-verified only — this is a brand-new multi-screen
+UI (the Waves tab, both nested overlays, the two-step enemy picker) and
+needs Kevin's own in-browser pass: build a custom wave, Playtest it, and
+Publish/Browse it.
+
+**Important files**: `src/game/systems/MapBuilderSystem.ts`,
+`src/game/scenes/MapBuilderScene.ts`, `src/game/data/testMap.ts`,
+`src/game/systems/MapSharingSystem.ts`, `src/game/scenes/BrowseSharedMapsScene.ts`,
+`firestore.rules`, `tests/mapBuilder.test.ts`, `tests/mapSharing.test.ts`.

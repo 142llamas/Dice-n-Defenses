@@ -12,6 +12,7 @@ import { getCampaignDefinition } from "../data/campaigns";
 import { loadCampaignProgress, isCampaignCompleted } from "../systems/CampaignProgressSystem";
 import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
 import { generateFreePlayWaves } from "../systems/FreePlayWaveGenerator";
+import { RUN_LENGTH_IDS, getRunLengthDefinition, type RunLengthId } from "../data/levelMilestones";
 import {
   getViewport,
   onViewportResize,
@@ -100,12 +101,6 @@ const BOSS_OPTIONS: GatedOption[] = [
   { id: "sundered-king", name: getEnemyDefinition("sundered-king").name, unlockCampaignId: "frostbound-hollow" },
 ];
 
-const WAVE_COUNT_PRESETS: { label: string; count: number }[] = [
-  { label: "Short (4)", count: 4 },
-  { label: "Medium (7)", count: 7 },
-  { label: "Long (10)", count: 10 },
-];
-
 /** The 7 pre-11.6 minions ("Standard"). */
 const STANDARD_MINIONS: string[] = ["grunt", "runner", "wisp", "brute", "swarmling", "warden", "razorwing"];
 /** Standard plus the 11.6 and 13.10 additions ("Expanded"). */
@@ -169,7 +164,7 @@ export class FreePlayScene extends Phaser.Scene {
   private unlockedCampaigns = new Set<string>();
   private mapButtons: OptionButton[] = [];
   private bossButtons: OptionButton[] = [];
-  private waveCountButtons: { handle: OrnateButtonHandle; count: number }[] = [];
+  private runLengthButtons: { handle: OrnateButtonHandle; id: RunLengthId }[] = [];
   private minionButtons: { handle: OrnateButtonHandle; source: MinionSource }[] = [];
   private difficultyButton!: OrnateButtonHandle;
   /** D-16x: the shared full-screen list-picker overlay (`openChoiceList`), replacing the old click-to-cycle Difficulty button. */
@@ -177,7 +172,13 @@ export class FreePlayScene extends Phaser.Scene {
 
   private selectedMapId = TEST_MAP.id;
   private selectedBossId = "basalt-colossus";
-  private selectedWaveCount = 7;
+  /**
+   * D-217 (item 3a): Run Length now drives BOTH the wave count and the
+   * level cap (see `data/levelMilestones.ts`'s `RUN_LENGTH_DEFINITIONS`) —
+   * replaces the old wave-count-only picker. Defaults to "medium" (7 waves),
+   * matching the old default `selectedWaveCount`.
+   */
+  private selectedRunLengthId: RunLengthId = "medium";
   private selectedMinionSource: MinionSource = "standard";
   private selectedDifficultyId: DifficultyId = "normal";
   private layoutRoot?: Phaser.GameObjects.Container;
@@ -247,7 +248,7 @@ export class FreePlayScene extends Phaser.Scene {
 
     this.buildMapSection(width, 130);
     this.buildBossSection(width, 255);
-    this.buildWaveCountSection(width, 370);
+    this.buildRunLengthSection(width, 370);
     this.buildMinionSection(width, 460);
     this.buildDifficultySection(width, 550);
     this.buildStartButton(width, 650);
@@ -377,17 +378,28 @@ export class FreePlayScene extends Phaser.Scene {
     });
   }
 
-  private buildWaveCountSection(width: number, labelY: number): void {
-    createSectionLabel(this, width / 2, labelY, "Wave Count");
+  /**
+   * D-217 (item 3a): Run Length replaces the old Wave-Count-only picker —
+   * same wave-count presets (Short 4/Medium 7/Long 10, plus D-226's Quick
+   * 2), now also setting the level cap (5/10/15/20) a `LevelMilestoneSystem`
+   * ramps the party to by the second-to-last wave (see
+   * `data/levelMilestones.ts`). Width is computed (not fixed at 300) —
+   * same `Math.min` shrink-to-fit technique `buildOptionRow` uses — since
+   * adding Quick grew this row from 3 buttons to 4.
+   */
+  private buildRunLengthSection(width: number, labelY: number): void {
+    createSectionLabel(this, width / 2, labelY, "Run Length");
 
-    const w = 300;
-    const h = 44;
+    const maxTotalWidth = width - 100;
     const gap = 20;
-    const totalWidth = WAVE_COUNT_PRESETS.length * w + (WAVE_COUNT_PRESETS.length - 1) * gap;
+    const w = Math.min(300, (maxTotalWidth - (RUN_LENGTH_IDS.length - 1) * gap) / RUN_LENGTH_IDS.length);
+    const h = 44;
+    const totalWidth = RUN_LENGTH_IDS.length * w + (RUN_LENGTH_IDS.length - 1) * gap;
     const startX = width / 2 - totalWidth / 2 + w / 2;
     const y = labelY + 40;
 
-    this.waveCountButtons = WAVE_COUNT_PRESETS.map((preset, i) => {
+    this.runLengthButtons = RUN_LENGTH_IDS.map((id, i) => {
+      const def = getRunLengthDefinition(id);
       const x = startX + i * (w + gap);
       const handle = createOrnateButton(
         this,
@@ -395,14 +407,14 @@ export class FreePlayScene extends Phaser.Scene {
         y,
         w,
         h,
-        preset.label,
+        `${def.label} (${def.waveCount} waves, Lvl ${def.levelCap} cap)`,
         () => {
-          this.selectedWaveCount = preset.count;
+          this.selectedRunLengthId = id;
           this.refreshAll();
         },
-        { variant: "tab", fontSize: 16 },
+        { variant: "tab", fontSize: 15 },
       );
-      return { handle, count: preset.count };
+      return { handle, id };
     });
   }
 
@@ -481,8 +493,9 @@ export class FreePlayScene extends Phaser.Scene {
 
   private startFreePlay(): void {
     const minionPool = this.selectedMinionSource === "expanded" ? EXPANDED_MINIONS : STANDARD_MINIONS;
+    const waveCount = getRunLengthDefinition(this.selectedRunLengthId).waveCount;
     const waves = generateFreePlayWaves({
-      waveCount: this.selectedWaveCount,
+      waveCount,
       minionPool,
       bossEnemyId: this.selectedBossId,
     });
@@ -490,6 +503,11 @@ export class FreePlayScene extends Phaser.Scene {
       freePlayMapId: this.selectedMapId,
       freePlayWaves: waves,
       difficultyId: this.selectedDifficultyId,
+      // D-217 (item 3a): threaded through to BattleScene so it can build a
+      // LevelMilestoneSystem the same way a campaign battle already does,
+      // and know which spawn group is the boss for threat-budget/boss-scaling.
+      freePlayRunLengthId: this.selectedRunLengthId,
+      freePlayBossEnemyId: this.selectedBossId,
     });
   }
 
@@ -498,8 +516,8 @@ export class FreePlayScene extends Phaser.Scene {
     this.refreshOptionRow(this.mapButtons, this.selectedMapId);
     this.refreshOptionRow(this.bossButtons, this.selectedBossId);
 
-    for (const btn of this.waveCountButtons) {
-      btn.handle.setSelected(btn.count === this.selectedWaveCount);
+    for (const btn of this.runLengthButtons) {
+      btn.handle.setSelected(btn.id === this.selectedRunLengthId);
     }
 
     for (const btn of this.minionButtons) {

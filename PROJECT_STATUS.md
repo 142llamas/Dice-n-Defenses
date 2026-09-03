@@ -1,5 +1,110 @@
 # Project Status
 
+## Map Builder: author-designed enemy waves — DONE this session, not yet played (D-227)
+
+Kevin's own ask: Map Builder previously painted terrain/markers only —
+Playtest and playing a browsed shared map always used a generated,
+hardcoded minion-pool-plus-fixed-boss wave list, with zero author control
+over what actually attacks. `ParsedMap` gained an optional
+`customWaves?: WaveDefinition[]` (the same shape every hand-authored wave
+list already uses); absent/empty leaves prior behavior unchanged, and once
+an author designs ≥1 wave with ≥1 spawn group it replaces the generated
+wave list entirely for both Playtest and Browse-and-play. Scope matches
+exactly what was asked — enemies, wave/turn timing, spawn point — turn
+limit/gold stay auto-computed, not author-editable this pass.
+
+New pure functions in `MapBuilderSystem.ts` (add/remove a wave, add/remove/
+update a spawn group, capped at 8 waves / 4 groups per wave) plus 3 new
+`validateDraft` reasons. `MapBuilderScene` gained a "Waves" button opening a
+full-screen editor (Waves list → Wave detail → Group edit) with a two-step
+enemy picker (role category, then a specific enemy) drawing from the full
+71-enemy roster. `SharedMapRecord`/`firestore.rules`/`BrowseSharedMapsScene`
+all updated so author-designed waves travel through Publish/Browse too.
+
+Tests: **1711** (was 1699 — 12 new `mapBuilder.test.ts` cases, 2 new
+`mapSharing.test.ts` cases, 1 existing assertion updated for the new
+always-present `customWaves` field). Typecheck clean, all pass, production
+build succeeds (**157 modules**, unchanged — no new files). `npm run dev` +
+HTTP check confirms the server boots. This is a brand-new multi-screen UI —
+needs Kevin's own in-browser pass (build a custom wave, Playtest it,
+Publish/Browse it).
+
+## Free Play gained a 4th Run Length: "Quick" (Lvl 1→5) — DONE this session, not yet played (D-226)
+
+Kevin's own follow-up right after D-224 shipped: an even faster Free Play
+option than Short, going from level 1 to 5. `data/levelMilestones.ts` gained
+a `"quick"` preset (2 waves, level cap 5 — the shortest shape a Run Length
+can take: one ramp wave reaching the cap, then the boss fought entirely at
+it). `FreePlayScene`'s Run Length row now shows 4 buttons; its button width
+is computed (shrink-to-fit) rather than fixed, so the 4th button doesn't
+crowd the row.
+
+Tests: **1700** (unchanged — 2 existing `tests/levelMilestones.test.ts`
+cases extended to cover Quick, plus 3 more that already iterate every Run
+Length generically). Typecheck clean, all pass, production build succeeds
+(**157 modules**, unchanged — a data-only addition, no new files). No
+browser available in this environment — see `KNOWN_ISSUES.md` KI-175.
+
+## D-223's progression redesign fully wired + last 4 overlays reskinned — DONE this session, not yet played (D-224/D-225)
+
+Closes the progression-redesign arc D-217 started. **D-224** wires all 5 of
+D-223's remaining gaps: Free Play's own "Run Length" section (replacing
+"Wave Count") now drives a `LevelMilestoneSystem` the same way Campaign
+already did — every Free Play run starts at level 1 and auto-levels to the
+picked cap (10/15/20); `ThreatBudgetSystem.applyThreatBudget` and
+`bossScaling.statMultiplierForBoss` are now genuinely applied to both
+Campaign and Free Play's wave lists (difficulty's real new effect: elite
+enemies, extra spawn lanes, faster cadence, a level-aware boss); Character
+Creation's now-inert per-hero "Starting Level"/team-wide "Team Level"
+controls show a disabled, read-only "Campaign Level: N"/"Starts at Level 1
+(Run Length)" instead of a clickable no-op, and their stat/spell previews
+reflect that real effective level; and an existing mid-campaign save missing
+`campaignLevel` entirely gets a one-time best-effort backfill (derived from
+`CampaignProgressSystem`'s own completed-chapter log) instead of silently
+resetting to level 1. **D-225** reskins the last 4 overlays still using the
+pre-D-123 flat-blue look: the in-battle Spellbook ("Cast a Spell") grid, the
+Rest-before-next-wave popup, the Victory/Defeat end screen, and Character
+Sheet's Hotkeys tab card grid — all now parchment/ornate, matching D-221's
+level-up-popup reskin from last session.
+
+Tests: **1700** (was 1696 — 4 new, covering the campaignLevel backfill
+computation). Typecheck clean, all pass, production build succeeds (**157
+modules**, up from 155 — `ThreatBudgetSystem.ts`/`bossScaling.ts` are now
+genuinely reachable, confirming both are for-real wired in). No browser
+available in this environment — see `KNOWN_ISSUES.md` KI-173/KI-174.
+
+## 7-item feedback batch: UI polish DONE (6/7 items), progression redesign PARTIAL (D-217 through D-223)
+
+Kevin's 7-item feedback batch. **Fully done**: icon-only Main Menu corner
+controls (D-217), Compendium/Bestiary cross-navigation (D-218), Compendium
+Subclasses tab reusing the class selector (D-219), click-to-pin detail info
+across every Compendium tab (D-220), the in-battle level-up menu's
+ornate/parchment reskin (D-221), and the spell-replacement flow redesign in
+both BattleScene and Character Creation's blueprint wizard (D-222).
+
+**Partial — progression redesign (D-223), the largest item.** Separates
+character level, run length, and difficulty per Kevin's spec, overriding
+D-174 (LOCKED, confirmed with Kevin directly) for Free Play/Campaign only.
+Every pure system/data module is built and unit-tested
+(`LevelMilestoneSystem`, `data/levelMilestones.ts`, `ThreatBudgetSystem`,
+`data/bossScaling.ts`, `CampaignLevelSystem`, `data/campaigns.ts`'s
+`chapterLevelMilestones`/`isSideMission`/`levelRange`, `data/difficulty.ts`'s
+6 new threat-budget fields). **Campaign mode is fully wired** — a campaign
+battle levels via its own chapter's milestone track from a persistent shared
+`campaignLevel`, with write-back at chapter-clear. **Not yet wired**: Free
+Play's Run Length picker (still the old wave-count-only UI, still uses the
+old uniform per-wave cadence), the threat-budget difficulty system (built,
+tested, not applied to any wave), boss-level-scaling (built, tested, not
+applied to any boss), and Character Creation's manual Starting Level picker
+in campaign mode (still visible, now has no actual effect). See
+`DECISIONS.md` D-223 for the complete gap list.
+
+Tests: **1696** (was 1643 — 53 new). Typecheck clean, all pass, production
+build succeeds (**155 modules**, up from 152 — `ThreatBudgetSystem.ts`/
+`bossScaling.ts` aren't in the bundle yet, confirming the gaps above are
+real, not just undocumented). No browser available in this environment —
+see `KNOWN_ISSUES.md` KI-169 through KI-172.
+
 ## The Armory's layout rebuilt to match the agreed mockup — DONE this session, not yet played (D-216)
 
 Kevin said the shipped Armory (D-209) didn't match the interactive mockup

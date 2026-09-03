@@ -39,17 +39,22 @@ describe("REGION_BONUS_POOLS", () => {
     expect(new Set(allIds).size).toBe(allIds.length);
   });
 
-  it("every pool covers all four categories at least once", () => {
+  it("every pool covers all three categories at least once (D-217 dropped 'xp')", () => {
     for (const [campaignId, pool] of Object.entries(REGION_BONUS_POOLS)) {
       const categories = new Set(pool.map((o) => o.category));
-      expect(categories, `pool for ${campaignId}`).toEqual(new Set(["gold", "xp", "equipment", "structure"]));
+      expect(categories, `pool for ${campaignId}`).toEqual(new Set(["gold", "equipment", "structure"]));
+    }
+  });
+
+  it("D-217: every pool now has TWO gold options (filling the slot the removed 'xp' category left)", () => {
+    for (const [campaignId, pool] of Object.entries(REGION_BONUS_POOLS)) {
+      expect(pool.filter((o) => o.category === "gold").length, `pool for ${campaignId}`).toBe(2);
     }
   });
 
   it("every option carries exactly the payload field its own category needs, with a positive amount", () => {
     const fieldFor: Record<RegionBonusOption["category"], keyof RegionBonusOption> = {
       gold: "goldAmount",
-      xp: "bonusHealth",
       equipment: "equipmentId",
       structure: "structureId",
     };
@@ -57,7 +62,7 @@ describe("REGION_BONUS_POOLS", () => {
       for (const option of pool) {
         const expectedField = fieldFor[option.category];
         expect(option[expectedField], `${option.id}.${expectedField}`).toBeDefined();
-        if (option.category === "gold" || option.category === "xp") {
+        if (option.category === "gold") {
           expect(option[expectedField] as number).toBeGreaterThan(0);
         }
       }
@@ -83,7 +88,7 @@ describe("REGION_BONUS_POOLS", () => {
     }
   });
 
-  it("gold and xp bonus amounts escalate through CAMPAIGN_STORY_DESIGN.md §3's own region order", () => {
+  it("both gold bonus tiers escalate through CAMPAIGN_STORY_DESIGN.md §3's own region order", () => {
     const order = [
       "emberford-reach",
       "shattered-causeway",
@@ -92,12 +97,15 @@ describe("REGION_BONUS_POOLS", () => {
       "saltmere-shallows",
       "frostbound-hollow",
     ];
-    const goldByRegion = order.map((id) => REGION_BONUS_POOLS[id].find((o) => o.category === "gold")!.goldAmount!);
-    const xpByRegion = order.map((id) => REGION_BONUS_POOLS[id].find((o) => o.category === "xp")!.bonusHealth!);
+    const goldOptionsByRegion = order.map((id) => REGION_BONUS_POOLS[id].filter((o) => o.category === "gold").map((o) => o.goldAmount!));
+    const lowerTierByRegion = goldOptionsByRegion.map((amounts) => Math.min(...amounts));
+    const higherTierByRegion = goldOptionsByRegion.map((amounts) => Math.max(...amounts));
     for (let i = 1; i < order.length; i++) {
-      expect(goldByRegion[i]).toBeGreaterThan(goldByRegion[i - 1]);
-      expect(xpByRegion[i]).toBeGreaterThan(xpByRegion[i - 1]);
+      expect(lowerTierByRegion[i]).toBeGreaterThan(lowerTierByRegion[i - 1]);
+      expect(higherTierByRegion[i]).toBeGreaterThan(higherTierByRegion[i - 1]);
     }
+    // Within each region, the two gold tiers are genuinely different amounts.
+    for (let i = 0; i < order.length; i++) expect(higherTierByRegion[i]).toBeGreaterThan(lowerTierByRegion[i]);
   });
 });
 

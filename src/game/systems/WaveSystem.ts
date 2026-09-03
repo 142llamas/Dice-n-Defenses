@@ -1276,10 +1276,22 @@ export class WaveSystem {
       this.pendingRetry.delete(i);
 
       const baseDef: EnemyDefinition = getEnemyDefinition(group.enemyId);
+      // D-217 (item 3b/3.5): `group.statMultiplier` (ThreatBudgetSystem's
+      // elite substitution, or bossScaling's level-cap boss scaling) combines
+      // with the difficulty tier's own `enemyHpMultiplier` — absent on both
+      // is today's exact behavior.
+      const hpMultiplier = this.enemyHpMultiplier * (group.statMultiplier?.hp ?? 1);
+      const damageMultiplier = group.statMultiplier?.damage ?? 1;
+      const attackBonusAdd = group.statMultiplier?.attackBonusAdd ?? 0;
       const def: EnemyDefinition =
-        this.enemyHpMultiplier === 1
+        hpMultiplier === 1 && damageMultiplier === 1 && attackBonusAdd === 0
           ? baseDef
-          : { ...baseDef, maxHealth: Math.max(1, Math.round(baseDef.maxHealth * this.enemyHpMultiplier)) };
+          : {
+              ...baseDef,
+              maxHealth: Math.max(1, Math.round(baseDef.maxHealth * hpMultiplier)),
+              attackDamage: Math.max(1, Math.round(baseDef.attackDamage * damageMultiplier)),
+              attackBonus: baseDef.attackBonus + attackBonusAdd,
+            };
       const enemy = new Enemy(`${def.id}#${this.nextInstance++}`, def, spawnPos);
       this.active.push(enemy);
       spawned.push(enemy);

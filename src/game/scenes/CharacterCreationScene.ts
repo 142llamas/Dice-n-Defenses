@@ -3,10 +3,12 @@ import {
   SAVE_STORAGE_KEY,
   COMPANION_ROSTER_STORAGE_KEY,
   CAMPAIGN_PROGRESS_STORAGE_KEY,
+  CAMPAIGN_LEVEL_STORAGE_KEY,
   BLUEPRINT_LIBRARY_STORAGE_KEY,
   CHARACTER_LIBRARY_STORAGE_KEY,
 } from "../config";
 import { loadCampaignProgress, isCampaignCompleted } from "../systems/CampaignProgressSystem";
+import { loadCampaignLevel, DEFAULT_CAMPAIGN_LEVEL_STATE, type CampaignLevelState } from "../systems/CampaignLevelSystem";
 import { getCompanionDefinition } from "../data/companions";
 import {
   loadCompanionRoster,
@@ -110,6 +112,7 @@ import {
 import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
 import type { WaveDefinition } from "../data/waves";
 import type { ParsedMap } from "../data/testMap";
+import type { RunLengthId } from "../data/levelMilestones";
 import {
   StandardArrayAllocator,
   allocatorFromScores,
@@ -537,6 +540,17 @@ export class CharacterCreationScene extends Phaser.Scene {
    * unless reached from `FreePlayScene`. */
   private freePlayMapId?: string;
   private freePlayWaves?: WaveDefinition[];
+  /** D-217 (item 3a): forwarded unchanged to BattleScene; `undefined` unless
+   * reached from `FreePlayScene` (never set for a MapBuilder/shared-map Free
+   * Play run, which keeps the old uniform per-wave cadence unchanged — see
+   * `BattleScene`'s own `levelMilestoneSystem` construction). */
+  private freePlayRunLengthId?: RunLengthId;
+  private freePlayBossEnemyId?: string;
+  /** D-223 gap 4: read-only display only — campaign mode's real Starting
+   * Level is `BattleScene`'s own override, not this scene's picker (see
+   * `buildSlotUi`'s "Campaign Level: N" replacement). Loaded once in
+   * `create()`, same treatment as `campaignCompleted`. */
+  private campaignLevelState: CampaignLevelState = DEFAULT_CAMPAIGN_LEVEL_STATE;
   /** Phase 11.10 (D-085): forwarded unchanged to BattleScene; set only when
    * reached from `MapBuilderScene`'s Playtest button or `BrowseSharedMapsScene`. */
   private customMapData?: ParsedMap;
@@ -635,6 +649,8 @@ export class CharacterCreationScene extends Phaser.Scene {
     requiredCompanionIds?: string[];
     freePlayMapId?: string;
     freePlayWaves?: WaveDefinition[];
+    freePlayRunLengthId?: RunLengthId;
+    freePlayBossEnemyId?: string;
     difficultyId?: DifficultyId;
     loadedSlotId?: string;
     loadedParty?: CharacterBuild[];
@@ -646,6 +662,8 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.requiredCompanionIds = data?.requiredCompanionIds;
     this.freePlayMapId = data?.freePlayMapId;
     this.freePlayWaves = data?.freePlayWaves;
+    this.freePlayRunLengthId = data?.freePlayRunLengthId;
+    this.freePlayBossEnemyId = data?.freePlayBossEnemyId;
     this.difficultyId = data?.difficultyId ?? "normal";
     this.loadedSlotId = data?.loadedSlotId;
     this.loadedParty = data?.loadedParty;
@@ -780,6 +798,9 @@ export class CharacterCreationScene extends Phaser.Scene {
     const campaignCompleted = this.campaignId
       ? isCampaignCompleted(loadCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY), this.campaignId)
       : false;
+    this.campaignLevelState = this.campaignId
+      ? loadCampaignLevel(window.localStorage, CAMPAIGN_LEVEL_STORAGE_KEY)
+      : DEFAULT_CAMPAIGN_LEVEL_STATE;
 
     for (let slot = 0; slot < MAX_PARTY_SIZE; slot++) {
       const loadedBuild = this.loadedParty?.[slot] ?? companionBuildsForSlots[slot];
@@ -1884,6 +1905,8 @@ export class CharacterCreationScene extends Phaser.Scene {
           chapterIndex: this.chapterIndex,
           freePlayMapId: this.freePlayMapId,
           freePlayWaves: this.freePlayWaves,
+          freePlayRunLengthId: this.freePlayRunLengthId,
+          freePlayBossEnemyId: this.freePlayBossEnemyId,
           customMapData: this.customMapData,
           testMode: this.testMode,
           originalParty: builds,
@@ -2258,7 +2281,20 @@ export class CharacterCreationScene extends Phaser.Scene {
     // itself is hidden (not just disabled) in campaign mode.
     this.partySizeHandle.setLabel(`Party Size: ${this.partySize}`);
     this.difficultyHandle.setLabel(`Difficulty: ${getDifficultyDefinition(this.difficultyId).name}`);
-    this.teamLevelHandle.setLabel(`Team Level: ${this.teamLevelValue} (all heroes)`);
+    // D-223 gap 4: same read-only replacement as the per-hero Starting Level
+    // picker above (`refreshSlotUi`) — "set every slot at once" has nothing
+    // to set once campaignLevel/Run Length governs every hero's level
+    // instead.
+    if (this.campaignId) {
+      this.teamLevelHandle.setLabel(`Campaign Level: ${this.campaignLevelState.campaignLevel}`);
+      this.teamLevelHandle.setDisabled(true);
+    } else if (this.freePlayRunLengthId) {
+      this.teamLevelHandle.setLabel("Starts at Level 1 (Run Length)");
+      this.teamLevelHandle.setDisabled(true);
+    } else {
+      this.teamLevelHandle.setLabel(`Team Level: ${this.teamLevelValue} (all heroes)`);
+      this.teamLevelHandle.setDisabled(false);
+    }
 
     const duplicateNames = hasDuplicateNames(builds);
     // D-147 (piece 2): a hero name is now free text, so an empty/whitespace
@@ -2464,12 +2500,23 @@ export class CharacterCreationScene extends Phaser.Scene {
     w.subclassHandle.setLabel(this.subclassSummary(build.classId, build.subclassId, this.slots[slot].levelUpPlan));
 
     const def = heroDefinitionFromBuild(build);
+    // D-223 gap 4: in campaign mode (or a Free Play run that picked a Run
+    // Length), `BattleScene` overrides EVERY hero's starting level at battle
+    // start regardless of this build's own `startingLevel` (see
+    // `buildHeroes()`'s override there) — every preview below uses that same
+    // real, effective level instead of `build.startingLevel`, so this screen
+    // never shows stats/spells for a level the hero won't actually start at.
+    const effectiveStartingLevel = this.campaignId
+      ? this.campaignLevelState.campaignLevel
+      : this.freePlayRunLengthId
+        ? 1
+        : (build.startingLevel ?? 1);
     // D-129: the HP preview reflects the chosen Starting Level, not always
     // level 1 — `combatStatsForClassLevel` is the same pure function
     // `heroDefinitionFromBuild` itself calls, just re-run at `startingLevel`
     // instead of the build's fixed `level: 1`. Move doesn't change by level,
     // so it still comes from `def` unchanged.
-    const leveledStats = combatStatsForClassLevel(build.classId, build.startingLevel ?? 1, build.abilityScores);
+    const leveledStats = combatStatsForClassLevel(build.classId, effectiveStartingLevel, build.abilityScores);
     // Party Creation Overhaul Plan 4: ATK/Range replaced with AC — ATK was a
     // flat class/ability-mod number that never factored in equipped weapons,
     // and Range was purely melee-vs-ranged off the class's fixed attack
@@ -2480,12 +2527,29 @@ export class CharacterCreationScene extends Phaser.Scene {
     // plan — same precedent as `simulateHeroUpToChoice`/the planner UI, so
     // this preview genuinely reflects ASI-granted feats (e.g. Defense
     // fighting style) once a plan resolves them, not just level-1 gear.
-    const previewHero = simulateHeroForPlanning(build, this.slots[slot].levelUpPlan, build.startingLevel ?? 1);
+    const previewHero = simulateHeroForPlanning(build, this.slots[slot].levelUpPlan, effectiveStartingLevel);
     // D-213: "Move" -> "Speed" (Kevin's own rename ask; matches the race
     // description's own "Speed: N tiles/turn" wording elsewhere on this
     // screen, which already used "Speed").
     w.statsLabel.setText(`HP ${leveledStats.maxHealth}  AC ${previewHero.armorClass}\nSpeed ${def.movementTiles}`);
-    w.levelHandle.setLabel(`Starting Level: ${build.startingLevel ?? 1}`);
+    // D-223 gap 4: campaign mode's real Starting Level is `campaignLevel`
+    // (one shared number for the whole roster, written back at chapter-
+    // clear — see `CampaignLevelSystem`), not this per-hero picker; a Free
+    // Play Run Length run always starts at level 1 (see `buildHeroes()`'s
+    // own override). Both cases replace the picker with a disabled,
+    // read-only label instead of leaving a clickable control that silently
+    // does nothing when clicked (the exact "real, if non-corrupting, UX
+    // confusion gap" D-223's own writeup flagged).
+    if (this.campaignId) {
+      w.levelHandle.setLabel(`Campaign Level: ${this.campaignLevelState.campaignLevel}`);
+      w.levelHandle.setDisabled(true);
+    } else if (this.freePlayRunLengthId) {
+      w.levelHandle.setLabel("Starts at Level 1 (Run Length)");
+      w.levelHandle.setDisabled(true);
+    } else {
+      w.levelHandle.setLabel(`Starting Level: ${build.startingLevel ?? 1}`);
+      w.levelHandle.setDisabled(false);
+    }
 
     // Party Creation Overhaul Plan 6.4 (D-199): "which plan" (this button)
     // and "how it's applied" (`cadenceHandle`) are now two independent
@@ -2496,7 +2560,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     w.cadenceHandle.setLabel(`Cadence: ${cadenceLabel}`);
     w.cadenceHandle.setDisabled(isAiControlled);
 
-    w.spellsHandle.setLabel(this.spellsSummary(slot, build.classId, build.startingLevel ?? 1));
+    w.spellsHandle.setLabel(this.spellsSummary(slot, build.classId, effectiveStartingLevel));
 
     // D-204: static labels — this row's meaning never depends on the slot's
     // own state (unlike Gear's live item count), it just needs re-setting
@@ -3803,69 +3867,171 @@ export class CharacterCreationScene extends Phaser.Scene {
   }
 
   /**
-   * Party Creation Overhaul Plan 6.5 (D-199): a level-up-triggered spell
-   * swap becomes plannable — mirrors `BattleScene.showSpellPrepDropScreen`/
-   * `showSpellPrepLearnScreen`'s exact two-screen drop-then-learn shape,
-   * but writes into `planningDraft.spellSwaps[level]` (an array — a level
-   * can need both a cantrip AND a prepared swap, e.g. Sorcerer) instead of
-   * mutating a live Hero. Uses `simulateHeroUpToChoice` for real
-   * eligibility, same as the ASI/spell-pick steps above.
+   * D-217 (item 2): a level-up-triggered spell swap becomes plannable,
+   * redesigned per Kevin's own described flow — mirrors
+   * `BattleScene.showSpellPrepSwapScreen`'s persistent-overview shape
+   * exactly (click the known spell to replace, it stays on screen with a
+   * "▸ Replacing:" indicator and the eligible pool appears directly beneath
+   * it, pick one to commit into `planningDraft.spellSwaps[level]` — a level
+   * can need both a cantrip AND a prepared swap, e.g. Sorcerer, so this
+   * writes one entry of an array rather than mutating a live Hero), replacing
+   * the old two-screen `showPlanSpellSwapStep`/`showPlanSpellSwapLearnStep`
+   * hop. Doesn't go through `renderPlanPrompt`/`renderChoiceOverlay` (its
+   * flat centered grid doesn't support this screen's two-tier "row + its own
+   * expand-in-place sublist" layout), so it draws directly into the shared
+   * `levelPlanOverlay`/`clearLevelPlanOverlay` the same way `renderPlanPrompt`
+   * itself does. Uses `simulateHeroUpToChoice` for real eligibility, same as
+   * the ASI/spell-pick steps above.
    */
-  private showPlanSpellSwapStep(step: LevelUpChoiceStep): void {
-    const kind = step.spellSwapKind as SpellSwapStepKind;
-    const hero = this.simulateHeroUpToChoice(step.level);
-    const current = kind === "cantrips" ? hero.knownCantripIds : hero.preparedSpellIds;
-    const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
-    const existing = this.planningDraft.spellSwaps[step.level]?.find((c) => c.kind === kind);
-    this.renderPlanPrompt(`Level ${step.level} — Replace a ${label}`, [
-      ...current.map((id) => {
-        const spell = getSpell(id);
-        return {
-          label: spell.name,
-          desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
-          onClick: () => this.showPlanSpellSwapLearnStep(step, kind, id),
-          highlighted: existing?.dropId === id,
-        };
-      }),
-      this.planBackChoice(),
-      this.planSkipChoice(),
-    ]);
-  }
+  private showPlanSpellSwapStep(step: LevelUpChoiceStep, selectedDropId?: string): void {
+    this.closeDropdown();
+    this.blurNameField();
+    this.clearLevelPlanOverlay();
 
-  private showPlanSpellSwapLearnStep(step: LevelUpChoiceStep, kind: SpellSwapStepKind, dropId: string): void {
+    const kind = step.spellSwapKind as SpellSwapStepKind;
     const classId = CREATABLE_CLASS_IDS[this.slots[this.planningSlot as number].classIndex];
     const hero = this.simulateHeroUpToChoice(step.level);
     const current = kind === "cantrips" ? hero.knownCantripIds : hero.preparedSpellIds;
-    const maxLevel = this.maxCastableSpellLevel(classId, step.level);
-    const pool = (
-      kind === "cantrips" ? eligibleCantripPool(classId) : eligibleLeveledSpellPool(classId).filter((id) => getSpell(id).level <= maxLevel)
-    ).filter((id) => !current.includes(id));
-    if (pool.length === 0) {
-      // Nothing eligible to learn instead — same auto-skip idiom the ASI/
-      // spell-pick steps already use when there's genuinely nothing to pick.
-      this.advancePlanStep();
-      return;
-    }
-    const dropLabel = getSpell(dropId).name;
     const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
     const existing = this.planningDraft.spellSwaps[step.level]?.find((c) => c.kind === kind);
-    this.renderPlanPrompt(`Level ${step.level} — Learn a New ${label} (replacing ${dropLabel})`, [
-      ...pool.map((id) => {
-        const spell = getSpell(id);
-        return {
-          label: spell.name,
-          desc: spell.level === 0 ? "Cantrip" : `Level ${spell.level}`,
-          onClick: () => {
+    const maxLevel = this.maxCastableSpellLevel(classId, step.level);
+    const replacementPool = selectedDropId
+      ? (
+          kind === "cantrips"
+            ? eligibleCantripPool(classId)
+            : eligibleLeveledSpellPool(classId).filter((id) => getSpell(id).level <= maxLevel)
+        ).filter((id) => !current.includes(id))
+      : [];
+
+    const { width, height } = getViewport(this);
+    const cx = width / 2;
+    const colWidth = 480;
+    const rowHeight = 36;
+    const rowGap = 8;
+    const topY = 130;
+
+    const dim = this.add.rectangle(cx, height / 2, width, height, 0x000000, 0.85).setDepth(60).setInteractive();
+    this.levelPlanOverlay.push(dim);
+
+    const titleText = this.add
+      .text(cx, topY, `Level ${step.level} — Replace a ${label}`, {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "24px",
+        color: "#3a2a10",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(62);
+    this.levelPlanOverlay.push(titleText);
+
+    let y = topY + 46;
+    current.forEach((id) => {
+      const spell = getSpell(id);
+      const isSelected = id === selectedDropId;
+      const isSuggested = !isSelected && existing?.dropId === id;
+      const rowLabel = isSelected ? `▸ Replacing: ${spell.name}` : isSuggested ? `★ ${spell.name}` : spell.name;
+      const rowDesc = isSelected ? undefined : spell.level === 0 ? "Cantrip" : `Level ${spell.level}`;
+      const rowHandle = createOrnateButton(
+        this,
+        cx,
+        y,
+        colWidth,
+        rowHeight,
+        rowLabel,
+        () => this.showPlanSpellSwapStep(step, isSelected ? undefined : id),
+        { variant: "secondary", sublabel: rowDesc, depth: 62, fontSize: 15 },
+      );
+      if (isSelected || isSuggested) rowHandle.setSelected(true);
+      this.levelPlanOverlay.push(rowHandle.container);
+      y += rowHeight + rowGap;
+
+      if (!isSelected) return;
+
+      const hint = this.add
+        .text(cx, y + 8, "Replace with:", {
+          fontFamily: FONT_BODY,
+          fontSize: "14px",
+          color: "#5a4a34",
+          fontStyle: "italic",
+        })
+        .setOrigin(0.5)
+        .setDepth(62);
+      this.levelPlanOverlay.push(hint);
+      y += rowHeight + rowGap;
+
+      if (replacementPool.length === 0) {
+        // Nothing eligible to learn instead — same auto-skip idiom the ASI/
+        // spell-pick steps already use when there's genuinely nothing to pick.
+        const none = this.add
+          .text(cx, y, "Nothing eligible to learn instead.", {
+            fontFamily: FONT_BODY,
+            fontSize: "14px",
+            color: "#5a4a34",
+          })
+          .setOrigin(0.5)
+          .setDepth(62);
+        this.levelPlanOverlay.push(none);
+        y += rowHeight + rowGap;
+        return;
+      }
+
+      replacementPool.forEach((learnId) => {
+        const learnSpell = getSpell(learnId);
+        const isPlanned = existing?.dropId === id && existing.learnId === learnId;
+        const learnHandle = createOrnateButton(
+          this,
+          cx,
+          y,
+          colWidth - 30,
+          rowHeight,
+          isPlanned ? `★ ${learnSpell.name}` : learnSpell.name,
+          () => {
             const others = this.planningDraft.spellSwaps[step.level]?.filter((c) => c.kind !== kind) ?? [];
-            const choice: LevelUpSpellSwapChoice = { kind, dropId, learnId: id };
+            const choice: LevelUpSpellSwapChoice = { kind, dropId: id, learnId };
             this.planningDraft.spellSwaps[step.level] = [...others, choice];
-            this.advancePlanStep();
+            this.showPlanSpellSwapStep(step);
           },
-          highlighted: existing?.dropId === dropId && existing.learnId === id,
-        };
-      }),
-      { label: "◀ Back", onClick: () => this.showPlanSpellSwapStep(step) },
-    ]);
+          {
+            variant: "tool",
+            sublabel: learnSpell.level === 0 ? "Cantrip" : `Level ${learnSpell.level}`,
+            depth: 62,
+            fontSize: 14,
+          },
+        );
+        if (isPlanned) learnHandle.setSelected(true);
+        this.levelPlanOverlay.push(learnHandle.container);
+        y += rowHeight + rowGap;
+      });
+    });
+
+    const backHandle = createOrnateButton(this, cx - 125, y + 6, 230, 40, "◀ Back", () => this.goBackPlanStep(), {
+      variant: "secondary",
+      depth: 62,
+    });
+    this.levelPlanOverlay.push(backHandle.container);
+    const continueChoice = existing
+      ? { label: "Continue", desc: "Keeps the planned swap above and moves on." }
+      : { label: "Skip (decide later)", desc: "Leaves this level unset — you'll be prompted for a real choice when it comes up." };
+    const continueHandle = createOrnateButton(
+      this,
+      cx + 125,
+      y + 6,
+      230,
+      40,
+      continueChoice.label,
+      () => this.advancePlanStep(),
+      { variant: "secondary", sublabel: continueChoice.desc, depth: 62, fontSize: 13 },
+    );
+    this.levelPlanOverlay.push(continueHandle.container);
+
+    // Drawn last but rendered behind everything above (depth 61 < 62) — see
+    // `BattleScene.showSpellPrepSwapScreen`'s identical comment for why
+    // sizing the panel from the actual laid-out content bounds is safe here.
+    const bottomY = y + 6 + 40;
+    const panelTop = topY - 34;
+    const panelBottom = bottomY + 30;
+    const panel = drawParchmentPanel(this, cx, (panelTop + panelBottom) / 2, colWidth + 100, panelBottom - panelTop, 61);
+    this.levelPlanOverlay.push(panel);
   }
 
   // ---------------------------------------------------------------------

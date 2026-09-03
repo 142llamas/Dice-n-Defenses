@@ -210,6 +210,50 @@ describe("WaveSystem wave progression", () => {
   });
 });
 
+describe("WaveSystem per-group statMultiplier (D-217, item 3b/3.5)", () => {
+  it("with no statMultiplier, behaves exactly as before", () => {
+    const ws = makeSystem([
+      { id: "w", spawns: [{ enemyId: "grunt", count: 1, startTurn: 1, intervalTurns: 1 }], completionGold: 0 },
+    ]);
+    const t1 = ws.tickEnemyPhase();
+    expect(t1.spawned[0].def.maxHealth).toBe(6);
+    expect(t1.spawned[0].attackDamage).toBe(2);
+  });
+
+  it("scales a spawned enemy's max HP and attack damage per its own group, without mutating the shared enemy definition", () => {
+    const ws = makeSystem([
+      {
+        id: "w",
+        spawns: [
+          { enemyId: "grunt", count: 1, startTurn: 1, intervalTurns: 1, statMultiplier: { hp: 1.5, damage: 2 } },
+        ],
+        completionGold: 0,
+      },
+    ]);
+    const t1 = ws.tickEnemyPhase();
+    expect(t1.spawned[0].def.maxHealth).toBe(9); // 6 * 1.5
+    expect(t1.spawned[0].health).toBe(9);
+    expect(t1.spawned[0].attackDamage).toBe(4); // 2 * 2
+    expect(getEnemyDefinition("grunt").maxHealth).toBe(6); // shared definition untouched
+  });
+
+  it("combines a group's statMultiplier with the difficulty tier's own enemyHpMultiplier", () => {
+    const ws = makeScaledSystem(
+      [
+        {
+          id: "w",
+          spawns: [{ enemyId: "grunt", count: 1, startTurn: 1, intervalTurns: 1, statMultiplier: { hp: 2, damage: 1 } }],
+          completionGold: 0,
+        },
+      ],
+      1,
+      1.5, // combined: 6 * 1.5 * 2 = 18
+    );
+    const t1 = ws.tickEnemyPhase();
+    expect(t1.spawned[0].def.maxHealth).toBe(18);
+  });
+});
+
 describe("WaveSystem difficulty/party-size scaling (Phase 11.4, D-077)", () => {
   it("with no multipliers supplied, behaves exactly as before (1x)", () => {
     const ws = makeScaledSystem(

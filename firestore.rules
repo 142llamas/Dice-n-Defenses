@@ -180,7 +180,7 @@ service cloud.firestore {
     // header comment for the derivation math).
     function isValidSharedMap(mapId) {
       let data = request.resource.data;
-      return data.keys().hasOnly(['id', 'name', 'authorUid', 'authorDisplayName', 'createdAt', 'updatedAt', 'cols', 'rows', 'tileRows'])
+      return data.keys().hasOnly(['id', 'name', 'authorUid', 'authorDisplayName', 'createdAt', 'updatedAt', 'cols', 'rows', 'tileRows', 'customWaves'])
         && data.id is string && data.id == mapId && data.id.size() <= 100
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
         && data.authorUid is string && data.authorUid == request.auth.uid
@@ -190,7 +190,52 @@ service cloud.firestore {
         && data.cols is number && data.cols >= 6 && data.cols <= 32
         && data.rows is number && data.rows >= 6 && data.rows <= 14
         && data.tileRows is list && data.tileRows.size() == data.rows
-        && isValidTileRows(data.tileRows, data.cols);
+        && isValidTileRows(data.tileRows, data.cols)
+        && data.customWaves is list && data.customWaves.size() <= 8
+        && isValidCustomWaves(data.customWaves);
+    }
+
+    // Map Builder author-designed waves (mirrors `MapBuilderSystem.ts`'s
+    // MAX_CUSTOM_WAVES=8 / MAX_SPAWN_GROUPS_PER_WAVE=4). Enemy-id legality is
+    // NOT checked here — same stance `isValidTileRows` already takes toward
+    // legend-character legality — `MapSharingSystem.fromSharedMapRecord`'s
+    // load-time filtering is the real gatekeeper against an unknown enemy id
+    // or a stale spawnIndex, exactly as `parseMapRows` already is for tiles.
+    function isValidCustomWaves(waves) {
+      return (waves.size() < 1 || isValidWaveDef(waves[0]))
+        && (waves.size() < 2 || isValidWaveDef(waves[1]))
+        && (waves.size() < 3 || isValidWaveDef(waves[2]))
+        && (waves.size() < 4 || isValidWaveDef(waves[3]))
+        && (waves.size() < 5 || isValidWaveDef(waves[4]))
+        && (waves.size() < 6 || isValidWaveDef(waves[5]))
+        && (waves.size() < 7 || isValidWaveDef(waves[6]))
+        && (waves.size() < 8 || isValidWaveDef(waves[7]));
+    }
+
+    function isValidWaveDef(wave) {
+      return wave.keys().hasOnly(['id', 'turnLimit', 'spawns', 'completionGold', 'timeBonusGold'])
+        && wave.id is string && wave.id.size() <= 60
+        && (!('turnLimit' in wave) || (wave.turnLimit is number && wave.turnLimit >= 1 && wave.turnLimit <= 60))
+        && wave.completionGold is number && wave.completionGold >= 0 && wave.completionGold <= 1000
+        && (!('timeBonusGold' in wave) || (wave.timeBonusGold is number && wave.timeBonusGold >= 0 && wave.timeBonusGold <= 1000))
+        && wave.spawns is list && wave.spawns.size() >= 1 && wave.spawns.size() <= 4
+        && isValidSpawnGroups(wave.spawns);
+    }
+
+    function isValidSpawnGroups(groups) {
+      return (groups.size() < 1 || isValidSpawnGroup(groups[0]))
+        && (groups.size() < 2 || isValidSpawnGroup(groups[1]))
+        && (groups.size() < 3 || isValidSpawnGroup(groups[2]))
+        && (groups.size() < 4 || isValidSpawnGroup(groups[3]));
+    }
+
+    function isValidSpawnGroup(g) {
+      return g.keys().hasOnly(['enemyId', 'count', 'startTurn', 'intervalTurns', 'spawnIndex'])
+        && g.enemyId is string && g.enemyId.size() <= 60
+        && g.count is number && g.count >= 1 && g.count <= 20
+        && g.startTurn is number && g.startTurn >= 1 && g.startTurn <= 20
+        && g.intervalTurns is number && g.intervalTurns >= 1 && g.intervalTurns <= 10
+        && (!('spawnIndex' in g) || (g.spawnIndex is number && g.spawnIndex >= 0 && g.spawnIndex <= 20));
     }
 
     // No loop construct in rules — explicit per-index checks up through

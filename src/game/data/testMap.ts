@@ -1,4 +1,5 @@
 import type { GridPosition } from "../systems/GridSystem";
+import type { WaveDefinition } from "./waves";
 
 /**
  * The Phase 1 test map, written as human-editable "string art".
@@ -84,6 +85,16 @@ export interface ParsedMap {
    * logic that fires/telegraphs these.
    */
   dynamicTerrainEvents?: DynamicTerrainEvent[];
+  /**
+   * Map Builder (author-designed waves): when non-empty, this REPLACES the
+   * standard `generateFreePlayWaves` output entirely for both Playtest
+   * (`MapBuilderScene.onPlaytest`) and playing a browsed shared map
+   * (`BrowseSharedMapsScene.startWithSelectedMap`) — the author's own
+   * enemy/timing/spawn-point choices, in the exact same `WaveDefinition`
+   * shape every hand-authored wave list already uses. Absent/empty means
+   * unchanged prior behavior (the generated wave list still drives play).
+   */
+  customWaves?: WaveDefinition[];
 }
 
 /**
@@ -127,6 +138,7 @@ export function parseMapRows(
   options?: {
     hazardsAffectHeroes?: boolean;
     dynamicTerrainEvents?: DynamicTerrainEvent[];
+    customWaves?: WaveDefinition[];
   },
 ): ParsedMap {
   if (rows.length === 0) {
@@ -223,6 +235,7 @@ export function parseMapRows(
     treasures,
     hazardsAffectHeroes: options?.hazardsAffectHeroes,
     dynamicTerrainEvents: options?.dynamicTerrainEvents,
+    customWaves: options?.customWaves,
   };
 }
 

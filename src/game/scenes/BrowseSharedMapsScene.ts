@@ -75,6 +75,10 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
   private waveCountButtons: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; count: number }[] = [];
   private minionButtons: { rect: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; source: MinionSource }[] = [];
   private difficultyLabel!: Phaser.GameObjects.Text;
+  /** Author-designed waves: the Wave Count/Minion Source sections (title + buttons) are hidden for such a map, replaced by this note. */
+  private waveCountTitle!: Phaser.GameObjects.Text;
+  private minionTitle!: Phaser.GameObjects.Text;
+  private customWaveNoteLabel!: Phaser.GameObjects.Text;
   /** D-16x: the shared full-screen list-picker overlay (`openChoiceList`), replacing the old click-to-cycle Difficulty button. */
   private choiceOverlay: Phaser.GameObjects.GameObject[] = [];
   private startButton!: Phaser.GameObjects.Rectangle;
@@ -167,6 +171,16 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
 
     this.buildWaveCountSection(width, 430);
     this.buildMinionSection(width, 520);
+    this.customWaveNoteLabel = this.add
+      .text(width / 2, 475, "This map has custom author-designed waves — Wave Count/Minion Source don't apply.", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "14px",
+        color: "#8a8aa0",
+        align: "center",
+        wordWrap: { width: width - 200 },
+      })
+      .setOrigin(0.5)
+      .setVisible(false);
     this.buildDifficultySection(width, 610);
     this.buildStartButton(width, 690);
 
@@ -333,7 +347,7 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
   }
 
   private buildWaveCountSection(width: number, labelY: number): void {
-    this.add
+    this.waveCountTitle = this.add
       .text(width / 2, labelY, "Wave Count", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#c8c8d8", fontStyle: "bold" })
       .setOrigin(0.5);
 
@@ -355,7 +369,7 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
   }
 
   private buildMinionSection(width: number, labelY: number): void {
-    this.add
+    this.minionTitle = this.add
       .text(width / 2, labelY, "Minion Source", { fontFamily: "system-ui, Arial, sans-serif", fontSize: "16px", color: "#c8c8d8", fontStyle: "bold" })
       .setOrigin(0.5);
 
@@ -412,13 +426,26 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
     this.startButton.on("pointerdown", () => this.startWithSelectedMap());
   }
 
+  /** Whether the currently-selected map carries author-designed waves (see `ParsedMap.customWaves`) — when true, Wave Count/Minion Source are moot, the author's own wave list is authoritative. */
+  private selectedMapHasCustomWaves(): boolean {
+    const record = this.maps.find((m) => m.id === this.selectedMapId);
+    return !!record && record.customWaves.length > 0;
+  }
+
   private startWithSelectedMap(): void {
     const record = this.maps.find((m) => m.id === this.selectedMapId);
     if (!record) return;
-    const minionPool = this.selectedMinionSource === "expanded" ? EXPANDED_MINIONS : STANDARD_MINIONS;
-    const waves = generateFreePlayWaves({ waveCount: this.selectedWaveCount, minionPool, bossEnemyId: BROWSE_BOSS_ID });
+    const customMapData = fromSharedMapRecord(record);
+    const waves =
+      customMapData.customWaves && customMapData.customWaves.length > 0
+        ? customMapData.customWaves
+        : generateFreePlayWaves({
+            waveCount: this.selectedWaveCount,
+            minionPool: this.selectedMinionSource === "expanded" ? EXPANDED_MINIONS : STANDARD_MINIONS,
+            bossEnemyId: BROWSE_BOSS_ID,
+          });
     this.scene.start("CharacterCreationScene", {
-      customMapData: fromSharedMapRecord(record),
+      customMapData,
       freePlayWaves: waves,
       difficultyId: this.selectedDifficultyId,
     });
@@ -436,6 +463,24 @@ export class BrowseSharedMapsScene extends Phaser.Scene {
       btn.rect.setFillStyle(selected ? 0x3a5a3a : 0x2a2a3a);
       btn.rect.setStrokeStyle(1, selected ? 0x6aab7a : 0x4a4a5a);
     }
+
+    // Author-designed waves make Wave Count/Minion Source moot for this
+    // particular map — hide both sections and show a note instead, rather
+    // than leave controls on screen that silently do nothing once Start is
+    // pressed (see `startWithSelectedMap`).
+    const customWaves = this.selectedMapHasCustomWaves();
+    this.waveCountTitle?.setVisible(!customWaves);
+    this.minionTitle?.setVisible(!customWaves);
+    for (const btn of this.waveCountButtons) {
+      btn.rect.setVisible(!customWaves);
+      btn.label.setVisible(!customWaves);
+    }
+    for (const btn of this.minionButtons) {
+      btn.rect.setVisible(!customWaves);
+      btn.label.setVisible(!customWaves);
+    }
+    this.customWaveNoteLabel?.setVisible(customWaves);
+
     this.difficultyLabel?.setText(`Difficulty: ${getDifficultyDefinition(this.selectedDifficultyId).name}`);
 
     const canStart = this.selectedMapId !== null;

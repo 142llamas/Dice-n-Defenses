@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_CUSTOM_WAVES,
   MAX_HERO_STARTS,
   MAX_MAP_COLS,
   MAX_MAP_ROWS,
+  MAX_SPAWN_GROUPS_PER_WAVE,
   MIN_MAP_COLS,
   MIN_MAP_ROWS,
+  addSpawnGroup,
+  addWave,
   createBlankDraft,
   isValidMapName,
   paintTile,
+  removeSpawnGroup,
+  removeWave,
+  updateSpawnGroup,
   validateDraft,
 } from "../src/game/systems/MapBuilderSystem";
 import { TEST_MAP, encodeMapRows, parseMapRows } from "../src/game/data/testMap";
@@ -125,6 +132,115 @@ describe("MapBuilderSystem", () => {
       const result = validateDraft(draft);
       expect(result.ok).toBe(true);
       expect(result.reasons).toEqual([]);
+    });
+
+    describe("author-designed waves", () => {
+      function validBaseDraft() {
+        let draft = createBlankDraft("d", "D", 6, 6);
+        draft = paintTile(draft, { x: 0, y: 0 }, { kind: "marker", role: "spawn" });
+        draft = paintTile(draft, { x: 5, y: 5 }, { kind: "marker", role: "exit" });
+        draft = paintTile(draft, { x: 1, y: 1 }, { kind: "marker", role: "hero-start" });
+        return draft;
+      }
+
+      it("fails when a wave has no spawn groups", () => {
+        const draft = addWave(validBaseDraft());
+        const result = validateDraft(draft);
+        expect(result.ok).toBe(false);
+        expect(result.reasons.some((r) => r.includes("Wave 1") && r.includes("no enemies"))).toBe(true);
+      });
+
+      it("fails when a spawn group references an unknown enemy id", () => {
+        let draft = addWave(validBaseDraft());
+        draft = addSpawnGroup(draft, 0, "not-a-real-enemy-id");
+        const result = validateDraft(draft);
+        expect(result.ok).toBe(false);
+        expect(result.reasons.some((r) => r.includes("unknown enemy"))).toBe(true);
+      });
+
+      it("fails when a spawn group's spawnIndex has no matching spawn tile", () => {
+        let draft = addWave(validBaseDraft());
+        draft = addSpawnGroup(draft, 0, "grunt");
+        draft = updateSpawnGroup(draft, 0, 0, { spawnIndex: 3 }); // only 1 spawn tile exists
+        const result = validateDraft(draft);
+        expect(result.ok).toBe(false);
+        expect(result.reasons.some((r) => r.includes("spawn point that no longer exists"))).toBe(true);
+      });
+
+      it("passes with a well-formed custom wave", () => {
+        let draft = addWave(validBaseDraft());
+        draft = addSpawnGroup(draft, 0, "grunt");
+        const result = validateDraft(draft);
+        expect(result.ok).toBe(true);
+        expect(result.reasons).toEqual([]);
+      });
+    });
+  });
+
+  describe("author-designed wave editing", () => {
+    function validBaseDraft() {
+      let draft = createBlankDraft("d", "D", 6, 6);
+      draft = paintTile(draft, { x: 0, y: 0 }, { kind: "marker", role: "spawn" });
+      draft = paintTile(draft, { x: 5, y: 5 }, { kind: "marker", role: "exit" });
+      draft = paintTile(draft, { x: 1, y: 1 }, { kind: "marker", role: "hero-start" });
+      return draft;
+    }
+
+    it("addWave appends a blank wave and stops at MAX_CUSTOM_WAVES", () => {
+      let draft = validBaseDraft();
+      for (let i = 0; i < MAX_CUSTOM_WAVES; i++) draft = addWave(draft);
+      expect(draft.customWaves).toHaveLength(MAX_CUSTOM_WAVES);
+      expect(draft.customWaves?.every((w) => w.spawns.length === 0)).toBe(true);
+
+      const atCap = addWave(draft);
+      expect(atCap).toBe(draft); // no-op at the cap
+    });
+
+    it("removeWave removes the wave at the given index; out-of-range is a no-op", () => {
+      let draft = addWave(addWave(validBaseDraft()));
+      draft = removeWave(draft, 0);
+      expect(draft.customWaves).toHaveLength(1);
+
+      const result = removeWave(draft, 5);
+      expect(result).toBe(draft);
+    });
+
+    it("addSpawnGroup appends a default group and stops at MAX_SPAWN_GROUPS_PER_WAVE", () => {
+      let draft = addWave(validBaseDraft());
+      for (let i = 0; i < MAX_SPAWN_GROUPS_PER_WAVE; i++) draft = addSpawnGroup(draft, 0, "grunt");
+      expect(draft.customWaves?.[0].spawns).toHaveLength(MAX_SPAWN_GROUPS_PER_WAVE);
+      expect(draft.customWaves?.[0].spawns[0]).toEqual({ enemyId: "grunt", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 });
+
+      const atCap = addSpawnGroup(draft, 0, "grunt");
+      expect(atCap).toBe(draft); // no-op at the cap
+
+      const badWave = addSpawnGroup(draft, 9, "grunt");
+      expect(badWave).toBe(draft); // no-op for an out-of-range wave index
+    });
+
+    it("removeSpawnGroup removes the group at the given index; out-of-range is a no-op", () => {
+      let draft = addWave(validBaseDraft());
+      draft = addSpawnGroup(draft, 0, "grunt");
+      draft = addSpawnGroup(draft, 0, "runner");
+      draft = removeSpawnGroup(draft, 0, 0);
+      expect(draft.customWaves?.[0].spawns).toEqual([{ enemyId: "runner", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 }]);
+
+      const result = removeSpawnGroup(draft, 0, 5);
+      expect(result).toBe(draft);
+    });
+
+    it("updateSpawnGroup merges a patch into the targeted group only; out-of-range is a no-op", () => {
+      let draft = addWave(validBaseDraft());
+      draft = addSpawnGroup(draft, 0, "grunt");
+      draft = addSpawnGroup(draft, 0, "runner");
+      draft = updateSpawnGroup(draft, 0, 1, { count: 5, startTurn: 2 });
+      expect(draft.customWaves?.[0].spawns).toEqual([
+        { enemyId: "grunt", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+        { enemyId: "runner", count: 5, startTurn: 2, intervalTurns: 1, spawnIndex: 0 },
+      ]);
+
+      const result = updateSpawnGroup(draft, 0, 9, { count: 9 });
+      expect(result).toBe(draft);
     });
   });
 

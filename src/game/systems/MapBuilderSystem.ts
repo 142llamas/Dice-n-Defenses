@@ -2,6 +2,8 @@ import type { GridPosition } from "./GridSystem";
 import { GameMap } from "./GameMap";
 import { PathfindingSystem } from "./PathfindingSystem";
 import type { ParsedMap, TileType } from "../data/testMap";
+import type { WaveDefinition, WaveSpawnGroup } from "../data/waves";
+import { getEnemyDefinition } from "../data/enemies";
 
 /**
  * MapBuilderSystem — Phase 11.10 (D-085): pure rules for authoring a
@@ -41,6 +43,9 @@ export const MIN_MAP_ROWS = 6;
 export const MAX_MAP_ROWS = 14;
 /** Matches `CharacterCreationScene`'s own `MAX_PARTY_SIZE`. */
 export const MAX_HERO_STARTS = 4;
+/** Author-designed waves (Map Builder): caps mirrored by `firestore.rules`' `isValidSharedMap`. */
+export const MAX_CUSTOM_WAVES = 8;
+export const MAX_SPAWN_GROUPS_PER_WAVE = 4;
 
 export type MarkerRole = "spawn" | "exit" | "hero-start" | "enemy-start" | "shop" | "treasure";
 
@@ -128,6 +133,84 @@ export function paintTile(draft: ParsedMap, pos: GridPosition, selection: Palett
   return next;
 }
 
+// ----- Author-designed waves ------------------------------------------------
+//
+// Mirrors `FreePlayWaveGenerator`'s own gentle, monotonic curve for the
+// fields this pass doesn't hand to the author (turnLimit/completionGold/
+// timeBonusGold) — see that file's `turnLimitForWave`/`completionGoldForWave`.
+// Kept as a private duplicate rather than a shared import, matching this
+// project's existing style of small per-module duplicated constants over
+// cross-module coupling for a few numbers.
+
+function defaultTurnLimitForWave(waveIndex: number): number {
+  return 8 + waveIndex;
+}
+
+function defaultCompletionGoldForWave(waveIndex: number): number {
+  return 10 + waveIndex * 4;
+}
+
+/** Appends a blank wave (no spawn groups yet). No-ops at `MAX_CUSTOM_WAVES`. */
+export function addWave(draft: ParsedMap): ParsedMap {
+  const waves = draft.customWaves ?? [];
+  if (waves.length >= MAX_CUSTOM_WAVES) return draft;
+  const index = waves.length;
+  const completionGold = defaultCompletionGoldForWave(index);
+  const wave: WaveDefinition = {
+    id: `wave-${index + 1}`,
+    turnLimit: defaultTurnLimitForWave(index),
+    spawns: [],
+    completionGold,
+    timeBonusGold: Math.round(completionGold * 0.35),
+  };
+  return { ...draft, customWaves: [...waves, wave] };
+}
+
+/** Removes the wave at `waveIndex`. Out-of-range is a no-op. */
+export function removeWave(draft: ParsedMap, waveIndex: number): ParsedMap {
+  const waves = draft.customWaves ?? [];
+  if (waveIndex < 0 || waveIndex >= waves.length) return draft;
+  return { ...draft, customWaves: waves.filter((_, i) => i !== waveIndex) };
+}
+
+/** Appends a spawn group of `enemyId` to the wave at `waveIndex`. No-ops at `MAX_SPAWN_GROUPS_PER_WAVE` or an out-of-range `waveIndex`. */
+export function addSpawnGroup(draft: ParsedMap, waveIndex: number, enemyId: string): ParsedMap {
+  const waves = draft.customWaves ?? [];
+  const wave = waves[waveIndex];
+  if (!wave || wave.spawns.length >= MAX_SPAWN_GROUPS_PER_WAVE) return draft;
+  const group: WaveSpawnGroup = { enemyId, count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 };
+  const nextWave: WaveDefinition = { ...wave, spawns: [...wave.spawns, group] };
+  return { ...draft, customWaves: waves.map((w, i) => (i === waveIndex ? nextWave : w)) };
+}
+
+/** Removes the spawn group at `groupIndex` from the wave at `waveIndex`. Out-of-range is a no-op. */
+export function removeSpawnGroup(draft: ParsedMap, waveIndex: number, groupIndex: number): ParsedMap {
+  const waves = draft.customWaves ?? [];
+  const wave = waves[waveIndex];
+  if (!wave || groupIndex < 0 || groupIndex >= wave.spawns.length) return draft;
+  const nextWave: WaveDefinition = { ...wave, spawns: wave.spawns.filter((_, i) => i !== groupIndex) };
+  return { ...draft, customWaves: waves.map((w, i) => (i === waveIndex ? nextWave : w)) };
+}
+
+/** Merges `patch` into the spawn group at (`waveIndex`, `groupIndex`). Out-of-range is a no-op. */
+export function updateSpawnGroup(
+  draft: ParsedMap,
+  waveIndex: number,
+  groupIndex: number,
+  patch: Partial<WaveSpawnGroup>,
+): ParsedMap {
+  const waves = draft.customWaves ?? [];
+  const wave = waves[waveIndex];
+  const group = wave?.spawns[groupIndex];
+  if (!wave || !group) return draft;
+  const nextGroup: WaveSpawnGroup = { ...group, ...patch };
+  const nextWave: WaveDefinition = {
+    ...wave,
+    spawns: wave.spawns.map((g, i) => (i === groupIndex ? nextGroup : g)),
+  };
+  return { ...draft, customWaves: waves.map((w, i) => (i === waveIndex ? nextWave : w)) };
+}
+
 /**
  * D-154: a real, player-typed map name (replacing the old fixed 8-name
  * cycle pool) needs its own validation independent of the DOM `<input>`'s
@@ -184,6 +267,24 @@ export function validateDraft(draft: ParsedMap): MapValidationResult {
       reasons.push("Every spawn must have a clear route to an exit — check for a sealed-off area.");
     }
   }
+
+  (draft.customWaves ?? []).forEach((wave, i) => {
+    const waveNum = i + 1;
+    if (wave.spawns.length === 0) {
+      reasons.push(`Wave ${waveNum} has no enemies — add one or remove the wave.`);
+      return;
+    }
+    for (const group of wave.spawns) {
+      try {
+        getEnemyDefinition(group.enemyId);
+      } catch {
+        reasons.push(`Wave ${waveNum} has an unknown enemy — re-pick it.`);
+      }
+      if ((group.spawnIndex ?? 0) >= draft.spawns.length) {
+        reasons.push(`Wave ${waveNum} references a spawn point that no longer exists.`);
+      }
+    }
+  });
 
   return { ok: reasons.length === 0, reasons };
 }

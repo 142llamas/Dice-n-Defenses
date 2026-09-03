@@ -35,6 +35,21 @@ export interface WaveSpawnGroup {
   intervalTurns: number;
   /** Which spawn point to use (index into the map's spawn list). Default 0. */
   spawnIndex?: number;
+  /**
+   * D-217 (item 3b/3.5): optional per-group stat bump, consumed by
+   * `WaveSystem.spawnDueEnemies` on top of the difficulty tier's own
+   * `enemyHpMultiplier` — absent means today's exact behavior. Introduced by
+   * `ThreatBudgetSystem`'s elite-substitution step (a group split into a
+   * regular sub-group and an elite sub-group of the same `enemyId`) and
+   * reused by `bossScaling.ts`'s level-cap boss scaling, so `WaveSystem`
+   * gains exactly one new concept for both features rather than two.
+   * `attackBonusAdd` is additive (a small flat to-hit bonus, unlike the
+   * multiplicative `hp`/`damage`) — only `bossScaling.ts` sets it, since a
+   * higher-level party's AC climbs enough that a static boss to-hit bonus
+   * would fall increasingly behind without it; elite substitution never
+   * touches it.
+   */
+  statMultiplier?: { hp: number; damage: number; attackBonusAdd?: number };
 }
 
 export interface WaveDefinition {

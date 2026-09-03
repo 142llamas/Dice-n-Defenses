@@ -132,7 +132,9 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   private refreshAccountLabel(): void {
-    this.accountButtonHandle?.setLabel(this.accountLabel());
+    // D-217 (item 7): the account control is icon-only now — the dynamic
+    // sign-in/sign-out text lives in its hover tooltip, not on-button text.
+    this.accountButtonHandle?.setTooltip(this.accountLabel());
   }
 
   private buildTitle(): void {
@@ -374,11 +376,13 @@ export class MainMenuScene extends Phaser.Scene {
   private buildExitControl(): void {
     // D-16x: was `height - 40` (only 4px clear of `drawScreenBackdrop`'s
     // frame border on hover) — real clearance now.
-    const handle = createOrnateButton(this, 170, getViewport(this).height - 56, 190, 36, "Exit Game", () => {
+    // D-217 (item 7): shrunk to a 44x44 icon button, matching Settings/
+    // Account — its full explanation moved to the hover tooltip.
+    const handle = createOrnateButton(this, 94, getViewport(this).height - 56, 44, 44, "", () => {
       window.close();
-      handle.setLabel("You may now close this tab");
+      handle.setTooltip("You may now close this tab");
       handle.setDisabled(true);
-    }, { variant: "tool", depth: 5 });
+    }, { variant: "tool", depth: 5, icon: drawExitIcon, tooltip: "Exit Game" });
   }
 
   /**
@@ -397,7 +401,7 @@ export class MainMenuScene extends Phaser.Scene {
   private buildAccountControl(): void {
     if (!firebaseReady) return;
 
-    const x = getViewport(this).width - 170;
+    const x = getViewport(this).width - 62;
     const y = 104; // D-16x: was 88 — shifted down to match Settings clearing the frame border
 
     // D-154: shows "Connecting…" only until the FIRST auth callback ever
@@ -405,18 +409,21 @@ export class MainMenuScene extends Phaser.Scene {
     // first-render behavior — a later rebuild (e.g. from a resize) after
     // the real state is already known shows it immediately instead of
     // flashing back to "Connecting…" every time.
+    // D-217 (item 7): shrunk to a 44x44 icon button — the dynamic sign-in/
+    // sign-out label now lives in the hover tooltip instead of on-button
+    // text (see `refreshAccountLabel`, which calls `setTooltip` now).
     this.accountButtonHandle = createOrnateButton(
       this,
       x,
       y,
-      260,
       44,
-      this.accountLabel(),
+      44,
+      "",
       () => {
         const action = !this.authState.isAnonymous ? signOutAndResetAnonymous() : signInWithGoogle();
         action.catch((err) => console.error("Account action failed:", err));
       },
-      { variant: "tool", depth: 20 },
+      { variant: "tool", depth: 20, icon: drawPersonIcon, tooltip: this.accountLabel() },
     );
   }
 
@@ -430,18 +437,74 @@ export class MainMenuScene extends Phaser.Scene {
    * directly, same as before).
    */
   private buildSettingsControl(): void {
-    const x = getViewport(this).width - 170;
+    const x = getViewport(this).width - 62;
     const y = 48; // D-16x: was 32 — its top edge (10) sat above drawScreenBackdrop's frame line (18), a real overlap
 
+    // D-217 (item 7): shrunk to a 44x44 icon button, full label moved to tooltip.
     createOrnateButton(
       this,
       x,
       y,
-      260,
       44,
-      "Settings",
+      44,
+      "",
       () => this.scene.start("SettingsScene", { returnScene: "MainMenuScene" }),
-      { variant: "tool", depth: 20 },
+      { variant: "tool", depth: 20, icon: drawGearIcon, tooltip: "Settings" },
     );
   }
+}
+
+/**
+ * D-217 (item 7): placeholder icon glyphs for the Settings/Account/Exit
+ * corner controls — Kevin has no real icon art yet and said appearance
+ * doesn't matter for now ("just placeholders"), so these are hand-drawn
+ * `Graphics` shapes, same "real drawing code stands in for real art"
+ * treatment `buildCrest`'s tower-and-shield emblem already uses. Swap these
+ * out for real image-based icons once art is supplied — nothing else about
+ * `createOrnateButton`'s `icon` option needs to change to support that later.
+ */
+function drawGearIcon(g: Phaser.GameObjects.Graphics, size: number, color: number): void {
+  const outerR = size / 2;
+  const innerR = outerR * 0.42;
+  const teeth = 8;
+  const toothDepth = outerR * 0.26;
+  g.fillStyle(color, 1);
+  g.beginPath();
+  for (let i = 0; i < teeth * 2; i++) {
+    const angle = (Math.PI * i) / teeth;
+    const r = i % 2 === 0 ? outerR : outerR - toothDepth;
+    const px = Math.cos(angle) * r;
+    const py = Math.sin(angle) * r;
+    if (i === 0) g.moveTo(px, py);
+    else g.lineTo(px, py);
+  }
+  g.closePath();
+  g.fillPath();
+  g.fillStyle(COLORS.woodPanel, 1);
+  g.fillCircle(0, 0, innerR);
+}
+
+function drawPersonIcon(g: Phaser.GameObjects.Graphics, size: number, color: number): void {
+  g.fillStyle(color, 1);
+  g.fillCircle(0, -size * 0.22, size * 0.18);
+  g.beginPath();
+  g.moveTo(-size * 0.28, size * 0.32);
+  g.lineTo(size * 0.28, size * 0.32);
+  g.lineTo(size * 0.16, -size * 0.02);
+  g.lineTo(-size * 0.16, -size * 0.02);
+  g.closePath();
+  g.fillPath();
+}
+
+function drawExitIcon(g: Phaser.GameObjects.Graphics, size: number, color: number): void {
+  const w = size * 0.5;
+  const h = size * 0.82;
+  const frameX = -size * 0.12;
+  g.lineStyle(Math.max(2, size * 0.07), color, 1);
+  g.strokeRect(frameX - w / 2, -h / 2, w, h);
+  const arrowStartX = frameX + w / 2 - size * 0.06;
+  const arrowTipX = size * 0.34;
+  g.lineBetween(arrowStartX, 0, arrowTipX, 0);
+  g.lineBetween(arrowTipX, 0, arrowTipX - size * 0.14, -size * 0.14);
+  g.lineBetween(arrowTipX, 0, arrowTipX - size * 0.14, size * 0.14);
 }

@@ -1,5 +1,6 @@
 import Phaser from "phaser";
-import { CAMPAIGN_PROGRESS_STORAGE_KEY, COMPANION_ROSTER_STORAGE_KEY, WORLD_FLAG_STORAGE_KEY } from "../config";
+import { CAMPAIGN_PROGRESS_STORAGE_KEY, CAMPAIGN_LEVEL_STORAGE_KEY, COMPANION_ROSTER_STORAGE_KEY, WORLD_FLAG_STORAGE_KEY } from "../config";
+import { DEFAULT_CAMPAIGN_LEVEL_STATE, saveCampaignLevel } from "../systems/CampaignLevelSystem";
 import {
   CAMPAIGNS,
   PROLOGUE_CAMPAIGN_ID,
@@ -234,6 +235,9 @@ export class CampaignSelectScene extends Phaser.Scene {
     saveCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY, DEFAULT_COMPANION_ROSTER_STATE);
     saveCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY, DEFAULT_CAMPAIGN_PROGRESS);
     saveWorldFlags(window.localStorage, WORLD_FLAG_STORAGE_KEY, DEFAULT_WORLD_FLAG_STATE);
+    // D-217 (item 3c): a fresh playthrough's shared campaignLevel resets to 1
+    // along with everything else this button already wipes.
+    saveCampaignLevel(window.localStorage, CAMPAIGN_LEVEL_STORAGE_KEY, DEFAULT_CAMPAIGN_LEVEL_STATE);
     this.rebuildLayout();
   }
 

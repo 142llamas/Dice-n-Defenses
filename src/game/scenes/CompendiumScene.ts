@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { CLASS_DEFINITIONS, getClassDefinition } from "../data/classes";
-import { SUBCLASS_DEFINITIONS } from "../data/subclasses";
+import { subclassesForClass } from "../data/subclasses";
 import { RACE_DEFINITIONS } from "../data/races";
 import { FEATS, FEAT_IDS } from "../data/feats";
 import { SPELLS } from "../data/spells";
@@ -158,6 +158,14 @@ interface DetailRow {
 /** D-165: fixed line height for `renderRowList`'s paginated rows — page size is derived from this against the panel's actual available height, not a per-category constant, since every category now shares the same renderer. */
 const ROW_HEIGHT = 24;
 
+// D-217 (item 5): a persistent "pin" strip reserved at the bottom of the
+// panel — clicking any row with a `tooltip` shows its full text here, so it
+// stays readable after the pointer moves away (unlike hover, which hides it
+// the instant the mouse leaves). Fixed height, not dynamically sized to the
+// pinned text, so pinning a row never reflows/jumps the row list above it.
+const DETAIL_STRIP_HEIGHT = 150;
+const DETAIL_STRIP_PLACEHOLDER = "Click an entry above to pin its full description here.";
+
 /** D-200: one condensed caster-progression line for `renderClassDetail`'s per-level table. */
 function casterSummaryText(entry: ProgressionLevelEntry): string {
   const parts: string[] = [];
@@ -196,6 +204,7 @@ export class CompendiumScene extends Phaser.Scene {
   private subButtons: OrnateButtonHandle[] = [];
   private detailText!: Phaser.GameObjects.Text;
   private detailRows: Phaser.GameObjects.Text[] = [];
+  private detailStripBody!: Phaser.GameObjects.Text;
   private tooltip!: TooltipController;
   private pageLabel!: Phaser.GameObjects.Text;
   private prevButton!: OrnateButtonHandle;
@@ -271,6 +280,16 @@ export class CompendiumScene extends Phaser.Scene {
 
     createOrnateButton(this, 120, 42, 160, 44, "Back (Esc)", () => this.leave(), { variant: "tool", depth: 5 });
 
+    // D-217 (item 6): a direct jump to the other half of the Knowledge Base
+    // — Kevin asked to keep "Back" going straight to Main Menu (unchanged
+    // above, Esc still bound to it) but also wants a way to reach the
+    // Bestiary without detouring back through Main Menu/KnowledgeBaseScene.
+    createOrnateButton(this, width - 150, 42, 160, 44, "Bestiary", () => this.scene.start("BestiaryScene"), {
+      variant: "tool",
+      depth: 5,
+      tooltip: "Jump directly to the Bestiary",
+    });
+
     this.buildTabs(width);
 
     drawParchmentPanel(this, width / 2, PANEL_TOP + PANEL_HEIGHT / 2, panelWidth, PANEL_HEIGHT, 2);
@@ -282,6 +301,33 @@ export class CompendiumScene extends Phaser.Scene {
       lineSpacing: 7,
       wordWrap: { width: panelWidth - TEXT_PAD_X * 2 },
     }).setDepth(3);
+
+    // D-217 (item 5): the pinned-detail strip, reserved at the bottom of the
+    // panel — see `renderRowList`, which accounts for its height when paging
+    // the row list above it and resets it to the placeholder on every render.
+    const stripTop = PANEL_TOP + PANEL_HEIGHT - 50 - DETAIL_STRIP_HEIGHT;
+    const stripLeft = PANEL_LEFT + TEXT_PAD_X;
+    const stripRight = width - PANEL_LEFT - TEXT_PAD_X;
+    const stripDivider = this.add.graphics().setDepth(3);
+    stripDivider.lineStyle(1, 0x8a7658, 0.6);
+    stripDivider.lineBetween(stripLeft, stripTop, stripRight, stripTop);
+    this.add
+      .text(stripLeft, stripTop + 10, "Selected", {
+        fontFamily: FONT_BODY,
+        fontSize: "13px",
+        color: "#8a7658",
+        fontStyle: "italic",
+      })
+      .setDepth(3);
+    this.detailStripBody = this.add
+      .text(stripLeft, stripTop + 32, DETAIL_STRIP_PLACEHOLDER, {
+        fontFamily: FONT_BODY,
+        fontSize: "14px",
+        color: "#2a1a10",
+        lineSpacing: 6,
+        wordWrap: { width: panelWidth - TEXT_PAD_X * 2 },
+      })
+      .setDepth(3);
 
     this.buildPaginationControls(width, height);
 
@@ -397,14 +443,30 @@ export class CompendiumScene extends Phaser.Scene {
   private renderRowList(headerLine: string | null, panelWidth: number, rows: DetailRow[]): void {
     this.clearDetailRows();
     this.detailText.setText(headerLine ?? "");
+    // D-217 (item 5): every fresh render (tab switch, page change, class/
+    // level selector change) drops any previously-pinned detail — a stale
+    // pin from a row that's no longer on screen should never linger.
+    this.detailStripBody.setText(DETAIL_STRIP_PLACEHOLDER);
 
     const startX = PANEL_LEFT + TEXT_PAD_X;
     const startY = PANEL_TOP + TEXT_PAD_Y + (headerLine ? 34 : 0);
-    const available = PANEL_TOP + PANEL_HEIGHT - 50 - startY;
+    const available = PANEL_TOP + PANEL_HEIGHT - 50 - DETAIL_STRIP_HEIGHT - startY;
     const rowsPerPage = Math.max(1, Math.floor(available / ROW_HEIGHT));
     const totalPages = Math.max(1, Math.ceil(rows.length / rowsPerPage));
     this.page = Math.max(0, Math.min(this.page, totalPages - 1));
     const pageRows = rows.slice(this.page * rowsPerPage, (this.page + 1) * rowsPerPage);
+
+    let pinned: Phaser.GameObjects.Text | undefined;
+    const unpin = (t: Phaser.GameObjects.Text, row: DetailRow) => {
+      t.setText(row.text);
+      t.setColor("#2a1a10");
+      t.setFontStyle("normal");
+    };
+    const pin = (t: Phaser.GameObjects.Text, row: DetailRow) => {
+      t.setText(`▸ ${row.text}`);
+      t.setColor("#1a4a6a");
+      t.setFontStyle("bold");
+    };
 
     pageRows.forEach((row, i) => {
       const y = startY + i * ROW_HEIGHT;
@@ -420,8 +482,25 @@ export class CompendiumScene extends Phaser.Scene {
       if (row.tooltip) {
         const tooltipText = row.tooltip;
         t.setInteractive({ useHandCursor: true });
-        t.on("pointerover", () => t.setColor("#5a2a08"));
-        t.on("pointerout", () => t.setColor("#2a1a10"));
+        t.on("pointerover", () => {
+          if (t !== pinned) t.setColor("#5a2a08");
+        });
+        t.on("pointerout", () => {
+          if (t !== pinned) t.setColor("#2a1a10");
+        });
+        t.on("pointerdown", () => {
+          if (pinned === t) {
+            unpin(t, row);
+            pinned = undefined;
+            this.detailStripBody.setText(DETAIL_STRIP_PLACEHOLDER);
+            return;
+          }
+          if (pinned) unpin(pinned, pinned.getData("row"));
+          pin(t, row);
+          pinned = t;
+          this.detailStripBody.setText(tooltipText);
+        });
+        t.setData("row", row);
         attachHoverTooltip(this.tooltip, t, startX + t.width / 2, y, () => tooltipText);
       }
       this.detailRows.push(t);
@@ -458,6 +537,11 @@ export class CompendiumScene extends Phaser.Scene {
         this.renderEquipmentDetail();
         break;
       case "subclasses":
+        // D-217 (item 4): Subclasses now reuses the Classes tab's own class
+        // selector, so browsing subclasses starts with "pick a class" the
+        // same way the Classes tab does, instead of one flat alphabetized
+        // list of every subclass in the game.
+        this.buildClassSelector();
         this.renderSubclassesDetail();
         break;
       case "races":
@@ -729,25 +813,28 @@ export class CompendiumScene extends Phaser.Scene {
     return getViewport(this).width - PANEL_LEFT * 2;
   }
 
-  // D-150: alphabetized for DISPLAY ONLY via a local sorted copy —
-  // `SUBCLASS_DEFINITIONS`'s own declared order must stay untouched, since
-  // `CharacterBuildSystem.subclassIdForNewBuild` relies on each class's two
-  // subclasses staying in "SRD one first, original one second" registration
-  // order within that array. D-165: each subclass name is a non-interactive
-  // `isGroupHeader` divider; each of its features is its own hoverable row.
+  // D-217 (item 4): now filtered to `this.classId` via `buildClassSelector`,
+  // same "pick a class, see its own detail" shape as `renderClassDetail` —
+  // replaces the old flat alphabetized-across-all-classes list. The
+  // `(${className})` suffix is dropped since every visible entry already
+  // belongs to the selected class. D-165: each subclass name is a
+  // non-interactive `isGroupHeader` divider; each of its features is its own
+  // hoverable row.
   private renderSubclassesDetail(): void {
+    const subclasses = subclassesForClass(this.classId);
     const rows: DetailRow[] = [];
-    [...SUBCLASS_DEFINITIONS]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach((s) => {
-        rows.push({ text: `${s.name} (${getClassDefinition(s.classId).name})`, isGroupHeader: true });
-        s.features.forEach((f) =>
-          rows.push({
-            text: `  Lv${f.level} ${f.name}${f.mechanicallyActive ? "" : " [inert]"}`,
-            tooltip: f.description,
-          }),
-        );
-      });
+    if (subclasses.length === 0) {
+      rows.push({ text: "No subclasses defined for this class yet." });
+    }
+    subclasses.forEach((s) => {
+      rows.push({ text: s.name, isGroupHeader: true });
+      s.features.forEach((f) =>
+        rows.push({
+          text: `  Lv${f.level} ${f.name}${f.mechanicallyActive ? "" : " [inert]"}`,
+          tooltip: f.description,
+        }),
+      );
+    });
     this.renderRowList(null, this.panelWidth(), rows);
   }
 

@@ -3,9 +3,9 @@ import { computeCornerControlsRegion } from "../src/game/systems/mainMenuLayout"
 
 describe("computeCornerControlsRegion (D-154)", () => {
   it("matches the current corner-control layout at the fixed canvas width (1280)", () => {
-    // D-16x: Settings/Account both shifted down 16px (32->48, 88->104) so
-    // Settings clears drawScreenBackdrop's frame border with real margin.
-    expect(computeCornerControlsRegion(1280)).toEqual({ x: 980, y: 26, width: 260, height: 100 });
+    // D-217: Settings/Account shrank from 260x44 text buttons to 44x44 icon
+    // buttons (item 7), right edge held at viewportWidth - 40.
+    expect(computeCornerControlsRegion(1280)).toEqual({ x: 1196, y: 26, width: 44, height: 100 });
   });
 
   it("stays fully on-canvas and tracks the right edge at other viewport widths", () => {
