@@ -36,6 +36,9 @@ import {
   FONT_BODY,
   type OrnateButtonHandle,
 } from "./uiTheme";
+import { clampScrollOffset, contentHeight as scrollContentHeight } from "../systems/ScrollListMath";
+import { renderScrollListRows, renderScrollbarVisual, attachWheelScroll, type ScrollListRect, type ScrollRegion } from "./uiScrollList";
+import { isProficientWithHandsItem } from "../systems/ProficiencySystem";
 import {
   ABILITY_SCORE_IDS,
   ABILITY_SCORE_NAMES,
@@ -587,9 +590,13 @@ export class CharacterCreationScene extends Phaser.Scene {
    * catalog page) that doesn't fit the generic `renderPlanPrompt` shape.
    */
   private gearPickerOverlay: Phaser.GameObjects.GameObject[] = [];
+  /** D-234: set each `refreshGearPicker()` call so the persistent wheel handler (registered once in `create()`) always reflects the current picker state; null while the picker is closed. */
+  private gearPickerViewportRect: ScrollListRect | null = null;
+  private gearPickerContentHeight = 0;
   private gearPickerSlotIndex = 0;
   private gearPickerGearSlot: GearSlotId = "weapon";
-  private gearPickerCatalogPage = 0;
+  /** D-234: scroll offset (px) replacing the old page index — see `uiScrollList.ts`. */
+  private gearPickerScrollOffset = 0;
   /**
    * D-228 (KI-177 item 4): Ring 1/Ring 2 consolidation, mirroring the
    * Armory's (`GearShopScene`) same-session fix — a new ring pick that
@@ -709,6 +716,18 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.scale.refresh();
     fixDomContainerAlignment(this);
     onViewportResize(this, () => fixDomContainerAlignment(this));
+    // D-234: registered once (not per-refresh) since this is a scene-level
+    // subscription, not a GameObject — `activeGearPickerScrollRegion` is
+    // re-read on every wheel event so it always reflects the current picker
+    // state (or is null while the picker is closed).
+    attachWheelScroll(
+      this,
+      () => this.activeGearPickerScrollRegion(),
+      (offset) => {
+        this.gearPickerScrollOffset = offset;
+        this.refreshGearPicker();
+      },
+    );
 
     this.slots = [];
     this.widgets = [];
@@ -2707,7 +2726,7 @@ export class CharacterCreationScene extends Phaser.Scene {
   private openGearPicker(slot: number): void {
     this.gearPickerSlotIndex = slot;
     this.gearPickerGearSlot = "weapon";
-    this.gearPickerCatalogPage = 0;
+    this.gearPickerScrollOffset = 0;
     this.pendingRingPick = null;
     this.refreshGearPicker();
   }
@@ -2733,6 +2752,11 @@ export class CharacterCreationScene extends Phaser.Scene {
    * alone, same as before), which is a pre-existing quirk, not a
    * regression introduced by this rebuild.
    */
+  private activeGearPickerScrollRegion(): ScrollRegion | null {
+    if (!this.gearPickerViewportRect) return null;
+    return { rect: this.gearPickerViewportRect, totalContentHeight: this.gearPickerContentHeight, scrollOffset: this.gearPickerScrollOffset };
+  }
+
   private refreshGearPicker(): void {
     clearChoiceOverlay(this.gearPickerOverlay);
     this.closeDropdown();
@@ -2740,7 +2764,10 @@ export class CharacterCreationScene extends Phaser.Scene {
     const overlay = this.gearPickerOverlay;
     const slot = this.gearPickerSlotIndex;
     const s = this.slots[slot];
-    if (!s) return;
+    if (!s) {
+      this.gearPickerViewportRect = null;
+      return;
+    }
     const build = this.buildFromSlot(slot);
     const { width: viewportWidth, height: viewportHeight } = getViewport(this);
     const pointBuy = !!this.campaignId;
@@ -2753,6 +2780,7 @@ export class CharacterCreationScene extends Phaser.Scene {
 
     const closeAndApply = (): void => {
       clearChoiceOverlay(this.gearPickerOverlay);
+      this.gearPickerViewportRect = null;
       this.refreshAll();
     };
 
@@ -2834,7 +2862,7 @@ export class CharacterCreationScene extends Phaser.Scene {
             return;
           }
           this.gearPickerGearSlot = slotId;
-          this.gearPickerCatalogPage = 0;
+          this.gearPickerScrollOffset = 0;
           this.pendingRingPick = null;
           this.refreshGearPicker();
         });
@@ -2887,10 +2915,14 @@ export class CharacterCreationScene extends Phaser.Scene {
     // picker this replaces.
     const availableForThisSlot = budget - this.gearPointsSpent(s) + currentCost;
 
-    const list: (string | null)[] = [
-      null,
-      ...pool.filter((id) => !pointBuy || startingGearPointCost(getEquipmentDefinition(id).rarity) <= availableForThisSlot),
-    ];
+    // D-235 (item 7): weapon proficiency — fully hidden, same "simply
+    // doesn't appear in the list" convention the point-buy budget filter
+    // right above already uses, plus a one-line hidden-count footer below
+    // instead of a toggle.
+    const budgetFilteredPool = pool.filter((id) => !pointBuy || startingGearPointCost(getEquipmentDefinition(id).rarity) <= availableForThisSlot);
+    const proficientPool = build.classId ? budgetFilteredPool.filter((id) => isProficientWithHandsItem(build.classId!, id)) : budgetFilteredPool;
+    const proficiencyHiddenCount = budgetFilteredPool.length - proficientPool.length;
+    const list: (string | null)[] = [null, ...proficientPool];
 
     if (this.pendingRingPick !== null && isRingSlot(gearSlot)) {
       overlay.push(
@@ -2909,11 +2941,8 @@ export class CharacterCreationScene extends Phaser.Scene {
     const catalogTop = paperdollTop + paperdollPanelHeight + 20;
     const rowHeight = 58;
     const rowGap = 8;
-    const pageSize = 6;
-    const pageCount = Math.max(1, Math.ceil(list.length / pageSize));
-    const page = Math.min(this.gearPickerCatalogPage, pageCount - 1);
-    const pageItems = list.slice(page * pageSize, page * pageSize + pageSize);
-    const listHeight = pageSize * (rowHeight + rowGap) - rowGap + 24;
+    const visibleRowCount = 6;
+    const listHeight = visibleRowCount * (rowHeight + rowGap) - rowGap + 24;
 
     overlay.push(drawParchmentPanel(this, panelCenterX, catalogTop + listHeight / 2, panelWidth, listHeight, 61));
 
@@ -2946,142 +2975,155 @@ export class CharacterCreationScene extends Phaser.Scene {
     };
     const applyPick = (id: string | null): void => applyPickToSlot(id, gearSlot);
 
-    pageItems.forEach((id, idx) => {
-      const rowY = catalogTop + 12 + idx * (rowHeight + rowGap) + rowHeight / 2;
-      const isCurrent = id === (currentItemId ?? null) || (id !== null && id === otherRingItemId);
-      const leftX = panelCenterX - panelWidth / 2 + 16;
-      const def = id ? getEquipmentDefinition(id) : undefined;
-      const rarityTag = def && def.rarity !== "common" ? ` · ${RARITY_LABELS[def.rarity]}` : "";
+    // D-234: scrollable instead of paginated — see `uiScrollList.ts`.
+    const rowHeights = list.map(() => rowHeight);
+    const totalRowsHeight = scrollContentHeight(rowHeights, rowGap);
+    const rowsRect: ScrollListRect = {
+      x: panelCenterX - panelWidth / 2 + 10,
+      y: catalogTop + 12,
+      width: panelWidth - 20,
+      height: listHeight - 24,
+    };
+    this.gearPickerScrollOffset = clampScrollOffset(this.gearPickerScrollOffset, totalRowsHeight, rowsRect.height);
+    this.gearPickerViewportRect = rowsRect;
+    this.gearPickerContentHeight = totalRowsHeight;
 
-      overlay.push(
-        this.add
-          .text(leftX, rowY - 8, `${def ? def.name : "None"}${rarityTag}`, {
-            fontFamily: FONT_BODY,
-            fontSize: "15px",
-            color: "#2a1a10",
-            fontStyle: isCurrent ? "bold" : "normal",
-          })
-          .setDepth(64),
-      );
+    renderScrollListRows(
+      this,
+      rowsRect,
+      rowHeights,
+      rowGap,
+      this.gearPickerScrollOffset,
+      63,
+      (index, rowX, rowTopY, rowWidth) => {
+        const id = list[index];
+        const objs: Phaser.GameObjects.GameObject[] = [];
+        const rowCenterX = rowX + rowWidth / 2;
+        const rowCenterY = rowTopY + rowHeight / 2;
+        const isCurrent = id === (currentItemId ?? null) || (id !== null && id === otherRingItemId);
+        const leftX = rowX + 16;
+        const def = id ? getEquipmentDefinition(id) : undefined;
+        const rarityTag = def && def.rarity !== "common" ? ` · ${RARITY_LABELS[def.rarity]}` : "";
 
-      // A one-line delta so every candidate's effect is visible without a
-      // separate compare step (no economic risk to guard against here — a
-      // click IS the equip action, unlike the Armory's delayed Purchase).
-      let subline = "";
-      if (id && !isCurrent) {
-        subline = formatGearDelta(previewGearSlotChange(previewHero, gearSlot, id));
-      } else if (id === null && currentItemId) {
-        subline = `Removes ${getEquipmentDefinition(currentItemId).name}`;
-      } else if (def) {
-        subline = def.description;
-      }
-      overlay.push(
-        this.add
-          .text(leftX, rowY + 12, subline, {
-            fontFamily: FONT_BODY,
-            fontSize: "11px",
-            color: "#6a4a2a",
-            wordWrap: { width: panelWidth - 260 },
-          })
-          .setDepth(64),
-      );
-
-      if (isCurrent) {
-        overlay.push(
+        objs.push(
           this.add
-            .text(panelCenterX + panelWidth / 2 - 130, rowY, "Equipped", {
+            .text(leftX, rowCenterY - 8, `${def ? def.name : "None"}${rarityTag}`, {
               fontFamily: FONT_BODY,
-              fontSize: "11px",
-              color: "#fff3d0",
-              backgroundColor: "#2a1a10",
-              padding: { x: 6, y: 2 },
+              fontSize: "15px",
+              color: "#2a1a10",
+              fontStyle: isCurrent ? "bold" : "normal",
             })
-            .setOrigin(0, 0.5)
             .setDepth(64),
         );
-      } else {
-        if (pointBuy && id) {
-          const cost = startingGearPointCost(getEquipmentDefinition(id).rarity);
-          overlay.push(
+
+        // A one-line delta so every candidate's effect is visible without a
+        // separate compare step (no economic risk to guard against here — a
+        // click IS the equip action, unlike the Armory's delayed Purchase).
+        let subline = "";
+        if (id && !isCurrent) {
+          subline = formatGearDelta(previewGearSlotChange(previewHero, gearSlot, id));
+        } else if (id === null && currentItemId) {
+          subline = `Removes ${getEquipmentDefinition(currentItemId).name}`;
+        } else if (def) {
+          subline = def.description;
+        }
+        objs.push(
+          this.add
+            .text(leftX, rowCenterY + 12, subline, {
+              fontFamily: FONT_BODY,
+              fontSize: "11px",
+              color: "#6a4a2a",
+              wordWrap: { width: rowWidth - 260 },
+            })
+            .setDepth(64),
+        );
+
+        if (isCurrent) {
+          objs.push(
             this.add
-              .text(panelCenterX + panelWidth / 2 - 220, rowY, `${cost} pt${cost === 1 ? "" : "s"}`, {
+              .text(rowCenterX + rowWidth / 2 - 130, rowCenterY, "Equipped", {
                 fontFamily: FONT_BODY,
-                fontSize: "12px",
-                color: "#6a4a2a",
+                fontSize: "11px",
+                color: "#fff3d0",
+                backgroundColor: "#2a1a10",
+                padding: { x: 6, y: 2 },
               })
               .setOrigin(0, 0.5)
               .setDepth(64),
           );
-        }
-        const actionHandle = createOrnateButton(
-          this,
-          panelCenterX + panelWidth / 2 - 90,
-          rowY,
-          140,
-          34,
-          id === null ? "Unequip" : "Equip",
-          () => {
-            // D-228 (KI-177 item 4): a new ring pick with both physical
-            // slots already full can't auto-resolve — arm it and wait for
-            // an explicit paperdoll-cell click (see that handler above)
-            // instead of guessing which ring to replace.
-            if (id !== null && isRingSlot(gearSlot) && otherRingSlot) {
-              const decision = decideSlotPairPlacement(currentItemId ?? null, otherRingItemId ?? null, gearSlot, otherRingSlot);
-              if (decision.kind === "autoPlace") applyPickToSlot(id, decision.slot);
-              else {
-                this.pendingRingPick = id;
-                this.refreshGearPicker();
-              }
-              return;
-            }
-            applyPick(id);
-          },
-          { variant: "tool", fontSize: 12, depth: 64 },
-        );
-        overlay.push(actionHandle.container);
-      }
-    });
-
-    if (pageCount > 1) {
-      const navY = catalogTop + listHeight + 24;
-      const prevHandle = createOrnateButton(
-        this,
-        panelCenterX - 90,
-        navY,
-        110,
-        34,
-        "< Prev",
-        () => {
-          if (page > 0) {
-            this.gearPickerCatalogPage = page - 1;
-            this.refreshGearPicker();
+        } else {
+          if (pointBuy && id) {
+            const cost = startingGearPointCost(getEquipmentDefinition(id).rarity);
+            objs.push(
+              this.add
+                .text(rowCenterX + rowWidth / 2 - 220, rowCenterY, `${cost} pt${cost === 1 ? "" : "s"}`, {
+                  fontFamily: FONT_BODY,
+                  fontSize: "12px",
+                  color: "#6a4a2a",
+                })
+                .setOrigin(0, 0.5)
+                .setDepth(64),
+            );
           }
-        },
-        { variant: "tool", fontSize: 12, depth: 64, disabled: page === 0 },
-      );
-      overlay.push(prevHandle.container);
+          const actionHandle = createOrnateButton(
+            this,
+            rowCenterX + rowWidth / 2 - 90,
+            rowCenterY,
+            140,
+            34,
+            id === null ? "Unequip" : "Equip",
+            () => {
+              // D-228 (KI-177 item 4): a new ring pick with both physical
+              // slots already full can't auto-resolve — arm it and wait for
+              // an explicit paperdoll-cell click (see that handler above)
+              // instead of guessing which ring to replace.
+              if (id !== null && isRingSlot(gearSlot) && otherRingSlot) {
+                const decision = decideSlotPairPlacement(currentItemId ?? null, otherRingItemId ?? null, gearSlot, otherRingSlot);
+                if (decision.kind === "autoPlace") applyPickToSlot(id, decision.slot);
+                else {
+                  this.pendingRingPick = id;
+                  this.refreshGearPicker();
+                }
+                return;
+              }
+              applyPick(id);
+            },
+            { variant: "tool", fontSize: 12, depth: 64 },
+          );
+          objs.push(actionHandle.container);
+        }
+
+        return objs;
+      },
+      overlay,
+    );
+
+    renderScrollbarVisual(
+      this,
+      rowsRect,
+      totalRowsHeight,
+      this.gearPickerScrollOffset,
+      63,
+      (offset) => {
+        this.gearPickerScrollOffset = offset;
+        this.refreshGearPicker();
+      },
+      overlay,
+    );
+
+    // D-235 (item 7): a one-line footer rather than a toggle, same as the Armory's own.
+    if (proficiencyHiddenCount > 0) {
       overlay.push(
         this.add
-          .text(panelCenterX, navY, `Page ${page + 1}/${pageCount}`, { fontFamily: FONT_BODY, fontSize: "13px", color: "#f0e6c8" })
+          .text(panelCenterX, catalogTop + listHeight + 14, `${proficiencyHiddenCount} hidden — not proficient`, {
+            fontFamily: FONT_BODY,
+            fontSize: "12px",
+            color: "#6a4a2a",
+            fontStyle: "italic",
+          })
           .setOrigin(0.5)
           .setDepth(64),
       );
-      const nextHandle = createOrnateButton(
-        this,
-        panelCenterX + 90,
-        navY,
-        110,
-        34,
-        "Next >",
-        () => {
-          if (page < pageCount - 1) {
-            this.gearPickerCatalogPage = page + 1;
-            this.refreshGearPicker();
-          }
-        },
-        { variant: "tool", fontSize: 12, depth: 64, disabled: page === pageCount - 1 },
-      );
-      overlay.push(nextHandle.container);
     }
   }
 

@@ -1,5 +1,69 @@
 # Project Status
 
+## Kevin's 10-item playtest list: CLOSED — items 6 and 7, the last two pieces, DONE this session (D-234, D-235)
+
+The mid-batch handoff from 2026-09-03/04 is now fully resolved. Item 6
+(scrollable lists) and item 7 (weapon proficiency) were the only two pieces
+still not started; both shipped this session, closing the entire 10-item
+list.
+
+- **D-234**: pagination replaced by real scrolling (mouse wheel + a
+  draggable scrollbar thumb) everywhere except `CompendiumScene` (Kevin's
+  explicit exception) — the Armory catalog, Character Creation's gear
+  picker, the in-battle spellbook picker, the in-battle Build/Test-Mode item
+  grids, and the Bestiary. New `systems/ScrollListMath.ts` (pure, unit-
+  tested) + `scenes/uiScrollList.ts` (Phaser glue) share the same math
+  across all 5 very differently-shaped consumers. See KI-183.
+- **D-235**: a real weapon-proficiency system — `data/proficiencies.ts` +
+  `systems/ProficiencySystem.ts`, sourced from real SRD 5.2.1 verified
+  during implementation (not assumed). The Armory's Hands tab and Character
+  Creation's gear picker now fully hide any weapon a hero's class isn't
+  proficient with, with a one-line hidden-count footer. See KI-184.
+
+Tests: **1795** (was 1739 at session start — 24 in `tests/
+scrollListMath.test.ts`, 30 in `tests/proficiencySystem.test.ts`, 2 more
+added to `tests/gearFilterSystem.test.ts`). Typecheck clean throughout.
+Production build succeeds (**162 modules**, up from 158 — 4 new files).
+`npm run dev` + an HTTP check confirms the server boots. No browser
+available in this environment — every piece above needs Kevin's own
+playtest pass; see KI-183/KI-184 for click-through checklists.
+
+Two deliberate scope decisions to flag: Cleric/Druid's 2024-SRD optional
+level-1 choice to trade Simple-only for full Martial proficiency isn't
+modeled (that choice mechanic doesn't exist in this project's `classes.ts`
+at all); and the in-battle shop grid still sells everything regardless of
+proficiency (only the Armory/Character Creation were in scope, matching the
+prior handoff's own wording).
+
+## Armory batch continued: spellcasting foci (item 8) + sub-filter layer (item 5) — DONE prior session, not yet played (D-232, D-233)
+
+Continuation of the mid-batch handoff below. Built item 8 before item 5 on
+purpose: item 5's "Spell Focus" Hands sub-filter would otherwise launch with
+zero members (dead scaffolding), since the only items that could populate
+it didn't exist as Hands-eligible items until this session.
+
+- **D-232**: the 4 pre-existing spellcasting foci (Holy Symbol/Arcane
+  Focus/Druidic Totem/Component Pouch) retyped from the Amulet slot to the
+  Hands (shield/off-hand) slot, plus 4 brand-new ones (Apprentice's Wand/
+  Gnarled Staff/Wizard's Spellbook/Scrying Crystal). Found and fixed a real
+  hidden balance bug along the way: `companionStartingGearForDifficulty`
+  hardcoded "amulet" as a caster's never-stripped implement — without a
+  fix, moving foci into `shield` would have started silently stripping
+  every caster companion's focus on Hard/Nightmare campaigns. See KI-181.
+- **D-233**: item 5's extra layer — a rarity + Magic Only filter row on
+  every Armory tab (persists across tab switches), and a Hands-only second
+  row (category/Simple-Martial/1H-2H, 11 chips). New pure `GearFilterSystem`
+  functions (`handsCategoryOf`/`weaponGripOf`/`isMagicItem`/
+  `applyCatalogFilters`) drive it; a filtered-to-empty catalog gets its own
+  message, and a gold border now marks any non-common row. See KI-182.
+
+Tests: **1739** (was 1721 at session start — 18 new, all in
+`tests/gearFilterSystem.test.ts`). Typecheck clean throughout. Production
+build succeeds (**158 modules**, unchanged — `GearFilterSystem.ts` already
+existed as a file). No browser available in this environment — see KI-181/
+KI-182 for click-through checklists. Still not started: item 6 (scrollable
+lists) and item 7 (weapon proficiency) — see `PHASE_HANDOFF.md`.
+
 ## 2026-09-03/04 playtest batch: freeze bug + difficulty/maps + victory flow + Armory consolidation — DONE, session handed off mid-batch (D-228 through D-231)
 
 Kevin's latest playtest notes (10 numbered items). Four pieces shipped and

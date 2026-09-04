@@ -74,9 +74,9 @@ describe("startingGearIdsForSlotType (D-193, Party Creation Overhaul Plan 2)", (
     expect(startingGearIdsForSlotType("ring")).not.toContain("ring-of-frostbite"); // rare
   });
 
-  it("includes the 4 new focus items under the amulet slot", () => {
-    const amuletIds = startingGearIdsForSlotType("amulet");
-    expect(amuletIds).toEqual(
+  it("includes the spellcasting focus items under the shield (off-hand) slot", () => {
+    const shieldIds = startingGearIdsForSlotType("shield");
+    expect(shieldIds).toEqual(
       expect.arrayContaining(["holy-symbol", "arcane-focus", "druidic-totem", "component-pouch"]),
     );
   });
@@ -96,14 +96,17 @@ describe("startingGearPointCost (D-194, campaign gear economy)", () => {
 });
 
 describe("companionStartingGearForDifficulty (D-194, campaign gear economy)", () => {
-  const casterBaseline = { weapon: "dagger", chest: "padded-armor", amulet: "arcane-focus" };
+  // D-232: a caster's spellcasting focus now lives in the `shield`
+  // (off-hand) slot, not `amulet` — this baseline's `shield` is a focus
+  // item (`itemKind: "focus"`), NOT a real Shield.
+  const casterBaseline = { weapon: "dagger", chest: "padded-armor", shield: "arcane-focus" };
   const martialBaseline = { weapon: "longsword", chest: "chain-shirt", shield: "shield" };
 
-  it("always keeps weapon and a caster's amulet (implement), regardless of difficulty", () => {
+  it("always keeps weapon and a caster's focus (implement), regardless of difficulty", () => {
     for (const difficultyId of ["easy", "normal", "hard", "nightmare"] as const) {
       const kit = companionStartingGearForDifficulty(casterBaseline, difficultyId);
       expect(kit.weapon).toBe("dagger");
-      expect(kit.amulet).toBe("arcane-focus");
+      expect(kit.shield).toBe("arcane-focus");
     }
   });
 
@@ -112,7 +115,7 @@ describe("companionStartingGearForDifficulty (D-194, campaign gear economy)", ()
     expect(companionStartingGearForDifficulty(martialBaseline, "normal")).toEqual(martialBaseline);
   });
 
-  it("trims discretionary slots (chest, then shield) as difficulty rises", () => {
+  it("trims discretionary slots (chest, then a real shield) as difficulty rises", () => {
     const hardKit = companionStartingGearForDifficulty(martialBaseline, "hard");
     expect(hardKit).toEqual({ weapon: "longsword", chest: "chain-shirt" }); // 1 discretionary slot: chest kept, shield dropped
 
@@ -120,14 +123,14 @@ describe("companionStartingGearForDifficulty (D-194, campaign gear economy)", ()
     expect(nightmareKit).toEqual({ weapon: "longsword" }); // 0 discretionary slots: weapon only
   });
 
-  it("a martial companion with no amulet in their baseline stays weapon-only at nightmare (no implement to preserve)", () => {
+  it("a martial companion with no amulet/focus in their baseline stays weapon-only at nightmare (no implement to preserve)", () => {
     expect(companionStartingGearForDifficulty(martialBaseline, "nightmare")).toEqual({ weapon: "longsword" });
   });
 
-  it("a caster companion always keeps weapon+amulet even at nightmare, with chest dropped", () => {
+  it("a caster companion always keeps weapon+focus even at nightmare, with chest dropped", () => {
     expect(companionStartingGearForDifficulty(casterBaseline, "nightmare")).toEqual({
       weapon: "dagger",
-      amulet: "arcane-focus",
+      shield: "arcane-focus",
     });
   });
 

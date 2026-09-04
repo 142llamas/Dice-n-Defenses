@@ -241,6 +241,12 @@ export interface EquipmentDefinition {
   baseItemId?: string;
   /** Rendering hint (used later for real art); a colour is used for now. */
   assetKey: string;
+  /**
+   * D-232: an explicit (not inferred) tag for a spellcasting focus — a
+   * `slot: "shield"` item held in the off-hand instead of a real Shield.
+   * Absent for every other item, including a real Shield.
+   */
+  itemKind?: "focus";
 }
 
 /**
@@ -456,21 +462,27 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     attackDamage: 2,
     assetKey: "equipment-amulet-of-fury",
   },
-  // Party Creation Overhaul Plan 2 (D-193): four basic spellcasting foci,
-  // part of the amulet slot's own starting-gear pool (any hero may pick
-  // one, same as any other amulet — no class gating). Reuses the
-  // pre-existing "amulet" slot (already a generic misc-trinket slot for
-  // bracers/wands/gauntlets, not literally amulet-shaped) rather than
-  // adding a new slot type — zero blast radius on GEAR_SLOT_IDS/
-  // attunement/slot-enumerating UI.
+  // Party Creation Overhaul Plan 2 (D-193): basic spellcasting foci, part of
+  // the shield (off-hand) slot's own starting-gear pool (any hero may pick
+  // one, same as any other off-hand item — no class gating; a real weapon
+  // still can't be equipped alongside a Two-Handed weapon, same grip-
+  // conflict rule a Shield already follows). D-232: retyped from "amulet"
+  // to "shield" (their real SRD hand-slot) and given `itemKind: "focus"` so
+  // The Armory's Hands tab and its Spell Focus sub-filter can find them —
+  // see `companionStartingGearForDifficulty` (data/characterCreation.ts)
+  // for why a focus still counts as an always-kept implement like `amulet`
+  // used to, not a discretionary slot like a real Shield. D-232 also added
+  // 4 more (apprentice's-wand/gnarled-staff/wizard's-spellbook/scrying-
+  // crystal) so "spellbook/staff/wand/crystal ball" all exist as real items.
   "holy-symbol": {
     id: "holy-symbol",
     name: "Holy Symbol",
     description: "+1 AC. A cleric's channel for divine magic.",
     cost: 6,
-    slot: "amulet",
+    slot: "shield",
     rarity: "common",
     armorClass: 1,
+    itemKind: "focus",
     assetKey: "equipment-holy-symbol",
   },
   "arcane-focus": {
@@ -478,9 +490,10 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     name: "Arcane Focus",
     description: "+1 basic-attack damage. A wizard or sorcerer's channel for arcane magic.",
     cost: 6,
-    slot: "amulet",
+    slot: "shield",
     rarity: "common",
     attackDamage: 1,
+    itemKind: "focus",
     assetKey: "equipment-arcane-focus",
   },
   "druidic-totem": {
@@ -488,9 +501,10 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     name: "Druidic Totem",
     description: "+1 AC. A druid's channel for primal magic.",
     cost: 6,
-    slot: "amulet",
+    slot: "shield",
     rarity: "common",
     armorClass: 1,
+    itemKind: "focus",
     assetKey: "equipment-druidic-totem",
   },
   "component-pouch": {
@@ -498,10 +512,55 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     name: "Component Pouch",
     description: "+1 basic-attack damage. A warlock or bard's spellcasting component kit.",
     cost: 6,
-    slot: "amulet",
+    slot: "shield",
     rarity: "common",
     attackDamage: 1,
+    itemKind: "focus",
     assetKey: "equipment-component-pouch",
+  },
+  "apprentices-wand": {
+    id: "apprentices-wand",
+    name: "Apprentice's Wand",
+    description: "+1 basic-attack damage. A slender wand favored by fledgling spellcasters.",
+    cost: 6,
+    slot: "shield",
+    rarity: "common",
+    attackDamage: 1,
+    itemKind: "focus",
+    assetKey: "equipment-apprentices-wand",
+  },
+  "gnarled-staff": {
+    id: "gnarled-staff",
+    name: "Gnarled Staff",
+    description: "+1 AC. A twisted length of wood that channels primal or arcane power.",
+    cost: 6,
+    slot: "shield",
+    rarity: "common",
+    armorClass: 1,
+    itemKind: "focus",
+    assetKey: "equipment-gnarled-staff",
+  },
+  "wizards-spellbook": {
+    id: "wizards-spellbook",
+    name: "Wizard's Spellbook",
+    description: "+1 basic-attack damage. A leather-bound tome of arcane formulae.",
+    cost: 6,
+    slot: "shield",
+    rarity: "common",
+    attackDamage: 1,
+    itemKind: "focus",
+    assetKey: "equipment-wizards-spellbook",
+  },
+  "scrying-crystal": {
+    id: "scrying-crystal",
+    name: "Scrying Crystal",
+    description: "+1 AC. A polished orb that helps a caster focus their will.",
+    cost: 6,
+    slot: "shield",
+    rarity: "common",
+    armorClass: 1,
+    itemKind: "focus",
+    assetKey: "equipment-scrying-crystal",
   },
   "boots-of-striding": {
     id: "boots-of-striding",
@@ -632,6 +691,10 @@ export const EQUIPMENT_ORDER: string[] = [
   "arcane-focus",
   "druidic-totem",
   "component-pouch",
+  "apprentices-wand",
+  "gnarled-staff",
+  "wizards-spellbook",
+  "scrying-crystal",
   "boots-of-striding",
   "boots-of-the-brawler",
   ...WEAPON_ORDER,

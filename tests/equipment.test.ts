@@ -507,9 +507,9 @@ describe("Hero starting equipment — startingGearIds (D-193)", () => {
     expect(hero.armorClass).toBe(13 + 0 + 2);
   });
 
-  it("fills a caster's focus (amulet) third slot alongside weapon+chest", () => {
-    const hero = heroWithStartingGearIds({ weapon: "dagger", chest: "padded-armor", amulet: "arcane-focus" });
-    expect(hero.equippedItems).toEqual({ weapon: "dagger", chest: "padded-armor", amulet: "arcane-focus" });
+  it("fills a caster's focus (shield/off-hand slot) third slot alongside weapon+chest", () => {
+    const hero = heroWithStartingGearIds({ weapon: "dagger", chest: "padded-armor", shield: "arcane-focus" });
+    expect(hero.equippedItems).toEqual({ weapon: "dagger", chest: "padded-armor", shield: "arcane-focus" });
     // arcane-focus grants +1 attack damage — confirm it's actually summed in.
     const withoutFocus = heroWithStartingGearIds({ weapon: "dagger", chest: "padded-armor" });
     expect(hero.effectiveAttackDamage).toBe(withoutFocus.effectiveAttackDamage + 1);

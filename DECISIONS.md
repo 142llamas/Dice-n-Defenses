@@ -13527,3 +13527,285 @@ pick paperdoll-click resolution.
 **Important files**: `src/game/systems/GearFilterSystem.ts`,
 `tests/gearFilterSystem.test.ts`, `src/game/scenes/GearShopScene.ts`,
 `src/game/scenes/CharacterCreationScene.ts`.
+
+### D-232 — Item 8: spellcasting focus items become real Hands-slot items, plus a hidden gear-difficulty balance fix
+
+Kevin's item 8: "Add missing spellcasting focus items: spellbook, staff,
+wand, crystal ball, holy symbol, etc." — Holy Symbol/Arcane Focus/Druidic
+Totem/Component Pouch already existed (D-193) but Kevin didn't realize it;
+they were also typed `slot: "amulet"`, wrong both for SRD accuracy (a real
+focus is hand-held) and for item 5's own "Spell Focus" Hands sub-filter
+framing. Built first, ahead of D-233, specifically so that sub-filter
+launches populated instead of permanently empty — an empty category chip is
+exactly the "dead scaffolding" pattern Kevin has rejected before (see
+`feedback_no_dead_scaffolding` memory).
+
+**`data/equipment.ts`**: added `itemKind?: "focus"` to `EquipmentDefinition`
+(explicit tag, not inferred — a real Shield in the same `"shield"` slot has
+no `itemKind`). Retyped the 4 existing foci from `slot: "amulet"` to `slot:
+"shield"`, added `itemKind: "focus"` to each. Verified safe before touching
+anything: `Hero.effectiveAttackDamage` excludes only the `"weapon"` slot
+from its flat-bonus loop, not `"shield"`, so the existing `+1 attackDamage`
+foci keep working; the Amulet slot still has other real items (Amulet of
+Fury/Warding/Withering, etc.) so its own catalog doesn't go empty. Added 4
+new common-rarity foci (also `slot: "shield"`, `itemKind: "focus"`, 6g,
+matching the original 4's cost/stat shape): `apprentices-wand`,
+`gnarled-staff`, `wizards-spellbook`, `scrying-crystal` — names checked
+against `magicItems.ts`'s unrelated "Wand of Magic Missile"/"Staff of
+Healing" (a different `chargedSpell` mechanic, still `slot: "amulet"`) —
+no collision.
+
+**The hidden balance fix**: `companionStartingGearForDifficulty`
+(`data/characterCreation.ts`, D-194) hardcoded `amulet` as "a caster's
+implement — always survives difficulty scaling" and `["chest", "shield"]`
+as the discretionary slots trimmed on Hard/Nightmare. Retyping foci to
+`shield` without fixing this would have silently started stripping every
+caster companion's spellcasting focus on Hard/Nightmare campaigns the
+moment this shipped — a real regression, not just a display change, and NOT
+something the original ask anticipated. Fixed by checking `itemKind ===
+"focus"` on the baseline's `shield` entry: a focus joins `weapon`/`amulet`
+in the always-kept set and is explicitly skipped in the discretionary loop,
+while a real Shield in that same slot is completely unaffected (still
+counts against `companionDiscretionaryGearSlots` exactly as before).
+
+**Ripple fixes** (grepped for every place these 4 items' old `amulet` key
+was assumed): `data/companions.ts` — the 6 caster companions (Fenna/druid,
+Isolde/wizard, Dorian/warlock, Wren/bard, Perrin/cleric, Ellery/sorcerer)
+now key their focus under `shield` instead of `amulet` in their
+`startingGearIds`. `tests/characterCreationData.test.ts`,
+`tests/equipment.test.ts`, `tests/partyInventorySystem.test.ts` updated to
+match (same items, correct slot).
+
+**Not touched**: `CharacterCreationScene.ts`'s gear picker needed no code
+change — it already lists whatever `startingGearIdsForSlotType` returns per
+slot type, so the 8 foci simply moved from its Amulet tab to its
+Shield/off-hand tab automatically. That's the intended, correct side
+effect, not a regression.
+
+Verified: `npm run typecheck` clean, all 1721 tests still pass (no count
+change — this is a retype + ripple-fix, not new test surface; D-233 below
+adds the new tests). Production build succeeds. Needs Kevin's own in-browser
+pass; no visual/feel claim made.
+
+**Important files**: `src/game/data/equipment.ts`,
+`src/game/data/characterCreation.ts`, `src/game/data/companions.ts`,
+`tests/characterCreationData.test.ts`, `tests/equipment.test.ts`,
+`tests/partyInventorySystem.test.ts`.
+
+### D-233 — Item 5's extra layer: Armory sub-filters — rarity + Magic Only (every tab), Hands category/weapon-type/grip chips
+
+Kevin's item 5 (the part D-231 deliberately left for later): "sub-filters
+within Hands for melee/ranged/spell-focus/shields..., a 1H/2H
+distinguisher, a rarity sub-filter for ALL item types, and a magic-item
+visual indicator + filter." Built on top of D-232 so the Spell Focus
+category launches with real members instead of empty.
+
+**`GearFilterSystem.ts`** — 5 new pure functions/types, appended alongside
+the existing D-231 pair: `handsCategoryOf(itemId)` (→ `"melee"`/`"ranged"`/
+`"focus"`/`"shield"`/`null` — a real Shield and a D-232 focus both live in
+`slot: "shield"` but are told apart by `itemKind`), `weaponGripOf(itemId)`
+(→ `"oneHanded"`/`"twoHanded"`/`null`, off the existing `isTwoHandedWeapon`),
+`isMagicItem(rarity)` (the one place "magic" is defined for this feature —
+anything above Common), and `applyCatalogFilters(itemIds, getRarity,
+filters)` — the actual composed filter pass, short-circuiting each
+dimension by its "all"/false default so it never calls
+`handsCategoryOf`/`weaponGripOf` (which assume an equipment id) on a potion
+id. Reuses `WeaponCategory` from `data/weapons.ts` for the Simple/Martial
+axis rather than inventing a parallel type, since item 7 (weapon
+proficiency, still deferred) will need the exact same axis later. 18 new
+tests in `tests/gearFilterSystem.test.ts`, same flat one-branch-per-`it`
+style as the existing 15.
+
+**`GearShopScene.ts`**: two new chip rows, same `createOrnateButton(...,
+{variant: "tab"})` + `.setSelected()` pattern `buildSlotTabs` already uses.
+A rarity row (All/Common/Uncommon/Rare/Very Rare/Legendary + a "✦ Magic
+Only" toggle) renders on every tab and — unlike every other piece of this
+scene's state — deliberately survives a `navigateTo` tab switch, since
+"applies across every slot tab" reads as a persistent browsing preference,
+not a per-tab setting. A second row (category + Simple/Martial + 1H/2H, 11
+chips) renders only on the Hands tab; `centeredRowX` already auto-shrinks
+chip width to fit rather than overflowing, confirmed before relying on it.
+A new `extraFilterOffset` field (34px, +34 more on Hands) shifts the compare
+strip and catalog panel down to make room instead of overlapping — checked
+against the real fixed canvas size (`GAME_HEIGHT` 1080, not the older 720)
+to confirm no realistic bottom-of-screen overflow even in the worst case
+(Hands tab, both extra rows).
+
+`buildCatalog` applies `applyCatalogFilters` to `eligibleIds` BEFORE the
+pre-existing occupant-pinning step, so an equipped/carried item a filter
+would hide still shows as the pinned Equipped/Carried row — same guarantee
+slot-eligibility filtering already gave. An all-filtered-out state now shows
+"No items match these filters." instead of the generic empty-slot message.
+A thin gold `Graphics` stroke marks any non-common catalog row, additive to
+the existing selection highlight.
+
+**Not touched**: `CharacterCreationScene.ts`'s gear picker — same D-231
+reasoning (no purchase economy there to motivate filter chips, Kevin's own
+phrasing reads as Armory-specific).
+
+Verified: `npm run typecheck` clean, all 1739 tests pass (18 new). Production
+build succeeds, 158 modules (unchanged — `GearFilterSystem.ts` already
+existed as a file). Needs Kevin's own in-browser pass — this is scene-layer
+UI/layout, no visual/feel claim made.
+
+**Important files**: `src/game/systems/GearFilterSystem.ts`,
+`tests/gearFilterSystem.test.ts`, `src/game/scenes/GearShopScene.ts`.
+
+### D-234 — Item 6: scrollable lists (everywhere except the Compendium) replace pagination
+
+Kevin's item 6: "Scrollable tables instead of pagination, everywhere except
+the Compendium." Closes the "not started" half of item 6/7 left at the
+2026-09-03/04 mid-batch handoff, alongside D-235.
+
+**New pure math, `src/game/systems/ScrollListMath.ts`** (unit-tested,
+`tests/scrollListMath.test.ts`, 24 tests): `cumulativeOffsets`/
+`contentHeight` (works over an array of PER-ROW heights, not one fixed
+height, so the same module serves both uniform-row consumers and
+BestiaryScene's variable-height wrapped entries), `clampScrollOffset`,
+`visibleRowRange` (which rows currently overlap the viewport — a row is
+"visible" if ANY part of it is inside, so a partially-scrolled row still
+gets drawn and relies on a clip mask, not exact-row-boundary slicing, to
+look right), `scrollOffsetToReveal` (scroll-into-view, powers keyboard/
+gamepad focus-follows-scroll), `scrollbarThumbMetrics`/
+`scrollOffsetForThumbY` (a draggable thumb's size/position and its inverse).
+
+**New Phaser glue, `src/game/scenes/uiScrollList.ts`**: `renderScrollListRows`
+(draws only the visible rows inside a `Graphics.createGeometryMask()` clip,
+matching this codebase's existing "destroy and redraw everything on
+refresh" convention rather than a persistent-widget lifecycle — an optional
+`overlay` param pushes created objects into a caller-tracked array for
+scenes that use that convention; when omitted, a caller's own before/after-
+diff capture picks them up instead), `renderScrollbarVisual` (the draggable
+thumb, drawn separately since `BattleScene`'s persistent-button grid reuses
+it without going through `renderScrollListRows`), `attachWheelScroll`
+(registered ONCE per scene, in `create()` — not per-refresh, since
+`scene.input.on("wheel", ...)` is a scene-level subscription, not a
+GameObject; confirmed safe against Phaser's own `InputPlugin.shutdown()`
+source, which calls `removeAllListeners()` on every scene shutdown, so a
+scene Phaser reuses across restarts — `BattleScene` explicitly documents
+this reuse — never stacks duplicate handlers), and `createViewportMask` (the
+shared mask-graphics helper, factored out for `BestiaryScene`'s own
+different rendering shape to reuse). No Prev/Next buttons or "Page N/M" text
+survive anywhere — replaced entirely by mouse wheel + thumb drag.
+
+**Applied to all 5 consumers**, smallest blast radius first:
+1. **`GearShopScene.ts`** catalog — `CATALOG_PAGE_SIZE` renamed
+   `CATALOG_VISIBLE_ROWS` (now a fixed viewport row count, not a page size);
+   `buildActionButton` changed `void` → returns its `Container` so row
+   objects can be parented into the masked scroll container.
+2. **`CharacterCreationScene.ts`** gear picker — same treatment,
+   `gearPickerCatalogPage` → `gearPickerScrollOffset`.
+3. **`BattleScene.ts`** spellbook picker — each scroll "row" is one GRID row
+   (up to 4 cards); the grid's own fixed width doesn't shrink for the
+   scrollbar, which draws in the existing margin instead.
+4. **`BattleScene.ts`** in-battle shop/debug item grid — the ONE consumer
+   using the persistent-buttons-with-visibility-toggle idiom instead of
+   destroy/rebuild (all 4 grids' buttons are still created once, up front,
+   at their TRUE unscrolled row/col position); `showShopUI`/
+   `showDebugPickerUI` now reposition + show/hide via `visibleRowRange`
+   instead of `Math.floor(i/PAGE_SIZE)===page`, and `moveGridFocus` calls
+   `scrollOffsetToReveal` so arrow-key navigation scrolls the list instead
+   of hard-jumping a page boundary. `turnGridPage`/`refreshPageNav`/the
+   Prev/Next Text buttons are gone, replaced by `refreshGridScrollbar`.
+5. **`BestiaryScene.ts`** — the one STRUCTURAL change: entries used to be
+   one joined multi-paragraph `Text` per page (`pageEntries.map(...)
+   .join("\n\n")`); now each entry is its own `Text` object, created up
+   front purely to MEASURE its real wrapped height (`.height` is only
+   accurate once a Text object exists with its final `wordWrap` width) before
+   laying out scroll offsets via `cumulativeOffsets`. Cheap for a roster this
+   size, and the only way to know a wrapped Text's true height without
+   reimplementing Phaser's own text-wrapping metrics.
+
+`CompendiumScene.ts` stays paginated — Kevin's explicit exception, untouched.
+`LoadGameScene`/`CompanionRosterScene` already showed everything unpaginated
+— nothing to do there.
+
+Verified: `npm run typecheck` clean, all 1763 tests pass (24 new, all in
+`tests/scrollListMath.test.ts`). Production build succeeds, 160 modules (up
+from 158 — the 2 new files). `npm run dev` + an HTTP check confirms the
+server boots. Needs Kevin's own in-browser pass for scroll feel (wheel
+speed, thumb drag responsiveness, whether a partially-scrolled row's clip
+looks right) — no visual/feel claim made. See KI-183.
+
+**Important files**: `src/game/systems/ScrollListMath.ts`,
+`tests/scrollListMath.test.ts`, `src/game/scenes/uiScrollList.ts`,
+`src/game/scenes/GearShopScene.ts`, `src/game/scenes/
+CharacterCreationScene.ts`, `src/game/scenes/BattleScene.ts`,
+`src/game/scenes/BestiaryScene.ts`.
+
+### D-235 — Item 7: real weapon-proficiency system, auto-filtering the Hands tab
+
+Kevin's item 7: "Is there a weapon-proficiency system? If so, auto-filter
+out items a class can't use." There wasn't one — only saving-throw
+proficiencies existed, with explicit "Inert — no skill-proficiency system"
+comments in `classes.ts`. Closes the entire 10-item playtest list from the
+2026-09-03/04 session, alongside D-234.
+
+**Real SRD 5.2.1 sourcing, verified during implementation (not assumed from
+memory)**: fetched each of the 12 classes' "Weapon Proficiencies" line
+directly from a 2024-SRD mirror, matching this project's existing SRD 5.2.1
+sourcing for `data/classes.ts`/`data/weapons.ts` (the prior handoff's note
+to source "SRD 5.1" was a slip — both the weapon catalogue and class
+features this is gating are already 5.2.1). Every class gets Simple
+weapons — universal in the real rules, not a per-class variable. Martial
+access: full for Barbarian/Fighter/Paladin/Ranger; none for Bard/Cleric/
+Druid/Sorcerer/Warlock/Wizard; Monk gets martial weapons with the Light
+property, Rogue gets martial weapons with Finesse OR Light. The old
+assumption that Wizard/Sorcerer have named weapon exceptions (dagger/dart/
+sling/quarterstaff/light crossbow) turned out to be moot either way — every
+one of those is already a Simple weapon, so that list was always redundant
+with blanket simple-weapon proficiency. 2024 SRD's Cleric (Divine Order →
+Protector)/Druid (Primal Order → Warden) optional level-1 choice to gain
+martial proficiency instead isn't modeled — `classes.ts` never built Divine
+Order/Primal Order (only Divine Domain, a different level-1 choice), and
+adding that choice mechanic is out of scope for a proficiency FILTER pass;
+both are modeled at their Simple-only base line. A deliberate scope call,
+not an oversight — flagging for Kevin.
+
+**New data, `src/game/data/proficiencies.ts`**: `WEAPON_PROFICIENCIES`,
+`{simpleWeapons: true, martialWeapons: boolean,
+martialExceptionProperties?: WeaponProperty[]}` per class. `spellFociAllowed`
+is deliberately NOT a stored field — it's derived from
+`getClassDefinition(id).spellcasting !== undefined` (already this project's
+own "present only for caster classes" signal), avoiding a second source of
+truth that could drift.
+
+**New pure system, `src/game/systems/ProficiencySystem.ts`**:
+`isProficientWithHandsItem(classId, itemId)` — `null` category (not a
+weapon/shield/focus item) always passes; a real Shield always passes (no
+armor/shield-proficiency system exists or is being added this pass — this
+gates WEAPONS, exactly what was asked); a focus checks `spellcasting !==
+undefined`; a weapon checks the class's table, folding in
+`martialExceptionProperties`. 30 new tests, `tests/proficiencySystem.test.ts`.
+
+**Wiring**: `GearFilterSystem.ts`'s `CatalogFilters` gains
+`proficiencyClassId: string | null`, applied inside `applyCatalogFilters`
+with the same "null/'all' unless it's the Hands tab" guard the D-233 filters
+already use, so `isProficientWithHandsItem` (which assumes an equipment id)
+never reaches a potion id. `GearShopScene.buildCatalog` passes the shopping
+hero's `classId` on the Hands tab only, plus a one-line "N hidden — not
+proficient" footer (computed by diffing the filtered count with/without the
+proficiency clause, so it counts ONLY what proficiency itself hid, not other
+active filters). `CharacterCreationScene.refreshGearPicker`'s starting-gear
+pool gets the identical filter + footer treatment — safe to apply
+unconditionally there since that picker's pool never contains potion ids.
+Both follow this project's existing convention (a gear-point overspend item
+"simply doesn't appear in the list at all") rather than a disabled/greyed
+toggle. **Out of scope, flagged for Kevin**: `BattleScene`'s in-battle shop
+grid still sells everything regardless of proficiency — the original ask
+only cited "the Hands tab" (Armory) and `CharacterCreationScene`'s existing
+hide-pattern, not the in-battle shop; a real gap worth knowing about, same
+category as item 5's Hands consolidation being Armory-only.
+
+Verified: `npm run typecheck` clean, all 1795 tests pass (32 new: 30 in
+`tests/proficiencySystem.test.ts`, 2 more added to
+`tests/gearFilterSystem.test.ts` for the new filter dimension). Production
+build succeeds, 162 modules (up from 160 — the 2 new files). Needs Kevin's
+own in-browser pass — whether hiding items reads as helpful or confusing is
+a feel judgment call this environment can't make. See KI-184.
+
+**Important files**: `src/game/data/proficiencies.ts`,
+`src/game/systems/ProficiencySystem.ts`, `tests/proficiencySystem.test.ts`,
+`src/game/systems/GearFilterSystem.ts`, `tests/gearFilterSystem.test.ts`,
+`src/game/scenes/GearShopScene.ts`, `src/game/scenes/
+CharacterCreationScene.ts`.

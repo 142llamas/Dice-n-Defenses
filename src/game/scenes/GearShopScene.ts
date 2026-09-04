@@ -21,7 +21,18 @@ import { getClassDefinition } from "../data/classes";
 import { POTION_DEFINITIONS, getPotionDefinition, GENERAL_SLOT_LABELS, type GeneralSlotId } from "../data/potions";
 import { sellValueForCost } from "../systems/EconomySystem";
 import { isItemEligibleForSlot, previewGearSlotChange, formatGearDelta } from "../systems/GearCompareSystem";
-import { decideSlotPairPlacement, decideHandsPlacement } from "../systems/GearFilterSystem";
+import {
+  decideSlotPairPlacement,
+  decideHandsPlacement,
+  applyCatalogFilters,
+  isMagicItem,
+  type HandsCategory,
+  type WeaponGrip,
+  type CatalogFilters,
+} from "../systems/GearFilterSystem";
+import { clampScrollOffset, contentHeight as scrollContentHeight } from "../systems/ScrollListMath";
+import { renderScrollListRows, renderScrollbarVisual, attachWheelScroll, type ScrollListRect, type ScrollRegion } from "./uiScrollList";
+import type { WeaponCategory } from "../data/weapons";
 import type { BattleScene } from "./BattleScene";
 
 /**
@@ -60,7 +71,8 @@ import type { BattleScene } from "./BattleScene";
  */
 
 const PRIME_DELAY_MS = 650;
-const CATALOG_PAGE_SIZE = 9;
+/** D-234: no longer a "page size" — the fixed number of rows the scrollable catalog panel is tall enough to show at once. */
+const CATALOG_VISIBLE_ROWS = 9;
 
 // Sidebar-vs-content split (mockup layout): a narrow hero list on the left,
 // one wide shopping panel on the right for the selected hero/slot.
@@ -174,8 +186,29 @@ export class GearShopScene extends Phaser.Scene {
   private targetSlot: ArmorySlotId | null = null;
   private primed = false;
   private primeTimer: Phaser.Time.TimerEvent | null = null;
-  private catalogPage = 0;
+  /** D-234: scroll offset (px) replacing the old page index — see `uiScrollList.ts`. */
+  private catalogScrollOffset = 0;
+  /** Set each `buildCatalog()` call so the persistent wheel handler (registered once in `create()`) always reflects the current filter/list state; null while nothing scrollable is on screen. */
+  private catalogViewportRect: ScrollListRect | null = null;
+  private catalogContentHeight = 0;
   private contentObjects: Phaser.GameObjects.GameObject[] = [];
+
+  /**
+   * D-233 (item 5's extra layer): catalog sub-filters. Rarity/Magic Only
+   * apply on every tab and deliberately persist across `navigateTo` (a
+   * player browsing "only Rare+" across several slots shouldn't have to
+   * reselect it each time) — only `init()` resets them for a fresh shop
+   * session. The Hands-only three are harmless to leave set while browsing
+   * a different tab, since they only ever affect `buildCatalog`'s
+   * `applyCatalogFilters` call when `isHandsFilter(this.selectedSlot)`.
+   */
+  private rarityFilter: EquipmentRarity | "all" = "all";
+  private magicOnlyFilter = false;
+  private handsCategoryFilter: HandsCategory | "all" = "all";
+  private weaponCategoryFilter: WeaponCategory | "all" = "all";
+  private gripFilter: WeaponGrip | "all" = "all";
+  /** Vertical space the filter-chip rows take this refresh — 0 outside Hands' extra row. Shifts the compare strip/catalog down instead of overlapping. */
+  private extraFilterOffset = 0;
 
   constructor() {
     super("GearShopScene");
@@ -188,7 +221,12 @@ export class GearShopScene extends Phaser.Scene {
     this.selectedItemId = null;
     this.targetSlot = null;
     this.primed = false;
-    this.catalogPage = 0;
+    this.catalogScrollOffset = 0;
+    this.rarityFilter = "all";
+    this.magicOnlyFilter = false;
+    this.handsCategoryFilter = "all";
+    this.weaponCategoryFilter = "all";
+    this.gripFilter = "all";
   }
 
   create(): void {
@@ -199,7 +237,24 @@ export class GearShopScene extends Phaser.Scene {
       this.input.keyboard?.removeAllListeners();
     });
     onViewportResize(this, () => this.refresh());
+    // D-234: registered once (not per-refresh) since this is a scene-level
+    // subscription, not a GameObject — `activeCatalogScrollRegion` is
+    // re-read on every wheel event so it always reflects the current filter/
+    // scroll state.
+    attachWheelScroll(
+      this,
+      () => this.activeCatalogScrollRegion(),
+      (offset) => {
+        this.catalogScrollOffset = offset;
+        this.refresh();
+      },
+    );
     this.refresh();
+  }
+
+  private activeCatalogScrollRegion(): ScrollRegion | null {
+    if (!this.catalogViewportRect) return null;
+    return { rect: this.catalogViewportRect, totalContentHeight: this.catalogContentHeight, scrollOffset: this.catalogScrollOffset };
   }
 
   private close(): void {
@@ -230,7 +285,7 @@ export class GearShopScene extends Phaser.Scene {
     this.selectedItemId = null;
     this.targetSlot = null;
     this.primed = false;
-    this.catalogPage = 0;
+    this.catalogScrollOffset = 0;
     this.refresh();
   }
 
@@ -350,9 +405,14 @@ export class GearShopScene extends Phaser.Scene {
     const contentX = SIDEBAR_X + SIDEBAR_WIDTH + CONTENT_GAP;
     const contentWidth = width - contentX - 40;
 
+    const showHandsSubFilters = isHandsFilter(this.selectedSlot);
+    this.extraFilterOffset = 34 + (showHandsSubFilters ? 34 : 0);
+
     this.buildHeroSidebar(height);
     this.buildShopHeader(contentX);
     this.buildSlotTabs(contentX, contentWidth);
+    this.buildRarityFilterRow(contentX, contentWidth);
+    if (showHandsSubFilters) this.buildHandsSubFilterRow(contentX, contentWidth);
     this.buildCompareStrip(contentX, contentWidth);
     this.buildCatalog(contentX, contentWidth);
 
@@ -480,6 +540,80 @@ export class GearShopScene extends Phaser.Scene {
     });
   }
 
+  /** D-233: rarity + Magic Only — always shown, every tab, and (unlike everything else in this scene) deliberately survives a tab switch. */
+  private buildRarityFilterRow(contentX: number, contentWidth: number): void {
+    const options: Array<{ id: EquipmentRarity | "all"; label: string }> = [
+      { id: "all", label: "All Rarities" },
+      { id: "common", label: "Common" },
+      { id: "uncommon", label: "Uncommon" },
+      { id: "rare", label: "Rare" },
+      { id: "veryRare", label: RARITY_LABELS.veryRare },
+      { id: "legendary", label: "Legendary" },
+    ];
+    const chipWidth = 96;
+    const y = CONTENT_TOP + 94;
+    const { xs, itemWidth } = centeredRowX(options.length + 1, chipWidth, 6, contentX + contentWidth / 2, contentWidth);
+    options.forEach((opt, i) => {
+      createOrnateButton(this, xs[i], y, itemWidth, 28, opt.label, () => {
+        this.rarityFilter = opt.id;
+        this.catalogScrollOffset = 0;
+        this.refresh();
+      }, { variant: "tab", fontSize: 10, depth: 4 }).setSelected(this.rarityFilter === opt.id);
+    });
+    createOrnateButton(this, xs[options.length], y, itemWidth, 28, "✦ Magic Only", () => {
+      this.magicOnlyFilter = !this.magicOnlyFilter;
+      this.catalogScrollOffset = 0;
+      this.refresh();
+    }, { variant: "tab", fontSize: 10, depth: 4 }).setSelected(this.magicOnlyFilter);
+  }
+
+  /** D-233 (item 5's extra layer): Hands-only category/weapon-type/grip chips — one row, `centeredRowX` shrinks chip width to fit rather than overflowing. */
+  private buildHandsSubFilterRow(contentX: number, contentWidth: number): void {
+    const categories: Array<{ id: HandsCategory | "all"; label: string }> = [
+      { id: "all", label: "All" },
+      { id: "melee", label: "Melee" },
+      { id: "ranged", label: "Ranged" },
+      { id: "shield", label: "Shields" },
+      { id: "focus", label: "Spell Focus" },
+    ];
+    const weaponCategories: Array<{ id: WeaponCategory | "all"; label: string }> = [
+      { id: "all", label: "Any Type" },
+      { id: "simple", label: "Simple" },
+      { id: "martial", label: "Martial" },
+    ];
+    const grips: Array<{ id: WeaponGrip | "all"; label: string }> = [
+      { id: "all", label: "Any Grip" },
+      { id: "oneHanded", label: "1H" },
+      { id: "twoHanded", label: "2H" },
+    ];
+    const total = categories.length + weaponCategories.length + grips.length;
+    const chipWidth = 84;
+    const y = CONTENT_TOP + 94 + 34;
+    const { xs, itemWidth } = centeredRowX(total, chipWidth, 6, contentX + contentWidth / 2, contentWidth);
+    let i = 0;
+    categories.forEach((c) => {
+      createOrnateButton(this, xs[i++], y, itemWidth, 26, c.label, () => {
+        this.handsCategoryFilter = c.id;
+        this.catalogScrollOffset = 0;
+        this.refresh();
+      }, { variant: "tab", fontSize: 9, depth: 4 }).setSelected(this.handsCategoryFilter === c.id);
+    });
+    weaponCategories.forEach((w) => {
+      createOrnateButton(this, xs[i++], y, itemWidth, 26, w.label, () => {
+        this.weaponCategoryFilter = w.id;
+        this.catalogScrollOffset = 0;
+        this.refresh();
+      }, { variant: "tab", fontSize: 9, depth: 4 }).setSelected(this.weaponCategoryFilter === w.id);
+    });
+    grips.forEach((g) => {
+      createOrnateButton(this, xs[i++], y, itemWidth, 26, g.label, () => {
+        this.gripFilter = g.id;
+        this.catalogScrollOffset = 0;
+        this.refresh();
+      }, { variant: "tab", fontSize: 9, depth: 4 }).setSelected(this.gripFilter === g.id);
+    });
+  }
+
   private buildCompareStrip(contentX: number, contentWidth: number): void {
     if (isHandsFilter(this.selectedSlot)) {
       this.buildHandsCompareStrip(contentX, contentWidth);
@@ -492,7 +626,7 @@ export class GearShopScene extends Phaser.Scene {
     }
 
     const panelCenterX = contentX + contentWidth / 2;
-    const panelTop = CONTENT_TOP + 94;
+    const panelTop = CONTENT_TOP + 94 + this.extraFilterOffset;
     const panelWidth = contentWidth;
     const panelHeight = 100;
     drawParchmentPanel(this, panelCenterX, panelTop + panelHeight / 2, panelWidth, panelHeight, 2);
@@ -553,7 +687,7 @@ export class GearShopScene extends Phaser.Scene {
    */
   private buildPairCompareStrip(contentX: number, contentWidth: number, pair: [ArmorySlotId, ArmorySlotId]): void {
     const panelCenterX = contentX + contentWidth / 2;
-    const panelTop = CONTENT_TOP + 94;
+    const panelTop = CONTENT_TOP + 94 + this.extraFilterOffset;
     const panelWidth = contentWidth;
     const panelHeight = 100;
     drawParchmentPanel(this, panelCenterX, panelTop + panelHeight / 2, panelWidth, panelHeight, 2);
@@ -644,7 +778,7 @@ export class GearShopScene extends Phaser.Scene {
    */
   private buildHandsCompareStrip(contentX: number, contentWidth: number): void {
     const panelCenterX = contentX + contentWidth / 2;
-    const panelTop = CONTENT_TOP + 94;
+    const panelTop = CONTENT_TOP + 94 + this.extraFilterOffset;
     const panelWidth = contentWidth;
     const panelHeight = 100;
     drawParchmentPanel(this, panelCenterX, panelTop + panelHeight / 2, panelWidth, panelHeight, 2);
@@ -700,15 +834,18 @@ export class GearShopScene extends Phaser.Scene {
 
   private buildCatalog(contentX: number, contentWidth: number): void {
     const panelCenterX = contentX + contentWidth / 2;
-    const panelTop = CONTENT_TOP + 210;
+    const panelTop = CONTENT_TOP + 210 + this.extraFilterOffset;
     const panelWidth = contentWidth;
     const rowHeight = 58;
     const rowGap = 8;
-    const listHeight = CATALOG_PAGE_SIZE * (rowHeight + rowGap) - rowGap + 24;
+    const listHeight = CATALOG_VISIBLE_ROWS * (rowHeight + rowGap) - rowGap + 24;
     drawParchmentPanel(this, panelCenterX, panelTop + listHeight / 2, panelWidth, listHeight, 2);
 
     const hero = this.selectedHero();
-    if (!hero) return;
+    if (!hero) {
+      this.catalogViewportRect = null;
+      return;
+    }
 
     // D-228 (KI-177 items 3/4/5): a consolidated Potions/Rings/Hands filter
     // has TWO physical occupants instead of one — everything below that
@@ -728,59 +865,118 @@ export class GearShopScene extends Phaser.Scene {
       : hands
         ? allIds.filter((id) => !isPotionItem(id) && (isItemEligibleForSlot(id, "weapon") || isItemEligibleForSlot(id, "shield")))
         : allIds.filter((id) => !isPotionItem(id) && isItemEligibleForSlot(id, this.selectedSlot as GearSlotId));
+    // D-233: rarity/Magic Only apply on every tab; the Hands-only three only
+    // ever leave "all" when this IS the Hands tab (their chips don't even
+    // render otherwise), so they're no-ops for every other slot filter.
+    // D-235 (item 7): proficiency is likewise Hands-only, and not a chip the
+    // player toggles — it's always on for whichever hero is being shopped
+    // for, with a footer reporting how many it hid (see below).
+    const proficiencyClassId = hands ? (hero.classId ?? null) : null;
+    const filters: CatalogFilters = {
+      rarity: this.rarityFilter,
+      magicOnly: this.magicOnlyFilter,
+      handsCategory: hands ? this.handsCategoryFilter : "all",
+      weaponCategory: hands ? this.weaponCategoryFilter : "all",
+      grip: hands ? this.gripFilter : "all",
+      proficiencyClassId,
+    };
+    const filteredIds = applyCatalogFilters(eligibleIds, itemRarity, filters);
+    const proficiencyHiddenCount = proficiencyClassId
+      ? applyCatalogFilters(eligibleIds, itemRarity, { ...filters, proficiencyClassId: null }).length - filteredIds.length
+      : 0;
     // Either occupant may be a unique/starting item outside the level-gated
-    // visible catalog — still pin it at the top of the list as the
-    // Equipped/Carried row so its Sell action is always reachable.
-    const missingOccupantIds = occupantIds.filter((id) => !eligibleIds.includes(id));
-    const list = missingOccupantIds.length > 0 ? [...new Set([...missingOccupantIds, ...eligibleIds])] : eligibleIds;
+    // visible catalog, or hidden by the active filters — still pin it at the
+    // top of the list as the Equipped/Carried row so its Sell action is
+    // always reachable.
+    const missingOccupantIds = occupantIds.filter((id) => !filteredIds.includes(id));
+    const list = missingOccupantIds.length > 0 ? [...new Set([...missingOccupantIds, ...filteredIds])] : filteredIds;
 
     if (list.length === 0) {
+      this.catalogViewportRect = null;
+      const filtersActive =
+        filters.rarity !== "all" || filters.magicOnly || filters.handsCategory !== "all" || filters.weaponCategory !== "all" || filters.grip !== "all";
+      const message =
+        proficiencyHiddenCount > 0
+          ? `No items available (${proficiencyHiddenCount} hidden — not proficient).`
+          : filtersActive && eligibleIds.length > 0
+            ? "No items match these filters."
+            : "Nothing available for this slot yet.";
       this.add
-        .text(panelCenterX, panelTop + 30, "Nothing available for this slot yet.", { fontFamily: FONT_BODY, fontSize: "14px", color: INK_MUTED })
+        .text(panelCenterX, panelTop + 30, message, { fontFamily: FONT_BODY, fontSize: "14px", color: INK_MUTED })
         .setOrigin(0.5)
         .setDepth(3);
       return;
     }
 
-    const pageCount = Math.max(1, Math.ceil(list.length / CATALOG_PAGE_SIZE));
-    const page = Math.min(this.catalogPage, pageCount - 1);
-    const pageItems = list.slice(page * CATALOG_PAGE_SIZE, page * CATALOG_PAGE_SIZE + CATALOG_PAGE_SIZE);
+    // D-234: scrollable instead of paginated — see `uiScrollList.ts`.
+    const rowHeights = list.map(() => rowHeight);
+    const totalRowsHeight = scrollContentHeight(rowHeights, rowGap);
+    const rowsRect: ScrollListRect = {
+      x: panelCenterX - panelWidth / 2 + 10,
+      y: panelTop + 12,
+      width: panelWidth - 20,
+      height: listHeight - 24,
+    };
+    this.catalogScrollOffset = clampScrollOffset(this.catalogScrollOffset, totalRowsHeight, rowsRect.height);
+    this.catalogViewportRect = rowsRect;
+    this.catalogContentHeight = totalRowsHeight;
 
-    pageItems.forEach((id, idx) => {
-      const rowY = panelTop + 12 + idx * (rowHeight + rowGap) + rowHeight / 2;
+    renderScrollListRows(this, rowsRect, rowHeights, rowGap, this.catalogScrollOffset, 3, (index, rowX, rowTopY, rowWidth) => {
+      const id = list[index];
+      const objs: Phaser.GameObjects.GameObject[] = [];
+      const rowCenterX = rowX + rowWidth / 2;
+      const rowCenterY = rowTopY + rowHeight / 2;
       const isOccupant = occupantIds.includes(id);
       const isSelected = this.selectedItemId === id;
 
       const rowBg = this.add
-        .rectangle(panelCenterX, rowY, panelWidth - 20, rowHeight, 0xffffff, isSelected ? 0.18 : 0)
+        .rectangle(rowCenterX, rowCenterY, rowWidth, rowHeight, 0xffffff, isSelected ? 0.18 : 0)
         .setInteractive({ useHandCursor: true })
         .setDepth(3);
       rowBg.on("pointerdown", () => this.chooseItem(id));
+      objs.push(rowBg);
 
-      const leftX = panelCenterX - panelWidth / 2 + 16;
-      this.add
-        .text(leftX, rowY - 8, `${itemName(id)}${rarityTag(id)}`, {
-          fontFamily: FONT_BODY,
-          fontSize: "15px",
-          color: INK,
-          fontStyle: isSelected ? "bold" : "normal",
-        })
-        .setDepth(4);
-      this.add
-        .text(leftX, rowY + 12, itemDescription(id), { fontFamily: FONT_BODY, fontSize: "11px", color: INK_MUTED, wordWrap: { width: panelWidth - 260 } })
-        .setDepth(4);
+      // D-233: a thin gold border marks any non-common (magic) row.
+      if (isMagicItem(itemRarity(id))) {
+        objs.push(
+          this.add
+            .graphics()
+            .lineStyle(2, 0xc9a227, 0.9)
+            .strokeRect(rowCenterX - rowWidth / 2, rowCenterY - rowHeight / 2, rowWidth, rowHeight)
+            .setDepth(3),
+        );
+      }
+
+      const leftX = rowCenterX - rowWidth / 2 + 16;
+      objs.push(
+        this.add
+          .text(leftX, rowCenterY - 8, `${itemName(id)}${rarityTag(id)}`, {
+            fontFamily: FONT_BODY,
+            fontSize: "15px",
+            color: INK,
+            fontStyle: isSelected ? "bold" : "normal",
+          })
+          .setDepth(4),
+      );
+      objs.push(
+        this.add
+          .text(leftX, rowCenterY + 12, itemDescription(id), { fontFamily: FONT_BODY, fontSize: "11px", color: INK_MUTED, wordWrap: { width: rowWidth - 260 } })
+          .setDepth(4),
+      );
 
       if (isOccupant) {
-        this.add
-          .text(panelCenterX + panelWidth / 2 - 260, rowY, potions ? "Carried" : "Equipped", {
-            fontFamily: FONT_BODY,
-            fontSize: "11px",
-            color: "#fff3d0",
-            backgroundColor: "#2a1a10",
-            padding: { x: 6, y: 2 },
-          })
-          .setOrigin(0, 0.5)
-          .setDepth(4);
+        objs.push(
+          this.add
+            .text(rowCenterX + rowWidth / 2 - 260, rowCenterY, potions ? "Carried" : "Equipped", {
+              fontFamily: FONT_BODY,
+              fontSize: "11px",
+              color: "#fff3d0",
+              backgroundColor: "#2a1a10",
+              padding: { x: 6, y: 2 },
+            })
+            .setOrigin(0, 0.5)
+            .setDepth(4),
+        );
       } else {
         // For a pair/Hands filter, a row's trade-in is 0 (nothing to sell)
         // when at least one physical slot is still empty (auto-place); once
@@ -791,76 +987,85 @@ export class GearShopScene extends Phaser.Scene {
         const tradeIn = pair || hands ? 0 : occupantId ? sellValueForCost(itemCost(occupantId)) : 0;
         const netCost = cost - tradeIn;
         const afford = netCost <= this.battleScene.goldFor(hero);
-        this.add
-          .text(panelCenterX + panelWidth / 2 - 300, rowY, tradeIn > 0 ? `${cost}g  (+${tradeIn}g trade-in)` : `${cost}g`, {
-            fontFamily: FONT_BODY,
-            fontSize: "12px",
-            color: afford ? OK_GREEN : BAD_RED,
-          })
-          .setOrigin(0, 0.5)
-          .setDepth(4);
+        objs.push(
+          this.add
+            .text(rowCenterX + rowWidth / 2 - 300, rowCenterY, tradeIn > 0 ? `${cost}g  (+${tradeIn}g trade-in)` : `${cost}g`, {
+              fontFamily: FONT_BODY,
+              fontSize: "12px",
+              color: afford ? OK_GREEN : BAD_RED,
+            })
+            .setOrigin(0, 0.5)
+            .setDepth(4),
+        );
       }
 
       const showSelectButton = (): void => {
         // Both candidate slots are full — the real "which one to replace"
         // action lives in the compare strip above once selected here.
-        createOrnateButton(
-          this,
-          panelCenterX + panelWidth / 2 - 100,
-          rowY,
-          170,
-          34,
-          isSelected ? "Selected ▴" : "Select",
-          () => this.chooseItem(id),
-          { variant: "tool", fontSize: 11, depth: 5, disabled: isSelected },
+        objs.push(
+          createOrnateButton(
+            this,
+            rowCenterX + rowWidth / 2 - 100,
+            rowCenterY,
+            170,
+            34,
+            isSelected ? "Selected ▴" : "Select",
+            () => this.chooseItem(id),
+            { variant: "tool", fontSize: 11, depth: 5, disabled: isSelected },
+          ).container,
         );
       };
 
       if (isOccupant) {
         // Sell branch — works unchanged for a pair/Hands filter too, since
         // `chooseItem` already resolves WHICH physical slot `id` occupies.
-        this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, id, 170, 34, 11);
+        objs.push(this.buildActionButton(rowCenterX + rowWidth / 2 - 100, rowCenterY, hero, id, id, 170, 34, 11));
       } else if (hands) {
         const decision = decideHandsPlacement(id, occupantA, occupantB);
         if (decision.kind === "autoPlace") {
-          this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, null, 170, 34, 11);
+          objs.push(this.buildActionButton(rowCenterX + rowWidth / 2 - 100, rowCenterY, hero, id, null, 170, 34, 11));
         } else if (decision.candidateSlots.length === 1) {
           // Only one possible slot (a real shield, or a non-Light weapon) —
           // behaves exactly like a single-slot Compare-then-Purchase.
-          this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, this.occupantOf(hero, decision.candidateSlots[0]), 170, 34, 11);
+          objs.push(
+            this.buildActionButton(rowCenterX + rowWidth / 2 - 100, rowCenterY, hero, id, this.occupantOf(hero, decision.candidateSlots[0]), 170, 34, 11),
+          );
         } else {
           showSelectButton();
         }
       } else if (!pair) {
-        this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, occupantId, 170, 34, 11);
+        objs.push(this.buildActionButton(rowCenterX + rowWidth / 2 - 100, rowCenterY, hero, id, occupantId, 170, 34, 11));
       } else {
         const decision = decideSlotPairPlacement(occupantA, occupantB, pair[0], pair[1]);
         if (decision.kind === "autoPlace") {
-          this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, null, 170, 34, 11);
+          objs.push(this.buildActionButton(rowCenterX + rowWidth / 2 - 100, rowCenterY, hero, id, null, 170, 34, 11));
         } else {
           showSelectButton();
         }
       }
+
+      return objs;
     });
 
-    if (pageCount > 1) {
-      const navY = panelTop + listHeight + 24;
-      createOrnateButton(this, panelCenterX - 90, navY, 110, 34, "< Prev", () => {
-        if (page > 0) {
-          this.catalogPage = page - 1;
-          this.refresh();
-        }
-      }, { variant: "tool", fontSize: 12, depth: 4, disabled: page === 0 });
+    renderScrollbarVisual(this, rowsRect, totalRowsHeight, this.catalogScrollOffset, 3, (offset) => {
+      this.catalogScrollOffset = offset;
+      this.refresh();
+    });
+
+    // D-235 (item 7): a one-line footer rather than a toggle — matches this
+    // project's own existing convention that a gear-point overspend item
+    // "simply doesn't appear in the list at all" (CharacterCreationScene
+    // .refreshGearPicker), just with a count so it doesn't read as a bug.
+    if (proficiencyHiddenCount > 0) {
       this.add
-        .text(panelCenterX, navY, `Page ${page + 1}/${pageCount}`, { fontFamily: FONT_BODY, fontSize: "13px", color: CREAM })
+        .text(panelCenterX, panelTop + listHeight + 14, `${proficiencyHiddenCount} hidden — not proficient`, {
+          fontFamily: FONT_BODY,
+          fontSize: "12px",
+          color: INK_MUTED,
+          fontStyle: "italic",
+        })
         .setOrigin(0.5)
-        .setDepth(4);
-      createOrnateButton(this, panelCenterX + 90, navY, 110, 34, "Next >", () => {
-        if (page < pageCount - 1) {
-          this.catalogPage = page + 1;
-          this.refresh();
-        }
-      }, { variant: "tool", fontSize: 12, depth: 4, disabled: page === pageCount - 1 });
+        .setDepth(3);
     }
   }
 
@@ -879,7 +1084,7 @@ export class GearShopScene extends Phaser.Scene {
     width: number,
     height: number,
     fontSize: number,
-  ): void {
+  ): Phaser.GameObjects.Container {
     const isOccupant = occupantId === id;
     const isSelected = this.selectedItemId === id;
     const primedForThis = isSelected && this.primed;
@@ -887,11 +1092,10 @@ export class GearShopScene extends Phaser.Scene {
     if (isOccupant) {
       const sellVal = sellValueForCost(itemCost(id));
       const label = primedForThis ? `Confirm Sell +${sellVal}g` : `Sell — ${sellVal}g`;
-      createOrnateButton(this, x, y, width, height, label, () => {
+      return createOrnateButton(this, x, y, width, height, label, () => {
         if (primedForThis) this.commitSell();
         else this.chooseItem(id);
-      }, { variant: "tool", fontSize, depth: 5 });
-      return;
+      }, { variant: "tool", fontSize, depth: 5 }).container;
     }
 
     const cost = itemCost(id);
@@ -906,7 +1110,7 @@ export class GearShopScene extends Phaser.Scene {
       else if (netCost > 0) label = `Purchase — ${netCost}g net`;
       else if (netCost < 0) label = `Purchase (+${-netCost}g back)`;
       else label = "Purchase — free";
-      createOrnateButton(this, x, y, width, height, label, () => {
+      return createOrnateButton(this, x, y, width, height, label, () => {
         if (!afford) return;
         // A fresh, not-yet-primed click resolves `targetSlot` via
         // `chooseItem` first — for a consolidated Potions/Rings filter
@@ -916,9 +1120,8 @@ export class GearShopScene extends Phaser.Scene {
         // delay timer instead of confirming.
         if (!needsCompareStep) this.chooseItem(id);
         this.commitPurchase(id);
-      }, { variant: "tool", fontSize, depth: 5, disabled: !afford });
-    } else {
-      createOrnateButton(this, x, y, width, height, "Compare", () => this.chooseItem(id), { variant: "tool", fontSize, depth: 5 });
+      }, { variant: "tool", fontSize, depth: 5, disabled: !afford }).container;
     }
+    return createOrnateButton(this, x, y, width, height, "Compare", () => this.chooseItem(id), { variant: "tool", fontSize, depth: 5 }).container;
   }
 }

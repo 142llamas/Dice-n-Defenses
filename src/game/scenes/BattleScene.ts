@@ -54,6 +54,8 @@ import { RestSystem } from "../systems/RestSystem";
 import { firstAvailableHeroAction, listHeroActions, hotkeyDisplayLabel } from "../systems/HeroActionRegistry";
 import { createTooltipController, attachHoverTooltip, type TooltipController } from "./tooltip";
 import { centeredRowX, drawScreenBackdrop, createOrnateButton, drawParchmentPanel, FONT_DISPLAY, FONT_BODY } from "./uiTheme";
+import { clampScrollOffset, contentHeight as scrollContentHeight, cumulativeOffsets, visibleRowRange, scrollOffsetToReveal } from "../systems/ScrollListMath";
+import { renderScrollListRows, renderScrollbarVisual, attachWheelScroll, type ScrollListRect, type ScrollRegion } from "./uiScrollList";
 import { showDialogue, type DialogueBoxController, type DialogueLine } from "./dialogueBox";
 import { asiFeatureGrantedAtLevel, subclassGrantedAtLevel } from "../systems/CharacterSystem";
 import { subclassesForClass, getSubclassDefinition } from "../data/subclasses";
@@ -349,12 +351,19 @@ const STEALTH_SENSE_RANGE_TILES = 2;
 const ALL_GEAR_CATALOG_IDS: string[] = [...EQUIPMENT_ORDER, ...POTION_ORDER];
 
 /**
- * Phase 25 (D-116): the shop grid grew past 20 structures this phase and
- * paginates via `showShopUI`/`turnGridPage`. D-209: this used to also cap
- * the (now-deleted) in-scene Gear grid, sharing one nav control with Shop —
- * `GearShopScene` handles its own catalog paging separately now.
+ * Phase 25 (D-116): the shop grid grew past 20 structures this phase, so
+ * only a fixed-height window of it shows at once. D-234: that window
+ * scrolls (`showShopUI`/`refreshGridScrollbar`) instead of paginating —
+ * D-209: this footprint used to also host the (now-deleted) in-scene Gear
+ * grid; `GearShopScene` handles its own catalog scrolling separately now.
  */
-const ITEM_GRID_PAGE_SIZE = 16;
+const ITEM_GRID_COLS = 4;
+const ITEM_GRID_BTN_W = 150;
+const ITEM_GRID_GAP_X = 10;
+const ITEM_GRID_ROW_HEIGHT = 30;
+const ITEM_GRID_ROW_GAP = 8;
+/** How many grid rows are visible at once (== the old `ITEM_GRID_PAGE_SIZE` of 16 slots / 4 columns). */
+const ITEM_GRID_VISIBLE_ROWS = 4;
 
 /** D-158: matches `CharacterCreationScene`'s own `MAX_PARTY_SIZE` — the hero roster strip builds this many slot widgets, then hides whichever aren't in play. */
 const MAX_ROSTER_SLOTS = 4;
@@ -566,14 +575,18 @@ export class BattleScene extends Phaser.Scene {
   private shopButtons: Phaser.GameObjects.Rectangle[] = [];
   private shopLabels: Phaser.GameObjects.Text[] = [];
   /**
-   * Phase 17 (D-108): page nav for the shop item grid — its page is derived
-   * from `gridFocusIndex`, no separate page field. D-209: this used to also
-   * serve the (now-deleted) in-scene Gear grid, renamed from `gearPage*`
-   * since the two were never shown at once.
+   * D-234: scroll offset (px) for whichever item grid (Shop, or a Test Mode
+   * debug picker — never more than one at once) is currently showing,
+   * replacing the old page-nav Prev/Next. See `refreshGridScrollbar`/
+   * `uiScrollList.ts`.
    */
-  private pageNavPrevButton!: Phaser.GameObjects.Text;
-  private pageNavNextButton!: Phaser.GameObjects.Text;
-  private pageNavLabel!: Phaser.GameObjects.Text;
+  private gridScrollOffset = 0;
+  private gridScrollbarObjects: Phaser.GameObjects.GameObject[] = [];
+  /** Set each `refreshGridScrollbar()` call so the persistent wheel handler (registered once in `create()`) always reflects the current grid; null while no grid is showing. */
+  private gridViewportRect: ScrollListRect | null = null;
+  private gridContentHeight = 0;
+  /** The shared, once-computed Y origin every item-grid button's row offset is measured from — see `buildItemGrid`. */
+  private itemGridCy = 0;
   private doneButton!: Phaser.GameObjects.Rectangle;
   private doneLabel!: Phaser.GameObjects.Text;
   private buildGhost!: Phaser.GameObjects.Rectangle;
@@ -686,13 +699,15 @@ export class BattleScene extends Phaser.Scene {
    */
   private spellbookOverlay: Phaser.GameObjects.GameObject[] = [];
   /**
-   * Phase 16 (D-106): which page of the spellbook grid is showing. A
-   * full-caster's known-spell list can now run past 100 entries (see
-   * `characterCreation.ts`), far more than the single-row layout Phase
-   * 13.7 designed for a 2-6-spell list — reset to 0 every time the
-   * overlay opens.
+   * D-234: scroll offset (px) replacing the old page index (Phase 16/D-106
+   * — a full-caster's known-spell list can run past 100 entries, far more
+   * than the single-row layout Phase 13.7 designed for a 2-6-spell list).
+   * Reset to 0 every time the overlay opens. See `uiScrollList.ts`.
    */
-  private spellbookPage = 0;
+  private spellbookScrollOffset = 0;
+  /** Set each `renderSpellbookOverlay()` call so the persistent wheel handler (registered once in `create()`) always reflects the current state; null while the overlay is closed. */
+  private spellbookViewportRect: ScrollListRect | null = null;
+  private spellbookContentHeight = 0;
 
   /**
    * KI-030 ("full keyboard-only play"): a keyboard-driven tile cursor,
@@ -1102,7 +1117,24 @@ export class BattleScene extends Phaser.Scene {
     this.pendingAfterSpellPrep = null;
     this.choosingSpellPrep = false;
     this.spellbookOverlay = [];
-    this.spellbookPage = 0;
+    this.spellbookScrollOffset = 0;
+    this.spellbookViewportRect = null;
+    // D-234: registered once per `create()` (which itself only reruns after
+    // a full scene shutdown — Phaser's `InputPlugin.shutdown()` clears every
+    // `scene.input.on(...)` listener, so this never stacks duplicates across
+    // restarts of this reused scene instance). `activeSpellbookScrollRegion`
+    // is re-read on every wheel event, so it reflects the current state (or
+    // null while the spellbook isn't open).
+    attachWheelScroll(
+      this,
+      () => this.activeSpellbookScrollRegion(),
+      (offset) => {
+        this.spellbookScrollOffset = offset;
+        if (this.ui.kind !== "choosingSpell") return;
+        const hero = this.heroById(this.ui.heroId);
+        if (hero) this.renderSpellbookOverlay(hero);
+      },
+    );
     this.ui = { kind: "idle" };
     this.lastReport = null;
     this.combatLog = [];
@@ -1115,6 +1147,19 @@ export class BattleScene extends Phaser.Scene {
     this.chapterDialogue = null;
     this.keyboardFocus = "board";
     this.gridFocusIndex = 0;
+    this.gridScrollOffset = 0;
+    this.gridViewportRect = null;
+    // D-234: registered once per `create()` — see the spellbook's own wheel
+    // registration above for why this never stacks duplicate listeners
+    // across restarts of this reused scene instance.
+    attachWheelScroll(
+      this,
+      () => this.activeGridScrollRegion(),
+      (offset) => {
+        this.gridScrollOffset = offset;
+        this.refreshGridFocusVisual();
+      },
+    );
     // KI-177/D-228: `movingIntoAttack` is only cleared inside a
     // `time.delayedCall` callback (see the move-then-attack flow) — Phaser's
     // `Clock.shutdown()` destroys a still-pending timer WITHOUT invoking it,
@@ -2571,21 +2616,17 @@ export class BattleScene extends Phaser.Scene {
     // longer fits; this is a small, generic grid instead, verified by the
     // same bounding-box math as D-046 (see the GAME_HEIGHT comment in
     // config.ts for the room it needs). Phase 25 (D-116): the shop catalogue
-    // passed the one-page limit, so it now paginates via `ITEM_GRID_PAGE_SIZE`.
+    // passed the one-screen limit; D-234: it now scrolls instead of
+    // paginating (see `refreshGridScrollbar`).
     // D-209: this grid used to also host the equip/Gear catalogue (mutually
     // exclusive with build mode via `setInteraction`) — that catalogue now
     // lives in the separate `GearShopScene` instead.
+    this.itemGridCy = cy;
     const shopItems = SHOP_ORDER.map((defId) => ({
       id: defId,
       label: `${getStructureDefinition(defId).name} (${getStructureDefinition(defId).cost}g)`,
     }));
-    const shop = this.buildItemGrid(
-      cy,
-      shopItems,
-      (id) => this.selectShopItem(id),
-      (id) => this.setHoveredItem(id),
-      ITEM_GRID_PAGE_SIZE,
-    );
+    const shop = this.buildItemGrid(cy, shopItems, (id) => this.selectShopItem(id), (id) => this.setHoveredItem(id));
     this.shopButtons = shop.buttons;
     this.shopLabels = shop.labels;
 
@@ -2594,86 +2635,29 @@ export class BattleScene extends Phaser.Scene {
     // exclusive via `this.ui.kind`). Only ever built; only ever SHOWN when
     // `this.testMode`.
     const debugEnemyItems = DEBUG_ENEMY_IDS.map((id) => ({ id, label: getEnemyDefinition(id).name }));
-    const debugEnemy = this.buildItemGrid(
-      cy,
-      debugEnemyItems,
-      (id) => this.selectDebugEnemy(id),
-      undefined,
-      ITEM_GRID_PAGE_SIZE,
-    );
+    const debugEnemy = this.buildItemGrid(cy, debugEnemyItems, (id) => this.selectDebugEnemy(id));
     this.debugEnemyButtons = debugEnemy.buttons;
     this.debugEnemyLabels = debugEnemy.labels;
 
     const debugTerrainItems = DEBUG_TERRAIN_TYPES.map((type) => ({ id: type, label: type }));
-    const debugTerrain = this.buildItemGrid(
-      cy,
-      debugTerrainItems,
-      (id) => this.selectDebugTerrain(id as TileType),
-      undefined,
-      ITEM_GRID_PAGE_SIZE,
-    );
+    const debugTerrain = this.buildItemGrid(cy, debugTerrainItems, (id) => this.selectDebugTerrain(id as TileType));
     this.debugTerrainButtons = debugTerrain.buttons;
     this.debugTerrainLabels = debugTerrain.labels;
 
     const debugStatusItems = STATUS_EFFECT_ORDER.map((id) => ({ id, label: getStatusEffectDefinition(id).name }));
-    const debugStatus = this.buildItemGrid(
-      cy,
-      debugStatusItems,
-      (id) => this.selectDebugStatus(id as StatusEffectId),
-      undefined,
-      ITEM_GRID_PAGE_SIZE,
-    );
+    const debugStatus = this.buildItemGrid(cy, debugStatusItems, (id) => this.selectDebugStatus(id as StatusEffectId));
     this.debugStatusButtons = debugStatus.buttons;
     this.debugStatusLabels = debugStatus.labels;
 
-    // D-209: BOTH the Done button and page-nav Y positions used to also
-    // account for the (now-deleted) Gear grid's own row/page counts, since
-    // it shared this exact footprint with the Shop grid — Shop is the only
-    // grid left here, so these are sized off it alone. Phase 25 (D-116):
-    // the shop catalogue's real ROW COUNT caps at one page
-    // (`ITEM_GRID_PAGE_SIZE` / cols = 4 rows) regardless of its total size,
-    // since it's paginated — otherwise the now-22-item shop would make this
-    // grid dozens of rows tall.
-    const cols = 4;
-    const rows = Math.min(Math.ceil(SHOP_ORDER.length / cols), ITEM_GRID_PAGE_SIZE / cols);
-    const rowHeight = 38; // button height (30) + vertical gap (8)
-    const shopPageCount = Math.ceil(SHOP_ORDER.length / ITEM_GRID_PAGE_SIZE);
-    const navY = cy + rows * rowHeight + 14;
-    this.pageNavPrevButton = this.add
-      .text(GAME_WIDTH / 2 - 90, navY, "◀ Prev", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "14px",
-        color: "#8ad0f0",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5)
-      .setDepth(31)
-      .setInteractive({ useHandCursor: true })
-      .setVisible(false);
-    this.pageNavPrevButton.on("pointerdown", () => this.turnGridPage(-1));
-    this.pageNavLabel = this.add
-      .text(GAME_WIDTH / 2, navY, "", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "13px",
-        color: "#c8c8d8",
-      })
-      .setOrigin(0.5)
-      .setDepth(31)
-      .setVisible(false);
-    this.pageNavNextButton = this.add
-      .text(GAME_WIDTH / 2 + 90, navY, "Next ▶", {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "14px",
-        color: "#8ad0f0",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5)
-      .setDepth(31)
-      .setInteractive({ useHandCursor: true })
-      .setVisible(false);
-    this.pageNavNextButton.on("pointerdown", () => this.turnGridPage(1));
-    const navRowHeight = shopPageCount > 1 ? 30 : 0;
-    const doneY = cy + rows * rowHeight + navRowHeight + 6;
+    // D-234: the Done button sits below a FIXED `ITEM_GRID_VISIBLE_ROWS`-tall
+    // viewport now, regardless of which grid is showing or how long its
+    // catalogue is (scrolling handles the rest) — same simplification
+    // `GearShopScene`/`CharacterCreationScene`'s own catalogs got this
+    // session. D-209: this footprint used to also account for the
+    // (now-deleted) Gear grid's own row count, since it shared this exact
+    // footprint with the Shop grid.
+    const rowPitch = ITEM_GRID_ROW_HEIGHT + ITEM_GRID_ROW_GAP;
+    const doneY = cy + ITEM_GRID_VISIBLE_ROWS * rowPitch + 20;
     this.doneButton = this.add
       .rectangle(GAME_WIDTH / 2, doneY, 120, 30, 0x7a5a3a)
       .setInteractive({ useHandCursor: true })
@@ -2708,29 +2692,23 @@ export class BattleScene extends Phaser.Scene {
     items: ReadonlyArray<{ id: string; label: string }>,
     onClick: (id: string) => void,
     onHover?: (id: string | null) => void,
-    perPage: number = items.length || 1,
   ): { buttons: Phaser.GameObjects.Rectangle[]; labels: Phaser.GameObjects.Text[] } {
-    const cols = 4;
-    const btnW = 150;
-    const btnH = 30;
-    const gapX = 10;
-    const gapY = 8;
-    const gridWidth = cols * btnW + (cols - 1) * gapX;
-    const startX = GAME_WIDTH / 2 - gridWidth / 2 + btnW / 2;
+    const gridWidth = ITEM_GRID_COLS * ITEM_GRID_BTN_W + (ITEM_GRID_COLS - 1) * ITEM_GRID_GAP_X;
+    const startX = GAME_WIDTH / 2 - gridWidth / 2 + ITEM_GRID_BTN_W / 2;
 
     const buttons: Phaser.GameObjects.Rectangle[] = [];
     const labels: Phaser.GameObjects.Text[] = [];
     items.forEach((item, i) => {
-      // Phase 17 (D-108): position by the WITHIN-PAGE slot (i % perPage), not
-      // the flat catalogue index — every page reuses the same on-screen
-      // slots, `showShopUI` decides which item occupies them right now.
-      const onPageIndex = i % perPage;
-      const col = onPageIndex % cols;
-      const row = Math.floor(onPageIndex / cols);
-      const x = startX + col * (btnW + gapX);
-      const y = cy + row * (btnH + gapY);
+      // D-234: positioned by the item's TRUE row/col — every button is
+      // created once, up front, at its unscrolled position; `showShopUI`/
+      // `showDebugPickerUI` shift each visible one by the current scroll
+      // offset and hide the rest (see `refreshGridScrollbar`).
+      const col = i % ITEM_GRID_COLS;
+      const row = Math.floor(i / ITEM_GRID_COLS);
+      const x = startX + col * (ITEM_GRID_BTN_W + ITEM_GRID_GAP_X);
+      const y = cy + row * (ITEM_GRID_ROW_HEIGHT + ITEM_GRID_ROW_GAP);
       const btn = this.add
-        .rectangle(x, y, btnW, btnH, COLORS.woodPanel)
+        .rectangle(x, y, ITEM_GRID_BTN_W, ITEM_GRID_ROW_HEIGHT, COLORS.woodPanel)
         .setInteractive({ useHandCursor: true })
         .setDepth(31)
         .setVisible(false);
@@ -2753,6 +2731,65 @@ export class BattleScene extends Phaser.Scene {
       labels.push(lbl);
     });
     return { buttons, labels };
+  }
+
+  /** D-234: the fixed viewport geometry every item grid's scroll math is computed against — `items` differ per grid (Shop vs. a debug picker), everything else is shared. */
+  private itemGridScrollGeometry(items: readonly string[]): {
+    rowHeights: number[];
+    offsets: number[];
+    viewportHeight: number;
+    totalHeight: number;
+  } {
+    const totalRows = Math.max(1, Math.ceil(items.length / ITEM_GRID_COLS));
+    const rowHeights = new Array(totalRows).fill(ITEM_GRID_ROW_HEIGHT);
+    const offsets = cumulativeOffsets(rowHeights, ITEM_GRID_ROW_GAP);
+    const viewportHeight = ITEM_GRID_VISIBLE_ROWS * (ITEM_GRID_ROW_HEIGHT + ITEM_GRID_ROW_GAP) - ITEM_GRID_ROW_GAP;
+    return { rowHeights, offsets, viewportHeight, totalHeight: scrollContentHeight(rowHeights, ITEM_GRID_ROW_GAP) };
+  }
+
+  private activeGridScrollRegion(): ScrollRegion | null {
+    if (!this.gridViewportRect) return null;
+    return { rect: this.gridViewportRect, totalContentHeight: this.gridContentHeight, scrollOffset: this.gridScrollOffset };
+  }
+
+  /**
+   * D-234: redraws the shared scrollbar for whichever item grid is
+   * currently active (Shop, or a Test Mode debug picker), and records the
+   * viewport rect the persistent wheel handler (`create()`) scrolls. Called
+   * from the same places the old page-nav control used to refresh from.
+   */
+  private refreshGridScrollbar(): void {
+    for (const obj of this.gridScrollbarObjects) obj.destroy();
+    this.gridScrollbarObjects = [];
+    const kind = this.ui.kind;
+    const gridVisible = kind === "building" || this.isDebugGridKind(kind);
+    const items = this.currentGridItems();
+    if (!gridVisible || items.length === 0) {
+      this.gridViewportRect = null;
+      return;
+    }
+    const geo = this.itemGridScrollGeometry(items);
+    const gridWidth = ITEM_GRID_COLS * ITEM_GRID_BTN_W + (ITEM_GRID_COLS - 1) * ITEM_GRID_GAP_X;
+    const rect: ScrollListRect = {
+      x: GAME_WIDTH / 2 - gridWidth / 2,
+      y: this.itemGridCy - ITEM_GRID_ROW_HEIGHT / 2,
+      width: gridWidth + 40,
+      height: geo.viewportHeight,
+    };
+    this.gridViewportRect = rect;
+    this.gridContentHeight = geo.totalHeight;
+    renderScrollbarVisual(
+      this,
+      rect,
+      geo.totalHeight,
+      this.gridScrollOffset,
+      31,
+      (offset) => {
+        this.gridScrollOffset = offset;
+        this.refreshGridFocusVisual();
+      },
+      this.gridScrollbarObjects,
+    );
   }
 
   // ----- Phase machine ---------------------------------------------------
@@ -4179,6 +4216,12 @@ export class BattleScene extends Phaser.Scene {
                 : undefined;
       const idx = currentId ? items.indexOf(currentId) : -1;
       this.gridFocusIndex = idx >= 0 ? idx : 0;
+      // D-234: scroll straight to whatever's newly focused (0 when there's
+      // nothing to resume) instead of always resetting to the top — matters
+      // when re-entering a mode with a selection deep in a long catalogue.
+      const geo = this.itemGridScrollGeometry(items);
+      this.gridScrollOffset =
+        idx >= 0 ? scrollOffsetToReveal(Math.floor(idx / ITEM_GRID_COLS), geo.offsets, geo.rowHeights, 0, geo.viewportHeight) : 0;
     } else {
       this.keyboardFocus = "board";
     }
@@ -4199,7 +4242,7 @@ export class BattleScene extends Phaser.Scene {
     this.buildGhostGlyph.setVisible(false);
     this.showShopUI(next.kind === "building", next.kind === "building" ? next.defId : undefined);
     this.showDebugPickerUI();
-    this.refreshPageNav();
+    this.refreshGridScrollbar();
     const modeActive = next.kind === "building" || this.isDebugGridKind(next.kind);
     this.doneButton.setVisible(modeActive);
     this.doneLabel.setVisible(modeActive);
@@ -4243,7 +4286,7 @@ export class BattleScene extends Phaser.Scene {
       this.showConfirmButtons(true);
     }
     if (next.kind === "choosingSpell") {
-      this.spellbookPage = 0;
+      this.spellbookScrollOffset = 0;
       const hero = this.heroById(next.heroId);
       if (hero) this.renderSpellbookOverlay(hero);
     }
@@ -5373,11 +5416,20 @@ export class BattleScene extends Phaser.Scene {
   private moveGridFocus(dx: number, dy: number): void {
     const items = this.currentGridItems();
     if (items.length === 0) return;
-    const cols = 4;
-    let idx = this.gridFocusIndex + dx + dy * cols;
+    let idx = this.gridFocusIndex + dx + dy * ITEM_GRID_COLS;
     idx = Math.max(0, Math.min(items.length - 1, idx));
     if (idx === this.gridFocusIndex) return;
     this.gridFocusIndex = idx;
+    // D-234: scroll the newly-focused row into view instead of hard-jumping
+    // a page — replaces the old implicit page-boundary crossing.
+    const geo = this.itemGridScrollGeometry(items);
+    this.gridScrollOffset = scrollOffsetToReveal(
+      Math.floor(idx / ITEM_GRID_COLS),
+      geo.offsets,
+      geo.rowHeights,
+      this.gridScrollOffset,
+      geo.viewportHeight,
+    );
     this.setHoveredItem(items[idx]); // preview its description, same as a mouse hover
     this.refreshGridFocusVisual();
   }
@@ -5422,7 +5474,7 @@ export class BattleScene extends Phaser.Scene {
   private refreshGridFocusVisual(): void {
     if (this.ui.kind === "building") this.showShopUI(true, this.ui.defId);
     else if (this.isDebugGridKind(this.ui.kind)) this.showDebugPickerUI();
-    this.refreshPageNav();
+    this.refreshGridScrollbar();
   }
 
   /** Phase 8 keyboard hotkey: select the hero at this fixed roster index. */
@@ -6705,6 +6757,11 @@ export class BattleScene extends Phaser.Scene {
    * once the castable list overflows one page — same paging pattern
    * `CompendiumScene`'s Spells tab already uses for the same reason.
    */
+  private activeSpellbookScrollRegion(): ScrollRegion | null {
+    if (!this.spellbookViewportRect) return null;
+    return { rect: this.spellbookViewportRect, totalContentHeight: this.spellbookContentHeight, scrollOffset: this.spellbookScrollOffset };
+  }
+
   private renderSpellbookOverlay(hero: Hero): void {
     this.clearSpellbookOverlay();
     const castable = hero.knownSpellAbilityIds().filter((id) => hero.canCastSpell(id));
@@ -6715,13 +6772,10 @@ export class BattleScene extends Phaser.Scene {
     dim.on("pointerdown", () => this.setInteraction({ kind: "heroSelected", heroId: hero.id }));
     this.spellbookOverlay.push(dim);
 
+    // D-234: scrollable instead of paginated — see `uiScrollList.ts`. Each
+    // "row" in the scroll math is one GRID row (up to `columns` cards).
     const columns = 4;
-    const rows = 3;
-    const perPage = columns * rows;
-    const pageCount = Math.max(1, Math.ceil(castable.length / perPage));
-    this.spellbookPage = Math.min(this.spellbookPage, pageCount - 1);
-    const pageLabel = pageCount > 1 ? ` (page ${this.spellbookPage + 1}/${pageCount})` : "";
-
+    const visibleRows = 3;
     const width = 260;
     const height = 130;
     const colGap = 20;
@@ -6729,20 +6783,16 @@ export class BattleScene extends Phaser.Scene {
     const gridWidth = columns * width + (columns - 1) * colGap;
     const startX = GAME_WIDTH / 2 - gridWidth / 2 + width / 2;
     const startY = 210;
-    const navY = startY + rows * (height + rowGap) + 30;
+    const viewportTop = startY - height / 2;
+    const viewportHeight = visibleRows * (height + rowGap) - rowGap;
+    const panelTop = 130;
+    const panelBottom = viewportTop + viewportHeight + 20;
 
-    const panel = drawParchmentPanel(
-      this,
-      GAME_WIDTH / 2,
-      (130 + (pageCount > 1 ? navY + 20 : navY - 14)) / 2,
-      GAME_WIDTH - 60,
-      (pageCount > 1 ? navY + 20 : navY - 14) - 130,
-      40,
-    );
+    const panel = drawParchmentPanel(this, GAME_WIDTH / 2, (panelTop + panelBottom) / 2, GAME_WIDTH - 60, panelBottom - panelTop, 40);
     this.spellbookOverlay.push(panel);
 
     const title = this.add
-      .text(GAME_WIDTH / 2, 150, `${hero.name} — Cast a Spell${pageLabel}`, {
+      .text(GAME_WIDTH / 2, 150, `${hero.name} — Cast a Spell`, {
         fontFamily: FONT_DISPLAY,
         fontSize: "26px",
         color: "#3a2a10",
@@ -6752,80 +6802,84 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(42);
     this.spellbookOverlay.push(title);
 
-    const pageItems = castable.slice(this.spellbookPage * perPage, this.spellbookPage * perPage + perPage);
-    pageItems.forEach((id, i) => {
-      const ability = getAbility(id);
-      // D-127: a charge-based item's granted spell shows its own charge
-      // count instead of a spell-slot count — it isn't spent from either.
-      const chargeInfo = hero.chargeInfoForSpell(id);
-      const costLabel = chargeInfo
-        ? `${chargeInfo.remaining}/${chargeInfo.max} charges`
-        : ability.spellSlotLevel
-          ? `${ordinalSpellLevel(ability.spellSlotLevel)}-level (${hero.spellSlotsRemainingAt(ability.spellSlotLevel)} left)`
-          : "cantrip";
-      const col = i % columns;
-      const row = Math.floor(i / columns);
-      const x = startX + col * (width + colGap);
-      const y = startY + row * (height + rowGap);
-      const handle = createOrnateButton(this, x, y, width, height, `${ability.name} · ${costLabel}`, () => this.chooseSpell(hero, id), {
-        variant: "secondary",
-        fontSize: 13,
-        depth: 41,
-      });
-      const label = handle.container.list[1] as Phaser.GameObjects.Text;
-      label.setPosition(0, -height / 2 + 22);
-      label.setWordWrapWidth(width - 16, true);
-      const desc = this.add
-        .text(x, y + 16, ability.description, {
-          fontFamily: FONT_BODY,
-          fontSize: "11px",
-          color: "#3a2a10",
-          align: "center",
-          wordWrap: { width: width - 20 },
-        })
-        .setOrigin(0.5)
-        .setDepth(42);
-      this.spellbookOverlay.push(handle.container, desc);
-    });
+    const gridRowCount = Math.max(1, Math.ceil(castable.length / columns));
+    const rowHeights = new Array(gridRowCount).fill(height);
+    const totalRowsHeight = scrollContentHeight(rowHeights, rowGap);
+    // The grid's own width is fixed regardless of scrollbar presence — a
+    // little extra room to its right (rather than shrinking the cards) is
+    // where `renderScrollbarVisual` draws the thumb.
+    const rect: ScrollListRect = { x: startX - width / 2, y: viewportTop, width: gridWidth + 40, height: viewportHeight };
+    this.spellbookScrollOffset = clampScrollOffset(this.spellbookScrollOffset, totalRowsHeight, rect.height);
+    this.spellbookViewportRect = rect;
+    this.spellbookContentHeight = totalRowsHeight;
 
-    if (pageCount > 1) {
-      const prev = createOrnateButton(
-        this,
-        GAME_WIDTH / 2 - 90,
-        navY,
-        140,
-        36,
-        "◀ Prev",
-        () => {
-          if (this.spellbookPage > 0) {
-            this.spellbookPage -= 1;
-            this.renderSpellbookOverlay(hero);
-          }
-        },
-        { variant: "tool", depth: 41, disabled: this.spellbookPage === 0 },
-      );
-      const next = createOrnateButton(
-        this,
-        GAME_WIDTH / 2 + 90,
-        navY,
-        140,
-        36,
-        "Next ▶",
-        () => {
-          if (this.spellbookPage < pageCount - 1) {
-            this.spellbookPage += 1;
-            this.renderSpellbookOverlay(hero);
-          }
-        },
-        { variant: "tool", depth: 41, disabled: this.spellbookPage === pageCount - 1 },
-      );
-      this.spellbookOverlay.push(prev.container, next.container);
-    }
+    renderScrollListRows(
+      this,
+      rect,
+      rowHeights,
+      rowGap,
+      this.spellbookScrollOffset,
+      41,
+      (gridRowIndex, _rowX, rowTopY) => {
+        const objs: Phaser.GameObjects.GameObject[] = [];
+        for (let col = 0; col < columns; col++) {
+          const i = gridRowIndex * columns + col;
+          if (i >= castable.length) break;
+          const id = castable[i];
+          const ability = getAbility(id);
+          // D-127: a charge-based item's granted spell shows its own charge
+          // count instead of a spell-slot count — it isn't spent from either.
+          const chargeInfo = hero.chargeInfoForSpell(id);
+          const costLabel = chargeInfo
+            ? `${chargeInfo.remaining}/${chargeInfo.max} charges`
+            : ability.spellSlotLevel
+              ? `${ordinalSpellLevel(ability.spellSlotLevel)}-level (${hero.spellSlotsRemainingAt(ability.spellSlotLevel)} left)`
+              : "cantrip";
+          const x = startX + col * (width + colGap);
+          const y = rowTopY + height / 2;
+          const handle = createOrnateButton(this, x, y, width, height, `${ability.name} · ${costLabel}`, () => this.chooseSpell(hero, id), {
+            variant: "secondary",
+            fontSize: 13,
+            depth: 41,
+          });
+          const label = handle.container.list[1] as Phaser.GameObjects.Text;
+          label.setPosition(0, -height / 2 + 22);
+          label.setWordWrapWidth(width - 16, true);
+          const desc = this.add
+            .text(x, y + 16, ability.description, {
+              fontFamily: FONT_BODY,
+              fontSize: "11px",
+              color: "#3a2a10",
+              align: "center",
+              wordWrap: { width: width - 20 },
+            })
+            .setOrigin(0.5)
+            .setDepth(42);
+          objs.push(handle.container, desc);
+        }
+        return objs;
+      },
+      this.spellbookOverlay,
+    );
+
+    renderScrollbarVisual(
+      this,
+      rect,
+      totalRowsHeight,
+      this.spellbookScrollOffset,
+      41,
+      (offset) => {
+        this.spellbookScrollOffset = offset;
+        this.renderSpellbookOverlay(hero);
+      },
+      this.spellbookOverlay,
+    );
   }
 
   private clearSpellbookOverlay(): void {
     for (const obj of this.spellbookOverlay) obj.destroy();
     this.spellbookOverlay = [];
+    this.spellbookViewportRect = null;
   }
 
   /**
@@ -7467,17 +7521,20 @@ export class BattleScene extends Phaser.Scene {
 
   /**
    * Show/hide the shop buttons and highlight the selected, affordable items.
-   * Phase 25 (D-116): only the current PAGE (`ITEM_GRID_PAGE_SIZE` slots) is
-   * shown — see `refreshPageNav` for the shared nav control.
+   * D-234: only the rows in the current scroll viewport are shown — see
+   * `refreshGridScrollbar` for the shared scrollbar.
    */
   private showShopUI(show: boolean, selectedDefId?: string): void {
-    const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
+    const geo = this.itemGridScrollGeometry(SHOP_ORDER);
+    const { start, end } = visibleRowRange(geo.offsets, geo.rowHeights, this.gridScrollOffset, geo.viewportHeight);
     this.shopButtons.forEach((btn, i) => {
-      const onThisPage = Math.floor(i / ITEM_GRID_PAGE_SIZE) === page;
-      const visible = show && onThisPage;
+      const row = Math.floor(i / ITEM_GRID_COLS);
+      const visible = show && row >= start && row <= end;
       btn.setVisible(visible);
       this.shopLabels[i].setVisible(visible);
       if (visible) {
+        btn.y = this.itemGridCy + row * (ITEM_GRID_ROW_HEIGHT + ITEM_GRID_ROW_GAP) - this.gridScrollOffset;
+        this.shopLabels[i].y = btn.y;
         const defId = SHOP_ORDER[i];
         const selected = defId === selectedDefId;
         const affordable = this.economy.canAfford(this.economyOwnerFor(), getStructureDefinition(defId).cost);
@@ -7490,14 +7547,13 @@ export class BattleScene extends Phaser.Scene {
 
   /**
    * Test Mode (D-138): show/hide whichever debug-picker grid (Spawn Enemy,
-   * Paint Terrain, Set Status) matches `this.ui.kind`, one page at a time —
-   * same pagination shape as `showShopUI`. Hides all three grids outright
-   * when `this.ui.kind` isn't one of them (called unconditionally from
-   * `setInteraction`, same as `showShopUI`).
+   * Paint Terrain, Set Status) matches `this.ui.kind` — D-234: only the rows
+   * in the current scroll viewport, same shape as `showShopUI`. Hides all
+   * three grids outright when `this.ui.kind` isn't one of them (called
+   * unconditionally from `setInteraction`, same as `showShopUI`).
    */
   private showDebugPickerUI(): void {
     const ui = this.ui;
-    const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
     const render = (
       show: boolean,
       buttons: Phaser.GameObjects.Rectangle[],
@@ -7505,12 +7561,16 @@ export class BattleScene extends Phaser.Scene {
       items: readonly string[],
       selectedId: string | undefined,
     ): void => {
+      const geo = this.itemGridScrollGeometry(items);
+      const { start, end } = visibleRowRange(geo.offsets, geo.rowHeights, this.gridScrollOffset, geo.viewportHeight);
       buttons.forEach((btn, i) => {
-        const onThisPage = Math.floor(i / ITEM_GRID_PAGE_SIZE) === page;
-        const visible = show && onThisPage;
+        const row = Math.floor(i / ITEM_GRID_COLS);
+        const visible = show && row >= start && row <= end;
         btn.setVisible(visible);
         labels[i].setVisible(visible);
         if (visible) {
+          btn.y = this.itemGridCy + row * (ITEM_GRID_ROW_HEIGHT + ITEM_GRID_ROW_GAP) - this.gridScrollOffset;
+          labels[i].y = btn.y;
           const selected = items[i] === selectedId;
           btn.setFillStyle(selected ? COLORS.bronze : COLORS.woodPanel);
           btn.setStrokeStyle(this.keyboardFocus === "grid" && i === this.gridFocusIndex ? 3 : 0, COLORS.gilt);
@@ -7538,38 +7598,6 @@ export class BattleScene extends Phaser.Scene {
       STATUS_EFFECT_ORDER,
       ui.kind === "debugStatus" ? ui.statusId : undefined,
     );
-  }
-
-  /**
-   * Phase 17 (D-108)/Phase 25 (D-116): the page-nav control shared by
-   * whichever item grid is active (Shop, or a Test Mode debug picker —
-   * never more than one at once), refreshed after any change to
-   * `gridFocusIndex` or mode. Hidden entirely when no grid is showing, or
-   * when the active grid's whole catalogue fits on one page.
-   */
-  private refreshPageNav(): void {
-    const kind = this.ui.kind;
-    const gridVisible = kind === "building" || this.isDebugGridKind(kind);
-    const items = this.currentGridItems();
-    const pageCount = Math.max(1, Math.ceil(items.length / ITEM_GRID_PAGE_SIZE));
-    const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
-    const showNav = gridVisible && pageCount > 1;
-    this.pageNavPrevButton.setVisible(showNav).setColor(page > 0 ? "#8ad0f0" : "#555560");
-    this.pageNavNextButton.setVisible(showNav).setColor(page < pageCount - 1 ? "#8ad0f0" : "#555560");
-    this.pageNavLabel.setVisible(showNav).setText(`Page ${page + 1}/${pageCount}`);
-  }
-
-  /** Phase 17 (D-108)/Phase 25 (D-116): jump the active grid's (Shop, or a Test Mode debug picker) page by moving `gridFocusIndex` to the start of the adjacent page. */
-  private turnGridPage(direction: 1 | -1): void {
-    if (this.ui.kind !== "building" && !this.isDebugGridKind(this.ui.kind)) return;
-    const items = this.currentGridItems();
-    const pageCount = Math.max(1, Math.ceil(items.length / ITEM_GRID_PAGE_SIZE));
-    const page = Math.floor(this.gridFocusIndex / ITEM_GRID_PAGE_SIZE);
-    const nextPage = Math.max(0, Math.min(pageCount - 1, page + direction));
-    if (nextPage === page) return;
-    this.gridFocusIndex = nextPage * ITEM_GRID_PAGE_SIZE;
-    this.setHoveredItem(items[this.gridFocusIndex] ?? null);
-    this.refreshGridFocusVisual();
   }
 
   /**

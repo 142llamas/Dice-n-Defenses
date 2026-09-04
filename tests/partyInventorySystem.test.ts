@@ -25,7 +25,7 @@ function idCounter(prefix = "pool"): () => string {
 }
 
 const HOLLIS_KIT: Partial<Record<GearSlotId, string>> = { weapon: "longsword", chest: "chain-shirt", shield: "shield" };
-const FENNA_KIT: Partial<Record<GearSlotId, string>> = { weapon: "quarterstaff", chest: "hide-armor", amulet: "druidic-totem" };
+const FENNA_KIT: Partial<Record<GearSlotId, string>> = { weapon: "quarterstaff", chest: "hide-armor", shield: "druidic-totem" };
 
 function kitFor(kits: Record<string, Partial<Record<GearSlotId, string>>>): (id: string) => Partial<Record<GearSlotId, string>> {
   return (id) => kits[id] ?? {};

@@ -2,6 +2,99 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Real weapon-proficiency system auto-filters the Hands tab (D-235)
+
+Kevin's item 7: "Is there a weapon-proficiency system? If so, auto-filter
+out items a class can't use." There wasn't one — this session built it.
+
+Added:
+- `data/proficiencies.ts` (new): `WEAPON_PROFICIENCIES`, real SRD 5.2.1
+  Simple/Martial weapon access per class, verified during implementation
+  (not assumed from memory).
+- `systems/ProficiencySystem.ts` (new, fully unit-tested):
+  `isProficientWithHandsItem(classId, itemId)`.
+- `GearFilterSystem.ts`'s `CatalogFilters` gains `proficiencyClassId`.
+
+Changed:
+- The Armory's and Character Creation's Hands tab/gear picker now fully hide
+  any weapon a hero's class isn't proficient with, plus a "N hidden — not
+  proficient" footer. A real Shield is unaffected (no shield-proficiency
+  system exists or is being added); a spellcasting focus is gated by
+  whether the class casts spells at all.
+
+See `DECISIONS.md` D-235 for the full writeup, including the deliberate
+Cleric/Druid and in-battle-shop scope calls.
+
+## [Unreleased] — 0.2.0-dev — Scrollable lists replace pagination everywhere except the Compendium (D-234)
+
+Kevin's item 6: "Scrollable tables instead of pagination, everywhere except
+the Compendium."
+
+Added:
+- `systems/ScrollListMath.ts` (new, fully unit-tested): pure scroll/clip
+  math (offsets, clamping, visible-range, scroll-into-view, scrollbar
+  thumb metrics) shared by every consumer below.
+- `scenes/uiScrollList.ts` (new): the Phaser glue (masked viewport, mouse-
+  wheel scroll, a draggable scrollbar thumb) built on top of it.
+
+Changed:
+- The Armory's catalog, Character Creation's gear picker, the in-battle
+  spellbook picker, the in-battle Build/Test-Mode item grids, and the
+  Bestiary all scroll now instead of paginating — every Prev/Next button
+  and "Page N/M" label is gone. `CompendiumScene` is untouched (Kevin's
+  explicit exception).
+
+See `DECISIONS.md` D-234 for the full writeup, including which consumer
+needed which adaptation (BestiaryScene's variable-height entries, the
+in-battle grid's persistent-button idiom).
+
+## [Unreleased] — 0.2.0-dev — Armory sub-filters: rarity + Magic Only (every tab), Hands category/weapon-type/grip chips (D-233)
+
+Added:
+- `GearFilterSystem.ts`: `handsCategoryOf`, `weaponGripOf`, `isMagicItem`,
+  and `applyCatalogFilters` — pure, unit-tested filtering logic on top of
+  D-231's `decideSlotPairPlacement`/`decideHandsPlacement`.
+- `GearShopScene.ts` ("The Armory"): a rarity chip row (All/Common/
+  Uncommon/Rare/Very Rare/Legendary + a "✦ Magic Only" toggle) on every tab,
+  which persists across tab switches; a Hands-only second row (category:
+  Melee/Ranged/Shields/Spell Focus, weapon type: Simple/Martial, grip: 1H/
+  2H). A thin gold border now marks any non-common catalog row.
+
+Changed:
+- An all-filtered-out catalog now shows "No items match these filters."
+  instead of the generic empty-slot message. An equipped/carried item stays
+  pinned at the top of the list even when the active filters would
+  otherwise hide it (same guarantee slot-eligibility filtering already had).
+
+See `DECISIONS.md` D-233 for the full writeup.
+
+## [Unreleased] — 0.2.0-dev — Spellcasting focus items become real Hands-slot items; 4 new ones added (D-232)
+
+Kevin's item 8: "Add missing spellcasting focus items: spellbook, staff,
+wand, crystal ball, holy symbol, etc." Holy Symbol/Arcane Focus/Druidic
+Totem/Component Pouch already existed but lived in the wrong slot.
+
+Added:
+- 4 new common-rarity focus items: Apprentice's Wand, Gnarled Staff,
+  Wizard's Spellbook, Scrying Crystal.
+
+Changed:
+- The 4 existing foci retyped from the Amulet slot to the Hands (shield/
+  off-hand) slot, matching their real SRD hand-held nature and item 5's own
+  "Spell Focus" sub-filter framing. Both The Armory and Character
+  Creation's gear picker now list all 8 under Hands/Shield instead of
+  Amulet.
+
+Fixed:
+- `companionStartingGearForDifficulty` no longer treats a caster
+  companion's spellcasting focus as a discretionary slot once it moved into
+  `shield` — it joins `weapon`/`amulet` in the always-kept set, same as
+  before the retype. Without this fix, a caster companion would have
+  silently lost their focus on Hard/Nightmare campaigns. A real Shield in
+  that same slot is unaffected and still gets trimmed as before.
+
+See `DECISIONS.md` D-232 for the full writeup.
+
 ## [Unreleased] — 0.2.0-dev — Armory + Character Creation: Potions/Rings/Hands consolidated into one filter each (D-231)
 
 Buying a potion, ring, or hand item now auto-places it into whichever

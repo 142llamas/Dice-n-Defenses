@@ -18,6 +18,8 @@ import {
   FONT_BODY,
   type OrnateButtonHandle,
 } from "./uiTheme";
+import { cumulativeOffsets, contentHeight as scrollContentHeight, clampScrollOffset, visibleRowRange } from "../systems/ScrollListMath";
+import { createViewportMask, renderScrollbarVisual, attachWheelScroll, type ScrollListRect, type ScrollRegion } from "./uiScrollList";
 
 /**
  * BestiaryScene — Phase 11.6 (D-079): a read-only, unlock-on-encounter enemy
@@ -62,7 +64,8 @@ const PANEL_TOP = 168;
 const PANEL_HEIGHT = 782;
 const TEXT_PAD_X = 42;
 const TEXT_PAD_Y = 28;
-const ENTRIES_PER_PAGE = 10;
+/** D-234: vertical space between two entries' Text objects — replaces the old joined-text "\n\n" separator now that each entry is its own object. */
+const ENTRY_GAP = 18;
 
 const GROUPS: { label: string; match: (role: EnemyRole | undefined) => boolean }[] = [
   { label: "Minions", match: (role) => role === undefined || role === "minion" },
@@ -74,16 +77,17 @@ const GROUPS: { label: string; match: (role: EnemyRole | undefined) => boolean }
 ];
 
 export class BestiaryScene extends Phaser.Scene {
-  private sectionObjects: Phaser.GameObjects.Text[] = [];
+  private sectionObjects: Phaser.GameObjects.GameObject[] = [];
   private roster: EnemyDefinition[] = [];
   private progress!: BestiaryProgress;
-  private page = 0;
+  /** D-234: scroll offset (px) replacing the old page index — see `uiScrollList.ts`. */
+  private scrollOffset = 0;
   private groupIndex = 0;
   private tabButtons: OrnateButtonHandle[] = [];
-  private pageLabel!: Phaser.GameObjects.Text;
-  private prevButton!: OrnateButtonHandle;
-  private nextButton!: OrnateButtonHandle;
   private layoutRoot?: Phaser.GameObjects.Container;
+  /** Set each `renderRoster()` call so the persistent wheel handler (registered once in `create()`) always reflects the current tab/roster; null while there's nothing to scroll. */
+  private viewportRect: ScrollListRect | null = null;
+  private contentHeightPx = 0;
 
   constructor() {
     super("BestiaryScene");
@@ -91,7 +95,7 @@ export class BestiaryScene extends Phaser.Scene {
 
   create(): void {
     this.sectionObjects = [];
-    this.page = 0;
+    this.scrollOffset = 0;
     this.groupIndex = 0;
     this.progress = loadBestiaryProgress(window.localStorage, BESTIARY_STORAGE_KEY);
     this.roster = this.buildRoster();
@@ -107,16 +111,32 @@ export class BestiaryScene extends Phaser.Scene {
       this.input.keyboard?.removeAllListeners();
     });
     onViewportResize(this, () => this.rebuildLayout());
+    // D-234: registered once (not per-refresh) since this is a scene-level
+    // subscription, not a GameObject.
+    attachWheelScroll(
+      this,
+      () => this.activeScrollRegion(),
+      (offset) => {
+        this.scrollOffset = offset;
+        this.renderRoster();
+      },
+    );
+  }
+
+  private activeScrollRegion(): ScrollRegion | null {
+    if (!this.viewportRect) return null;
+    return { rect: this.viewportRect, totalContentHeight: this.contentHeightPx, scrollOffset: this.scrollOffset };
   }
 
   // D-154: rebuilds the whole screen against the current viewport,
-  // deliberately preserving `this.page`/`this.groupIndex` (only `create()`
-  // resets those) so a resize doesn't silently snap back to page 1/Minions.
+  // deliberately preserving `this.scrollOffset`/`this.groupIndex` (only
+  // `create()` resets those) so a resize doesn't silently snap back to the
+  // top of Minions.
   private rebuildLayout(): void {
     this.layoutRoot?.destroy();
     const before = new Set<Phaser.GameObjects.GameObject>(this.children.list);
     this.tabButtons = [];
-    const { width, height } = getViewport(this);
+    const { width } = getViewport(this);
     const panelWidth = width - PANEL_LEFT * 2;
 
     drawScreenBackdrop(this);
@@ -162,13 +182,12 @@ export class BestiaryScene extends Phaser.Scene {
     this.buildTabs(width);
 
     drawParchmentPanel(this, width / 2, PANEL_TOP + PANEL_HEIGHT / 2, panelWidth, PANEL_HEIGHT, 2);
-    this.buildPaginationControls(width, height);
 
     const created = this.children.list.filter((c) => !before.has(c));
     this.layoutRoot = this.add.container(0, 0);
     this.layoutRoot.add(created);
 
-    this.renderPage(panelWidth);
+    this.renderRoster();
   }
 
   /** D-150: one tab per role group, mirroring `CompendiumScene.buildTabs`'s pattern. */
@@ -176,7 +195,6 @@ export class BestiaryScene extends Phaser.Scene {
     const y = 122;
     const w = 150;
     const gap = 8;
-    const panelWidth = width - PANEL_LEFT * 2;
     const { xs, itemWidth } = centeredRowX(GROUPS.length, w, gap, width / 2, width - 80);
     GROUPS.forEach((group, i) => {
       const handle = createOrnateButton(
@@ -188,10 +206,10 @@ export class BestiaryScene extends Phaser.Scene {
         group.label,
         () => {
           this.groupIndex = i;
-          this.page = 0;
+          this.scrollOffset = 0;
           this.refreshTabHighlights();
           this.roster = this.buildRoster();
-          this.renderPage(panelWidth);
+          this.renderRoster();
         },
         { variant: "tab", depth: 5 },
       );
@@ -208,67 +226,28 @@ export class BestiaryScene extends Phaser.Scene {
     this.scene.start("MainMenuScene");
   }
 
-  private buildPaginationControls(width: number, height: number): void {
-    const y = height - 45;
-    const panelWidth = width - PANEL_LEFT * 2;
-    this.prevButton = createOrnateButton(
-      this,
-      width / 2 - 110,
-      y,
-      130,
-      36,
-      "◀ Prev",
-      () => {
-        if (this.page > 0) {
-          this.page--;
-          this.renderPage(panelWidth);
-        }
-      },
-      { variant: "tool", depth: 5 },
-    );
-
-    this.pageLabel = this.add
-      .text(width / 2, y, "", {
-        fontFamily: FONT_BODY,
-        fontSize: "15px",
-        color: "#c8b888",
-      })
-      .setOrigin(0.5)
-      .setDepth(5);
-
-    this.nextButton = createOrnateButton(
-      this,
-      width / 2 + 110,
-      y,
-      130,
-      36,
-      "Next ▶",
-      () => {
-        this.page++;
-        this.renderPage(panelWidth);
-      },
-      { variant: "tool", depth: 5 },
-    );
-  }
-
   /** D-150: only the CURRENTLY SELECTED tab's role, now that role is chosen by tab rather than shown as one continuous grouped scroll. */
   private buildRoster(): EnemyDefinition[] {
     const group = GROUPS[this.groupIndex];
     return Object.values(ENEMY_DEFINITIONS).filter((d) => group.match(d.role));
   }
 
-  private totalPages(): number {
-    return Math.max(1, Math.ceil(this.roster.length / ENTRIES_PER_PAGE));
-  }
-
-  private renderPage(panelWidth: number): void {
+  /**
+   * D-234: scrollable instead of paginated — see `uiScrollList.ts`. Unlike
+   * every other consumer this session, each entry's height is genuinely
+   * variable (wrapped lore text), so every entry is created up front purely
+   * to MEASURE its real wrapped height (a Text object's `.height` is only
+   * accurate once it exists with its final `wordWrap` width) before laying
+   * out scroll offsets — cheap for a roster this size, and the only way to
+   * know a wrapped Text's true height without re-implementing Phaser's own
+   * text-wrapping metrics.
+   */
+  private renderRoster(): void {
     for (const obj of this.sectionObjects) obj.destroy();
     this.sectionObjects = [];
 
-    const totalPages = this.totalPages();
-    this.page = Math.max(0, Math.min(this.page, totalPages - 1));
-    const pageEntries = this.roster.slice(this.page * ENTRIES_PER_PAGE, (this.page + 1) * ENTRIES_PER_PAGE);
-
+    const { width } = getViewport(this);
+    const panelWidth = width - PANEL_LEFT * 2;
     const textLeft = PANEL_LEFT + TEXT_PAD_X;
     const wrapWidth = panelWidth - TEXT_PAD_X * 2;
 
@@ -282,25 +261,62 @@ export class BestiaryScene extends Phaser.Scene {
       .setDepth(3);
     this.sectionObjects.push(heading);
 
-    const body = this.add
-      .text(
-        textLeft,
-        PANEL_TOP + TEXT_PAD_Y + heading.height + 12,
-        pageEntries.map((def) => this.entryText(def, this.progress)).join("\n\n"),
-        {
+    const viewportTop = PANEL_TOP + TEXT_PAD_Y + heading.height + 12;
+    const viewportHeight = Math.max(0, PANEL_TOP + PANEL_HEIGHT - TEXT_PAD_Y - viewportTop);
+
+    if (this.roster.length === 0 || viewportHeight <= 0) {
+      this.viewportRect = null;
+      return;
+    }
+
+    const entryWidth = wrapWidth - 20; // room for the scrollbar, matching this session's other consumers
+    const entries = this.roster.map((def) =>
+      this.add
+        .text(textLeft, 0, this.entryText(def, this.progress), {
           fontFamily: FONT_BODY,
           fontSize: "15px",
           color: "#2a1a10",
           lineSpacing: 6,
-          wordWrap: { width: wrapWidth },
-        },
-      )
-      .setDepth(3);
-    this.sectionObjects.push(body);
+          wordWrap: { width: entryWidth },
+        })
+        .setDepth(3)
+        .setVisible(false),
+    );
+    const rowHeights = entries.map((t) => t.height);
+    const offsets = cumulativeOffsets(rowHeights, ENTRY_GAP);
+    const totalHeight = scrollContentHeight(rowHeights, ENTRY_GAP);
+    this.scrollOffset = clampScrollOffset(this.scrollOffset, totalHeight, viewportHeight);
+    const { start, end } = visibleRowRange(offsets, rowHeights, this.scrollOffset, viewportHeight);
 
-    this.pageLabel.setText(`Page ${this.page + 1}/${totalPages}`);
-    this.prevButton.setDisabled(this.page === 0);
-    this.nextButton.setDisabled(this.page >= totalPages - 1);
+    const rect: ScrollListRect = { x: textLeft, y: viewportTop, width: wrapWidth, height: viewportHeight };
+    this.viewportRect = rect;
+    this.contentHeightPx = totalHeight;
+
+    const container = this.add.container(0, 0).setDepth(3);
+    this.sectionObjects.push(container);
+    container.setMask(createViewportMask(this, rect, this.sectionObjects));
+
+    entries.forEach((text, i) => {
+      if (i < start || i > end) {
+        text.destroy();
+        return;
+      }
+      text.setPosition(textLeft, viewportTop + offsets[i] - this.scrollOffset).setVisible(true);
+      container.add(text);
+    });
+
+    renderScrollbarVisual(
+      this,
+      rect,
+      totalHeight,
+      this.scrollOffset,
+      4,
+      (offset) => {
+        this.scrollOffset = offset;
+        this.renderRoster();
+      },
+      this.sectionObjects,
+    );
   }
 
   /** Renders one enemy's entry: a locked "???" line if unseen, full detail otherwise. */

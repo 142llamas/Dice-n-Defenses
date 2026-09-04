@@ -29,6 +29,103 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
+### KI-184 — D-235: real weapon-proficiency system, auto-filters the Hands tab
+**(headless-verified, not yet played)**.
+- Open the Armory for a Wizard (or another Simple-only caster) and go to the
+  Hands tab — confirm martial weapons (Greatsword, Longsword, etc.) no
+  longer appear, but Daggers/Slings/other Simple weapons, real Shields, and
+  spellcasting foci all still do. Confirm a "N hidden — not proficient"
+  footer appears below the catalog.
+- Same for a Fighter/Barbarian/Paladin/Ranger — confirm EVERY weapon still
+  shows (full martial access) and the footer does NOT appear.
+- Monk: confirm a Scimitar/Shortsword (martial + Light) still shows, but a
+  Greatsword/Longsword does not. Rogue: confirm a Rapier (Finesse, no Light)
+  AND a Shortsword (Light) both still show, but a Greatsword does not.
+- Open the Armory for a martial class (e.g. Fighter) and confirm spellcasting
+  foci (Holy Symbol, Arcane Focus, etc.) are hidden from their Hands tab —
+  they don't cast spells, so a focus is pointless for them.
+- Character Creation's starting-gear picker: repeat the Wizard/Fighter checks
+  above there too — confirm the same items are hidden, with the same
+  footer treatment.
+- Confirm every OTHER Armory tab (Chest/Head/Amulet/Potions/etc.) is
+  completely unaffected — proficiency only ever touches the Hands tab.
+- Known, deliberate gap (not a bug): the in-battle shop grid (opened via the
+  Build/Gear button during a battle, not the Armory) still sells everything
+  regardless of proficiency — flag if this reads as inconsistent enough to
+  prioritize fixing.
+
+### KI-183 — D-234: scrollable lists replace pagination (Armory, Character Creation gear picker, spellbook, in-battle shop/debug grids, Bestiary)
+**(headless-verified, not yet played)** — touches 5 scenes; go through each.
+- **The Armory catalog / Character Creation's gear picker**: browse a tab/
+  slot with more items than fit on screen (e.g. Hands, or Potions) — confirm
+  the list scrolls smoothly with the mouse wheel, a thin scrollbar thumb
+  appears on the right, and dragging it scrolls the list too. Confirm there
+  are no more "Page N/M" labels or Prev/Next buttons anywhere.
+- **Cast a Spell (in battle)**: pick a caster hero with more than 12 known
+  castable spells (a high-level full caster) — confirm the spell grid
+  scrolls the same way (wheel + thumb drag), and clicking a spell still
+  casts it correctly regardless of scroll position.
+- **Build mode / Test Mode debug pickers (in battle)**: open the Build shop
+  — confirm it scrolls instead of paginating. Use arrow keys (Tab into grid
+  focus first) to navigate past the visible rows — confirm the list scrolls
+  to follow your keyboard cursor instead of jumping a hard page boundary.
+  Repeat for a Test Mode debug picker (Spawn Enemy/Paint Terrain/Set Status)
+  if Test Mode is enabled.
+- **Bestiary**: open a role tab with more than a handful of enemies (e.g.
+  Minions) — confirm entries scroll smoothly even though each entry's height
+  varies (some have lore text, some don't); confirm a partially-scrolled
+  entry at the top/bottom edge is cleanly clipped, not overlapping the panel
+  border or the heading above it.
+- **Confirm untouched**: the Compendium still paginates exactly as before
+  (Kevin's own explicit exception) — nothing about it should have changed.
+- General feel check: does the scroll speed/wheel sensitivity feel right? Is
+  the scrollbar thumb easy to grab and drag accurately?
+
+### KI-182 — D-233: Armory sub-filters — rarity + Magic Only (every tab), Hands category/weapon-type/grip chips
+**(headless-verified, not yet played)**.
+- On any Armory tab, click through the new rarity chip row (All/Common/
+  Uncommon/Rare/Very Rare/Legendary) — confirm the catalog narrows to only
+  that tier, and switching tabs keeps your rarity choice (it's deliberately
+  NOT tab-scoped). Toggle "✦ Magic Only" on a tab that has both common and
+  non-common items — confirm only non-common rows remain, and every
+  non-common row has a visible thin gold border.
+- On the Hands tab specifically, click through the category chips (All/
+  Melee/Ranged/Shields/Spell Focus) — confirm each isolates the right kind
+  of item, and Spell Focus shows the 8 focus items from KI-181. Click
+  through Simple/Martial and 1H/2H — confirm both narrow correctly and that
+  a real Shield/Spell Focus item disappears when either is set to something
+  other than "Any" (grip/weapon-type are weapon-only concepts by design).
+- Combine filters until nothing matches (e.g. Hands + Ranged + Legendary on
+  a low-level shop) — confirm the message reads "No items match these
+  filters." rather than the generic empty-slot message.
+- Equip an item, then set filters that would normally hide it (e.g. filter
+  to a different rarity than your equipped item) — confirm the equipped/
+  carried row still shows at the top so Sell stays reachable, same
+  guarantee slot-eligibility filtering already had.
+- General layout check: on the Hands tab (both new chip rows visible at
+  once), confirm the compare strip and catalog panel are pushed down
+  cleanly with no overlap, and the catalog's last row/pagination controls
+  aren't clipped off the bottom of the screen.
+
+### KI-181 — D-232: spellcasting focus items retyped to the Hands (shield/off-hand) slot, 4 new ones added
+**(headless-verified, not yet played)**.
+- The Armory: confirm Holy Symbol/Arcane Focus/Druidic Totem/Component
+  Pouch now appear under the Hands tab (not Amulet), and that the 4 new
+  items (Apprentice's Wand/Gnarled Staff/Wizard's Spellbook/Scrying
+  Crystal) are there too, all purchasable/sellable normally.
+- Character Creation's gear picker: confirm the same 8 items now list under
+  its Shield slot instead of Amulet, and still work as a normal one-click
+  pick (no purchase economy there).
+- Start a campaign with a caster companion (e.g. a Wizard/Cleric) on Hard or
+  Nightmare difficulty — confirm their spellcasting focus is STILL in their
+  starting kit (this is the bug the D-232 balance fix specifically
+  prevents; before that fix, a focus in the `shield` slot would have been
+  silently trimmed as a "discretionary" item, same as a real Shield).
+- Same campaign, a martial companion carrying a real Shield (e.g. the
+  Fighter or Paladin recruit) on Hard/Nightmare — confirm their Shield is
+  STILL correctly dropped as before (this fix should NOT change existing
+  real-Shield trimming behavior).
+
 ### KI-180 — D-231: Armory + Character Creation gear picker — Potions/Rings/Hands consolidated
 **(headless-verified, not yet played)** — the biggest pure-UI rework in this
 batch, touches both `GearShopScene.ts` ("The Armory") and

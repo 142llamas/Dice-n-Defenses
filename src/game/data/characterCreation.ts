@@ -59,7 +59,13 @@
  * left for a future session, not an oversight.
  */
 
-import { equipmentForSlotType, type GearSlotType, type GearSlotId, type EquipmentRarity } from "./equipment";
+import {
+  equipmentForSlotType,
+  getEquipmentDefinition,
+  type GearSlotType,
+  type GearSlotId,
+  type EquipmentRarity,
+} from "./equipment";
 import { getDifficultyDefinition, type DifficultyId } from "./difficulty";
 
 export const CHARACTER_NAME_POOL: string[] = [
@@ -115,11 +121,15 @@ export function startingGearPointCost(rarity: EquipmentRarity): number {
  * derived from their authored "normal" baseline (`CharacterBuild
  * .startingGearIds`, D-193 Plan 2.2) — never player-editable in campaign
  * mode (see `CharacterCreationScene`'s Gear button `identityLocked` guard).
- * `weapon` and `amulet` (a caster's spellcasting focus/holy symbol/etc. —
- * only ever authored for a caster companion) always survive, since they're
- * what makes the companion's class actually function; `chest` then
- * `shield` are discretionary and get trimmed on harder difficulty, up to
- * `companionDiscretionaryGearSlots` of them surviving.
+ * `weapon` and `amulet` always survive, since they're what makes the
+ * companion's class actually function. D-232: a caster's spellcasting focus
+ * (holy symbol/wand/etc.) now lives in the `shield` slot instead of
+ * `amulet` (`itemKind: "focus"`, see `equipment.ts`) — it ALSO always
+ * survives and does NOT spend the discretionary budget below, same
+ * treatment `amulet` used to give it. A real Shield in that same slot is
+ * unaffected: `chest` then a non-focus `shield` stay discretionary and get
+ * trimmed on harder difficulty, up to `companionDiscretionaryGearSlots` of
+ * them surviving.
  */
 export function companionStartingGearForDifficulty(
   baselineGearIds: Partial<Record<GearSlotId, string>>,
@@ -129,8 +139,13 @@ export function companionStartingGearForDifficulty(
   if (baselineGearIds.weapon) kept.weapon = baselineGearIds.weapon;
   if (baselineGearIds.amulet) kept.amulet = baselineGearIds.amulet;
 
+  const shieldId = baselineGearIds.shield;
+  const shieldIsFocus = !!shieldId && getEquipmentDefinition(shieldId).itemKind === "focus";
+  if (shieldIsFocus) kept.shield = shieldId;
+
   let discretionaryBudget = getDifficultyDefinition(difficultyId).companionDiscretionaryGearSlots;
   for (const slotId of ["chest", "shield"] as const) {
+    if (shieldIsFocus && slotId === "shield") continue; // already always-kept above, not part of the discretionary budget
     if (discretionaryBudget <= 0) break;
     if (baselineGearIds[slotId]) {
       kept[slotId] = baselineGearIds[slotId];

@@ -104,7 +104,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["wis", "con", "dex", "cha", "int", "str"]).scores(),
       controlledBy: "ai",
-      startingGearIds: { weapon: "quarterstaff", chest: "hide-armor", amulet: "druidic-totem" },
+      startingGearIds: { weapon: "quarterstaff", chest: "hide-armor", shield: "druidic-totem" },
     },
   },
   {
@@ -122,7 +122,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["int", "con", "dex", "wis", "cha", "str"]).scores(),
       controlledBy: "ai",
-      startingGearIds: { weapon: "dagger", chest: "padded-armor", amulet: "arcane-focus" },
+      startingGearIds: { weapon: "dagger", chest: "padded-armor", shield: "arcane-focus" },
     },
   },
 
@@ -162,7 +162,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       abilityScores: new StandardArrayAllocator(["cha", "con", "dex", "wis", "int", "str"]).scores(),
       controlledBy: "ai",
       subclassId: subclassIdForNewBuild("warlock"),
-      startingGearIds: { weapon: "dagger", chest: "leather-armor", amulet: "component-pouch" },
+      startingGearIds: { weapon: "dagger", chest: "leather-armor", shield: "component-pouch" },
     },
   },
   {
@@ -225,7 +225,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       level: 1,
       abilityScores: new StandardArrayAllocator(["cha", "dex", "con", "wis", "int", "str"]).scores(),
       controlledBy: "ai",
-      startingGearIds: { weapon: "rapier", chest: "leather-armor", amulet: "component-pouch" },
+      startingGearIds: { weapon: "rapier", chest: "leather-armor", shield: "component-pouch" },
     },
   },
   {
@@ -244,7 +244,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       abilityScores: new StandardArrayAllocator(["wis", "con", "str", "dex", "cha", "int"]).scores(),
       controlledBy: "ai",
       subclassId: subclassIdForNewBuild("cleric"),
-      startingGearIds: { weapon: "mace", chest: "chain-shirt", amulet: "holy-symbol" },
+      startingGearIds: { weapon: "mace", chest: "chain-shirt", shield: "holy-symbol" },
     },
   },
   {
@@ -301,7 +301,7 @@ export const COMPANIONS: CompanionDefinition[] = [
       abilityScores: new StandardArrayAllocator(["cha", "con", "dex", "wis", "int", "str"]).scores(),
       controlledBy: "ai",
       subclassId: subclassIdForNewBuild("sorcerer"),
-      startingGearIds: { weapon: "dagger", chest: "padded-armor", amulet: "arcane-focus" },
+      startingGearIds: { weapon: "dagger", chest: "padded-armor", shield: "arcane-focus" },
     },
   },
 ];
