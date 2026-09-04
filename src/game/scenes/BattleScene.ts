@@ -581,6 +581,22 @@ export class BattleScene extends Phaser.Scene {
    * doesn't rely solely on green-vs-red. */
   private buildGhostGlyph!: Phaser.GameObjects.Text;
   private endOverlay: Phaser.GameObjects.GameObject[] = [];
+  /**
+   * D-228 (KI-177 item 9): which scene "Return to Menu"/Esc goes to once the
+   * end screen is up — read by both the button and `handleEscape` so they
+   * always agree. Defaults to Main Menu (Free Play/defeat/every other
+   * path); `showEndScreen` overrides it to Campaign Select for a campaign
+   * VICTORY specifically.
+   */
+  private endOverlayDestination: "MainMenuScene" | "CampaignSelectScene" = "MainMenuScene";
+  /**
+   * D-228 (KI-177 item 9): total starting gold across every economy owner,
+   * snapshotted right after `this.economy` is constructed — diffed against
+   * current gold at victory to show "Gold Earned" on the campaign end
+   * screen. Always fresh (assigned unconditionally in `create()`), so no
+   * separate reset-block entry is needed.
+   */
+  private battleStartGold = 0;
   /** Phase 13.4 (D-088): the between-waves Rest-choice overlay (Short/Long Rest/Continue). */
   private restOverlay: Phaser.GameObjects.GameObject[] = [];
   private pendingAfterRest: (() => void) | null = null;
@@ -1052,6 +1068,7 @@ export class BattleScene extends Phaser.Scene {
     this.shopButtons = [];
     this.shopLabels = [];
     this.endOverlay = [];
+    this.endOverlayDestination = "MainMenuScene";
     this.restOverlay = [];
     this.pendingAfterRest = null;
     this.choosingRest = false;
@@ -1098,6 +1115,19 @@ export class BattleScene extends Phaser.Scene {
     this.chapterDialogue = null;
     this.keyboardFocus = "board";
     this.gridFocusIndex = 0;
+    // KI-177/D-228: `movingIntoAttack` is only cleared inside a
+    // `time.delayedCall` callback (see the move-then-attack flow) — Phaser's
+    // `Clock.shutdown()` destroys a still-pending timer WITHOUT invoking it,
+    // so exiting/ending a battle mid-animation left this (and the D-144 drag
+    // fields below) stuck from the previous battle, since Phaser reuses this
+    // scene instance and neither was in this reset block. `inputLocked()`
+    // reads `movingIntoAttack` directly, so a stuck `true` silently swallowed
+    // every click/keydown in the NEXT battle — the long-standing "start a
+    // second game and all buttons stop working" bug.
+    this.movingIntoAttack = false;
+    this.dragArmedHeroId = null;
+    this.heroDrag = null;
+    this.clearDragPinMarks();
     this.animationSpeed = loadSettings(window.localStorage, SETTINGS_STORAGE_KEY).animationSpeed;
     this.keyBindings = loadKeyBindings(window.localStorage, KEYBINDINGS_STORAGE_KEY);
     this.bestiaryProgress = loadBestiaryProgress(window.localStorage, BESTIARY_STORAGE_KEY);
@@ -1243,6 +1273,8 @@ export class BattleScene extends Phaser.Scene {
       startingGoldByOwner[ownerId] = STARTING_GOLD + ownerBackgroundBonus;
     }
     this.economy = new EconomySystem(startingGoldByOwner);
+    // D-228: snapshot for the campaign victory screen's "Gold Earned" stat.
+    this.battleStartGold = Object.values(startingGoldByOwner).reduce((sum, g) => sum + g, 0);
     this.buildSystem = new BuildSystem(this.map, this.pathfinding);
     this.progression = new ProgressionSystem();
     // D-217 (item 3a/3c): a campaign battle levels via the chapter's own
@@ -5458,7 +5490,7 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
     if (this.endOverlay.length > 0) {
-      this.scene.start("MainMenuScene");
+      this.scene.start(this.endOverlayDestination);
     } else if (this.ui.kind === "building") {
       this.exitBuildMode();
     } else if (this.isDebugGridKind(this.ui.kind)) {
@@ -10315,13 +10347,24 @@ export class BattleScene extends Phaser.Scene {
     return target instanceof Hero ? target.name : target.def.name;
   }
 
+  /**
+   * D-228 (KI-177 item 9): a campaign VICTORY (not defeat, not Free Play)
+   * gets a stats readout and routes back to Campaign Select (mission
+   * select) instead of Main Menu — Kevin's own complaint: "upon victory I
+   * only had the option to go back to the main menu." Everything else
+   * (Free Play win, any defeat) is completely unchanged.
+   */
   private showEndScreen(message: string, colorHex: string): void {
+    const isCampaignVictory = message === "Victory!" && !!this.campaignId;
+    this.endOverlayDestination = isCampaignVictory ? "CampaignSelectScene" : "MainMenuScene";
+
     const dim = this.add
       .rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65)
       .setDepth(40);
-    const panel = drawParchmentPanel(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20, 640, 220, 40);
+    const panelHeight = isCampaignVictory ? 320 : 220;
+    const panel = drawParchmentPanel(this, GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20, 640, panelHeight, 40);
     const title = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60, message, {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - (isCampaignVictory ? 100 : 60), message, {
         fontFamily: FONT_DISPLAY,
         fontSize: "40px",
         color: colorHex,
@@ -10330,25 +10373,57 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(41);
 
+    const statsObjects: Phaser.GameObjects.GameObject[] = [];
+    if (isCampaignVictory) {
+      const turnsTaken = this.turns.history.filter((p) => p === "player").length;
+      const goldEarned = Math.max(0, this.economy.gold(SOLO_ECONOMY_OWNER) - this.battleStartGold);
+      const levelUps = this.levelUpDeltaByHeroId.size;
+      const lines = [
+        `Waves Cleared: ${this.wavesCleared}`,
+        `Turns Taken: ${turnsTaken}`,
+        `Gold Earned: ${goldEarned}g`,
+      ];
+      if (levelUps > 0) lines.push(`Heroes Leveled Up: ${levelUps}`);
+      const stats = this.add
+        .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 30, lines.join("\n"), {
+          fontFamily: FONT_BODY,
+          fontSize: "18px",
+          color: "#e8dcc0",
+          align: "center",
+          lineSpacing: 6,
+        })
+        .setOrigin(0.5)
+        .setDepth(41);
+      statsObjects.push(stats);
+    }
+
     // Playtest fix: the end screen used to offer only a small "press Esc"
     // text hint with no clickable control, which is easy to miss (or simply
     // not work if the browser's keyboard focus isn't on the game canvas) and
     // left players stuck looking at the win/lose screen with no visible way
     // out. A real button is now the primary path; Esc still works too.
-    const buttonY = GAME_HEIGHT / 2 + 20;
-    const menuHandle = createOrnateButton(this, GAME_WIDTH / 2, buttonY, 260, 56, "Return to Menu", () => this.scene.start("MainMenuScene"), {
-      variant: "primary",
-      depth: 41,
-    });
+    const buttonY = GAME_HEIGHT / 2 + (isCampaignVictory ? 90 : 20);
+    const buttonLabel = isCampaignVictory ? "Continue" : "Return to Menu";
+    const menuHandle = createOrnateButton(
+      this,
+      GAME_WIDTH / 2,
+      buttonY,
+      260,
+      56,
+      buttonLabel,
+      () => this.scene.start(this.endOverlayDestination),
+      { variant: "primary", depth: 41 },
+    );
 
+    const hintText = isCampaignVictory ? "or press Esc" : "or press Esc  ·  then START to play again";
     const hint = this.add
-      .text(GAME_WIDTH / 2, buttonY + 56, "or press Esc  ·  then START to play again", {
+      .text(GAME_WIDTH / 2, buttonY + 56, hintText, {
         fontFamily: FONT_BODY,
         fontSize: "16px",
         color: "#a89058",
       })
       .setOrigin(0.5)
       .setDepth(41);
-    this.endOverlay.push(dim, panel, title, menuHandle.container, hint);
+    this.endOverlay.push(dim, panel, title, ...statsObjects, menuHandle.container, hint);
   }
 }

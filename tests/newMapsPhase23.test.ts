@@ -29,8 +29,11 @@ describe("CAUSEWAY_MAP (chasm crossing, pit showcase)", () => {
     expect(CAUSEWAY_MAP.name).toMatch(/Causeway/);
   });
 
-  it("has 2 spawns, 2 exits, and 4 hero-starts", () => {
-    expect(CAUSEWAY_MAP.spawns.length).toBe(2);
+  // D-228 (KI-177 item 1): resized 19x8 -> 34x18 for "at least 4x bigger
+  // maps" — 2 spawns -> 4 (one per bridge-mouth row), 4 hero-starts
+  // unchanged, still 2 exits (both at the bridge's east mouth).
+  it("has 4 spawns, 2 exits, and 4 hero-starts", () => {
+    expect(CAUSEWAY_MAP.spawns.length).toBe(4);
     expect(CAUSEWAY_MAP.exits.length).toBe(2);
     expect(CAUSEWAY_MAP.heroStarts.length).toBe(4);
   });
@@ -47,8 +50,8 @@ describe("CAUSEWAY_MAP (chasm crossing, pit showcase)", () => {
   it("Phase 24 (D-115): includes sand, walkable but unbuildable, without breaking connectivity", () => {
     expect(CAUSEWAY_MAP.tiles.flat()).toContain("sand");
     const gameMap = new GameMap(CAUSEWAY_MAP);
-    expect(gameMap.isWalkable({ x: 12, y: 0 })).toBe(true);
-    expect(gameMap.isBuildable({ x: 12, y: 0 })).toBe(false);
+    expect(gameMap.isWalkable({ x: 21, y: 0 })).toBe(true);
+    expect(gameMap.isBuildable({ x: 21, y: 0 })).toBe(false);
     expect(everySpawnCanReachAnExit(CAUSEWAY_MAP)).toBe(true);
   });
 });
@@ -59,10 +62,14 @@ describe("DROWNING_VALE_MAP (tidal marsh, cyclical dynamic terrain)", () => {
     expect(DROWNING_VALE_MAP.name).toMatch(/Drowning Vale/);
   });
 
-  it("has 2 spawns, 2 exits, 4 hero-starts, a shop, and a treasure", () => {
-    expect(DROWNING_VALE_MAP.spawns.length).toBe(2);
-    expect(DROWNING_VALE_MAP.exits.length).toBe(2);
-    expect(DROWNING_VALE_MAP.heroStarts.length).toBe(4);
+  // D-228 (KI-177 item 1): resized 16x8 -> 32x16 (exact 2x2 tile doubling)
+  // for "at least 4x bigger maps," plus 2 extra spawns at different
+  // heights — see that file's own doc comment for the exact counts this
+  // doubling produces.
+  it("has 10 spawns, 8 exits, 16 hero-starts, a shop, and a treasure", () => {
+    expect(DROWNING_VALE_MAP.spawns.length).toBe(10);
+    expect(DROWNING_VALE_MAP.exits.length).toBe(8);
+    expect(DROWNING_VALE_MAP.heroStarts.length).toBe(16);
     expect(DROWNING_VALE_MAP.shops.length).toBeGreaterThanOrEqual(1);
     expect(DROWNING_VALE_MAP.treasures.length).toBeGreaterThanOrEqual(1);
   });
@@ -87,8 +94,8 @@ describe("DROWNING_VALE_MAP (tidal marsh, cyclical dynamic terrain)", () => {
   it("Phase 24 (D-115): includes sand bordering the water fringe, walkable but unbuildable", () => {
     expect(DROWNING_VALE_MAP.tiles.flat()).toContain("sand");
     const gameMap = new GameMap(DROWNING_VALE_MAP);
-    expect(gameMap.isWalkable({ x: 5, y: 0 })).toBe(true);
-    expect(gameMap.isBuildable({ x: 5, y: 0 })).toBe(false);
+    expect(gameMap.isWalkable({ x: 10, y: 0 })).toBe(true);
+    expect(gameMap.isBuildable({ x: 10, y: 0 })).toBe(false);
   });
 });
 
@@ -98,10 +105,13 @@ describe("CINDERFALL_RIFT_MAP (volcanic, one-way bridge collapse)", () => {
     expect(CINDERFALL_RIFT_MAP.name).toMatch(/Cinderfall/);
   });
 
-  it("has 1 spawn, 1 exit, 4 hero-starts, cliffs, and fire", () => {
-    expect(CINDERFALL_RIFT_MAP.spawns.length).toBe(1);
-    expect(CINDERFALL_RIFT_MAP.exits.length).toBe(1);
-    expect(CINDERFALL_RIFT_MAP.heroStarts.length).toBe(4);
+  // D-228 (KI-177 item 1): resized 16x9 -> 32x18 (exact 2x2 tile doubling)
+  // for "at least 4x bigger maps," plus 2 extra spawns (north/south lanes)
+  // — see that file's own doc comment for the exact counts this produces.
+  it("has 6 spawns, 4 exits, 16 hero-starts, cliffs, and fire", () => {
+    expect(CINDERFALL_RIFT_MAP.spawns.length).toBe(6);
+    expect(CINDERFALL_RIFT_MAP.exits.length).toBe(4);
+    expect(CINDERFALL_RIFT_MAP.heroStarts.length).toBe(16);
     expect(CINDERFALL_RIFT_MAP.tiles.flat()).toContain("cliff");
     expect(CINDERFALL_RIFT_MAP.tiles.flat()).toContain("fire");
   });
@@ -130,8 +140,8 @@ describe("CINDERFALL_RIFT_MAP (volcanic, one-way bridge collapse)", () => {
   it("Phase 24 (D-115): includes ash-sand at the connector mouths, walkable but unbuildable", () => {
     expect(CINDERFALL_RIFT_MAP.tiles.flat()).toContain("sand");
     const gameMap = new GameMap(CINDERFALL_RIFT_MAP);
-    expect(gameMap.isWalkable({ x: 0, y: 1 })).toBe(true);
-    expect(gameMap.isBuildable({ x: 0, y: 1 })).toBe(false);
+    expect(gameMap.isWalkable({ x: 0, y: 2 })).toBe(true);
+    expect(gameMap.isBuildable({ x: 0, y: 2 })).toBe(false);
     expect(everySpawnCanReachAnExit(CINDERFALL_RIFT_MAP)).toBe(true);
   });
 });
@@ -142,10 +152,13 @@ describe("FROSTBOUND_HOLLOW_MAP (verticality, static — no dynamic terrain)", (
     expect(FROSTBOUND_HOLLOW_MAP.name).toMatch(/Frostbound Hollow/);
   });
 
-  it("has 1 spawn, 1 exit, 4 hero-starts, cliffs, and water, but no dynamic events", () => {
-    expect(FROSTBOUND_HOLLOW_MAP.spawns.length).toBe(1);
-    expect(FROSTBOUND_HOLLOW_MAP.exits.length).toBe(1);
-    expect(FROSTBOUND_HOLLOW_MAP.heroStarts.length).toBe(4);
+  // D-228 (KI-177 item 1): resized 14x9 -> 28x18 (exact 2x2 tile doubling)
+  // for "at least 4x bigger maps," plus 2 extra spawns (upper/lower ground
+  // lanes) — see that file's own doc comment for the exact counts.
+  it("has 6 spawns, 4 exits, 16 hero-starts, cliffs, and water, but no dynamic events", () => {
+    expect(FROSTBOUND_HOLLOW_MAP.spawns.length).toBe(6);
+    expect(FROSTBOUND_HOLLOW_MAP.exits.length).toBe(4);
+    expect(FROSTBOUND_HOLLOW_MAP.heroStarts.length).toBe(16);
     expect(FROSTBOUND_HOLLOW_MAP.tiles.flat()).toContain("cliff");
     expect(FROSTBOUND_HOLLOW_MAP.tiles.flat()).toContain("water");
     expect(FROSTBOUND_HOLLOW_MAP.dynamicTerrainEvents).toBeUndefined();
@@ -155,7 +168,7 @@ describe("FROSTBOUND_HOLLOW_MAP (verticality, static — no dynamic terrain)", (
     expect(everySpawnCanReachAnExit(FROSTBOUND_HOLLOW_MAP)).toBe(true);
     // the ridge really is a ground barrier in the middle rows, not decorative
     const map = new GameMap(FROSTBOUND_HOLLOW_MAP);
-    expect(map.isWalkable({ x: 6, y: 4 })).toBe(false);
-    expect(map.isWalkable({ x: 7, y: 4 })).toBe(false);
+    expect(map.isWalkable({ x: 12, y: 8 })).toBe(false);
+    expect(map.isWalkable({ x: 13, y: 8 })).toBe(false);
   });
 });

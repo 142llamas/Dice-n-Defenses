@@ -2,6 +2,84 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Armory + Character Creation: Potions/Rings/Hands consolidated into one filter each (D-231)
+
+Buying a potion, ring, or hand item now auto-places it into whichever
+physical slot of the pair is empty; only when both are full does it show
+both current occupants and ask which to replace.
+
+Added:
+- `systems/GearFilterSystem.ts` (new, fully unit-tested):
+  `decideSlotPairPlacement` (Potions/Rings, symmetric pairs) and
+  `decideHandsPlacement` (Weapon/Shield, asymmetric — candidate slot(s)
+  depend on the item itself, reusing the existing `isItemEligibleForSlot`
+  rule).
+
+Changed:
+- `GearShopScene.ts` ("The Armory"): one "Potions"/"Rings"/"Hands" tab each
+  instead of 5 separate tabs; both physical paperdoll cells of a pair
+  highlight together; a new both-occupied compare view shows both current
+  occupants with independent "Replace — Ng net" buttons.
+- `CharacterCreationScene.ts`'s gear picker: Ring 1/Ring 2 get the same
+  consolidation. No delayed-confirm economy here, so the both-full case
+  instead arms a pending pick and waits for the player to click which
+  physical ring cell to place it in — never a silent default. Hands was
+  deliberately NOT consolidated here (no purchase economy to motivate it).
+
+See `DECISIONS.md` D-231 for the full writeup.
+
+## [Unreleased] — 0.2.0-dev — Campaign victory screen shows stats + routes to Campaign Select; LoadGameScene resume bug fixed (D-230)
+
+Added:
+- Campaign victory screen: Waves Cleared/Turns Taken/Gold Earned/Heroes
+  Leveled Up readout, and "Return to Menu" is now "Continue," routing to
+  Campaign Select instead of Main Menu. Free Play victories and every
+  defeat screen are unchanged.
+
+Fixed:
+- `LoadGameScene.loadSlot()` no longer trusts a save slot's stored
+  `chapterIndex` verbatim (which goes stale once the player progresses
+  further chapters via Campaign Select's own "Continue" without re-saving
+  that slot) — it now recomputes the real next chapter from
+  `CampaignProgressSystem`, the same way Campaign Select's own "Continue"
+  does. This was the actual cause of "loading a campaign took me back to
+  before mission 1."
+
+See `DECISIONS.md` D-230 for the full writeup.
+
+## [Unreleased] — 0.2.0-dev — Combat difficulty: simultaneous multi-point enemy spawns + ~4x bigger maps (D-229)
+
+Campaign combat was trivially easy — enemies only ever spawned one at a
+time from a single point, on maps too small to hold real pressure.
+
+Changed:
+- Every campaign chapter's wave list now explicitly spreads spawn groups
+  across a map's spawn points (`WaveSpawnGroup.spawnIndex`), with several
+  groups sharing a `startTurn` for genuine same-turn multi-point spawns —
+  `data/campaigns.ts`'s Emberford/Saltmere/Causeway/Cinderfall Rift/
+  Frostbound Hollow/Drowning Vale/Prologue wave lists.
+- All 6 region maps resized to ~4x their original area (the Map Builder's
+  own size cap raised from 32x14 to 40x18 to make room, `MapBuilderSystem.ts`),
+  each gaining 2-4x its old spawn-point count. `PROLOGUE_MAP` kept its small
+  footprint (a one-time level-1 intro) but gained a 2nd spawn point.
+  `firestore.rules` mirrors the new size cap.
+
+See `DECISIONS.md` D-229 for the full writeup.
+
+## [Unreleased] — 0.2.0-dev — Fixed 2 real defects behind the recurring "2nd game freezes" bug (D-228)
+
+Fixed:
+- `movingIntoAttack` and the D-144 drag-and-drop fields
+  (`dragArmedHeroId`/`heroDrag`/`dragPinMarks`) were never reset in
+  `BattleScene.create()`, despite Phaser reusing the same scene instance
+  across every battle — a stuck `movingIntoAttack` silently blocks nearly
+  every input handler via `inputLocked()`. Both groups now reset on every
+  battle start, same as every other piece of interaction state already is.
+
+Root cause not independently confirmable without a browser — see
+`DECISIONS.md` D-228 and `KNOWN_ISSUES.md` KI-177 for the full honesty
+about confidence here.
+
 ## [Unreleased] — 0.2.0-dev — Map Builder: author-designed enemy waves (D-227)
 
 Map authors can now design their own enemy waves — pick the enemies, the

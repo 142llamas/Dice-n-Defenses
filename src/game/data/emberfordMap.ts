@@ -18,17 +18,42 @@ import { parseMapRows, type ParsedMap } from "./testMap";
  * had none, which is fine for the "parseable data" showcase 11.7 needed but
  * not for a real battle — `BattleScene.buildHeroes` needs one hero-start
  * tile per party slot, same as `TEST_MAP`'s four).
+ *
+ * D-228 (KI-177 item 1): resized 16x9 (144 tiles) -> 32x18 (576 tiles,
+ * exactly 4x) — Kevin's "campaign combat is trivially easy" complaint, half
+ * of which is that maps were too small to support more than a couple of
+ * enemies on the field at once. Redesigned around an open cross-shaped
+ * layout (mostly floor, so path connectivity is trivially guaranteed)
+ * instead of the old two-lane flanking pattern: FOUR separate spawn points
+ * (top x16y0, left x0y9, right x31y9, bottom x16y17 — `spawns` array order
+ * is therefore [top, left, right, bottom], i.e. `spawnIndex` 0-3) each with
+ * its own open corridor into a shared two-tile exit/hero-start cluster at
+ * the center (rows 8-9), so a chapter's waves can spawn multiple groups on
+ * the SAME turn from DIFFERENT points — see `EMBERFORD_CH1..4_WAVES`. The
+ * cliff/fire/acid flavor tiles moved off the direct spawn->center lines
+ * into the four diagonal quadrants, purely decorative now (not gating any
+ * route). One shop, one treasure — same count as the original, still
+ * reachable from the center.
  */
 const EMBERFORD_ROWS: string[] = [
-  ".H.H.H.H........",
-  "....^^....^^....",
-  "S...^^....^^...X",
-  "....FF....AA....",
-  "................",
-  "....FF....AA....",
-  "S...^^....^^...X",
-  "....^^....^^....",
-  "...$........T...",
+  "................S...............",
+  "................................",
+  "................................",
+  "......^^................FF......",
+  "......^^................FF......",
+  "................................",
+  "................................",
+  "................................",
+  "..............HXXH..............",
+  "S..........$..H..H..T..........S",
+  "................................",
+  "................................",
+  "................................",
+  "......AA................^^......",
+  "......AA................^^......",
+  "................................",
+  "................................",
+  "................S...............",
 ];
 
 export const EMBERFORD_MAP: ParsedMap = parseMapRows(

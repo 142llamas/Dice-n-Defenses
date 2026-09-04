@@ -76,6 +76,7 @@ import {
   type GearSlotId,
 } from "../data/equipment";
 import { previewGearSlotChange, formatGearDelta } from "../systems/GearCompareSystem";
+import { decideSlotPairPlacement } from "../systems/GearFilterSystem";
 import { FEAT_IDS, getFeat } from "../data/feats";
 import { RACE_IDS, getRaceDefinition } from "../data/races";
 import { BACKGROUND_IDS, getBackgroundDefinition, backgroundAbilityChoices } from "../data/backgrounds";
@@ -270,6 +271,11 @@ const COLUMN_GAP = 10;
 function columnCenterX(width: number, slot: number): number {
   const firstColumnLeft = (width - (MAX_PARTY_SIZE * COLUMN_WIDTH + (MAX_PARTY_SIZE - 1) * COLUMN_GAP)) / 2;
   return firstColumnLeft + slot * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_WIDTH / 2;
+}
+
+/** D-228 (KI-177 item 4): the gear picker's own Ring 1/Ring 2 consolidation check. */
+function isRingSlot(slot: GearSlotId): boolean {
+  return slot === "ring1" || slot === "ring2";
 }
 
 /**
@@ -584,6 +590,14 @@ export class CharacterCreationScene extends Phaser.Scene {
   private gearPickerSlotIndex = 0;
   private gearPickerGearSlot: GearSlotId = "weapon";
   private gearPickerCatalogPage = 0;
+  /**
+   * D-228 (KI-177 item 4): Ring 1/Ring 2 consolidation, mirroring the
+   * Armory's (`GearShopScene`) same-session fix — a new ring pick that
+   * can't auto-resolve (both physical ring slots already occupied) waits
+   * here until the player clicks WHICH paperdoll ring cell to place it in,
+   * rather than silently guessing (see `feedback_no_silent_choice_defaults`).
+   */
+  private pendingRingPick: string | null = null;
   private planningSlot: number | null = null;
   private planningDraft: LevelUpPlan = emptyLevelUpPlan();
   private planningSteps: LevelUpChoiceStep[] = [];
@@ -2694,6 +2708,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.gearPickerSlotIndex = slot;
     this.gearPickerGearSlot = "weapon";
     this.gearPickerCatalogPage = 0;
+    this.pendingRingPick = null;
     this.refreshGearPicker();
   }
 
@@ -2792,7 +2807,10 @@ export class CharacterCreationScene extends Phaser.Scene {
         const cellIndex = s.gearIndices[slotId] ?? 0;
         const cellPool = startingGearIdsForSlotType(gearSlotType(slotId));
         const occupantId = cellIndex > 0 ? cellPool[cellIndex - 1] : undefined;
-        const isActive = slotId === this.gearPickerGearSlot;
+        // D-228 (KI-177 item 4): Ring 1/Ring 2 share one catalog view, so
+        // BOTH cells read as "active" together whenever either is selected
+        // — same consolidation `GearShopScene` got this session.
+        const isActive = slotId === this.gearPickerGearSlot || (isRingSlot(slotId) && isRingSlot(this.gearPickerGearSlot));
 
         const cellG = this.add.graphics().setDepth(62);
         cellG.fillStyle(0x1a1108, 1);
@@ -2806,8 +2824,18 @@ export class CharacterCreationScene extends Phaser.Scene {
           .setInteractive({ useHandCursor: true })
           .setDepth(63);
         hit.on("pointerdown", () => {
+          // A pending ring pick (both ring slots were full) resolves the
+          // instant this specific physical cell is clicked — Kevin's own
+          // spec: show both spots, let the player choose which to replace.
+          if (this.pendingRingPick !== null && isRingSlot(slotId)) {
+            const pick = this.pendingRingPick;
+            this.pendingRingPick = null;
+            applyPickToSlot(pick, slotId);
+            return;
+          }
           this.gearPickerGearSlot = slotId;
           this.gearPickerCatalogPage = 0;
+          this.pendingRingPick = null;
           this.refreshGearPicker();
         });
         overlay.push(hit);
@@ -2844,6 +2872,13 @@ export class CharacterCreationScene extends Phaser.Scene {
     const pool = startingGearIdsForSlotType(gearSlotType(gearSlot));
     const currentIndex = s.gearIndices[gearSlot] ?? 0;
     const currentItemId = currentIndex > 0 ? pool[currentIndex - 1] : undefined;
+    // D-228 (KI-177 item 4): the OTHER physical ring slot's own occupant,
+    // when `gearSlot` is a ring — used below both to show "Equipped" on
+    // its row too and to decide whether a new pick can auto-place (one
+    // ring free) or needs the player to choose (both full).
+    const otherRingSlot: GearSlotId | null = isRingSlot(gearSlot) ? (gearSlot === "ring1" ? "ring2" : "ring1") : null;
+    const otherRingIndex = otherRingSlot ? (s.gearIndices[otherRingSlot] ?? 0) : 0;
+    const otherRingItemId = otherRingSlot && otherRingIndex > 0 ? pool[otherRingIndex - 1] : undefined;
     const budget = pointBuy ? getDifficultyDefinition(this.difficultyId).startingGearPoints : Infinity;
     const currentCost = currentItemId ? startingGearPointCost(getEquipmentDefinition(currentItemId).rarity) : 0;
     // Points available for a NEW pick in this slot: the budget minus
@@ -2856,6 +2891,20 @@ export class CharacterCreationScene extends Phaser.Scene {
       null,
       ...pool.filter((id) => !pointBuy || startingGearPointCost(getEquipmentDefinition(id).rarity) <= availableForThisSlot),
     ];
+
+    if (this.pendingRingPick !== null && isRingSlot(gearSlot)) {
+      overlay.push(
+        this.add
+          .text(
+            panelCenterX,
+            paperdollTop + paperdollPanelHeight + 10,
+            `Click Ring 1 or Ring 2 above to place ${getEquipmentDefinition(this.pendingRingPick).name}.`,
+            { fontFamily: FONT_BODY, fontSize: "13px", color: "#e8c25a" },
+          )
+          .setOrigin(0.5)
+          .setDepth(61),
+      );
+    }
 
     const catalogTop = paperdollTop + paperdollPanelHeight + 20;
     const rowHeight = 58;
@@ -2870,19 +2919,24 @@ export class CharacterCreationScene extends Phaser.Scene {
 
     const previewHero = simulateHeroForPlanning(build, s.levelUpPlan, build.startingLevel ?? 1);
 
-    const applyPick = (id: string | null): void => {
+    // D-228 (KI-177 item 4): generalized to an explicit target slot so a
+    // ring pick resolved via the paperdoll (see the pointerdown handler
+    // above) can write into whichever specific physical slot the player
+    // clicked, not just whatever `gearSlot` happened to be selected.
+    const applyPickToSlot = (id: string | null, targetSlot: GearSlotId): void => {
+      const targetPool = startingGearIdsForSlotType(gearSlotType(targetSlot));
       if (id === null) {
-        delete s.gearIndices[gearSlot];
+        delete s.gearIndices[targetSlot];
       } else {
-        const i = pool.indexOf(id);
-        s.gearIndices[gearSlot] = i + 1;
+        const i = targetPool.indexOf(id);
+        s.gearIndices[targetSlot] = i + 1;
         // D-204: the SRD grip rule — a Two-Handed weapon needs both hands,
         // so it can't coexist with anything in the other hand slot.
         // Force-clears the conflicting slot instead of rejecting the pick
         // (BattleScene's mid-battle equip flow rejects instead — this is
         // Character Creation's own, more forgiving, pre-battle picker).
-        if (gearSlot === "weapon" && isTwoHandedWeapon(id)) delete s.gearIndices.shield;
-        if (gearSlot === "shield") {
+        if (targetSlot === "weapon" && isTwoHandedWeapon(id)) delete s.gearIndices.shield;
+        if (targetSlot === "shield") {
           const weaponIndex = s.gearIndices.weapon;
           const weaponId = weaponIndex ? startingGearIdsForSlotType("weapon")[weaponIndex - 1] : undefined;
           if (weaponId && isTwoHandedWeapon(weaponId)) delete s.gearIndices.weapon;
@@ -2890,10 +2944,11 @@ export class CharacterCreationScene extends Phaser.Scene {
       }
       this.refreshGearPicker();
     };
+    const applyPick = (id: string | null): void => applyPickToSlot(id, gearSlot);
 
     pageItems.forEach((id, idx) => {
       const rowY = catalogTop + 12 + idx * (rowHeight + rowGap) + rowHeight / 2;
-      const isCurrent = id === (currentItemId ?? null);
+      const isCurrent = id === (currentItemId ?? null) || (id !== null && id === otherRingItemId);
       const leftX = panelCenterX - panelWidth / 2 + 16;
       const def = id ? getEquipmentDefinition(id) : undefined;
       const rarityTag = def && def.rarity !== "common" ? ` · ${RARITY_LABELS[def.rarity]}` : "";
@@ -2965,7 +3020,22 @@ export class CharacterCreationScene extends Phaser.Scene {
           140,
           34,
           id === null ? "Unequip" : "Equip",
-          () => applyPick(id),
+          () => {
+            // D-228 (KI-177 item 4): a new ring pick with both physical
+            // slots already full can't auto-resolve — arm it and wait for
+            // an explicit paperdoll-cell click (see that handler above)
+            // instead of guessing which ring to replace.
+            if (id !== null && isRingSlot(gearSlot) && otherRingSlot) {
+              const decision = decideSlotPairPlacement(currentItemId ?? null, otherRingItemId ?? null, gearSlot, otherRingSlot);
+              if (decision.kind === "autoPlace") applyPickToSlot(id, decision.slot);
+              else {
+                this.pendingRingPick = id;
+                this.refreshGearPicker();
+              }
+              return;
+            }
+            applyPick(id);
+          },
           { variant: "tool", fontSize: 12, depth: 64 },
         );
         overlay.push(actionHandle.container);

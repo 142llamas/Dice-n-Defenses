@@ -175,8 +175,8 @@ service cloud.firestore {
     // `fromSharedMapRecord`) is the real gatekeeper against a malformed
     // character on load, exactly as it already is for the hardcoded maps.
     // Bounds mirror MapBuilderSystem.ts's own MIN/MAX_MAP_COLS/ROWS exactly
-    // (6-32 cols, 6-14 rows as of D-176 — BattleScene now renders at a
-    // per-map shrink-to-fit tile size floored at 40px, see that file's
+    // (6-40 cols, 6-18 rows as of D-228 — BattleScene now renders at a
+    // per-map shrink-to-fit tile size floored at 32px, see that file's
     // header comment for the derivation math).
     function isValidSharedMap(mapId) {
       let data = request.resource.data;
@@ -187,8 +187,8 @@ service cloud.firestore {
         && (data.authorDisplayName == null || (data.authorDisplayName is string && data.authorDisplayName.size() <= 100))
         && data.createdAt is number
         && data.updatedAt is number
-        && data.cols is number && data.cols >= 6 && data.cols <= 32
-        && data.rows is number && data.rows >= 6 && data.rows <= 14
+        && data.cols is number && data.cols >= 6 && data.cols <= 40
+        && data.rows is number && data.rows >= 6 && data.rows <= 18
         && data.tileRows is list && data.tileRows.size() == data.rows
         && isValidTileRows(data.tileRows, data.cols)
         && data.customWaves is list && data.customWaves.size() <= 8
@@ -239,7 +239,8 @@ service cloud.firestore {
     }
 
     // No loop construct in rules — explicit per-index checks up through
-    // MAX_MAP_ROWS (14), same shape as isValidParty's fixed 4-slot pattern.
+    // MAX_MAP_ROWS (18, as of D-228), same shape as isValidParty's fixed
+    // 4-slot pattern.
     function isValidTileRows(rows, cols) {
       return (rows.size() < 1 || (rows[0] is string && rows[0].size() == cols))
         && (rows.size() < 2 || (rows[1] is string && rows[1].size() == cols))
@@ -254,7 +255,11 @@ service cloud.firestore {
         && (rows.size() < 11 || (rows[10] is string && rows[10].size() == cols))
         && (rows.size() < 12 || (rows[11] is string && rows[11].size() == cols))
         && (rows.size() < 13 || (rows[12] is string && rows[12].size() == cols))
-        && (rows.size() < 14 || (rows[13] is string && rows[13].size() == cols));
+        && (rows.size() < 14 || (rows[13] is string && rows[13].size() == cols))
+        && (rows.size() < 15 || (rows[14] is string && rows[14].size() == cols))
+        && (rows.size() < 16 || (rows[15] is string && rows[15].size() == cols))
+        && (rows.size() < 17 || (rows[16] is string && rows[16].size() == cols))
+        && (rows.size() < 18 || (rows[17] is string && rows[17].size() == cols));
     }
   }
 }

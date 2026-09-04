@@ -1,7 +1,9 @@
 import Phaser from "phaser";
-import { SAVE_STORAGE_KEY } from "../config";
+import { SAVE_STORAGE_KEY, CAMPAIGN_PROGRESS_STORAGE_KEY } from "../config";
 import { getClassDefinition } from "../data/classes";
 import { getDifficultyDefinition } from "../data/difficulty";
+import { getCampaignDefinition, totalChapters } from "../data/campaigns";
+import { loadCampaignProgress, getHighestCompletedChapter } from "../systems/CampaignProgressSystem";
 import { deleteSaveSlot, loadSaveFile, saveSaveFile, type SaveSlot } from "../systems/SaveSystem";
 import { firebaseReady } from "../cloud/firebaseApp";
 import { initAuth, type AuthState } from "../cloud/AuthClient";
@@ -293,13 +295,32 @@ export class LoadGameScene extends Phaser.Scene {
     // without this, a saved campaign party re-entered Character Creation
     // as fully free-pick (no companion lock, no point-buy, wrong party
     // size). Both are simply undefined for a classic/Free Play slot.
+    //
+    // D-228 (KI-177 item 9 bug): `chapterIndex` is NO LONGER taken verbatim
+    // from the slot — `slot.chapterIndex` is whatever chapter was being
+    // fought the moment Save Party/Save & Exit was last clicked, which goes
+    // stale the instant the player progresses further chapters via Campaign
+    // Select's own "Continue" flow without re-saving that exact slot
+    // (Kevin's report: loading a campaign he'd played several chapters into
+    // dropped him back "before mission 1"). Recomputed here the same way
+    // `CampaignSelectScene.nextChapterIndexFor` does — the real source of
+    // truth for "which chapter is next" is `CampaignProgressSystem`, not a
+    // save-time snapshot.
+    const chapterIndex = slot.campaignId ? this.resumeChapterIndexFor(slot.campaignId) : slot.chapterIndex;
     this.scene.start("CharacterCreationScene", {
       loadedSlotId: slot.id,
       loadedParty: slot.party,
       difficultyId: slot.difficultyId,
       campaignId: slot.campaignId,
-      chapterIndex: slot.chapterIndex,
+      chapterIndex,
     });
+  }
+
+  /** D-228: mirrors `CampaignSelectScene.nextChapterIndexFor` exactly. */
+  private resumeChapterIndexFor(campaignId: string): number {
+    const campaign = getCampaignDefinition(campaignId);
+    const progress = loadCampaignProgress(window.localStorage, CAMPAIGN_PROGRESS_STORAGE_KEY);
+    return Math.min(getHighestCompletedChapter(progress, campaignId) + 1, totalChapters(campaign) - 1);
   }
 
   private deleteSlot(slotId: string): void {

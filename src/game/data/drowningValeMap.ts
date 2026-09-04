@@ -20,20 +20,38 @@ import { parseMapRows, type ParsedMap, type DynamicTerrainEvent } from "./testMa
  * Legend: see testMap.ts's doc comment ($ shop, T treasure, ~ water, D sand).
  *
  * All content here is original placeholder data — no third-party IP.
+ *
+ * D-228 (KI-177 item 1): resized 16x8 (128 tiles) -> 32x16 (512 tiles,
+ * exactly 4x) by scaling both dimensions 2x (each original tile becomes a
+ * 2x2 block) — preserves the flood-zone/tide mechanic exactly, since the
+ * event's tile positions just get re-derived from the same doubled
+ * coordinates (see `FLOOD_ZONE_POSITIONS` below). Two extra ground spawns
+ * were added at different heights (rows 4 and 12) alongside the original
+ * mid-height pair (rows 6-9, doubled) — `spawns` array order is
+ * [upper, mid x8 clustered, lower] — so enemies now approach from 3
+ * heights instead of funneling through one mid-height entry.
  */
 const DROWNING_VALE_ROWS: string[] = [
-  ".....D~~~~D.....",
-  ".............T..",
-  ".H..............",
-  "SH.............X",
-  "SH.............X",
-  ".H..............",
-  "..$.D...........",
-  ".....D~~~~D.....",
+  "..........DD~~~~~~~~DD..........",
+  "..........DD~~~~~~~~DD..........",
+  "..........................TT....",
+  "..........................TT....",
+  "S.HH............................",
+  "..HH............................",
+  "SSHH..........................XX",
+  "SSHH..........................XX",
+  "SSHH..........................XX",
+  "SSHH..........................XX",
+  "..HH............................",
+  "..HH............................",
+  "S...$$..DD......................",
+  "....$$..DD......................",
+  "..........DD~~~~~~~~DD..........",
+  "..........DD~~~~~~~~DD..........",
 ];
 
-const FLOOD_ZONE_POSITIONS = Array.from({ length: 6 }, (_, rowOffset) =>
-  Array.from({ length: 4 }, (_, colOffset) => ({ x: 6 + colOffset, y: 1 + rowOffset })),
+const FLOOD_ZONE_POSITIONS = Array.from({ length: 12 }, (_, rowOffset) =>
+  Array.from({ length: 8 }, (_, colOffset) => ({ x: 12 + colOffset, y: 2 + rowOffset })),
 ).flat();
 
 const DROWNING_VALE_EVENTS: DynamicTerrainEvent[] = [

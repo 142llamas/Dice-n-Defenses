@@ -1,5 +1,40 @@
 # Project Status
 
+## 2026-09-03/04 playtest batch: freeze bug + difficulty/maps + victory flow + Armory consolidation — DONE, session handed off mid-batch (D-228 through D-231)
+
+Kevin's latest playtest notes (10 numbered items). Four pieces shipped and
+verified (typecheck clean, all 1721 tests pass, production build succeeds
+each time); the rest of the Armory/gear-UX batch (items 5's sub-filters,
+item 6 scrollable lists, item 7 weapon proficiency, item 8 spellcasting
+foci) is explicitly NOT started — see `PHASE_HANDOFF.md` for the full
+continuation plan, this was a deliberate mid-session handoff at Kevin's own
+request, not a stopping point chosen by the agent.
+
+- **D-228**: the recurring "2nd game freezes all input" bug — two real,
+  previously-undiscovered reset-block gaps fixed (`movingIntoAttack`, the
+  D-144 drag fields). Strongest static lead after two full investigation
+  rounds; root cause still unconfirmed without a browser. See KI-177.
+- **D-229**: campaign combat difficulty — every region's wave data now
+  spawns enemies simultaneously from multiple points instead of one at a
+  time; all 6 regions + the Prologue resized to ~4x their original map
+  area (Map Builder's own cap raised 32x14→40x18 to make room). Nameless
+  Throne (the capstone) deliberately not touched. See KI-178.
+- **D-230**: campaign victory screen now shows real stats (waves/turns/
+  gold/level-ups) and routes to Campaign Select instead of Main Menu; fixed
+  the actual bug behind "loading a campaign put me before mission 1"
+  (`LoadGameScene` was trusting a stale save-time chapter index). See KI-179.
+- **D-231**: The Armory's and Character Creation's gear picker's Potion 1/2,
+  Ring 1/2, and (Armory only) Weapon/Shield slots consolidated into one
+  filter each, with a new fully-unit-tested `GearFilterSystem.ts` driving
+  auto-place-if-empty / compare-and-replace-if-both-full. See KI-180.
+
+Tests: **1721** (was 1711 at session start — 15 new, all in the new
+`tests/gearFilterSystem.test.ts`). Typecheck clean throughout. Production
+build succeeds (**158 modules**, up from 157 — the new
+`GearFilterSystem.ts`). No browser available in this environment — every
+piece above needs Kevin's own playtest pass; see the 4 new KI entries
+(KI-177 through KI-180) for click-through checklists.
+
 ## Map Builder: author-designed enemy waves — DONE this session, not yet played (D-227)
 
 Kevin's own ask: Map Builder previously painted terrain/markers only —

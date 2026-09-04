@@ -13286,3 +13286,244 @@ Publish/Browse it.
 `src/game/scenes/MapBuilderScene.ts`, `src/game/data/testMap.ts`,
 `src/game/systems/MapSharingSystem.ts`, `src/game/scenes/BrowseSharedMapsScene.ts`,
 `firestore.rules`, `tests/mapBuilder.test.ts`, `tests/mapSharing.test.ts`.
+
+### D-228 — The recurring "2nd game freezes all input" bug: two real reset-block gaps fixed (best static lead, unconfirmed)
+
+Kevin's playtest note explicitly asked for this to be "officially made part
+of the plan" — a bug reported and static-investigated (D-213) but never
+confirmed fixed, now reliably reproducible on his end: starting a SECOND
+battle in the same browser session, regardless of Free Play/Campaign or
+win/lose/exit, eventually freezes all input.
+
+`BattleScene.create()` has an explicit ~130-line block (comment: "Reset all
+mutable state so returning from the menu starts a clean game (Phaser reuses
+the scene instance, so fields must be cleared here)") — Phaser never
+reconstructs `BattleScene`, it's the SAME instance across every battle.
+Audited every field declared before `init`/`create` against that reset
+block and found two groups genuinely missing from it, both read directly by
+input handlers:
+
+1. **`movingIntoAttack`** — set `true` right before a move-then-attack
+   animation, cleared only inside a `this.time.delayedCall` callback.
+   Phaser's `Clock.shutdown()` (fires on every `scene.stop("BattleScene")`,
+   i.e. every Return-to-Menu/Exit/Pause-Load path) destroys a still-pending
+   timer WITHOUT invoking it — if a battle ends or is exited while that
+   ~400ms window is open, this stays stuck `true` forever. It's read
+   directly in `inputLocked()`, gating nearly every click/keydown handler in
+   the file, and `openPauseMenu()`'s own guard doesn't even check it, so
+   exiting mid-window is an easy, repeatable trigger.
+2. **`dragArmedHeroId`/`heroDrag`/`dragPinMarks`** (D-144 drag-and-drop hero
+   movement) — same gap. A stale `heroDrag` from a prior battle hijacks the
+   new battle's first mouse-move (`updateDragPreview` instead of normal
+   hover), since hero ids are stable across battles for the same character.
+   Self-heals on the next left-click release (`resolveDrop` unconditionally
+   clears it first), so this reads as a confusing glitch rather than a
+   permanent freeze, but it's a real, independently-confirmed defect from
+   the same root cause.
+
+**Fix**: both groups added to `create()`'s existing reset block, same
+pattern every other piece of interaction state there already follows —
+`this.movingIntoAttack = false; this.dragArmedHeroId = null; this.heroDrag = null;`
+plus destroying any live pin-mark `Arc`s via the existing
+`clearDragPinMarks()`. No new mechanism, purely closes a reset gap.
+
+**Honesty about confidence**: this is the strongest static lead after two
+full investigation rounds (this session's field-by-field audit + D-213's
+own pass), on two real, independently-verified defects — but this
+environment has no browser, so unlike D-149's confirmed fix, this can't be
+confirmed the same way. If Kevin still sees the freeze after this, the next
+step is DevTools console output at the moment it happens — the one piece of
+information static analysis can't get, per D-213's own conclusion.
+
+Verified: `npm run typecheck` clean, all 1711 tests pass (scene-layer
+change, no new test coverage applies — matches this project's own
+architecture rule that the scene layer itself carries none), production
+build succeeds. **Important file**: `src/game/scenes/BattleScene.ts`
+(`create()`'s reset block, ~line 1032).
+
+### D-229 — Combat difficulty: simultaneous multi-point enemy spawns + ~4x bigger maps, all 6 regions + Prologue
+
+Kevin's most emphatic complaint this session: "campaign combat feels way
+way way too easy... one enemy at a time... no need to use any special
+abilities... no need to take a rest." Root cause (confirmed by reading
+`WaveSystem.spawnDueEnemies`): a spawn group's `count` only controls how
+many ticks it re-spawns over — it always spawns exactly ONE enemy per due
+tick, never a batch. Campaign wave data never set `WaveSpawnGroup.spawnIndex`
+either, so every group across every chapter funneled through spawn point 0
+only, even on maps with 2 spawn tiles. `ThreatBudgetSystem` (D-217/223/224)
+already applies to campaign battles, but its own simultaneity lever
+(`extraLaneChance`/`maxSimultaneousLanes`) tops out at a 10-40% chance / 2-3
+lanes — a maybe, not reliable design.
+
+**Fix, deterministic and data-only (no engine change, no `ThreatBudgetSystem`
+retuning)**: every campaign chapter's wave list now explicitly distributes
+`WaveSpawnGroup`s across a map's spawn points via `spawnIndex`, with several
+groups sharing a `startTurn` so multiple enemies spawn on the SAME turn from
+DIFFERENT points — real simultaneity, not a random maybe. Applied to
+`EMBERFORD_WAVES`/`EMBERFORD_CH1..4_WAVES`, the same for Saltmere/Causeway/
+Cinderfall Rift/Frostbound Hollow/Drowning Vale, plus `PROLOGUE_WAVES`.
+
+**Bigger maps.** `MapBuilderSystem.ts` documented its own 32x14 cap as
+derived from a 40px "legibility floor" against the fixed 1280x1080 canvas —
+explicitly "not a hard technical limit... the floor, not the shrink-to-fit
+mechanism itself, is what's tunable." The render path
+(`GridSystem.computeFittedTileSize`) has no hard ceiling; confirmed the cap
+was purely a Map Builder/shared-map validation number. Lowered the floor to
+32px and recomputed both caps from the SAME documented formula:
+`MAX_MAP_ROWS` 14→18, `MAX_MAP_COLS` 32→40 (720-tile ceiling). Smaller tiles
+read slightly more cramped without real art yet — a real, accepted visual
+tradeoff, not a free lunch. `firestore.rules`' `isValidSharedMap`/
+`isValidTileRows` mirror the new caps exactly.
+
+Every one of the 6 region maps (`emberfordMap.ts`/`saltmereMap.ts`/
+`causewayMap.ts`/`cinderfallRiftMap.ts`/`frostboundHollowMap.ts`/
+`drowningValeMap.ts`) resized to ~4x its original area (verified via
+`tests/newMapsPhase23.test.ts`, updated for the new dimensions/spawn-exit
+counts — its `everySpawnCanReachAnExit` connectivity check still passes on
+every resized map). Emberford/Saltmere/Causeway were hand-redesigned around
+an open cross layout (or, for Causeway, a scaled-up version of its own
+signature "one bridge crossing" chokepoint mechanic) with genuinely
+separated new spawn points. Cinderfall Rift/Frostbound Hollow/Drowning Vale
+— each with a more delicate signature mechanic (a 3-lane bridge-collapse
+map, a static flying-vs-ground ridge, a cyclical flood zone) — were instead
+scaled by an exact 2x-both-dimensions tile-doubling (each original tile
+becomes a 2x2 block), which preserves every wall/lane/connector relationship
+and every `DynamicTerrainEvent`'s tile coordinates by construction (each
+event position doubled into its own 2x2 block), then had 1-2 extra spawn
+points hand-added. `PROLOGUE_MAP` (a deliberately small, one-time level-1
+intro) was NOT resized — only given a 2nd spawn point, since a fresh
+level-1 party's very first fight doesn't need a sprawling battlefield.
+
+**Explicitly not done this session**: `NAMELESS_THRONE_MAP` (the endgame
+capstone) — left untouched; worth a look in a future session if Kevin's
+combat-difficulty complaint extends there too.
+
+Verified: `npm run typecheck` clean, all 1711 tests pass (map-shape/
+connectivity assertions in `tests/newMapsPhase23.test.ts` updated for the
+new dimensions; `tests/campaigns.test.ts`/`tests/waves.test.ts` cover the
+wave-data shape). Production build succeeds. Scene/data-only change with no
+browser available — Kevin's own in-browser pass is what actually confirms
+"does this feel harder, not just look bigger," same standing caveat every
+other balance number in this project carries.
+
+**Important files**: `src/game/systems/MapBuilderSystem.ts`,
+`firestore.rules`, `src/game/data/emberfordMap.ts`,
+`src/game/data/saltmereMap.ts`, `src/game/data/causewayMap.ts`,
+`src/game/data/cinderfallRiftMap.ts`, `src/game/data/frostboundHollowMap.ts`,
+`src/game/data/drowningValeMap.ts`, `src/game/data/prologueMap.ts`,
+`src/game/data/campaigns.ts`, `tests/newMapsPhase23.test.ts`.
+
+### D-230 — Campaign victory screen gets real stats + routes to Campaign Select; fixed the actual "loads before mission 1" bug
+
+Two related fixes to the post-mission flow, both from Kevin's own report:
+"upon victory I only had the option to go back to the main menu" and
+loading a campaign he'd played several chapters into "took me to the point
+before mission 1."
+
+**Victory screen.** `BattleScene.showEndScreen()` was one bare overlay
+("Victory!"/"Defeat" + a single "Return to Menu" button, always routing to
+`MainMenuScene`) shared identically by Free Play, Campaign, win, and loss.
+A campaign VICTORY specifically (`message === "Victory!" && !!this.campaignId`)
+now shows a stats readout — Waves Cleared (`wavesCleared`, already tracked),
+Turns Taken (counted from `TurnSystem.history`'s "player" phase entries,
+spanning the whole battle), Gold Earned (a new `battleStartGold` snapshot,
+taken right after `EconomySystem` is constructed, diffed against current
+gold at victory), Heroes Leveled Up (`levelUpDeltaByHeroId.size`, already
+tracked) — and its button/Esc now route to `CampaignSelectScene` instead of
+`MainMenuScene`. New `endOverlayDestination` field (added to the `create()`
+reset block, learning directly from D-228's lesson on this exact class of
+bug) is read by both the button and `handleEscape`'s end-overlay branch, so
+they can never disagree. Free Play's screen and every defeat screen are
+completely unchanged.
+
+**The resume bug — root cause confirmed.** `LoadGameScene.loadSlot()`
+forwarded `slot.chapterIndex` verbatim into `CharacterCreationScene` — the
+chapter that was being fought at the moment Save Party/Save & Exit was LAST
+clicked, never cross-checked against real progress.
+`CampaignSelectScene.nextChapterIndexFor` already computes the correct
+resume chapter from `CampaignProgressSystem.getHighestCompletedChapter`; if
+Kevin saved once early and then progressed further chapters via Campaign
+Select's own "Continue" flow without reloading and re-saving that exact
+slot, the slot's stored `chapterIndex` goes stale and Load Game resumes at
+that old chapter — exactly his "before mission 1" report. **Fix**:
+`LoadGameScene.loadSlot()` now recomputes the resume chapter via a new
+`resumeChapterIndexFor()` (mirrors `nextChapterIndexFor` exactly) whenever
+`slot.campaignId` is set, instead of trusting the stored value.
+
+Verified: `npm run typecheck` clean, all 1711 tests pass (no new pure logic
+beyond what's already covered — both fixes are scene-layer routing/state).
+Production build succeeds. Needs Kevin's own playtest: a full campaign
+victory (does the stats readout read right, does Continue land on the
+correct next chapter/mission-select) and the specific repro (save early,
+progress several chapters via Continue, then Load Game that old slot).
+
+**Important files**: `src/game/scenes/BattleScene.ts` (`showEndScreen`,
+`endOverlayDestination`, `battleStartGold`), `src/game/scenes/LoadGameScene.ts`.
+
+### D-231 — The Armory + Character Creation's gear picker: Potion 1/2, Ring 1/2, and Hands (Weapon/Shield) consolidated into one filter each
+
+Items 3/4/5 (base ask) of Kevin's numbered list: "consolidate potion 1 and
+potion 2 into a single filter. Purchasing a potion if either potion slot...
+is empty should just buy it and place it into the empty spot. Only if both
+spots... occupied should they need to compare... All those same things
+apply to rings as well... Same for right and left hand."
+
+New pure module `src/game/systems/GearFilterSystem.ts` (fully unit-tested,
+`tests/gearFilterSystem.test.ts`, 15 cases):
+- `decideSlotPairPlacement(occupantA, occupantB, slotA, slotB)` — generic
+  symmetric-pair logic (auto-place into whichever of the pair is empty,
+  "compare and replace" when neither is), used for Potions
+  (general1/general2) and Rings (ring1/ring2).
+- `decideHandsPlacement(itemId, weaponOccupantId, shieldOccupantId)` — the
+  harder ASYMMETRIC case: an item's candidate slot(s) depend on the item
+  itself via the exact eligibility rule the Armory already had
+  (`isItemEligibleForSlot`/D-110's off-hand-light-weapon case) — a real
+  shield only ever fits "shield," a non-Light weapon only ever fits
+  "weapon," a Light melee weapon fits either. Deliberately does NOT itself
+  enforce the SRD 2H-weapon/shield grip conflict — `Hero.
+  wouldConflictWithGrip` (already checked by `BattleScene.buyGearForHero`,
+  which REJECTS rather than auto-clears in the Armory, confirmed by reading
+  it — auto-clear is Character Creation's own more-forgiving behavior only)
+  stays the single source of truth for that rejection; this only decides
+  which slot(s) to even attempt.
+
+**`GearShopScene.ts`** ("The Armory"): the paperdoll still shows every
+physical cell individually, but `general2`/`ring2`/`shield` are normalized
+(`SLOT_GROUP`) to their pair's head slot for filtering purposes — one
+"Potions"/"Rings"/"Hands" tab each, both physical cells highlight together,
+a new `targetSlot` field tracks which SPECIFIC physical slot a pending buy/
+sell actually targets (added to `init()`, no reset-block entry needed since
+it's set unconditionally by every path that touches it). Buying with one
+slot empty commits instantly (same one-click feel an empty slot already
+had); buying with both full shows both current occupants side-by-side
+(`buildPairCompareStrip`/`buildHandsCompareStrip`) with a "Replace X / net
+Ng" button per occupied slot, each computing its own trade-in independently.
+
+**`CharacterCreationScene.ts`'s gear picker**: got the SAME Ring 1/2
+consolidation (Potions don't exist in this pre-battle picker — "not a
+pre-battle concept," pre-existing comment, unchanged) — audited per this
+project's own hard-learned lesson (a past session shipped an Armory rebuild
+without touching this screen's identical Gear button and it became Kevin's
+angriest complaint that batch, see `feedback_verify_all_entry_points_after_ui_rebuild`
+memory). This picker has no economy/delayed-confirm step (a click IS the
+equip action), so the both-full case works differently: a new pick that
+can't auto-resolve arms `pendingRingPick` and waits for the player to click
+WHICH paperdoll ring cell to place it in — deliberately NOT a silent
+default (see `feedback_no_silent_choice_defaults` memory: Kevin has
+rejected auto-resolved meaningful choices 3 times before). Hands (Weapon/
+Shield) was deliberately NOT extended to this picker — no purchase economy
+here to motivate consolidating, and Kevin's own phrasing ("filter chips")
+reads as Armory-specific; flagged, not silently skipped.
+
+Verified: `npm run typecheck` clean, all 1721 tests pass (10 new for
+`decideHandsPlacement`, 5 new for `decideSlotPairPlacement` — plus the full
+suite still green with zero regressions in either scene). Production build
+succeeds (158 modules, up from 157 — the new `GearFilterSystem.ts`). Needs
+Kevin's own in-browser pass on both screens — this is the biggest pure-UI
+rework in this batch: the Potions/Rings/Hands tabs, the auto-place vs.
+compare-and-replace flows, and (Character Creation only) the pending-ring-
+pick paperdoll-click resolution.
+
+**Important files**: `src/game/systems/GearFilterSystem.ts`,
+`tests/gearFilterSystem.test.ts`, `src/game/scenes/GearShopScene.ts`,
+`src/game/scenes/CharacterCreationScene.ts`.

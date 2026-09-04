@@ -19,17 +19,34 @@ import { parseMapRows, type ParsedMap } from "./testMap";
  * had none, which is fine for the "parseable data" showcase 11.7 needed but
  * not for a real battle — `BattleScene.buildHeroes` needs one hero-start
  * tile per party slot, same as `TEST_MAP`'s four).
+ *
+ * D-228 (KI-177 item 1): resized 16x9 (144 tiles) -> 32x18 (576 tiles,
+ * exactly 4x), same open cross-shaped layout as `EMBERFORD_MAP` (see that
+ * file's own doc comment for the full rationale) — FOUR spawn points (top
+ * x16y0, left x0y9, right x31y9, bottom x16y17; `spawns` array order is
+ * [top, left, right, bottom], `spawnIndex` 0-3) feeding a shared exit/
+ * hero-start cluster at the center, cliff/water flavor tiles moved into the
+ * four diagonal quadrants (decorative, off every spawn->center route).
  */
 const SALTMERE_ROWS: string[] = [
-  ".H.H.H.H........",
-  "....^^....^^....",
-  "S...^^....^^...X",
-  "....~~....~~....",
-  "................",
-  "....~~....~~....",
-  "S...^^....^^...X",
-  "....^^....^^....",
-  "...$........T...",
+  "................S...............",
+  "................................",
+  "................................",
+  "......^^................~~......",
+  "......^^................~~......",
+  "................................",
+  "................................",
+  "................................",
+  "..............HXXH..............",
+  "S..........$..H..H..T..........S",
+  "................................",
+  "................................",
+  "................................",
+  "......~~................^^......",
+  "......~~................^^......",
+  "................................",
+  "................................",
+  "................S...............",
 ];
 
 export const SALTMERE_MAP: ParsedMap = parseMapRows(

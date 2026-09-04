@@ -29,6 +29,108 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
+### KI-180 — D-231: Armory + Character Creation gear picker — Potions/Rings/Hands consolidated
+**(headless-verified, not yet played)** — the biggest pure-UI rework in this
+batch, touches both `GearShopScene.ts` ("The Armory") and
+`CharacterCreationScene.ts`'s own gear picker.
+- The Armory — confirm the paperdoll now shows one shared "Potions" tab
+  (both Potion 1/2 cells highlight together), one "Rings" tab, and one
+  "Hands" tab (Weapon+Shield cells highlight together) instead of 5
+  separate tabs. Click a hero with an empty potion slot and buy any potion
+  — confirm it places instantly with no extra step (same one-click feel an
+  empty slot always had). With BOTH potion slots full, click a different
+  potion — confirm the compare strip shows BOTH current potions side by
+  side, each with its own "Replace Potion N — Ng net" button, and that
+  clicking one correctly sells THAT specific potion and buys the new one.
+  Repeat for Rings.
+- Hands specifically: with an empty weapon slot, buy any weapon — confirm
+  instant purchase into Right hand. With weapon full but shield empty, buy
+  a Light melee weapon (e.g. Dagger/Shortsword/Scimitar) — confirm it
+  auto-places into Left hand (off-hand) instead of trying to replace the
+  main-hand weapon. With BOTH hands full, buy a Light melee weapon — confirm
+  the compare strip shows Right hand AND Left hand side by side with a
+  "Replace Right/Left hand" button each. Buy a real shield or a non-Light
+  weapon (e.g. Greatsword) with its one relevant hand already occupied —
+  confirm it behaves like a normal single-slot Compare-then-Purchase, not a
+  broken 2-button prompt. Try buying a Shield while a Two-Handed weapon is
+  equipped — confirm it's still rejected (unchanged pre-existing behavior,
+  not something this session added or removed).
+- Character Creation's Gear picker — confirm Ring 1/Ring 2 show the same
+  consolidated behavior (auto-place into the empty ring). With both rings
+  already picked, pick a different ring item — confirm NOTHING is applied
+  immediately; instead a gold hint appears ("Click Ring 1 or Ring 2 above to
+  place...") and clicking either ring paperdoll cell commits the pick into
+  THAT specific cell. Confirm Potions do NOT appear in this picker at all
+  (unchanged — not a pre-battle concept), and confirm Weapon/Shield are
+  STILL two fully independent slots here (deliberately not consolidated,
+  unlike the Armory).
+
+### KI-179 — D-230: Campaign victory screen shows stats + routes to Campaign Select; LoadGameScene resume bug fixed
+**(headless-verified, not yet played)**.
+- Clear a campaign chapter — confirm the Victory screen now shows Waves
+  Cleared/Turns Taken/Gold Earned/Heroes Leveled Up (the last line only if
+  at least one hero leveled that battle) above the button, and the button
+  now reads "Continue" and lands on Campaign Select (not Main Menu). Confirm
+  a FREE PLAY victory and every DEFEAT screen still look and route exactly
+  as before (bare message, "Return to Menu," Main Menu) — this change is
+  campaign-victory-only.
+- The actual reported bug: start a campaign, use the in-battle Pause Menu's
+  "Save Party"/"Save & Exit" once early (e.g. chapter 1), then progress
+  several MORE chapters via Campaign Select's own "Continue" card (not by
+  reloading/re-saving that slot). Then go to Load Game and load that old
+  slot — confirm it now resumes at your REAL next chapter (matching what
+  Campaign Select's own Continue would show), not back at chapter 1/"before
+  mission 1" like before this fix.
+
+### KI-178 — D-229: campaign combat difficulty — simultaneous multi-point spawns + ~4x bigger maps (all 6 regions + Prologue)
+**(headless-verified, not yet played)** — this is explicitly first-pass/
+untuned like every other balance number in this project; the real ask here
+is Kevin's own "does this actually feel harder now" gut check, not just a
+functional pass.
+- Play through Emberford Reach Chapter 1 again (the exact mission Kevin
+  reported as "3 waves, super easy" — actually the Prologue, or Chapter 1,
+  either way both changed) — confirm the map is visibly much larger, and
+  confirm more than one enemy is ever on the field/approaching at once,
+  especially by wave 2-3 of a chapter.
+- Spot-check at least one other region (Saltmere/Causeway/Cinderfall Rift/
+  Frostbound Hollow/Drowning Vale) for the same "genuinely bigger, genuinely
+  more simultaneous pressure" feel. Causeway specifically: confirm its
+  signature "one bridge crossing" chokepoint mechanic is still intact (the
+  pit wall + 2-row bridge gap), just now fed by 4 spawn lanes instead of 2.
+  Cinderfall Rift specifically: confirm the mid-battle bridge collapse
+  (~wave 4 each chapter) still fires correctly and still leaves the map
+  fully connected via the north/south detour after it collapses.
+- General "does this actually address campaign combat feeling too easy"
+  verdict — if enemy counts/HP still feel too low even with the new
+  simultaneity, that's a `difficulty.ts`/`ThreatBudgetSystem` tuning
+  question for a future session, not something this pass touched.
+- Known, deliberate scope gap: `NAMELESS_THRONE_MAP` (the endgame capstone)
+  was NOT resized this session — flag if Kevin wants it included too.
+
+### KI-177 — D-228: the recurring "2nd game freezes all input" bug — two real fixes applied, root cause still UNCONFIRMED
+Kevin explicitly asked for this to be part of the plan. Two real,
+independently-verified defects were found and fixed (`movingIntoAttack` and
+the D-144 drag fields were never reset in `BattleScene.create()`, despite
+Phaser reusing the same scene instance across every battle) — this is the
+strongest static lead after two full investigation rounds (this session's +
+D-213's own), but **this environment has no browser, so unlike D-149 this
+fix could NOT be confirmed the same way.**
+- The real test: play a full battle (win, lose, OR exit early via Pause
+  Menu — try a few different ways across a few attempts), return to Main
+  Menu, and start a SECOND battle (Free Play or Campaign, doesn't matter
+  which combination). Confirm every button/click still works normally
+  throughout that second battle — this is the actual repro Kevin described.
+- **If it still freezes**: open the browser DevTools console (F12) BEFORE
+  it happens if possible, or immediately after, and report whatever red
+  error/stack trace is there — per D-213's own conclusion, that's the one
+  piece of information a static code review can't get, and would very
+  likely pinpoint the real remaining cause immediately.
+- Also worth a quick side-check since it's the same root-cause family: mid-
+  battle, click-drag a hero (the D-144 waypoint-chain move) partway through
+  a move, then exit to Main Menu WITHOUT releasing/completing the drag,
+  then start a new battle — confirm no leftover hero-token snapping/drag
+  behavior appears on your first mouse-move in the new battle.
+
 ### KI-176 — D-227: Map Builder gained author-designed enemy waves
 **(headless-verified, not yet played)**. This is a brand-new multi-screen UI
 (nothing like it existed before this session), so it needs a real

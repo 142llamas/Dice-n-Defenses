@@ -22,17 +22,41 @@ import { parseMapRows, type ParsedMap, type DynamicTerrainEvent } from "./testMa
  * $ shop, T treasure).
  *
  * All content here is original placeholder data — no third-party IP.
+ *
+ * D-228 (KI-177 item 1): resized 16x9 (144 tiles) -> 32x18 (576 tiles,
+ * exactly 4x) by scaling BOTH dimensions exactly 2x (each original tile
+ * becomes a 2x2 block) — the safest possible transform for a map whose
+ * whole identity is its 3-lane topology (a north path, the direct middle
+ * bridge, a south path, joined only at the far west/east connector
+ * columns): doubling preserves every wall/connector/lane relationship by
+ * construction, so connectivity needs no re-verification. Two extra spawn
+ * points were then added, one in the north lane (top row) and one in the
+ * south lane (bottom row), both landing on the same doubled west connector
+ * column the mid-lane spawn already uses — so a chapter's waves can now
+ * pressure the player from all 3 lanes on the same turn (`spawns` array
+ * order is [north, mid x4 clustered at the west mouth, south], see the
+ * scratch-verified indices this file's own tests confirm), not just funnel
+ * everything down the one bridge as before.
  */
 const CINDERFALL_RIFT_ROWS: string[] = [
-  "...$..F..F......",
-  "D.^^^^^^^^^^^^.D",
-  ".H^^^^^^^^^^^^..",
-  ".H^^^^^^^^^^^^..",
-  "SH.............X",
-  ".H^^^^^^^^^^^^..",
-  "D.^^^^^^^^^^^^.D",
-  "D.^^^^^^^^^^^^.D",
-  "......F..F..T...",
+  "..S...$$....FF....FF............",
+  "......$$....FF....FF............",
+  "DD..^^^^^^^^^^^^^^^^^^^^^^^^..DD",
+  "DD..^^^^^^^^^^^^^^^^^^^^^^^^..DD",
+  "..HH^^^^^^^^^^^^^^^^^^^^^^^^....",
+  "..HH^^^^^^^^^^^^^^^^^^^^^^^^....",
+  "..HH^^^^^^^^^^^^^^^^^^^^^^^^....",
+  "..HH^^^^^^^^^^^^^^^^^^^^^^^^....",
+  "SSHH..........................XX",
+  "SSHH..........................XX",
+  "..HH^^^^^^^^^^^^^^^^^^^^^^^^....",
+  "..HH^^^^^^^^^^^^^^^^^^^^^^^^....",
+  "DD..^^^^^^^^^^^^^^^^^^^^^^^^..DD",
+  "DD..^^^^^^^^^^^^^^^^^^^^^^^^..DD",
+  "DD..^^^^^^^^^^^^^^^^^^^^^^^^..DD",
+  "DD..^^^^^^^^^^^^^^^^^^^^^^^^..DD",
+  "..S.........FF....FF....TT......",
+  "............FF....FF....TT......",
 ];
 
 const CINDERFALL_RIFT_EVENTS: DynamicTerrainEvent[] = [
@@ -40,10 +64,21 @@ const CINDERFALL_RIFT_EVENTS: DynamicTerrainEvent[] = [
     label: "The Cinderfall bridge groans and collapses into the rift!",
     atWave: 4,
     warnWavesBefore: 2,
+    // D-228: each original (x,y) tile doubled into its own 2x2 block —
+    // (7,4)/(8,4)/(9,4) -> x in [14,15]/[16,17]/[18,19], y in [8,9].
     positions: [
-      { x: 7, y: 4 },
-      { x: 8, y: 4 },
-      { x: 9, y: 4 },
+      { x: 14, y: 8 },
+      { x: 15, y: 8 },
+      { x: 16, y: 8 },
+      { x: 17, y: 8 },
+      { x: 18, y: 8 },
+      { x: 19, y: 8 },
+      { x: 14, y: 9 },
+      { x: 15, y: 9 },
+      { x: 16, y: 9 },
+      { x: 17, y: 9 },
+      { x: 18, y: 9 },
+      { x: 19, y: 9 },
     ],
     toTileType: "pit",
   },

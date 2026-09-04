@@ -21,26 +21,35 @@ import { getEnemyDefinition } from "../data/enemies";
  * computes a per-map tile size that shrinks to fit (`computeFittedTileSize`
  * in `GridSystem.ts`, mirroring `MapBuilderScene`'s own shrink-to-fit
  * pattern), clamped so it never exceeds the base 64px. The caps below
- * assume a chosen 40px legibility floor (not a hard technical limit —
- * tokens/HP text/VFX all scale off tile size, and much below this they get
- * hard to read) and are re-derived against the same fixed-HUD
- * bounding-box math as before: belowGridY = GRID_TOP_MARGIN(90) +
- * rows*tileSize + 16; cy (the button row) = belowGridY +
- * statusBlockHeight(78) + logBlockHeight(86) + 20; the Done button under
- * the taller shop/gear grid sits at cy + 4*38 + 30(pagination nav, worst
- * case) + 6, with its own half-height (15) below that — a fixed 403px of
- * HUD below the grid's top edge, independent of tile size. Requiring the
- * bottom edge to stay within the canvas (1080px) at the 40px floor caps
- * ROWS at 14 (587px available ÷ 40px). Columns have no HUD margin to
- * subtract (nothing else occupies the grid's horizontal band) — the
- * canvas's full 1280px width ÷ 40px caps COLS at 32. These are a
- * first-pass balance value (same status as `STARTING_GOLD`) — the 40px
- * floor, not the shrink-to-fit mechanism itself, is what's tunable.
+ * assume a chosen legibility floor (not a hard technical limit — tokens/HP
+ * text/VFX all scale off tile size, and much below this they get hard to
+ * read) and are re-derived against the same fixed-HUD bounding-box math as
+ * before: belowGridY = GRID_TOP_MARGIN(90) + rows*tileSize + 16; cy (the
+ * button row) = belowGridY + statusBlockHeight(78) + logBlockHeight(86) +
+ * 20; the Done button under the taller shop/gear grid sits at cy + 4*38 +
+ * 30(pagination nav, worst case) + 6, with its own half-height (15) below
+ * that — a fixed 403px of HUD below the grid's top edge, independent of
+ * tile size. Requiring the bottom edge to stay within the canvas (1080px)
+ * caps ROWS at floor(587 / floor). Columns have no HUD margin to subtract
+ * (nothing else occupies the grid's horizontal band) — the canvas's full
+ * 1280px width caps COLS at floor(1280 / floor). These are a first-pass
+ * balance value (same status as `STARTING_GOLD`) — the floor, not the
+ * shrink-to-fit mechanism itself, is what's tunable.
+ *
+ * D-228 (KI-177 item 1): Kevin's "maps at least 4x bigger" ask needed a
+ * true area increase for the *smallest* existing campaign maps (~144
+ * tiles) — the old 40px floor's 32x14=448 cap was only ~3.1x that, short
+ * of "at least 4x." Lowered the floor to 32px (still comfortably above a
+ * token/HP-text illegibility cliff, a real but accepted visual tradeoff
+ * with no art yet) and recomputed both caps from the exact same formula
+ * above: ROWS floor(587/32)=18, COLS floor(1280/32)=40 (720 tiles, ~5x a
+ * 144-tile map). `firestore.rules`' `isValidSharedMap`/`isValidTileRows`
+ * mirror these two numbers exactly, same as before.
  */
 export const MIN_MAP_COLS = 6;
-export const MAX_MAP_COLS = 32;
+export const MAX_MAP_COLS = 40;
 export const MIN_MAP_ROWS = 6;
-export const MAX_MAP_ROWS = 14;
+export const MAX_MAP_ROWS = 18;
 /** Matches `CharacterCreationScene`'s own `MAX_PARTY_SIZE`. */
 export const MAX_HERO_STARTS = 4;
 /** Author-designed waves (Map Builder): caps mirrored by `firestore.rules`' `isValidSharedMap`. */

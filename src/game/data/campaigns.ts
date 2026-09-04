@@ -210,14 +210,27 @@ export const REGION_CAMPAIGN_IDS: string[] = [
 /** D-188: the campaign capstone, CAMPAIGN_STORY_DESIGN.md §5. */
 export const NAMELESS_THRONE_CAMPAIGN_ID = "nameless-throne";
 
+// D-228 (KI-177 item 1): explicit `spawnIndex` per group across
+// `PROLOGUE_MAP`'s 2 spawn points (0=row2, 1=row5 — see that file's own
+// doc comment) so even this short intro puts more than one enemy on the
+// field at a time, instead of a single trickle.
 const PROLOGUE_WAVES: WaveDefinition[] = [
-  { id: "prologue-wave-1", turnLimit: 6, spawns: [{ enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 }], completionGold: 8, timeBonusGold: 4 },
+  {
+    id: "prologue-wave-1",
+    turnLimit: 6,
+    spawns: [
+      { enemyId: "grunt", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+    ],
+    completionGold: 8,
+    timeBonusGold: 4,
+  },
   {
     id: "prologue-wave-2",
     turnLimit: 7,
     spawns: [
-      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "grunt", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 10,
     timeBonusGold: 4,
@@ -226,8 +239,8 @@ const PROLOGUE_WAVES: WaveDefinition[] = [
     id: "prologue-wave-3",
     turnLimit: 8,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 14,
     timeBonusGold: 5,
@@ -241,7 +254,10 @@ const EMBERFORD_WAVES: WaveDefinition[] = [
   {
     id: "emberford-wave-1",
     turnLimit: 8,
-    spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }],
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+    ],
     completionGold: 10,
     timeBonusGold: 5,
   },
@@ -251,8 +267,9 @@ const EMBERFORD_WAVES: WaveDefinition[] = [
     id: "emberford-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 14,
     timeBonusGold: 6,
@@ -263,8 +280,9 @@ const EMBERFORD_WAVES: WaveDefinition[] = [
     id: "emberford-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "hexer", count: 3, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "runner", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "hexer", count: 3, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "runner", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 18,
     timeBonusGold: 7,
@@ -275,9 +293,9 @@ const EMBERFORD_WAVES: WaveDefinition[] = [
     id: "emberford-wave-4",
     turnLimit: 11,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "ravager", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 3, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -288,9 +306,10 @@ const EMBERFORD_WAVES: WaveDefinition[] = [
     id: "emberford-wave-5",
     turnLimit: 12,
     spawns: [
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 30,
     timeBonusGold: 10,
@@ -302,10 +321,11 @@ const EMBERFORD_WAVES: WaveDefinition[] = [
     id: "emberford-wave-6",
     turnLimit: 15,
     spawns: [
-      { enemyId: "brute", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "cinderlord", count: 1, startTurn: 4, intervalTurns: 1 },
+      { enemyId: "brute", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "cinderlord", count: 1, startTurn: 4, intervalTurns: 1, spawnIndex: 0 },
     ],
     completionGold: 55,
     timeBonusGold: 18,
@@ -319,7 +339,10 @@ const SALTMERE_WAVES: WaveDefinition[] = [
   {
     id: "saltmere-wave-1",
     turnLimit: 8,
-    spawns: [{ enemyId: "runner", count: 3, startTurn: 1, intervalTurns: 1 }],
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+    ],
     completionGold: 10,
     timeBonusGold: 5,
   },
@@ -328,8 +351,9 @@ const SALTMERE_WAVES: WaveDefinition[] = [
     id: "saltmere-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 14,
     timeBonusGold: 6,
@@ -340,8 +364,9 @@ const SALTMERE_WAVES: WaveDefinition[] = [
     id: "saltmere-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "hexer", count: 3, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "wisp", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "hexer", count: 3, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "wisp", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "wisp", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 19,
     timeBonusGold: 7,
@@ -352,8 +377,9 @@ const SALTMERE_WAVES: WaveDefinition[] = [
     id: "saltmere-wave-4",
     turnLimit: 11,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "swarmling", count: 4, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "swarmling", count: 4, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "swarmling", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -364,9 +390,10 @@ const SALTMERE_WAVES: WaveDefinition[] = [
     id: "saltmere-wave-5",
     turnLimit: 12,
     spawns: [
-      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "hexer", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "hexer", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 31,
     timeBonusGold: 10,
@@ -377,10 +404,11 @@ const SALTMERE_WAVES: WaveDefinition[] = [
     id: "saltmere-wave-6",
     turnLimit: 15,
     spawns: [
-      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "swarmling", count: 3, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "tidelord", count: 1, startTurn: 4, intervalTurns: 1 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "swarmling", count: 3, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "swarmling", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "tidelord", count: 1, startTurn: 4, intervalTurns: 1, spawnIndex: 0 },
     ],
     completionGold: 58,
     timeBonusGold: 18,
@@ -439,14 +467,34 @@ const SALTMERE_LOOT_POOL: string[] = [
  * named miniboss — see that enemy's own comment for why (the design doc's
  * "returning miniboss" mechanic isn't buildable yet).
  */
+/**
+ * D-228 (KI-177 item 1): every wave below gained an explicit `spawnIndex`
+ * per group, spread across `EMBERFORD_MAP`'s 4 spawn points (0=top,
+ * 1=left, 2=right, 3=bottom — see that file's own doc comment), with
+ * several groups deliberately sharing a `startTurn` so multiple enemies
+ * spawn on the SAME turn from DIFFERENT points. `WaveSystem.spawnDueEnemies`
+ * only ever spawns one enemy per group per due tick, so simultaneity comes
+ * entirely from having more than one group due at once — this is what
+ * actually fixes "one enemy at a time," not a higher per-wave total.
+ */
 const EMBERFORD_CH1_WAVES: WaveDefinition[] = [
-  { id: "emberford-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "emberford-ch1-wave-1",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 5,
+  },
   {
     id: "emberford-ch1-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 13,
     timeBonusGold: 6,
@@ -455,8 +503,9 @@ const EMBERFORD_CH1_WAVES: WaveDefinition[] = [
     id: "emberford-ch1-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "runner", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 16,
     timeBonusGold: 6,
@@ -465,8 +514,9 @@ const EMBERFORD_CH1_WAVES: WaveDefinition[] = [
     id: "emberford-ch1-wave-4",
     turnLimit: 12,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "basalt-colossus", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "basalt-colossus", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 32,
     timeBonusGold: 10,
@@ -478,8 +528,9 @@ const EMBERFORD_CH2_WAVES: WaveDefinition[] = [
     id: "emberford-ch2-wave-1",
     turnLimit: 10,
     spawns: [
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
     ],
     completionGold: 20,
     timeBonusGold: 7,
@@ -488,8 +539,10 @@ const EMBERFORD_CH2_WAVES: WaveDefinition[] = [
     id: "emberford-ch2-wave-2",
     turnLimit: 11,
     spawns: [
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "marauder", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -498,9 +551,10 @@ const EMBERFORD_CH2_WAVES: WaveDefinition[] = [
     id: "emberford-ch2-wave-3",
     turnLimit: 12,
     spawns: [
-      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "blightcaller", count: 2, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "blightcaller", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 28,
     timeBonusGold: 9,
@@ -509,8 +563,9 @@ const EMBERFORD_CH2_WAVES: WaveDefinition[] = [
     id: "emberford-ch2-wave-4",
     turnLimit: 13,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "cinderlord", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "cinderlord", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 40,
     timeBonusGold: 12,
@@ -522,9 +577,10 @@ const EMBERFORD_CH3_WAVES: WaveDefinition[] = [
     id: "emberford-ch3-wave-1",
     turnLimit: 12,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 34,
     timeBonusGold: 10,
@@ -533,9 +589,10 @@ const EMBERFORD_CH3_WAVES: WaveDefinition[] = [
     id: "emberford-ch3-wave-2",
     turnLimit: 13,
     spawns: [
-      { enemyId: "brute", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "brute", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "hexer", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 3 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 38,
     timeBonusGold: 11,
@@ -544,9 +601,10 @@ const EMBERFORD_CH3_WAVES: WaveDefinition[] = [
     id: "emberford-ch3-wave-3",
     turnLimit: 14,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 42,
     timeBonusGold: 12,
@@ -555,23 +613,38 @@ const EMBERFORD_CH3_WAVES: WaveDefinition[] = [
     id: "emberford-ch3-wave-4",
     turnLimit: 14,
     spawns: [
-      { enemyId: "ravager", count: 3, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 3, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
     ],
     completionGold: 46,
     timeBonusGold: 13,
   },
 ];
 
+// D-228 (KI-177 item 1): same treatment as `EMBERFORD_CH1..4_WAVES` above —
+// explicit `spawnIndex` per group across `SALTMERE_MAP`'s 4 spawn points
+// (0=top, 1=left, 2=right, 3=bottom), several groups sharing a `startTurn`
+// for genuine multi-point simultaneous spawns.
 const SALTMERE_CH1_WAVES: WaveDefinition[] = [
-  { id: "saltmere-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "runner", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "saltmere-ch1-wave-1",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 5,
+  },
   {
     id: "saltmere-ch1-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 13,
     timeBonusGold: 6,
@@ -580,8 +653,9 @@ const SALTMERE_CH1_WAVES: WaveDefinition[] = [
     id: "saltmere-ch1-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "runner", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "runner", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 16,
     timeBonusGold: 6,
@@ -590,8 +664,9 @@ const SALTMERE_CH1_WAVES: WaveDefinition[] = [
     id: "saltmere-ch1-wave-4",
     turnLimit: 12,
     spawns: [
-      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "tide-wretch", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "tide-wretch", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 32,
     timeBonusGold: 10,
@@ -603,8 +678,9 @@ const SALTMERE_CH2_WAVES: WaveDefinition[] = [
     id: "saltmere-ch2-wave-1",
     turnLimit: 10,
     spawns: [
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "cave-drake", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "cave-drake", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
     ],
     completionGold: 20,
     timeBonusGold: 7,
@@ -613,8 +689,10 @@ const SALTMERE_CH2_WAVES: WaveDefinition[] = [
     id: "saltmere-ch2-wave-2",
     turnLimit: 11,
     spawns: [
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "hexer", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -623,9 +701,10 @@ const SALTMERE_CH2_WAVES: WaveDefinition[] = [
     id: "saltmere-ch2-wave-3",
     turnLimit: 12,
     spawns: [
-      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "swarmling", count: 2, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "swarmling", count: 3, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 28,
     timeBonusGold: 9,
@@ -634,8 +713,9 @@ const SALTMERE_CH2_WAVES: WaveDefinition[] = [
     id: "saltmere-ch2-wave-4",
     turnLimit: 13,
     spawns: [
-      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "tidelord", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "tidelord", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 42,
     timeBonusGold: 12,
@@ -647,9 +727,10 @@ const SALTMERE_CH3_WAVES: WaveDefinition[] = [
     id: "saltmere-ch3-wave-1",
     turnLimit: 12,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "swarmling", count: 3, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "swarmling", count: 3, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "swarmling", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 34,
     timeBonusGold: 10,
@@ -658,9 +739,10 @@ const SALTMERE_CH3_WAVES: WaveDefinition[] = [
     id: "saltmere-ch3-wave-2",
     turnLimit: 13,
     spawns: [
-      { enemyId: "razorwing", count: 1, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "razorwing", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "hexer", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 3 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 38,
     timeBonusGold: 11,
@@ -669,10 +751,10 @@ const SALTMERE_CH3_WAVES: WaveDefinition[] = [
     id: "saltmere-ch3-wave-3",
     turnLimit: 14,
     spawns: [
-      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "wisp", count: 1, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "swarmling", count: 3, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "wisp", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "swarmling", count: 3, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
     ],
     completionGold: 42,
     timeBonusGold: 12,
@@ -681,9 +763,10 @@ const SALTMERE_CH3_WAVES: WaveDefinition[] = [
     id: "saltmere-ch3-wave-4",
     turnLimit: 14,
     spawns: [
-      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
     ],
     completionGold: 46,
     timeBonusGold: 13,
@@ -712,14 +795,30 @@ const SALTMERE_CH3_WAVES: WaveDefinition[] = [
 
 // ----- Shattered Causeway (chasm/pit crossing) -----------------------------
 
+// D-228 (KI-177 item 1): every wave below gained an explicit `spawnIndex`
+// per group, spread across `CAUSEWAY_MAP`'s 4 spawn rows (all funneling to
+// the SAME bridge — see that file's own doc comment), several groups
+// sharing a `startTurn` so multiple enemies converge on the bridge
+// simultaneously from different rows — real pressure on a genuinely
+// defensible chokepoint.
 const CAUSEWAY_CH1_WAVES: WaveDefinition[] = [
-  { id: "causeway-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "causeway-ch1-wave-1",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 5,
+  },
   {
     id: "causeway-ch1-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "runner", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 3 },
+      { enemyId: "runner", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 13,
     timeBonusGold: 6,
@@ -728,8 +827,9 @@ const CAUSEWAY_CH1_WAVES: WaveDefinition[] = [
     id: "causeway-ch1-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 16,
     timeBonusGold: 6,
@@ -738,8 +838,9 @@ const CAUSEWAY_CH1_WAVES: WaveDefinition[] = [
     id: "causeway-ch1-wave-4",
     turnLimit: 12,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "juggernaut", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "juggernaut", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 32,
     timeBonusGold: 10,
@@ -751,8 +852,9 @@ const CAUSEWAY_CH2_WAVES: WaveDefinition[] = [
     id: "causeway-ch2-wave-1",
     turnLimit: 10,
     spawns: [
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
     ],
     completionGold: 20,
     timeBonusGold: 7,
@@ -761,8 +863,10 @@ const CAUSEWAY_CH2_WAVES: WaveDefinition[] = [
     id: "causeway-ch2-wave-2",
     turnLimit: 11,
     spawns: [
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "hexer", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "marauder", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -771,9 +875,10 @@ const CAUSEWAY_CH2_WAVES: WaveDefinition[] = [
     id: "causeway-ch2-wave-3",
     turnLimit: 12,
     spawns: [
-      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "gilded-carrier", count: 2, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "gilded-carrier", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 28,
     timeBonusGold: 9,
@@ -782,8 +887,9 @@ const CAUSEWAY_CH2_WAVES: WaveDefinition[] = [
     id: "causeway-ch2-wave-4",
     turnLimit: 13,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "the-devourer", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "the-devourer", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 41,
     timeBonusGold: 12,
@@ -795,9 +901,10 @@ const CAUSEWAY_CH3_WAVES: WaveDefinition[] = [
     id: "causeway-ch3-wave-1",
     turnLimit: 12,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 34,
     timeBonusGold: 10,
@@ -806,8 +913,9 @@ const CAUSEWAY_CH3_WAVES: WaveDefinition[] = [
     id: "causeway-ch3-wave-2",
     turnLimit: 13,
     spawns: [
-      { enemyId: "marauder", count: 3, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
+      { enemyId: "marauder", count: 3, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "marauder", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
     ],
     completionGold: 38,
     timeBonusGold: 11,
@@ -816,9 +924,10 @@ const CAUSEWAY_CH3_WAVES: WaveDefinition[] = [
     id: "causeway-ch3-wave-3",
     turnLimit: 14,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "bolt-runner", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "bolt-runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "bolt-runner", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 42,
     timeBonusGold: 12,
@@ -827,9 +936,10 @@ const CAUSEWAY_CH3_WAVES: WaveDefinition[] = [
     id: "causeway-ch3-wave-4",
     turnLimit: 14,
     spawns: [
-      { enemyId: "ravager", count: 3, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 3, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 2 },
     ],
     completionGold: 46,
     timeBonusGold: 13,
@@ -837,13 +947,23 @@ const CAUSEWAY_CH3_WAVES: WaveDefinition[] = [
 ];
 
 const CAUSEWAY_WAVES: WaveDefinition[] = [
-  { id: "causeway-wave-1", turnLimit: 8, spawns: [{ enemyId: "runner", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "causeway-wave-1",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 5,
+  },
   {
     id: "causeway-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 14,
     timeBonusGold: 6,
@@ -852,8 +972,9 @@ const CAUSEWAY_WAVES: WaveDefinition[] = [
     id: "causeway-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "hexer", count: 3, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "hexer", count: 3, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "marauder", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 18,
     timeBonusGold: 7,
@@ -862,9 +983,9 @@ const CAUSEWAY_WAVES: WaveDefinition[] = [
     id: "causeway-wave-4",
     turnLimit: 11,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "ravager", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 3, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -873,10 +994,11 @@ const CAUSEWAY_WAVES: WaveDefinition[] = [
     id: "causeway-wave-5",
     turnLimit: 12,
     spawns: [
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "gilded-carrier", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "gilded-carrier", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 0 },
     ],
     completionGold: 30,
     timeBonusGold: 10,
@@ -885,10 +1007,11 @@ const CAUSEWAY_WAVES: WaveDefinition[] = [
     id: "causeway-wave-6",
     turnLimit: 15,
     spawns: [
-      { enemyId: "brute", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "the-devourer", count: 1, startTurn: 4, intervalTurns: 1 },
+      { enemyId: "brute", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "the-devourer", count: 1, startTurn: 4, intervalTurns: 1, spawnIndex: 0 },
     ],
     completionGold: 56,
     timeBonusGold: 18,
@@ -907,14 +1030,32 @@ const CAUSEWAY_LOOT_POOL: string[] = [
 
 // ----- Cinderfall Rift (volcanic, collapsing bridge) -----------------------
 
+// D-228 (KI-177 item 1): every wave below gained an explicit `spawnIndex`
+// per group across `CINDERFALL_RIFT_MAP`'s 6 spawn points (0=north lane,
+// 1-4=mid-lane bridge cluster, 5=south lane — see that file's own doc
+// comment). Waves 1-3 lean on the mid-lane cluster while the bridge still
+// stands; each chapter's wave 4 (when `DynamicTerrainSystem` collapses the
+// bridge) shifts pressure onto the north/south detour lanes (0 and 5)
+// instead, matching the map's own "the bridge is gone, the long way is all
+// that's left" moment.
 const CINDERFALL_CH1_WAVES: WaveDefinition[] = [
-  { id: "cinderfall-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "cinderfall-ch1-wave-1",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 5,
+  },
   {
     id: "cinderfall-ch1-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 4 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 13,
     timeBonusGold: 6,
@@ -923,8 +1064,9 @@ const CINDERFALL_CH1_WAVES: WaveDefinition[] = [
     id: "cinderfall-ch1-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "marauder", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "marauder", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 4 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 16,
     timeBonusGold: 6,
@@ -933,8 +1075,9 @@ const CINDERFALL_CH1_WAVES: WaveDefinition[] = [
     id: "cinderfall-ch1-wave-4",
     turnLimit: 12,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "gravemaw", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 5 },
+      { enemyId: "gravemaw", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 32,
     timeBonusGold: 10,
@@ -946,8 +1089,9 @@ const CINDERFALL_CH2_WAVES: WaveDefinition[] = [
     id: "cinderfall-ch2-wave-1",
     turnLimit: 10,
     spawns: [
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 4 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 2 },
     ],
     completionGold: 20,
     timeBonusGold: 7,
@@ -956,9 +1100,10 @@ const CINDERFALL_CH2_WAVES: WaveDefinition[] = [
     id: "cinderfall-ch2-wave-2",
     turnLimit: 11,
     spawns: [
-      { enemyId: "warcaptain", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warcaptain", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 3 },
+      { enemyId: "grunt", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 4 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -967,9 +1112,9 @@ const CINDERFALL_CH2_WAVES: WaveDefinition[] = [
     id: "cinderfall-ch2-wave-3",
     turnLimit: 12,
     spawns: [
-      { enemyId: "bannerbearer", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "bannerbearer", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 4 },
     ],
     completionGold: 28,
     timeBonusGold: 9,
@@ -978,8 +1123,9 @@ const CINDERFALL_CH2_WAVES: WaveDefinition[] = [
     id: "cinderfall-ch2-wave-4",
     turnLimit: 13,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "warlord-korrath", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 5 },
+      { enemyId: "warlord-korrath", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 40,
     timeBonusGold: 12,
@@ -991,9 +1137,9 @@ const CINDERFALL_CH3_WAVES: WaveDefinition[] = [
     id: "cinderfall-ch3-wave-1",
     turnLimit: 12,
     spawns: [
-      { enemyId: "warcaptain", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "warcaptain", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 4 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
     ],
     completionGold: 34,
     timeBonusGold: 10,
@@ -1002,10 +1148,10 @@ const CINDERFALL_CH3_WAVES: WaveDefinition[] = [
     id: "cinderfall-ch3-wave-2",
     turnLimit: 13,
     spawns: [
-      { enemyId: "bannerbearer", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "battlepriest", count: 1, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "grunt", count: 2, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "bannerbearer", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "battlepriest", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 4 },
+      { enemyId: "grunt", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 38,
     timeBonusGold: 11,
@@ -1014,9 +1160,9 @@ const CINDERFALL_CH3_WAVES: WaveDefinition[] = [
     id: "cinderfall-ch3-wave-3",
     turnLimit: 14,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "marauder", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "warcaptain", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 4 },
+      { enemyId: "warcaptain", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 42,
     timeBonusGold: 12,
@@ -1025,9 +1171,10 @@ const CINDERFALL_CH3_WAVES: WaveDefinition[] = [
     id: "cinderfall-ch3-wave-4",
     turnLimit: 14,
     spawns: [
-      { enemyId: "ravager", count: 3, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "bannerbearer", count: 1, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "battlepriest", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 3, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 5 },
+      { enemyId: "bannerbearer", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "battlepriest", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
     ],
     completionGold: 46,
     timeBonusGold: 13,
@@ -1035,13 +1182,23 @@ const CINDERFALL_CH3_WAVES: WaveDefinition[] = [
 ];
 
 const CINDERFALL_WAVES: WaveDefinition[] = [
-  { id: "cinderfall-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "cinderfall-wave-1",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 4 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 5,
+  },
   {
     id: "cinderfall-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 4 },
     ],
     completionGold: 14,
     timeBonusGold: 6,
@@ -1050,8 +1207,9 @@ const CINDERFALL_WAVES: WaveDefinition[] = [
     id: "cinderfall-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "marauder", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "warcaptain", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "marauder", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 4 },
+      { enemyId: "warcaptain", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 18,
     timeBonusGold: 7,
@@ -1060,9 +1218,9 @@ const CINDERFALL_WAVES: WaveDefinition[] = [
     id: "cinderfall-wave-4",
     turnLimit: 11,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "bannerbearer", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "ravager", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "bannerbearer", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 5 },
+      { enemyId: "ravager", count: 2, startTurn: 3, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -1071,9 +1229,9 @@ const CINDERFALL_WAVES: WaveDefinition[] = [
     id: "cinderfall-wave-5",
     turnLimit: 12,
     spawns: [
-      { enemyId: "battlepriest", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "battlepriest", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 4 },
     ],
     completionGold: 30,
     timeBonusGold: 10,
@@ -1082,10 +1240,11 @@ const CINDERFALL_WAVES: WaveDefinition[] = [
     id: "cinderfall-wave-6",
     turnLimit: 15,
     spawns: [
-      { enemyId: "warcaptain", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "bannerbearer", count: 1, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "warlord-korrath", count: 1, startTurn: 4, intervalTurns: 1 },
+      { enemyId: "warcaptain", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "bannerbearer", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 5 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "warlord-korrath", count: 1, startTurn: 4, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 55,
     timeBonusGold: 18,
@@ -1104,14 +1263,29 @@ const CINDERFALL_LOOT_POOL: string[] = [
 
 // ----- The Drowning Vale (tidal marsh) -------------------------------------
 
+// D-228 (KI-177 item 1): every wave below gained an explicit `spawnIndex`
+// per group across `DROWNING_VALE_MAP`'s 10 spawn points (0=upper ground
+// lane, 1-8=mid-height cluster, 9=lower ground lane — see that file's own
+// doc comment), several groups sharing a `startTurn` for real multi-height
+// simultaneous pressure.
 const DROWNING_VALE_CH1_WAVES: WaveDefinition[] = [
-  { id: "drowning-vale-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "runner", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "drowning-vale-ch1-wave-1",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 4 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 5,
+  },
   {
     id: "drowning-vale-ch1-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 9 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 13,
     timeBonusGold: 6,
@@ -1120,8 +1294,9 @@ const DROWNING_VALE_CH1_WAVES: WaveDefinition[] = [
     id: "drowning-vale-ch1-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "fungal-splitter", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "fungal-splitter", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "fungal-splitter", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 4 },
     ],
     completionGold: 16,
     timeBonusGold: 6,
@@ -1130,8 +1305,9 @@ const DROWNING_VALE_CH1_WAVES: WaveDefinition[] = [
     id: "drowning-vale-ch1-wave-4",
     turnLimit: 12,
     spawns: [
-      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "the-husk", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 9 },
+      { enemyId: "the-husk", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 32,
     timeBonusGold: 10,
@@ -1143,8 +1319,9 @@ const DROWNING_VALE_CH2_WAVES: WaveDefinition[] = [
     id: "drowning-vale-ch2-wave-1",
     turnLimit: 10,
     spawns: [
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "blightcaller", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "blightcaller", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
+      { enemyId: "blightcaller", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 4 },
     ],
     completionGold: 20,
     timeBonusGold: 7,
@@ -1153,8 +1330,9 @@ const DROWNING_VALE_CH2_WAVES: WaveDefinition[] = [
     id: "drowning-vale-ch2-wave-2",
     turnLimit: 11,
     spawns: [
-      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "fungal-splitter", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 9 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -1163,9 +1341,9 @@ const DROWNING_VALE_CH2_WAVES: WaveDefinition[] = [
     id: "drowning-vale-ch2-wave-3",
     turnLimit: 12,
     spawns: [
-      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "blightcaller", count: 1, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "blightcaller", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 4 },
     ],
     completionGold: 28,
     timeBonusGold: 9,
@@ -1174,8 +1352,9 @@ const DROWNING_VALE_CH2_WAVES: WaveDefinition[] = [
     id: "drowning-vale-ch2-wave-4",
     turnLimit: 13,
     spawns: [
-      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "blightmother", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 9 },
+      { enemyId: "blightmother", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 40,
     timeBonusGold: 12,
@@ -1187,9 +1366,10 @@ const DROWNING_VALE_CH3_WAVES: WaveDefinition[] = [
     id: "drowning-vale-ch3-wave-1",
     turnLimit: 12,
     spawns: [
-      { enemyId: "blightcaller", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "blightcaller", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "fungal-splitter", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 4 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 34,
     timeBonusGold: 10,
@@ -1198,9 +1378,10 @@ const DROWNING_VALE_CH3_WAVES: WaveDefinition[] = [
     id: "drowning-vale-ch3-wave-2",
     turnLimit: 13,
     spawns: [
-      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexbinder", count: 1, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "blightcaller", count: 2, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "hexbinder", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 4 },
+      { enemyId: "blightcaller", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "blightcaller", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
     ],
     completionGold: 38,
     timeBonusGold: 11,
@@ -1209,9 +1390,10 @@ const DROWNING_VALE_CH3_WAVES: WaveDefinition[] = [
     id: "drowning-vale-ch3-wave-3",
     turnLimit: 14,
     spawns: [
-      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "fungal-splitter", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 4 },
+      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 42,
     timeBonusGold: 12,
@@ -1220,10 +1402,11 @@ const DROWNING_VALE_CH3_WAVES: WaveDefinition[] = [
     id: "drowning-vale-ch3-wave-4",
     turnLimit: 14,
     spawns: [
-      { enemyId: "blightcaller", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexbinder", count: 1, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "plague-warden", count: 1, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "blightcaller", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "blightcaller", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 9 },
+      { enemyId: "hexbinder", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "plague-warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 4 },
     ],
     completionGold: 46,
     timeBonusGold: 13,
@@ -1231,13 +1414,23 @@ const DROWNING_VALE_CH3_WAVES: WaveDefinition[] = [
 ];
 
 const DROWNING_VALE_WAVES: WaveDefinition[] = [
-  { id: "drowning-vale-wave-1", turnLimit: 8, spawns: [{ enemyId: "runner", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "drowning-vale-wave-1",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 9 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 5,
+  },
   {
     id: "drowning-vale-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "hexer", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 4 },
     ],
     completionGold: 14,
     timeBonusGold: 6,
@@ -1246,8 +1439,9 @@ const DROWNING_VALE_WAVES: WaveDefinition[] = [
     id: "drowning-vale-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "blightcaller", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "fungal-splitter", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "fungal-splitter", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 9 },
+      { enemyId: "blightcaller", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 18,
     timeBonusGold: 7,
@@ -1256,9 +1450,9 @@ const DROWNING_VALE_WAVES: WaveDefinition[] = [
     id: "drowning-vale-wave-4",
     turnLimit: 11,
     spawns: [
-      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "hexbinder", count: 1, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "plague-warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "hexbinder", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
+      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 4 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -1267,9 +1461,10 @@ const DROWNING_VALE_WAVES: WaveDefinition[] = [
     id: "drowning-vale-wave-5",
     turnLimit: 12,
     spawns: [
-      { enemyId: "blightcaller", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "fungal-splitter", count: 2, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "plague-warden", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "blightcaller", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "blightcaller", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 9 },
+      { enemyId: "fungal-splitter", count: 2, startTurn: 2, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "plague-warden", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 30,
     timeBonusGold: 10,
@@ -1278,9 +1473,10 @@ const DROWNING_VALE_WAVES: WaveDefinition[] = [
     id: "drowning-vale-wave-6",
     turnLimit: 15,
     spawns: [
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "plague-warden", count: 1, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "blightmother", count: 1, startTurn: 4, intervalTurns: 1 },
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "hexer", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 4 },
+      { enemyId: "plague-warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "blightmother", count: 1, startTurn: 4, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 55,
     timeBonusGold: 18,
@@ -1299,14 +1495,31 @@ const DROWNING_VALE_LOOT_POOL: string[] = [
 
 // ----- Frostbound Hollow (verticality, frozen ridge) -----------------------
 
+// D-228 (KI-177 item 1): every wave below gained an explicit `spawnIndex`
+// per group across `FROSTBOUND_HOLLOW_MAP`'s 6 spawn points (0=upper
+// ground lane, 1-4=mid-height cluster, 5=lower ground lane — see that
+// file's own doc comment), several groups sharing a `startTurn` for real
+// multi-height simultaneous pressure. Flying enemies (`razorwing`/`wisp`)
+// stay spawnIndex 1-4 (mid cluster) since the ridge doesn't slow them down
+// anyway; ground enemies get spread across all 3 heights.
 const FROSTBOUND_CH1_WAVES: WaveDefinition[] = [
-  { id: "frostbound-ch1-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "frostbound-ch1-wave-1",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 4 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 5,
+  },
   {
     id: "frostbound-ch1-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "wisp", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 5 },
+      { enemyId: "wisp", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 13,
     timeBonusGold: 6,
@@ -1315,8 +1528,9 @@ const FROSTBOUND_CH1_WAVES: WaveDefinition[] = [
     id: "frostbound-ch1-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "frost-warden", count: 1, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "frost-warden", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 5 },
     ],
     completionGold: 16,
     timeBonusGold: 6,
@@ -1325,8 +1539,9 @@ const FROSTBOUND_CH1_WAVES: WaveDefinition[] = [
     id: "frostbound-ch1-wave-4",
     turnLimit: 12,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "bloodrage-warlord", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 5 },
+      { enemyId: "bloodrage-warlord", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 32,
     timeBonusGold: 10,
@@ -1338,8 +1553,9 @@ const FROSTBOUND_CH2_WAVES: WaveDefinition[] = [
     id: "frostbound-ch2-wave-1",
     turnLimit: 10,
     spawns: [
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 5 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 2 },
     ],
     completionGold: 20,
     timeBonusGold: 7,
@@ -1348,8 +1564,9 @@ const FROSTBOUND_CH2_WAVES: WaveDefinition[] = [
     id: "frostbound-ch2-wave-2",
     turnLimit: 11,
     spawns: [
-      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "razorwing", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 4 },
+      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -1358,8 +1575,9 @@ const FROSTBOUND_CH2_WAVES: WaveDefinition[] = [
     id: "frostbound-ch2-wave-3",
     turnLimit: 12,
     spawns: [
-      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 5 },
     ],
     completionGold: 28,
     timeBonusGold: 9,
@@ -1368,8 +1586,9 @@ const FROSTBOUND_CH2_WAVES: WaveDefinition[] = [
     id: "frostbound-ch2-wave-4",
     turnLimit: 13,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "sundered-king", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 5 },
+      { enemyId: "sundered-king", count: 1, startTurn: 3, intervalTurns: 1, spawnIndex: 2 },
     ],
     completionGold: 40,
     timeBonusGold: 12,
@@ -1381,9 +1600,10 @@ const FROSTBOUND_CH3_WAVES: WaveDefinition[] = [
     id: "frostbound-ch3-wave-1",
     turnLimit: 12,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "frost-warden", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "frost-warden", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "frost-warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 5 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 34,
     timeBonusGold: 10,
@@ -1392,9 +1612,9 @@ const FROSTBOUND_CH3_WAVES: WaveDefinition[] = [
     id: "frostbound-ch3-wave-2",
     turnLimit: 13,
     spawns: [
-      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "razorwing", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 5 },
     ],
     completionGold: 38,
     timeBonusGold: 11,
@@ -1403,9 +1623,10 @@ const FROSTBOUND_CH3_WAVES: WaveDefinition[] = [
     id: "frostbound-ch3-wave-3",
     turnLimit: 14,
     spawns: [
-      { enemyId: "frost-warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 2 },
+      { enemyId: "frost-warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "frost-warden", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 5 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
     ],
     completionGold: 42,
     timeBonusGold: 12,
@@ -1414,10 +1635,11 @@ const FROSTBOUND_CH3_WAVES: WaveDefinition[] = [
     id: "frostbound-ch3-wave-4",
     turnLimit: 14,
     spawns: [
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "ravager", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 5 },
+      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 4 },
     ],
     completionGold: 46,
     timeBonusGold: 13,
@@ -1425,13 +1647,23 @@ const FROSTBOUND_CH3_WAVES: WaveDefinition[] = [
 ];
 
 const FROSTBOUND_WAVES: WaveDefinition[] = [
-  { id: "frostbound-wave-1", turnLimit: 8, spawns: [{ enemyId: "grunt", count: 3, startTurn: 1, intervalTurns: 1 }], completionGold: 10, timeBonusGold: 5 },
+  {
+    id: "frostbound-wave-1",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 5 },
+    ],
+    completionGold: 10,
+    timeBonusGold: 5,
+  },
   {
     id: "frostbound-wave-2",
     turnLimit: 9,
     spawns: [
-      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "wisp", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "wisp", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "wisp", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 14,
     timeBonusGold: 6,
@@ -1440,8 +1672,9 @@ const FROSTBOUND_WAVES: WaveDefinition[] = [
     id: "frostbound-wave-3",
     turnLimit: 10,
     spawns: [
-      { enemyId: "frost-warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "frost-warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "frost-warden", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 5 },
+      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
     ],
     completionGold: 18,
     timeBonusGold: 7,
@@ -1450,9 +1683,9 @@ const FROSTBOUND_WAVES: WaveDefinition[] = [
     id: "frostbound-wave-4",
     turnLimit: 11,
     spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2 },
-      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "ravager", count: 1, startTurn: 3, intervalTurns: 1 },
+      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
+      { enemyId: "razorwing", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
+      { enemyId: "ravager", count: 2, startTurn: 3, intervalTurns: 1, spawnIndex: 0 },
     ],
     completionGold: 24,
     timeBonusGold: 8,
@@ -1461,9 +1694,10 @@ const FROSTBOUND_WAVES: WaveDefinition[] = [
     id: "frostbound-wave-5",
     turnLimit: 12,
     spawns: [
-      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "razorwing", count: 2, startTurn: 2, intervalTurns: 1 },
+      { enemyId: "ironhide", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 1 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 0 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 5 },
+      { enemyId: "razorwing", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 4 },
     ],
     completionGold: 30,
     timeBonusGold: 10,
@@ -1472,10 +1706,11 @@ const FROSTBOUND_WAVES: WaveDefinition[] = [
     id: "frostbound-wave-6",
     turnLimit: 15,
     spawns: [
-      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1 },
-      { enemyId: "ironhide", count: 1, startTurn: 2, intervalTurns: 2 },
-      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 1 },
-      { enemyId: "sundered-king", count: 1, startTurn: 4, intervalTurns: 1 },
+      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
+      { enemyId: "ironhide", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 1 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 0 },
+      { enemyId: "frost-warden", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 5 },
+      { enemyId: "sundered-king", count: 1, startTurn: 4, intervalTurns: 1, spawnIndex: 3 },
     ],
     completionGold: 55,
     timeBonusGold: 18,

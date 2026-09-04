@@ -21,6 +21,7 @@ import { getClassDefinition } from "../data/classes";
 import { POTION_DEFINITIONS, getPotionDefinition, GENERAL_SLOT_LABELS, type GeneralSlotId } from "../data/potions";
 import { sellValueForCost } from "../systems/EconomySystem";
 import { isItemEligibleForSlot, previewGearSlotChange, formatGearDelta } from "../systems/GearCompareSystem";
+import { decideSlotPairPlacement, decideHandsPlacement } from "../systems/GearFilterSystem";
 import type { BattleScene } from "./BattleScene";
 
 /**
@@ -76,7 +77,8 @@ const PAPERDOLL_ROWS: ArmorySlotId[][] = [
   ["weapon", "shield", "head", "chest", "legs", "general1"],
   ["back", "ring1", "ring2", "amulet", "footwear", "general2"],
 ];
-const ALL_ARMORY_SLOTS: ArmorySlotId[] = PAPERDOLL_ROWS.flat();
+/** D-228: tabs are FILTERS, not physical slots — "general2"/"ring2" never get their own tab, they share "general1"/"ring1"'s. */
+const ALL_ARMORY_FILTERS: ArmorySlotId[] = Array.from(new Set(PAPERDOLL_ROWS.flat().map(normalizeFilterSlot)));
 
 const INK = "#2a1a10";
 const INK_MUTED = "#6a4a2a";
@@ -90,6 +92,41 @@ function isGeneralSlot(slot: ArmorySlotId): slot is GeneralSlotId {
 
 function slotLabel(slot: ArmorySlotId): string {
   return isGeneralSlot(slot) ? GENERAL_SLOT_LABELS[slot] : GEAR_SLOT_LABELS[slot];
+}
+
+/**
+ * D-228 (KI-177 items 3/4/5): Potion 1/Potion 2, Ring 1/Ring 2, and
+ * Weapon/Shield each collapse into ONE shop filter — "general2"/"ring2"/
+ * "shield" are never stored as `selectedSlot` themselves, only ever
+ * normalized to their group's first slot. The paperdoll still shows all
+ * physical cells individually (`PAPERDOLL_ROWS`/`occupantOf` are
+ * untouched) — only the filter/tab concept and the buy/sell flow are
+ * pair-aware. Hands is asymmetric (see `isHandsFilter`/`decideHandsPlacement`
+ * below) so it does NOT go through `pairSlotsFor`'s fixed-pair logic.
+ */
+const SLOT_GROUP: Partial<Record<ArmorySlotId, ArmorySlotId>> = { general2: "general1", ring2: "ring1", shield: "weapon" };
+
+function normalizeFilterSlot(slot: ArmorySlotId): ArmorySlotId {
+  return SLOT_GROUP[slot] ?? slot;
+}
+
+/** Non-null only for a slot that heads a FIXED consolidated pair (Potions/Rings) — the two physical slots it represents, in display order. Hands is handled separately (see `isHandsFilter`). */
+function pairSlotsFor(filter: ArmorySlotId): [ArmorySlotId, ArmorySlotId] | null {
+  if (filter === "general1") return ["general1", "general2"];
+  if (filter === "ring1") return ["ring1", "ring2"];
+  return null;
+}
+
+function isHandsFilter(filter: ArmorySlotId): boolean {
+  return filter === "weapon";
+}
+
+/** Tab/header label for a (possibly consolidated) filter — "Potions"/"Rings"/"Hands" instead of "Potion 1"/"Ring 1"/"Right hand". */
+function filterLabel(filter: ArmorySlotId): string {
+  if (filter === "general1") return "Potions";
+  if (filter === "ring1") return "Rings";
+  if (filter === "weapon") return "Hands";
+  return slotLabel(filter);
 }
 
 function isPotionItem(itemId: string): boolean {
@@ -126,6 +163,15 @@ export class GearShopScene extends Phaser.Scene {
   private selectedHeroId: string | null = null;
   private selectedSlot: ArmorySlotId = "weapon";
   private selectedItemId: string | null = null;
+  /**
+   * D-228 (KI-177 items 3/4): the specific PHYSICAL slot a pending buy/sell
+   * targets — always equal to `selectedSlot` for a non-consolidated slot,
+   * but for a consolidated Potions/Rings filter this is what actually
+   * distinguishes "general1" from "general2" (or "ring1" from "ring2").
+   * Null while a compare-and-replace choice (both paired slots occupied)
+   * hasn't picked a specific one yet.
+   */
+  private targetSlot: ArmorySlotId | null = null;
   private primed = false;
   private primeTimer: Phaser.Time.TimerEvent | null = null;
   private catalogPage = 0;
@@ -140,6 +186,7 @@ export class GearShopScene extends Phaser.Scene {
     this.selectedHeroId = this.battleScene.shopHeroes()[0]?.id ?? null;
     this.selectedSlot = "weapon";
     this.selectedItemId = null;
+    this.targetSlot = null;
     this.primed = false;
     this.catalogPage = 0;
   }
@@ -179,10 +226,27 @@ export class GearShopScene extends Phaser.Scene {
   private navigateTo(heroId: string, slot: ArmorySlotId): void {
     this.clearPrimeTimer();
     this.selectedHeroId = heroId;
-    this.selectedSlot = slot;
+    this.selectedSlot = normalizeFilterSlot(slot);
     this.selectedItemId = null;
+    this.targetSlot = null;
     this.primed = false;
     this.catalogPage = 0;
+    this.refresh();
+  }
+
+  /** Arms `targetSlot`, either committing immediately (an empty/auto-placed slot) or after the usual delayed-confirm window (a slot with something already in it). */
+  private armTarget(slot: ArmorySlotId, instant: boolean): void {
+    this.targetSlot = slot;
+    if (instant) {
+      this.primed = true;
+      this.refresh();
+      return;
+    }
+    this.primed = false;
+    this.primeTimer = this.time.delayedCall(PRIME_DELAY_MS, () => {
+      this.primed = true;
+      this.refresh();
+    });
     this.refresh();
   }
 
@@ -191,37 +255,67 @@ export class GearShopScene extends Phaser.Scene {
     this.clearPrimeTimer();
     this.selectedItemId = itemId;
     const hero = this.selectedHero();
-    const occupant = hero ? this.occupantOf(hero, this.selectedSlot) : null;
-    if (!occupant) {
-      this.primed = true;
-    } else {
+    if (hero && isHandsFilter(this.selectedSlot)) {
+      const weaponOccupant = this.occupantOf(hero, "weapon");
+      const shieldOccupant = this.occupantOf(hero, "shield");
+      if (itemId === weaponOccupant) return this.armTarget("weapon", false);
+      if (itemId === shieldOccupant) return this.armTarget("shield", false);
+      const decision = decideHandsPlacement(itemId, weaponOccupant, shieldOccupant);
+      if (decision.kind === "autoPlace") return this.armTarget(decision.slot, true);
+      // A single-candidate item (a real shield, or a non-Light weapon) facing
+      // its one occupied slot behaves exactly like a single-slot compare —
+      // there's only one place it could go, nothing to choose between.
+      if (decision.candidateSlots.length === 1) return this.armTarget(decision.candidateSlots[0], false);
+      // A Light melee weapon with BOTH hands genuinely full — wait for an
+      // explicit "Replace Right/Left hand" pick.
+      this.targetSlot = null;
       this.primed = false;
-      this.primeTimer = this.time.delayedCall(PRIME_DELAY_MS, () => {
-        this.primed = true;
-        this.refresh();
-      });
+      this.refresh();
+      return;
     }
-    this.refresh();
+    const pair = pairSlotsFor(this.selectedSlot);
+    if (hero && pair) {
+      const [slotA, slotB] = pair;
+      const occupantA = this.occupantOf(hero, slotA);
+      const occupantB = this.occupantOf(hero, slotB);
+      // Clicking an existing occupant's own row is a sell action for that
+      // ONE physical slot, not a new-item placement decision.
+      if (itemId === occupantA) return this.armTarget(slotA, false);
+      if (itemId === occupantB) return this.armTarget(slotB, false);
+      const decision = decideSlotPairPlacement(occupantA, occupantB, slotA, slotB);
+      if (decision.kind === "autoPlace") return this.armTarget(decision.slot, true);
+      // Both full — wait for an explicit "Replace Potion 1/2" pick (see buildPairReplaceButtons).
+      this.targetSlot = null;
+      this.primed = false;
+      this.refresh();
+      return;
+    }
+    const occupant = hero ? this.occupantOf(hero, this.selectedSlot) : null;
+    this.armTarget(this.selectedSlot, !occupant);
   }
 
   private commitPurchase(itemId: string): void {
     const hero = this.selectedHero();
+    const slot = this.targetSlot ?? this.selectedSlot;
     if (!hero) return;
-    if (isGeneralSlot(this.selectedSlot)) this.battleScene.buyPotionForHero(hero, this.selectedSlot, itemId);
-    else this.battleScene.buyGearForHero(hero, this.selectedSlot, itemId);
+    if (isGeneralSlot(slot)) this.battleScene.buyPotionForHero(hero, slot, itemId);
+    else this.battleScene.buyGearForHero(hero, slot, itemId);
     this.clearPrimeTimer();
     this.selectedItemId = null;
+    this.targetSlot = null;
     this.primed = false;
     this.refresh();
   }
 
   private commitSell(): void {
     const hero = this.selectedHero();
+    const slot = this.targetSlot ?? this.selectedSlot;
     if (!hero) return;
-    if (isGeneralSlot(this.selectedSlot)) this.battleScene.sellPotionFromHero(hero, this.selectedSlot);
-    else this.battleScene.sellGearFromHero(hero, this.selectedSlot);
+    if (isGeneralSlot(slot)) this.battleScene.sellPotionFromHero(hero, slot);
+    else this.battleScene.sellGearFromHero(hero, slot);
     this.clearPrimeTimer();
     this.selectedItemId = null;
+    this.targetSlot = null;
     this.primed = false;
     this.refresh();
   }
@@ -327,7 +421,7 @@ export class GearShopScene extends Phaser.Scene {
           const sx = SIDEBAR_X + gridPad + colIdx * (cellWidth + cellGap) + cellWidth / 2;
           const sy = gridTop + rowIdx * (cellHeight + cellGap) + cellHeight / 2;
           const occupantId = this.occupantOf(hero, slot);
-          const isActiveSlot = isActiveHero && slot === this.selectedSlot;
+          const isActiveSlot = isActiveHero && normalizeFilterSlot(slot) === this.selectedSlot;
 
           const cellG = this.add.graphics().setDepth(3);
           cellG.fillStyle(isActiveSlot ? 0x3a2c14 : 0x1a1108, 1);
@@ -358,7 +452,7 @@ export class GearShopScene extends Phaser.Scene {
 
   private buildShopHeader(contentX: number): void {
     const hero = this.selectedHero();
-    const label = hero ? `Shopping for ${hero.name} — ${slotLabel(this.selectedSlot)}` : "Shopping";
+    const label = hero ? `Shopping for ${hero.name} — ${filterLabel(this.selectedSlot)}` : "Shopping";
     this.add
       .text(contentX, CONTENT_TOP - 8, label, { fontFamily: FONT_DISPLAY, fontSize: "20px", color: "#f0dfa8" })
       .setOrigin(0, 1)
@@ -369,8 +463,8 @@ export class GearShopScene extends Phaser.Scene {
   private buildSlotTabs(contentX: number, contentWidth: number): void {
     const chipWidth = 118;
     const rowGap = 8;
-    const half = Math.ceil(ALL_ARMORY_SLOTS.length / 2);
-    const rows = [ALL_ARMORY_SLOTS.slice(0, half), ALL_ARMORY_SLOTS.slice(half)];
+    const half = Math.ceil(ALL_ARMORY_FILTERS.length / 2);
+    const rows = [ALL_ARMORY_FILTERS.slice(0, half), ALL_ARMORY_FILTERS.slice(half)];
     const topY = CONTENT_TOP + 24;
 
     rows.forEach((rowSlots, rowIdx) => {
@@ -378,7 +472,7 @@ export class GearShopScene extends Phaser.Scene {
       const y = topY + rowIdx * (34 + rowGap);
       rowSlots.forEach((slot, i) => {
         const active = slot === this.selectedSlot;
-        createOrnateButton(this, xs[i], y, itemWidth, 34, slotLabel(slot), () => {
+        createOrnateButton(this, xs[i], y, itemWidth, 34, filterLabel(slot), () => {
           const hero = this.selectedHero();
           this.navigateTo(hero?.id ?? this.selectedHeroId ?? "", slot);
         }, { variant: "tab", fontSize: 12, depth: 4 }).setSelected(active);
@@ -387,6 +481,16 @@ export class GearShopScene extends Phaser.Scene {
   }
 
   private buildCompareStrip(contentX: number, contentWidth: number): void {
+    if (isHandsFilter(this.selectedSlot)) {
+      this.buildHandsCompareStrip(contentX, contentWidth);
+      return;
+    }
+    const pair = pairSlotsFor(this.selectedSlot);
+    if (pair) {
+      this.buildPairCompareStrip(contentX, contentWidth, pair);
+      return;
+    }
+
     const panelCenterX = contentX + contentWidth / 2;
     const panelTop = CONTENT_TOP + 94;
     const panelWidth = contentWidth;
@@ -436,6 +540,164 @@ export class GearShopScene extends Phaser.Scene {
     if (sel) this.buildActionButton(panelCenterX + panelWidth / 2 - 110, panelTop + panelHeight / 2, hero, sel, occupantId, 190, 40, 13);
   }
 
+  /**
+   * D-228 (KI-177 items 3/4): the Potions/Rings compare strip — shows BOTH
+   * physical slots' current occupants (Kevin's own spec: "they would need
+   * to see both potion spots and what occupies them") instead of one. Only
+   * rendered when a real choice is needed: an empty-slot auto-place case
+   * never reaches here selected-and-unresolved (see `chooseItem`'s
+   * `armTarget(decision.slot, true)` branch — it's already primed by the
+   * time this runs, same one-click purchase shape a single empty slot has
+   * today), so this only really needs to earn its keep for the both-full
+   * "which one do I replace" moment.
+   */
+  private buildPairCompareStrip(contentX: number, contentWidth: number, pair: [ArmorySlotId, ArmorySlotId]): void {
+    const panelCenterX = contentX + contentWidth / 2;
+    const panelTop = CONTENT_TOP + 94;
+    const panelWidth = contentWidth;
+    const panelHeight = 100;
+    drawParchmentPanel(this, panelCenterX, panelTop + panelHeight / 2, panelWidth, panelHeight, 2);
+
+    const hero = this.selectedHero();
+    if (!hero) return;
+    const [slotA, slotB] = pair;
+    const occupantA = this.occupantOf(hero, slotA);
+    const occupantB = this.occupantOf(hero, slotB);
+    const sel = this.selectedItemId;
+    const potions = isGeneralSlot(slotA);
+
+    const colWidth = panelWidth * 0.27;
+    const colAX = panelCenterX - panelWidth / 2 + 24;
+    const colBX = colAX + colWidth + 12;
+    for (const [x, slot, occupantId] of [
+      [colAX, slotA, occupantA],
+      [colBX, slotB, occupantB],
+    ] as const) {
+      this.add.text(x, panelTop + 14, slotLabel(slot), { fontFamily: FONT_BODY, fontSize: "11px", color: INK_MUTED }).setDepth(3);
+      if (occupantId) {
+        this.add
+          .text(x, panelTop + 32, itemName(occupantId), { fontFamily: FONT_BODY, fontSize: "14px", color: INK, fontStyle: "bold" })
+          .setDepth(3);
+        this.add
+          .text(x, panelTop + 54, itemDescription(occupantId), { fontFamily: FONT_BODY, fontSize: "10px", color: INK_MUTED, wordWrap: { width: colWidth - 8 } })
+          .setDepth(3);
+      } else {
+        this.add.text(x, panelTop + 38, "— empty —", { fontFamily: FONT_BODY, fontSize: "12px", color: INK_MUTED }).setDepth(3);
+      }
+    }
+
+    const midX = colBX + colWidth + 4;
+    this.add.text(midX, panelTop + 14, "Selected", { fontFamily: FONT_BODY, fontSize: "11px", color: INK_MUTED }).setDepth(3);
+    if (sel) {
+      this.add.text(midX, panelTop + 32, itemName(sel), { fontFamily: FONT_BODY, fontSize: "13px", color: INK, fontStyle: "bold" }).setDepth(3);
+    } else {
+      this.add.text(midX, panelTop + 38, potions ? "Pick a potion below." : "Pick an item below.", { fontFamily: FONT_BODY, fontSize: "11px", color: INK_MUTED, wordWrap: { width: panelWidth * 0.16 } }).setDepth(3);
+    }
+
+    // Both occupied and a NEW item (not either current occupant) is
+    // selected: the player must explicitly choose which slot to replace.
+    if (sel && occupantA && occupantB && sel !== occupantA && sel !== occupantB) {
+      this.buildPairReplaceButtons(panelCenterX + panelWidth / 2 - 110, panelTop + panelHeight / 2, hero, sel, [slotA, slotB]);
+    } else if (sel) {
+      // Either an empty-slot auto-place (already primed) or the selected
+      // item IS one of the two occupants (a sell in progress) — both
+      // resolve to exactly one target slot, so the shared single-slot
+      // button works unchanged.
+      const occupantId = sel === occupantA ? occupantA : sel === occupantB ? occupantB : null;
+      this.buildActionButton(panelCenterX + panelWidth / 2 - 110, panelTop + panelHeight / 2, hero, sel, occupantId, 190, 40, 13);
+    }
+  }
+
+  /** The two "Replace Potion 1/2"-style buttons for the both-full case — stacked, each computing its own trade-in independently. */
+  private buildPairReplaceButtons(x: number, centerY: number, hero: Hero, itemId: string, slots: [ArmorySlotId, ArmorySlotId]): void {
+    const cost = itemCost(itemId);
+    const buttonHeight = 32;
+    const gap = 6;
+    slots.forEach((slot, i) => {
+      const occupantId = this.occupantOf(hero, slot);
+      if (!occupantId) return;
+      const tradeIn = sellValueForCost(itemCost(occupantId));
+      const netCost = cost - tradeIn;
+      const afford = netCost <= this.battleScene.goldFor(hero);
+      const primedForThis = this.targetSlot === slot && this.primed;
+      const y = centerY - (buttonHeight + gap) / 2 + i * (buttonHeight + gap);
+      const label = primedForThis
+        ? `Confirm — ${netCost}g net`
+        : afford
+          ? `Replace ${slotLabel(slot)} — ${netCost}g net`
+          : `Need ${netCost}g`;
+      createOrnateButton(this, x, y, 220, buttonHeight, label, () => {
+        if (primedForThis) this.commitPurchase(itemId);
+        else if (afford) this.armTarget(slot, false);
+      }, { variant: "tool", fontSize: 12, depth: 5, disabled: !afford && !primedForThis });
+    });
+  }
+
+  /**
+   * D-228 (item 5's base ask): the "Hands" compare strip — always shows
+   * BOTH Right hand (weapon) and Left hand (shield), same "see both spots"
+   * spec as Potions/Rings, but the action area's shape depends on the
+   * SELECTED item's own candidate slot(s) (`decideHandsPlacement`): a real
+   * shield or a Two-Handed weapon only ever has one candidate (behaves
+   * exactly like a single-slot pick), while a Light melee weapon can have
+   * two (needs the same "Replace Right/Left hand" choice Potions/Rings use).
+   */
+  private buildHandsCompareStrip(contentX: number, contentWidth: number): void {
+    const panelCenterX = contentX + contentWidth / 2;
+    const panelTop = CONTENT_TOP + 94;
+    const panelWidth = contentWidth;
+    const panelHeight = 100;
+    drawParchmentPanel(this, panelCenterX, panelTop + panelHeight / 2, panelWidth, panelHeight, 2);
+
+    const hero = this.selectedHero();
+    if (!hero) return;
+    const weaponOccupant = this.occupantOf(hero, "weapon");
+    const shieldOccupant = this.occupantOf(hero, "shield");
+    const sel = this.selectedItemId;
+
+    const colWidth = panelWidth * 0.27;
+    const colAX = panelCenterX - panelWidth / 2 + 24;
+    const colBX = colAX + colWidth + 12;
+    for (const [x, slot, occupantId] of [
+      [colAX, "weapon", weaponOccupant],
+      [colBX, "shield", shieldOccupant],
+    ] as const) {
+      this.add.text(x, panelTop + 14, slotLabel(slot), { fontFamily: FONT_BODY, fontSize: "11px", color: INK_MUTED }).setDepth(3);
+      if (occupantId) {
+        this.add.text(x, panelTop + 32, itemName(occupantId), { fontFamily: FONT_BODY, fontSize: "14px", color: INK, fontStyle: "bold" }).setDepth(3);
+        this.add
+          .text(x, panelTop + 54, itemDescription(occupantId), { fontFamily: FONT_BODY, fontSize: "10px", color: INK_MUTED, wordWrap: { width: colWidth - 8 } })
+          .setDepth(3);
+      } else {
+        this.add.text(x, panelTop + 38, "— empty —", { fontFamily: FONT_BODY, fontSize: "12px", color: INK_MUTED }).setDepth(3);
+      }
+    }
+
+    const midX = colBX + colWidth + 4;
+    this.add.text(midX, panelTop + 14, "Selected", { fontFamily: FONT_BODY, fontSize: "11px", color: INK_MUTED }).setDepth(3);
+    if (sel) {
+      this.add.text(midX, panelTop + 32, itemName(sel), { fontFamily: FONT_BODY, fontSize: "13px", color: INK, fontStyle: "bold" }).setDepth(3);
+    } else {
+      this.add.text(midX, panelTop + 38, "Pick an item below.", { fontFamily: FONT_BODY, fontSize: "11px", color: INK_MUTED, wordWrap: { width: panelWidth * 0.16 } }).setDepth(3);
+    }
+
+    if (!sel) return;
+    if (sel === weaponOccupant || sel === shieldOccupant) {
+      const occupantId = sel === weaponOccupant ? weaponOccupant : shieldOccupant;
+      this.buildActionButton(panelCenterX + panelWidth / 2 - 110, panelTop + panelHeight / 2, hero, sel, occupantId, 190, 40, 13);
+      return;
+    }
+    const decision = decideHandsPlacement(sel, weaponOccupant, shieldOccupant);
+    if (decision.kind === "autoPlace") {
+      this.buildActionButton(panelCenterX + panelWidth / 2 - 110, panelTop + panelHeight / 2, hero, sel, null, 190, 40, 13);
+    } else if (decision.candidateSlots.length === 1) {
+      const slot = decision.candidateSlots[0];
+      this.buildActionButton(panelCenterX + panelWidth / 2 - 110, panelTop + panelHeight / 2, hero, sel, this.occupantOf(hero, slot), 190, 40, 13);
+    } else {
+      this.buildPairReplaceButtons(panelCenterX + panelWidth / 2 - 110, panelTop + panelHeight / 2, hero, sel, [decision.candidateSlots[0], decision.candidateSlots[1]]);
+    }
+  }
+
   private buildCatalog(contentX: number, contentWidth: number): void {
     const panelCenterX = contentX + contentWidth / 2;
     const panelTop = CONTENT_TOP + 210;
@@ -448,16 +710,29 @@ export class GearShopScene extends Phaser.Scene {
     const hero = this.selectedHero();
     if (!hero) return;
 
-    const occupantId = this.occupantOf(hero, this.selectedSlot);
+    // D-228 (KI-177 items 3/4/5): a consolidated Potions/Rings/Hands filter
+    // has TWO physical occupants instead of one — everything below that
+    // used to read a single `occupantId` now reads `occupantIds` (0-2
+    // entries). Hands is asymmetric (see `isHandsFilter`) so it's handled
+    // alongside, not through, `pairSlotsFor`'s fixed-pair shape.
+    const hands = isHandsFilter(this.selectedSlot);
+    const pair = hands ? null : pairSlotsFor(this.selectedSlot);
+    const occupantId = pair || hands ? null : this.occupantOf(hero, this.selectedSlot);
+    const occupantA = hands ? this.occupantOf(hero, "weapon") : pair ? this.occupantOf(hero, pair[0]) : null;
+    const occupantB = hands ? this.occupantOf(hero, "shield") : pair ? this.occupantOf(hero, pair[1]) : null;
+    const occupantIds = pair || hands ? [occupantA, occupantB].filter((v): v is string => v !== null) : occupantId ? [occupantId] : [];
     const potions = isGeneralSlot(this.selectedSlot);
     const allIds = this.battleScene.shopVisibleItemIds();
     const eligibleIds = potions
       ? allIds.filter((id) => isPotionItem(id))
-      : allIds.filter((id) => !isPotionItem(id) && isItemEligibleForSlot(id, this.selectedSlot as GearSlotId));
-    // The occupant may be a unique/starting item outside the level-gated
+      : hands
+        ? allIds.filter((id) => !isPotionItem(id) && (isItemEligibleForSlot(id, "weapon") || isItemEligibleForSlot(id, "shield")))
+        : allIds.filter((id) => !isPotionItem(id) && isItemEligibleForSlot(id, this.selectedSlot as GearSlotId));
+    // Either occupant may be a unique/starting item outside the level-gated
     // visible catalog — still pin it at the top of the list as the
     // Equipped/Carried row so its Sell action is always reachable.
-    const list = occupantId && !eligibleIds.includes(occupantId) ? [occupantId, ...eligibleIds] : eligibleIds;
+    const missingOccupantIds = occupantIds.filter((id) => !eligibleIds.includes(id));
+    const list = missingOccupantIds.length > 0 ? [...new Set([...missingOccupantIds, ...eligibleIds])] : eligibleIds;
 
     if (list.length === 0) {
       this.add
@@ -473,7 +748,7 @@ export class GearShopScene extends Phaser.Scene {
 
     pageItems.forEach((id, idx) => {
       const rowY = panelTop + 12 + idx * (rowHeight + rowGap) + rowHeight / 2;
-      const isOccupant = occupantId === id;
+      const isOccupant = occupantIds.includes(id);
       const isSelected = this.selectedItemId === id;
 
       const rowBg = this.add
@@ -507,8 +782,13 @@ export class GearShopScene extends Phaser.Scene {
           .setOrigin(0, 0.5)
           .setDepth(4);
       } else {
+        // For a pair/Hands filter, a row's trade-in is 0 (nothing to sell)
+        // when at least one physical slot is still empty (auto-place); once
+        // BOTH are full, which occupant gets traded in depends on which the
+        // player picks below — not knowable at the row-preview level, so
+        // this shows base cost only until that choice is made.
         const cost = itemCost(id);
-        const tradeIn = occupantId ? sellValueForCost(itemCost(occupantId)) : 0;
+        const tradeIn = pair || hands ? 0 : occupantId ? sellValueForCost(itemCost(occupantId)) : 0;
         const netCost = cost - tradeIn;
         const afford = netCost <= this.battleScene.goldFor(hero);
         this.add
@@ -521,7 +801,46 @@ export class GearShopScene extends Phaser.Scene {
           .setDepth(4);
       }
 
-      this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, occupantId, 170, 34, 11);
+      const showSelectButton = (): void => {
+        // Both candidate slots are full — the real "which one to replace"
+        // action lives in the compare strip above once selected here.
+        createOrnateButton(
+          this,
+          panelCenterX + panelWidth / 2 - 100,
+          rowY,
+          170,
+          34,
+          isSelected ? "Selected ▴" : "Select",
+          () => this.chooseItem(id),
+          { variant: "tool", fontSize: 11, depth: 5, disabled: isSelected },
+        );
+      };
+
+      if (isOccupant) {
+        // Sell branch — works unchanged for a pair/Hands filter too, since
+        // `chooseItem` already resolves WHICH physical slot `id` occupies.
+        this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, id, 170, 34, 11);
+      } else if (hands) {
+        const decision = decideHandsPlacement(id, occupantA, occupantB);
+        if (decision.kind === "autoPlace") {
+          this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, null, 170, 34, 11);
+        } else if (decision.candidateSlots.length === 1) {
+          // Only one possible slot (a real shield, or a non-Light weapon) —
+          // behaves exactly like a single-slot Compare-then-Purchase.
+          this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, this.occupantOf(hero, decision.candidateSlots[0]), 170, 34, 11);
+        } else {
+          showSelectButton();
+        }
+      } else if (!pair) {
+        this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, occupantId, 170, 34, 11);
+      } else {
+        const decision = decideSlotPairPlacement(occupantA, occupantB, pair[0], pair[1]);
+        if (decision.kind === "autoPlace") {
+          this.buildActionButton(panelCenterX + panelWidth / 2 - 100, rowY, hero, id, null, 170, 34, 11);
+        } else {
+          showSelectButton();
+        }
+      }
     });
 
     if (pageCount > 1) {
@@ -588,7 +907,15 @@ export class GearShopScene extends Phaser.Scene {
       else if (netCost < 0) label = `Purchase (+${-netCost}g back)`;
       else label = "Purchase — free";
       createOrnateButton(this, x, y, width, height, label, () => {
-        if (afford) this.commitPurchase(id);
+        if (!afford) return;
+        // A fresh, not-yet-primed click resolves `targetSlot` via
+        // `chooseItem` first — for a consolidated Potions/Rings filter
+        // (see `pairSlotsFor`) that's what picks the actual empty physical
+        // slot rather than trusting a possibly-stale `targetSlot`. Skipped
+        // once already `primedForThis`, which would otherwise restart its
+        // delay timer instead of confirming.
+        if (!needsCompareStep) this.chooseItem(id);
+        this.commitPurchase(id);
       }, { variant: "tool", fontSize, depth: 5, disabled: !afford });
     } else {
       createOrnateButton(this, x, y, width, height, "Compare", () => this.chooseItem(id), { variant: "tool", fontSize, depth: 5 });
