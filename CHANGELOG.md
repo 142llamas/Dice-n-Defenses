@@ -2,6 +2,25 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Fix: live site loaded to a black screen (D-236)
+
+Kevin reported the deployed link loading to a black screen immediately, on
+every load. Root cause: `GearShopScene.ts` (reworked by D-234) computed
+`ALL_ARMORY_FILTERS` at module scope before `SLOT_GROUP`, the `const` it
+depends on, had been initialized — a `ReferenceError` thrown during the
+bundle's very first tick, before the Main Menu could ever render. Since
+every scene is eagerly imported at startup, this took down the entire app
+for every visitor.
+
+Fixed:
+- `scenes/GearShopScene.ts`: reordered `SLOT_GROUP`/`normalizeFilterSlot`
+  above `ALL_ARMORY_FILTERS` — no logic changed, pure declaration reordering.
+
+See `DECISIONS.md` D-236 for the full root-cause writeup, including why
+`tsc`, `npm test`, and the dev-server HTTP check all pass despite this bug —
+none of them execute the production bundle's real module-init order — and
+`KNOWN_ISSUES.md` KI-185 for the post-deploy confirmation checklist.
+
 ## [Unreleased] — 0.2.0-dev — Real weapon-proficiency system auto-filters the Hands tab (D-235)
 
 Kevin's item 7: "Is there a weapon-proficiency system? If so, auto-filter

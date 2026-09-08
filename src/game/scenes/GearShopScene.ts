@@ -89,6 +89,30 @@ const PAPERDOLL_ROWS: ArmorySlotId[][] = [
   ["weapon", "shield", "head", "chest", "legs", "general1"],
   ["back", "ring1", "ring2", "amulet", "footwear", "general2"],
 ];
+/**
+ * D-228 (KI-177 items 3/4/5): Potion 1/Potion 2, Ring 1/Ring 2, and
+ * Weapon/Shield each collapse into ONE shop filter — "general2"/"ring2"/
+ * "shield" are never stored as `selectedSlot` themselves, only ever
+ * normalized to their group's first slot. The paperdoll still shows all
+ * physical cells individually (`PAPERDOLL_ROWS`/`occupantOf` are
+ * untouched) — only the filter/tab concept and the buy/sell flow are
+ * pair-aware. Hands is asymmetric (see `isHandsFilter`/`decideHandsPlacement`
+ * below) so it does NOT go through `pairSlotsFor`'s fixed-pair logic.
+ *
+ * Declared before `ALL_ARMORY_FILTERS` below deliberately: that line calls
+ * `normalizeFilterSlot` immediately (via `.map`), which reads `SLOT_GROUP`
+ * — module-eval order matters here, unlike a value only read from inside a
+ * function called later. (A prior ordering had `SLOT_GROUP` declared after
+ * `ALL_ARMORY_FILTERS`, which threw a `const` temporal-dead-zone
+ * ReferenceError on load — production-bundle-only, since it depends on
+ * source order rather than anything a type-checker or test suite runs.)
+ */
+const SLOT_GROUP: Partial<Record<ArmorySlotId, ArmorySlotId>> = { general2: "general1", ring2: "ring1", shield: "weapon" };
+
+function normalizeFilterSlot(slot: ArmorySlotId): ArmorySlotId {
+  return SLOT_GROUP[slot] ?? slot;
+}
+
 /** D-228: tabs are FILTERS, not physical slots — "general2"/"ring2" never get their own tab, they share "general1"/"ring1"'s. */
 const ALL_ARMORY_FILTERS: ArmorySlotId[] = Array.from(new Set(PAPERDOLL_ROWS.flat().map(normalizeFilterSlot)));
 
@@ -104,22 +128,6 @@ function isGeneralSlot(slot: ArmorySlotId): slot is GeneralSlotId {
 
 function slotLabel(slot: ArmorySlotId): string {
   return isGeneralSlot(slot) ? GENERAL_SLOT_LABELS[slot] : GEAR_SLOT_LABELS[slot];
-}
-
-/**
- * D-228 (KI-177 items 3/4/5): Potion 1/Potion 2, Ring 1/Ring 2, and
- * Weapon/Shield each collapse into ONE shop filter — "general2"/"ring2"/
- * "shield" are never stored as `selectedSlot` themselves, only ever
- * normalized to their group's first slot. The paperdoll still shows all
- * physical cells individually (`PAPERDOLL_ROWS`/`occupantOf` are
- * untouched) — only the filter/tab concept and the buy/sell flow are
- * pair-aware. Hands is asymmetric (see `isHandsFilter`/`decideHandsPlacement`
- * below) so it does NOT go through `pairSlotsFor`'s fixed-pair logic.
- */
-const SLOT_GROUP: Partial<Record<ArmorySlotId, ArmorySlotId>> = { general2: "general1", ring2: "ring1", shield: "weapon" };
-
-function normalizeFilterSlot(slot: ArmorySlotId): ArmorySlotId {
-  return SLOT_GROUP[slot] ?? slot;
 }
 
 /** Non-null only for a slot that heads a FIXED consolidated pair (Potions/Rings) — the two physical slots it represents, in display order. Hands is handled separately (see `isHandsFilter`). */

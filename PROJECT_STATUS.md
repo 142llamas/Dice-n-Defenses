@@ -1,5 +1,37 @@
 # Project Status
 
+## URGENT, fixed this session: the deployed site was a black screen for every visitor (D-236)
+
+Kevin came back to playtest (first time since the D-234/D-235 session) and
+found the live link (dice-n-defenses.web.app) loading to a black screen,
+immediately, every time. He supplied the DevTools console output on
+request, which pinpointed it: a `const` temporal-dead-zone `ReferenceError`
+in `GearShopScene.ts`, introduced by D-234's scroll-list rework of that file
+disturbing two declarations' relative order. Because every scene (including
+`GearShopScene`) is eagerly imported at startup, this crashed before the
+Main Menu could ever render — it wasn't a narrow Armory bug, it took down
+the entire app for every visitor since the 2026-09-04 deploy.
+
+Fixed by reordering two declarations in `GearShopScene.ts` — no logic
+changed. `npm run typecheck` clean, all 1795 tests still pass, `npm run
+build` succeeds (162 modules, unchanged). Verified beyond the normal
+headless checks: rebuilt with sourcemaps and confirmed the exact reported
+crash location mapped to the two declarations found; then actually executed
+the rebuilt bundle in a Node `vm` sandbox (minimal DOM stubs, no `jsdom`
+dependency added) and confirmed it now runs cleanly through all 162 of the
+app's own modules, stopping only deep inside Phaser's own internal canvas
+feature-detection code (an expected, unrelated limitation of not having a
+real browser here). **Still needs Kevin's own reload of the live link,
+post-deploy, to fully confirm** — see `KNOWN_ISSUES.md` KI-185. Full
+writeup: `DECISIONS.md` D-236.
+
+**Why this matters going forward**: this bug was invisible to every
+automated check this project normally runs (`tsc`, `npm test`, `npm run dev`
++ HTTP check) because none of them execute the production bundle's real
+module-evaluation order — only a real browser (or the sandboxed-execution
+technique used to verify this fix) would catch it. Worth keeping in mind
+for any future large single-file scene rework.
+
 ## Kevin's 10-item playtest list: CLOSED — items 6 and 7, the last two pieces, DONE this session (D-234, D-235)
 
 The mid-batch handoff from 2026-09-03/04 is now fully resolved. Item 6

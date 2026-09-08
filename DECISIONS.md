@@ -13809,3 +13809,73 @@ a feel judgment call this environment can't make. See KI-184.
 `src/game/systems/GearFilterSystem.ts`, `tests/gearFilterSystem.test.ts`,
 `src/game/scenes/GearShopScene.ts`, `src/game/scenes/
 CharacterCreationScene.ts`.
+
+### D-236 — Live site was a black screen on load: a `const` temporal-dead-zone bug in `GearShopScene.ts`, introduced by D-234/D-235
+
+Kevin reported the deployed link (dice-n-defenses.web.app) loading to a
+black screen — immediately, before the Main Menu ever appeared. He supplied
+the browser DevTools console output on request (per KI-177's own established
+protocol: get the real error before touching anything), which was the key
+piece of information: `Uncaught ReferenceError: Cannot access '...' before
+initialization`, thrown from a `.map()` callback during the bundle's very
+first synchronous tick. (The second console line, about a "message channel
+closed" listener, was unrelated browser-extension noise — not this bug.)
+
+**Root cause**: `src/game/scenes/GearShopScene.ts` computed
+`ALL_ARMORY_FILTERS` at module scope by calling `PAPERDOLL_ROWS.flat().map
+(normalizeFilterSlot)` — a `.map()` call executes its callback immediately,
+not lazily. `normalizeFilterSlot`'s body reads `SLOT_GROUP`, a `const`
+declared ~25 lines further down in the same file. Because `normalizeFilterSlot`
+is a hoisted function *declaration*, referencing it before its own text was
+legal — but actually *calling* it at that point wasn't: `SLOT_GROUP` was
+still in its temporal dead zone, so the very first call inside the `.map`
+threw. `main.ts` eagerly imports every scene (including `GearShopScene`, per
+the existing rationale documented in `vite.config.ts`), so this module's
+top-level code runs during the app's very first tick, before `BootScene` —
+hence a black screen with nothing ever reaching the Main Menu.
+
+This ordering came from D-234's scroll-list rework of `GearShopScene.ts`
+(381 lines changed) — `ALL_ARMORY_FILTERS`/`SLOT_GROUP`/`normalizeFilterSlot`
+themselves date to D-228, but their relative order was disturbed by that
+edit. **This category of bug is invisible to every check this project's
+workflow normally runs**: `tsc --noEmit` doesn't flag it (calling a hoisted
+function declaration is legal at any point in the file; TypeScript doesn't
+trace into the callee to see it touches a not-yet-initialized `const`),
+`npm test` never imports Phaser scene files at all, and `npm run dev` + an
+HTTP check only confirms the dev server *responds* — none of these actually
+execute the bundle's real module-evaluation order the way a browser does.
+Worth calling out explicitly: this is a genuinely different failure class
+from D-157/D-159's "browser-only, can't verify without Kevin's own pass" —
+that was a rendering/scaling behavior a static check could never judge; this
+is a hard crash a real browser run would have caught immediately, this
+environment just has no browser to run.
+
+**Fix**: moved `SLOT_GROUP` and `normalizeFilterSlot` above
+`ALL_ARMORY_FILTERS` in the same file — no logic changed, pure reordering.
+
+**Verification, given no browser is available here**: rebuilt production
+(`npm run build`, same command the deploy pipeline runs) with sourcemaps,
+used the `source-map` package (already present transitively) to confirm the
+exact reported minified location (`index-CLOZv0RR.js:9714`) mapped to
+`GearShopScene.ts` lines 93/119 — the exact `ALL_ARMORY_FILTERS`/
+`SLOT_GROUP` pair. Then, since no browser is available, actually *executed*
+the rebuilt bundle in a Node `vm` context with minimal `window`/`document`/
+`localStorage` stubs (not a real DOM — no `jsdom` dependency added). Fixed
+build ran cleanly through all 162 of the app's own modules — every scene,
+every data file's top-level code — and only stopped deep inside Phaser's
+own internal canvas-capability-detection code (`CanvasPool`/
+`checkInverseAlpha`), which needs a real 2D canvas context no stub can
+provide. That boundary is the strongest confirmation available without a
+real browser: everything belonging to this project evaluates cleanly now:
+only Phaser's own genuine canvas/WebGL requirement (an expected, unrelated
+environment limitation) stops the run. `npm run typecheck` clean, all 1795
+tests still pass, `npm run build` succeeds (162 modules, same as before —
+no files added or removed, only lines reordered within one file).
+
+**Not yet confirmed**: Kevin reloading the actual deployed
+dice-n-defenses.web.app link in his own browser after this fix is pushed and
+the GitHub Actions deploy completes — this is the one piece the above
+verification can't reach. See KI-185.
+
+**Important files**: `src/game/scenes/GearShopScene.ts` (the only file
+changed).

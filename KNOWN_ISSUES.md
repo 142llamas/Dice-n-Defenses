@@ -29,6 +29,30 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
+### KI-185 — D-236: live site was a black screen on load (`GearShopScene.ts` `const` ordering bug) — fixed, needs Kevin's reload to confirm
+Kevin reported the deployed link loading to a black screen, immediately,
+every time — no Main Menu ever appeared. He supplied the DevTools console
+output on request: `Uncaught ReferenceError: Cannot access '...' before
+initialization`, traced to `GearShopScene.ts` computing `ALL_ARMORY_FILTERS`
+before `SLOT_GROUP` (the `const` it transitively depends on) was
+initialized — a real crash during the bundle's first synchronous tick,
+before `BootScene` ever runs. See `DECISIONS.md` D-236 for the full root
+cause and why none of `tsc`/`npm test`/the dev-server HTTP check could have
+caught it.
+- **The real test**: once this fix is pushed and the GitHub Actions deploy
+  finishes (check the Actions tab — same pipeline as always), reload
+  https://dice-n-defenses.web.app/ with a hard refresh (`Ctrl+Shift+R`, to
+  bypass any cached broken bundle) and confirm the Main Menu actually
+  appears. Also worth opening DevTools (F12) → Console once to confirm it's
+  clean (no red errors) on load.
+- Fixed by reordering two declarations in one file — no behavior changed
+  beyond removing the crash, so nothing else needs re-testing specifically
+  because of this fix. The Armory/gear-shop functionality itself still needs
+  its own pass (see KI-183/KI-184 below, unaffected by this).
+- If the black screen persists after a hard refresh post-deploy, get a fresh
+  DevTools console screenshot — same protocol as this one — before assuming
+  it's the same bug recurring.
+
 ### KI-184 — D-235: real weapon-proficiency system, auto-filters the Hands tab
 **(headless-verified, not yet played)**.
 - Open the Armory for a Wizard (or another Simple-only caster) and go to the
