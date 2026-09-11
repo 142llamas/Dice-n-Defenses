@@ -12,10 +12,12 @@ import {
   BESTIARY_STORAGE_KEY,
   CAMPAIGN_PROGRESS_STORAGE_KEY,
   CAMPAIGN_LEVEL_STORAGE_KEY,
+  CAMPAIGN_GOLD_STORAGE_KEY,
   WORLD_FLAG_STORAGE_KEY,
   COMPANION_ROSTER_STORAGE_KEY,
   SAVE_STORAGE_KEY,
   KEYBINDINGS_STORAGE_KEY,
+  AUTOSAVE_STORAGE_KEY,
 } from "../config";
 import { SPRITE_MANIFEST } from "../data/spriteManifest";
 import { GridSystem, computeFittedTileSize, type GridPosition } from "../systems/GridSystem";
@@ -53,7 +55,16 @@ import { ProgressionSystem } from "../systems/ProgressionSystem";
 import { RestSystem } from "../systems/RestSystem";
 import { firstAvailableHeroAction, listHeroActions, hotkeyDisplayLabel } from "../systems/HeroActionRegistry";
 import { createTooltipController, attachHoverTooltip, type TooltipController } from "./tooltip";
-import { centeredRowX, drawScreenBackdrop, createOrnateButton, drawParchmentPanel, FONT_DISPLAY, FONT_BODY } from "./uiTheme";
+import {
+  centeredRowX,
+  drawScreenBackdrop,
+  createOrnateButton,
+  drawParchmentPanel,
+  shrinkFontToFit,
+  measureChoiceRowHeights,
+  FONT_DISPLAY,
+  FONT_BODY,
+} from "./uiTheme";
 import { clampScrollOffset, contentHeight as scrollContentHeight, cumulativeOffsets, visibleRowRange, scrollOffsetToReveal } from "../systems/ScrollListMath";
 import { renderScrollListRows, renderScrollbarVisual, attachWheelScroll, type ScrollListRect, type ScrollRegion } from "./uiScrollList";
 import { showDialogue, type DialogueBoxController, type DialogueLine } from "./dialogueBox";
@@ -111,6 +122,7 @@ import {
   totalChapters,
   NAMELESS_THRONE_CAMPAIGN_ID,
   REGION_CAMPAIGN_IDS,
+  SHATTERED_CAUSEWAY_CAMPAIGN_ID,
   type ChapterDefinition,
   type CampaignDefinition,
 } from "../data/campaigns";
@@ -123,6 +135,7 @@ import {
   highestReachedCampaignLevel,
   type CampaignLevelState,
 } from "../systems/CampaignLevelSystem";
+import { loadCampaignGold, saveCampaignGold, creditScaledCampaignGold } from "../systems/CampaignGoldSystem";
 import { levelMilestonesForRunLength, getRunLengthDefinition, type RunLengthId } from "../data/levelMilestones";
 import { applyThreatBudget } from "../systems/ThreatBudgetSystem";
 import { statMultiplierForBoss } from "../data/bossScaling";
@@ -187,7 +200,6 @@ import {
 } from "../data/equipment";
 import {
   POTION_ORDER,
-  POTION_DEFINITIONS,
   getPotionDefinition,
   GENERAL_SLOT_IDS,
   GENERAL_SLOT_LABELS,
@@ -223,11 +235,21 @@ import {
   saveCampaignProgress,
   markCampaignCompleted,
   markChapterCompleted,
+  isChapterCompleted,
   DEFAULT_CAMPAIGN_PROGRESS,
   type CampaignProgress,
 } from "../systems/CampaignProgressSystem";
 import type { CharacterBuild } from "../systems/CharacterBuildSystem";
 import { saveOrUpdatePartySlot, loadSaveFile, saveSaveFile, type SavePartyResult } from "../systems/SaveSystem";
+import { captureBattleState, restoreBattleState, type BattleStateSnapshot } from "../systems/BattleStateSnapshot";
+import {
+  loadAutosaveFile,
+  saveAutosaveFile,
+  checkpointAutosave,
+  deleteAutosaveSlot,
+  generateRunId,
+  type AutosaveSlot,
+} from "../systems/AutosaveSystem";
 import { loadWorldFlags, saveWorldFlags, setWorldFlag, hasWorldFlag, DEFAULT_WORLD_FLAG_STATE, type WorldFlagState } from "../systems/WorldFlagSystem";
 import {
   SPARABLE_MINIBOSS_CHAPTERS,
@@ -368,6 +390,11 @@ const ITEM_GRID_VISIBLE_ROWS = 4;
 /** D-158: matches `CharacterCreationScene`'s own `MAX_PARTY_SIZE` — the hero roster strip builds this many slot widgets, then hides whichever aren't in play. */
 const MAX_ROSTER_SLOTS = 4;
 
+/** Batch C (item 10's remainder, KI-188): `refreshStatus`'s shrink-to-fit guard on a roster slot's hero-name text — a player-typed, arbitrary-length name had no safeguard against overflowing its slot box before this. `ROSTER_NAME_MAX_WIDTH` leaves clear padding inside `buildHud`'s own 272px-wide `rosterBoxWidth`. */
+const ROSTER_NAME_BASE_FONT_PX = 14;
+const ROSTER_NAME_MIN_FONT_PX = 9;
+const ROSTER_NAME_MAX_WIDTH = 250;
+
 /** Phase 13.7 (D-092): "1st"/"2nd"/"3rd"/"Nth" for a spell-slot level in the spellbook overlay. */
 function ordinalSpellLevel(level: number): string {
   if (level === 1) return "1st";
@@ -412,6 +439,18 @@ export class BattleScene extends Phaser.Scene {
   private restSystem!: RestSystem;
   private heroAI!: HeroAISystem;
   private wavesCleared = 0;
+  /**
+   * `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 2: gross mission kill/wave gold
+   * earned THIS battle — a running total, never decremented by in-battle
+   * Armory spending/selling (unlike `goldEarned`'s victory-screen display,
+   * which nets against `battleStartGold` and would otherwise punish a
+   * player for using the still-live in-battle Armory before Plan 4 removes
+   * it). Credited to the persistent `CampaignGoldSystem` balance, times
+   * this difficulty's `campaignGoldMultiplier`, once at chapter-victory
+   * (`markCampaignCompletedIfAny`) — a no-op for Free Play/a mid-chapter
+   * loss, same as `campaignLevelState`'s own write-back timing.
+   */
+  private campaignRewardGoldEarned = 0;
   /** Phase 3 (D-205): rebindable Confirm/Cancel/Bonus Action keys — loaded in `create()`, refreshed on scene resume (see the `RESUME` listener) so a mid-battle Pause -> Settings rebind takes effect without a restart. */
   private keyBindings!: KeyBindings;
   /** Phase 3 (D-205): tracks the last board-tile click for double-click-to-confirm detection (see `isDoubleClickOn`) — generalized beyond just movement so a future tile-click feature can reuse it. */
@@ -727,6 +766,17 @@ export class BattleScene extends Phaser.Scene {
   private gridFocusIndex = 0;
 
   private ui: Interaction = { kind: "idle" };
+  /**
+   * KI-186: whichever hero was actually selected right before build mode was
+   * entered (if any) — captured because `{kind:"building"}` itself carries
+   * no `heroId`, so without this a structure was always attributed to
+   * whichever living hero happened to be closest to the clicked tile
+   * (`nearestLivingHeroId`'s own array-order tiebreak on ties), regardless
+   * of who the player actually had selected. Consulted by
+   * `attributionHeroIdFor`; cleared whenever build mode is left so a stale
+   * selection can never leak into a later, hero-less build session.
+   */
+  private buildAttributionHeroId: string | undefined;
   private lastReport: EnemyPhaseReport | null = null;
   private combatLog: string[] = [];
   /**
@@ -860,6 +910,16 @@ export class BattleScene extends Phaser.Scene {
   private resolvedThroneVariant: ThroneVariant | null = null;
 
   /**
+   * D-254 fix: whether Shattered Causeway (optional since D-253) has ever
+   * been played, so `NamelessThroneSystem.computeMercyTally`'s caller can
+   * exclude its miniboss entry rather than silently counting a skipped
+   * region as "finished it, showed no mercy."
+   */
+  private causewayPlayed(): boolean {
+    return isChapterCompleted(this.campaignProgress, SHATTERED_CAUSEWAY_CAMPAIGN_ID, 0);
+  }
+
+  /**
    * KI-098 item 13 continuation: set by `maybeUnlockHomeRegionCompanion` when
    * this battle's victory just recruited a Pool B companion, consumed by
    * `showCompanionRecruitmentIfAny` in the victory dialogue chain. Null the
@@ -918,6 +978,29 @@ export class BattleScene extends Phaser.Scene {
    * this default is always safe to resolve against.
    */
   private chapterIndex = 0;
+  /**
+   * D-248 (Batch E): the region-bonus option id `RegionBonusChoiceScene`
+   * already picked, passed via `scene.start("BattleScene",
+   * { pendingRegionBonusId })` (ultimately from `RegionBonusChoiceScene` via
+   * `CampaignArmoryScene`/`CharacterCreationScene`). `undefined` covers
+   * every non-campaign path AND `LoadGameScene`'s direct-to-
+   * `CharacterCreationScene` resume, which bypasses `RegionBonusChoiceScene`
+   * entirely — `showRegionBonusChoiceIfAny` falls back to its original
+   * live draw-and-ask prompt whenever this is unset but a bonus pool
+   * exists, so that resume path still offers a bonus.
+   */
+  private pendingRegionBonusId?: string;
+  /**
+   * D-250 (Batch E gap 1): the party-slot index (0 = PC, 1..N = companions,
+   * same order `heroDefinitions`/`this.heroes` already use) the player
+   * chose as the recipient of `pendingRegionBonusId`'s equipment, if that's
+   * what it is — set by `RegionBonusChoiceScene`'s own follow-up pick, via
+   * the same passthrough chain. `undefined` means "First available hero"
+   * was chosen, or this bonus isn't an equipment grant at all, or (Load
+   * Game's bypass path) no recipient was ever asked here — all three keep
+   * the original auto-assign-first-available behavior.
+   */
+  private pendingRegionBonusHeroSlot?: number;
   /**
    * D-177: the chapter actually resolved this battle (see the chokepoint in
    * `create()`) — `null` for a campaign-less run (Free Play, Co-op, a plain
@@ -1007,6 +1090,24 @@ export class BattleScene extends Phaser.Scene {
    * `CharacterCreationScene.loadedSlotId` already follows).
    */
   private loadedSlotId: string | undefined = undefined;
+  /**
+   * Batch F (item 18): when set (via `LoadGameScene`'s "Resume" button on an
+   * autosave slot), `create()` restores this instead of building a fresh
+   * battle — see `restoreBattleState`/`BattleStateSnapshot.ts`. `resolvedWaves`
+   * is the wave list AFTER `ThreatBudgetSystem`'s random rolls (can't be
+   * regenerated identically — see `AutosaveSystem.ts`'s own header comment).
+   */
+  private resumeSnapshot?: {
+    runId: string;
+    battleState: BattleStateSnapshot;
+    resolvedWaves: WaveDefinition[];
+    campaignRewardGoldEarned: number;
+    temporaryStructures: { instanceId: string; remainingTurns: number }[];
+  };
+  /** Batch F (item 18): this battle's own run id — generated fresh, or carried through a resume — so a mid-battle checkpoint upserts instead of duplicating. */
+  private autosaveRunId: string | null = null;
+  /** Batch F (item 18): true for the duration of a checkpoint write — see `inputLocked()`. */
+  private autosaving = false;
 
   constructor() {
     super("BattleScene");
@@ -1017,6 +1118,8 @@ export class BattleScene extends Phaser.Scene {
     difficultyId?: DifficultyId;
     campaignId?: string;
     chapterIndex?: number;
+    pendingRegionBonusId?: string;
+    pendingRegionBonusHeroSlot?: number;
     freePlayMapId?: string;
     freePlayWaves?: WaveDefinition[];
     freePlayRunLengthId?: RunLengthId;
@@ -1026,6 +1129,13 @@ export class BattleScene extends Phaser.Scene {
     testMode?: boolean;
     originalParty?: CharacterBuild[];
     loadedSlotId?: string;
+    resumeSnapshot?: {
+      runId: string;
+      battleState: BattleStateSnapshot;
+      resolvedWaves: WaveDefinition[];
+      campaignRewardGoldEarned: number;
+      temporaryStructures: { instanceId: string; remainingTurns: number }[];
+    };
   }): void {
     if (!data?.heroDefinitions?.length) {
       throw new Error(
@@ -1036,6 +1146,8 @@ export class BattleScene extends Phaser.Scene {
     this.difficultyId = data?.difficultyId ?? "normal";
     this.campaignId = data?.campaignId ?? null;
     this.chapterIndex = data?.chapterIndex ?? 0;
+    this.pendingRegionBonusId = data?.pendingRegionBonusId;
+    this.pendingRegionBonusHeroSlot = data?.pendingRegionBonusHeroSlot;
     this.freePlayMapId = data?.freePlayMapId ?? null;
     this.freePlayWaves = data?.freePlayWaves ?? null;
     this.freePlayRunLengthId = data?.freePlayRunLengthId ?? null;
@@ -1045,6 +1157,7 @@ export class BattleScene extends Phaser.Scene {
     this.testMode = data?.testMode ?? false;
     this.originalParty = data?.originalParty;
     this.loadedSlotId = data?.loadedSlotId;
+    this.resumeSnapshot = data?.resumeSnapshot;
   }
 
   /**
@@ -1142,6 +1255,12 @@ export class BattleScene extends Phaser.Scene {
     this.technicalLogOverlay = [];
     this.defeatReason = null;
     this.wavesCleared = 0;
+    this.campaignRewardGoldEarned = 0;
+    // Batch F (item 18): a resume carries its run id forward so a later
+    // checkpoint upserts the same autosave slot instead of duplicating it;
+    // a fresh battle mints a new one.
+    this.autosaveRunId = this.resumeSnapshot?.runId ?? generateRunId(Date.now());
+    this.autosaving = false;
     this.tutorialOverlay = [];
     this.pendingAfterTutorial = null;
     this.chapterDialogue = null;
@@ -1231,7 +1350,7 @@ export class BattleScene extends Phaser.Scene {
     // re-derives the same pure result from the same (by-then-unwritten-to)
     // `this.worldFlags`, so both stay consistent regardless of order.
     if (this.currentChapter?.id === NAMELESS_THRONE_CAMPAIGN_ID) {
-      const variant = resolveThroneVariant(this.worldFlags);
+      const variant = resolveThroneVariant(this.worldFlags, this.causewayPlayed());
       mapData = withThroneVariant(mapData, variant);
       waveList = withThroneEnemyReskins(waveList, variant);
       this.resolvedThroneVariant = variant;
@@ -1269,9 +1388,27 @@ export class BattleScene extends Phaser.Scene {
     // doc comment for why a MapBuilder/shared-map run never sets it.
     const freePlayRunLength =
       !campaign && this.freePlayRunLengthId ? getRunLengthDefinition(this.freePlayRunLengthId) : null;
-    const scalingTargetLevel = campaign ? this.currentChapter!.levelRange[1] : (freePlayRunLength?.levelCap ?? null);
+    // D-253 (Batch H, item 13): was `this.currentChapter!.levelRange[1]` — a
+    // chapter's static band, completely decoupled from the player's actual
+    // level. Regions already unlock in parallel with no forced order, so a
+    // fixed-band target was always a latent mismatch; the new order-
+    // independent "+1 level per chapter clear" cadence (see
+    // `chapterLevelMilestones`) removes the old per-wave ramp that used to
+    // mask it. Scaling off the party's real, currently-entering level keeps
+    // boss difficulty honest regardless of which chapter this is or what
+    // order it was reached in.
+    const scalingTargetLevel = campaign ? this.campaignLevelState.campaignLevel : (freePlayRunLength?.levelCap ?? null);
     const scalingBossEnemyId = campaign ? this.currentChapter?.bossEnemyId : (this.freePlayBossEnemyId ?? undefined);
-    if (scalingTargetLevel !== null) {
+    // Batch F (item 18): a resumed battle reuses the EXACT resolved wave
+    // list from the checkpoint moment instead of re-rolling it —
+    // `applyThreatBudget` consumes `this.random` (self-seeded, never
+    // reproduced) for its elite-split/extra-lane variance, so re-running it
+    // here would double-scale on top of the already-resolved list. Written
+    // as `if`/`else if` deliberately — `scalingTargetLevel !== null` is
+    // always true for exactly the runs that can have a `resumeSnapshot`.
+    if (this.resumeSnapshot) {
+      waveList = this.resumeSnapshot.resolvedWaves;
+    } else if (scalingTargetLevel !== null) {
       // `applyThreatBudget` bakes `tier.enemyCountMultiplier` into each
       // group's own `count` (see its own doc comment) — `WaveSystem` must
       // NOT also apply it live below, or every group would be double-scaled.
@@ -1285,16 +1422,56 @@ export class BattleScene extends Phaser.Scene {
           spawns: wave.spawns.map((group) => (group.enemyId === scalingBossEnemyId ? { ...group, statMultiplier: bossStats } : group)),
         }));
       }
-      this.currentWaves = waveList;
+    }
+    this.currentWaves = waveList;
+
+    // Deterministic given difficulty/heroCount/campaign — safe to recompute
+    // identically for a resume, unlike the wave list's own RNG-baked rolls
+    // just above.
+    const enemyCountMultiplier =
+      scalingTargetLevel !== null ? partySizeScalingFactor(heroCount) : difficulty.enemyCountMultiplier * partySizeScalingFactor(heroCount);
+    const enemyHpMultiplier = difficulty.enemyHpMultiplier * partySizeScalingFactor(heroCount);
+
+    // Batch F (item 18): restore every live system from the checkpoint
+    // instead of building them fresh below. Wrapped in try/catch — a future
+    // game-version schema drift could make an old snapshot incompatible
+    // with the live `Hero`/`WaveSystem` shape; on any failure this falls
+    // back to a completely fresh battle rather than crashing (every
+    // `if (!this.resumeSnapshot)` guard below then naturally takes the
+    // fresh path, since nothing was assigned before the throw).
+    if (this.resumeSnapshot) {
+      try {
+        const restored = restoreBattleState(this.resumeSnapshot.battleState, {
+          map: this.map,
+          pathfinding: this.pathfinding,
+          waves: waveList,
+          enemyCountMultiplier,
+          enemyHpMultiplier,
+          random: this.random,
+        });
+        this.turns = restored.turns;
+        this.economy = restored.economy;
+        this.heroes = restored.heroes;
+        this.waveSystem = restored.waveSystem;
+        this.buildSystem = restored.buildSystem;
+        this.restSystem = restored.restSystem;
+        this.wavesCleared = restored.wavesCleared;
+        this.campaignRewardGoldEarned = this.resumeSnapshot.campaignRewardGoldEarned;
+        this.temporaryStructures = this.resumeSnapshot.temporaryStructures;
+      } catch (err) {
+        console.error("BattleScene: failed to resume autosave, starting the battle fresh instead.", err);
+        this.resumeSnapshot = undefined;
+      }
     }
 
-    this.waveSystem = new WaveSystem(this.map, this.pathfinding, waveList, {
-      startingIntegrity: STRONGHOLD_START,
-      enemyCountMultiplier:
-        scalingTargetLevel !== null ? partySizeScalingFactor(heroCount) : difficulty.enemyCountMultiplier * partySizeScalingFactor(heroCount),
-      enemyHpMultiplier: difficulty.enemyHpMultiplier * partySizeScalingFactor(heroCount),
-      random: this.random,
-    });
+    if (!this.resumeSnapshot) {
+      this.waveSystem = new WaveSystem(this.map, this.pathfinding, waveList, {
+        startingIntegrity: STRONGHOLD_START,
+        enemyCountMultiplier,
+        enemyHpMultiplier,
+        random: this.random,
+      });
+    }
     // D-206: each hero's Background contributes a small starting-gold bonus
     // (this game's mechanical stand-in for the rest of the SRD equipment
     // package's tools/books/clothes — see `data/backgrounds.ts`'s own
@@ -1317,10 +1494,13 @@ export class BattleScene extends Phaser.Scene {
       );
       startingGoldByOwner[ownerId] = STARTING_GOLD + ownerBackgroundBonus;
     }
-    this.economy = new EconomySystem(startingGoldByOwner);
+    // Batch F (item 18): both are pure recomputations off heroDefinitions/
+    // backgrounds/coop — safe to redo unconditionally even on resume, but
+    // `this.economy` itself must not clobber the just-restored one.
+    if (!this.resumeSnapshot) this.economy = new EconomySystem(startingGoldByOwner);
     // D-228: snapshot for the campaign victory screen's "Gold Earned" stat.
     this.battleStartGold = Object.values(startingGoldByOwner).reduce((sum, g) => sum + g, 0);
-    this.buildSystem = new BuildSystem(this.map, this.pathfinding);
+    if (!this.resumeSnapshot) this.buildSystem = new BuildSystem(this.map, this.pathfinding);
     this.progression = new ProgressionSystem();
     // D-217 (item 3a/3c): a campaign battle levels via the chapter's own
     // milestone track, starting from the persistent shared campaignLevel —
@@ -1331,15 +1511,27 @@ export class BattleScene extends Phaser.Scene {
     // path (Co-op/Test Mode/classic Create-Party/MapBuilder-or-shared-map
     // Free Play) keeps `progression`'s old uniform per-wave cadence,
     // completely unchanged.
+    // D-253 (Batch H, item 13): a campaign chapter now grants exactly ONE
+    // level on its own clear (order-independent — see `chapterLevelMilestones`'s
+    // own doc comment), gated on `alreadyCompleted` so replaying an
+    // already-cleared chapter can't farm free levels.
     this.levelMilestoneSystem = campaign
-      ? new LevelMilestoneSystem(chapterLevelMilestones(campaign, this.chapterIndex), this.campaignLevelState.campaignLevel)
+      ? new LevelMilestoneSystem(
+          chapterLevelMilestones(campaign, this.chapterIndex, {
+            currentLevel: this.campaignLevelState.campaignLevel,
+            alreadyCompleted: isChapterCompleted(this.campaignProgress, this.campaignId!, this.chapterIndex),
+          }),
+          this.campaignLevelState.campaignLevel,
+        )
       : freePlayRunLength
         ? new LevelMilestoneSystem(levelMilestonesForRunLength(this.freePlayRunLengthId!), 1)
         : null;
-    this.restSystem = new RestSystem({
-      shortRestCharges: difficulty.shortRestCharges,
-      longRestCharges: difficulty.longRestCharges,
-    });
+    if (!this.resumeSnapshot) {
+      this.restSystem = new RestSystem({
+        shortRestCharges: difficulty.shortRestCharges,
+        longRestCharges: difficulty.longRestCharges,
+      });
+    }
 
     // D-176 (KI-098 item 9): dynamic per-map tile size, mirroring
     // MapBuilderScene's own shrink-to-fit pattern — never touches the global
@@ -1383,12 +1575,20 @@ export class BattleScene extends Phaser.Scene {
     this.buildBoard();
     this.drawBoardFrame();
     this.buildHeroes();
+    // Batch F (item 18): a fresh battle starts with no structures, but a
+    // resume's `buildSystem` (just restored above) may already hold some —
+    // `renderStructure` is the same visual-creation call every live
+    // placement already uses, so this reproduces exactly what the player
+    // had built before the checkpoint.
+    if (this.resumeSnapshot) {
+      for (const structure of this.buildSystem.structures) this.renderStructure(structure);
+    }
     this.buildHighlightObjects();
     this.buildHud();
     this.buildPauseMenuButton();
     if (this.testMode) this.buildDebugToolbar();
 
-    this.turns = new TurnSystem();
+    if (!this.resumeSnapshot) this.turns = new TurnSystem();
     this.turns.onChange = (next, prev) => this.onPhaseChange(next, prev);
 
     this.wireInput();
@@ -1408,35 +1608,54 @@ export class BattleScene extends Phaser.Scene {
     // (Drowning Vale is region 4, Saltmere is region 5).
     this.resolveSorrelFateIfAny();
 
-    this.waveSystem.startWave(0);
-    // Phase 8 ("tutorial prompts"): a one-time how-to-play overlay before the
-    // very first player phase, gated the same way a level-up choice gates the
-    // next phase transition — advance() only runs once it's dismissed.
-    const startBattleTurns = () => {
-      if (!hasSeenTutorial(window.localStorage, TUTORIAL_STORAGE_KEY)) {
-        this.showTutorial(() => this.turns.advance());
-      } else {
-        this.turns.advance(); // preparation -> player (wave 1 begins)
-      }
-    };
-    // D-16x: any hero fast-forwarded past a level whose ASI/subclass/
-    // spell-pick choice had no explicit plan entry surfaces here as the
-    // very first popup(s) of the battle, before wave 1 — never silently
-    // defaulted, regardless of that hero's Plan Levels mode.
-    // D-177: a chaptered campaign's introText (when written) shows before
-    // even the fast-forward choices, so a chapter's own opening beat is
-    // always the very first thing the player sees.
-    // D-181: the pre-region bonus choice comes right after the chapter
-    // intro (if any) and before the fast-forward ASI/subclass/spell-pick
-    // prompts — a HOMM3-style "pick 1 of 3" that applies before anything
-    // else about the battle is decided.
-    this.showChapterIntroIfAny(() =>
-      this.showNamelessThroneIntroIfAny(() =>
-        this.showSorrelChoiceIfAny(() =>
-          this.showRegionBonusChoiceIfAny(() => this.presentPendingFastForwardChoices(startBattleTurns)),
+    // Batch F (item 18): every prompt below (chapter intro, Nameless Throne
+    // intro, Sorrel's choice, the region bonus pick, fast-forward ASI/
+    // subclass/spell-pick choices, the tutorial) is a ONE-TIME "before wave
+    // 1" beat — a checkpoint can only ever exist AFTER wave 1+ has already
+    // cleared, meaning every one of these has already resolved by then. A
+    // resume skips the whole chain and re-enters via a REAL
+    // `transitionTo("betweenWave")` instead of `TurnSystem.fromHistory`
+    // (which only replayed up to the phase the checkpoint captured,
+    // `"resolution"` or `"player"` — both legal sources for this target) —
+    // that fires `onPhaseChange`'s existing `betweenWave` handling exactly
+    // as a live wave-clear already does, so no duplicate setup is needed
+    // here. `waveSystem.startWave(0)` is skipped too — `WaveSystem
+    // .restoreFrom`'s own contract assumes it's never called again after a
+    // restore (it resets wave index/turn/spawn state).
+    if (!this.resumeSnapshot) {
+      this.waveSystem.startWave(0);
+      // Phase 8 ("tutorial prompts"): a one-time how-to-play overlay before the
+      // very first player phase, gated the same way a level-up choice gates the
+      // next phase transition — advance() only runs once it's dismissed.
+      const startBattleTurns = () => {
+        if (!hasSeenTutorial(window.localStorage, TUTORIAL_STORAGE_KEY)) {
+          this.showTutorial(() => this.turns.advance());
+        } else {
+          this.turns.advance(); // preparation -> player (wave 1 begins)
+        }
+      };
+      // D-16x: any hero fast-forwarded past a level whose ASI/subclass/
+      // spell-pick choice had no explicit plan entry surfaces here as the
+      // very first popup(s) of the battle, before wave 1 — never silently
+      // defaulted, regardless of that hero's Plan Levels mode.
+      // D-177: a chaptered campaign's introText (when written) shows before
+      // even the fast-forward choices, so a chapter's own opening beat is
+      // always the very first thing the player sees.
+      // D-181: the pre-region bonus choice comes right after the chapter
+      // intro (if any) and before the fast-forward ASI/subclass/spell-pick
+      // prompts — a HOMM3-style "pick 1 of 3" that applies before anything
+      // else about the battle is decided.
+      this.showChapterIntroIfAny(() =>
+        this.showNamelessThroneIntroIfAny(() =>
+          this.showSorrelChoiceIfAny(() =>
+            this.showRegionBonusChoiceIfAny(() => this.presentPendingFastForwardChoices(startBattleTurns)),
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      this.logCombat("Resumed from autosave.");
+      this.turns.transitionTo("betweenWave");
+    }
   }
 
   /**
@@ -1526,10 +1745,24 @@ export class BattleScene extends Phaser.Scene {
    * that fits that architecture without inventing new save-state, at the
    * cost of not being a literal one-time "per region" offer per the design
    * doc's own wording — a deliberate, documented first-pass call.
+   *
+   * D-248 (Batch E): the normal campaign flow now asks BEFORE this battle
+   * even starts (`RegionBonusChoiceScene`, reached from
+   * `CampaignSelectScene`/`UnlockMissionPartyScene`) and threads the pick
+   * here as `pendingRegionBonusId` — apply it directly, no second prompt.
+   * `LoadGameScene`'s direct-to-`CharacterCreationScene` resume is the one
+   * real path that bypasses that scene, so this still falls back to the
+   * original live draw-and-ask below whenever the pending id is unset.
    */
   private showRegionBonusChoiceIfAny(onComplete: () => void): void {
     const pool = this.campaignId ? REGION_BONUS_POOLS[this.campaignId] : undefined;
     if (!pool || pool.length === 0) {
+      onComplete();
+      return;
+    }
+    if (this.pendingRegionBonusId) {
+      const chosen = pool.find((option) => option.id === this.pendingRegionBonusId);
+      if (chosen) this.applyRegionBonus(chosen, this.pendingRegionBonusHeroSlot);
       onComplete();
       return;
     }
@@ -1542,6 +1775,19 @@ export class BattleScene extends Phaser.Scene {
         desc: option.description,
         onClick: () => {
           this.clearAsiOverlay();
+          // D-250 (Batch E gap 1): the normal flow asks "who gets this?"
+          // before Character Creation (`RegionBonusChoiceScene`) — this live
+          // fallback only ever runs for Load Game's bypass path, so it asks
+          // its own follow-up here instead, using the real `this.heroes`
+          // already built at this point in the chapter-start sequence.
+          if (option.category === "equipment") {
+            this.promptRegionBonusRecipientThen(option.name, (heroSlot) => {
+              this.choosingRegionBonus = false;
+              this.applyRegionBonus(option, heroSlot);
+              onComplete();
+            });
+            return;
+          }
           this.choosingRegionBonus = false;
           this.applyRegionBonus(option);
           onComplete();
@@ -1550,13 +1796,41 @@ export class BattleScene extends Phaser.Scene {
     );
   }
 
-  private applyRegionBonus(option: RegionBonusOption): void {
+  /**
+   * D-250 (Batch E gap 1): the live-fallback prompt's own "who receives
+   * this?" follow-up — `RegionBonusChoiceScene` asks the equivalent
+   * question before Character Creation for every other path. `undefined`
+   * (the "First available hero" pick) preserves the original auto-assign
+   * behavior verbatim.
+   */
+  private promptRegionBonusRecipientThen(itemName: string, onChosen: (heroSlot?: number) => void): void {
+    this.renderAsiPrompt(`Who receives ${itemName}?`, [
+      {
+        label: "First available hero",
+        desc: "Auto-assign to the first hero with a free matching slot.",
+        onClick: () => {
+          this.clearAsiOverlay();
+          onChosen(undefined);
+        },
+      },
+      ...this.heroes.map((hero, i) => ({
+        label: hero.name,
+        onClick: () => {
+          this.clearAsiOverlay();
+          onChosen(i);
+        },
+      })),
+    ]);
+  }
+
+  /** D-250 (Batch E gap 1): `heroSlot` only matters for the "equipment" branch — see `grantRegionBonusEquipment`. */
+  private applyRegionBonus(option: RegionBonusOption, heroSlot?: number): void {
     switch (option.category) {
       case "gold":
         this.grantRegionBonusGold(option.goldAmount!);
         return;
       case "equipment":
-        this.grantRegionBonusEquipment(option.equipmentId!);
+        this.grantRegionBonusEquipment(option.equipmentId!, heroSlot);
         return;
       case "structure":
         this.grantRegionBonusStructure(option.structureId!);
@@ -1568,6 +1842,16 @@ export class BattleScene extends Phaser.Scene {
     this.economy.award(this.economyOwnerFor(), amount);
     this.updateGoldHud();
     this.logCombat(`Region bonus: +${amount} starting gold!`);
+    // Plan 2: ADDITIVE, not a replacement — this still funds THIS battle's
+    // in-battle Armory exactly as before (still live until Plan 4), and
+    // now ALSO counts toward the persistent pool. Accumulated into
+    // `campaignRewardGoldEarned` (credited only at chapter-VICTORY, same as
+    // kill/wave gold) rather than written to `CampaignGoldSystem` right
+    // here — this choice is re-offered at the START of every chapter
+    // attempt (see `showRegionBonusChoiceIfAny`'s own comment on why),
+    // including a retry after a loss, so crediting immediately here would
+    // let a lose-and-retry loop farm permanent gold for free.
+    this.campaignRewardGoldEarned += amount;
   }
 
   /**
@@ -1576,10 +1860,23 @@ export class BattleScene extends Phaser.Scene {
    * for gold if nobody has room) — shared by the region-bonus equipment
    * category and Sorrel's Redeemed reward (`grantSorrelRedeemedReward`
    * below). `sourceLabel` only changes the combat-log prefix.
+   *
+   * D-250 (Batch E gap 1): `heroSlot`, when given, restricts the candidate
+   * list to exactly `this.heroes[heroSlot]` — the party member the player
+   * explicitly chose to receive this item (`RegionBonusChoiceScene`'s own
+   * follow-up pick, or the live in-battle fallback's). If that hero no
+   * longer has room by battle-start (e.g. re-geared that slot afterward in
+   * the Armory/Character Creation), it's sold for gold exactly like the
+   * "nobody has room" case below — never silently redirected to a
+   * different hero, which would ignore the player's actual choice.
+   * `undefined` (the "First available hero" pick, Sorrel's reward, or any
+   * path with no recipient choice at all) keeps the original loop-and-find-
+   * first behavior verbatim.
    */
-  private grantEquipmentOrSellForGold(itemId: string, sourceLabel: string): void {
+  private grantEquipmentOrSellForGold(itemId: string, sourceLabel: string, heroSlot?: number): void {
     const def = getEquipmentDefinition(itemId);
-    for (const hero of this.heroes) {
+    const candidates = heroSlot !== undefined ? [this.heroes[heroSlot]].filter((h): h is Hero => !!h) : this.heroes;
+    for (const hero of candidates) {
       if (!hero.isAlive()) continue;
       const slot = GEAR_SLOT_IDS.find((s) => gearSlotType(s) === def.slot && !hero.equippedItems[s]);
       if (!slot) continue;
@@ -1597,8 +1894,8 @@ export class BattleScene extends Phaser.Scene {
     this.updateGoldHud();
   }
 
-  private grantRegionBonusEquipment(itemId: string): void {
-    this.grantEquipmentOrSellForGold(itemId, "Region bonus");
+  private grantRegionBonusEquipment(itemId: string, heroSlot?: number): void {
+    this.grantEquipmentOrSellForGold(itemId, "Region bonus", heroSlot);
   }
 
   /** KI-098 item 13 continuation (D-185 addendum close): Sorrel's Redeemed reward, same mechanism as a region-bonus equipment grant. */
@@ -1607,28 +1904,25 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * Places a free structure on the first valid buildable tile found
-   * (reusing `BuildSystem.canPlace`/`place`'s own validation — buildable,
-   * unoccupied, not a spawn/exit, doesn't seal off a wall's only route —
-   * rather than trusting a hardcoded position), near the party's own
-   * starting positions. Silently does nothing on the (practically
-   * unreachable, every map has open floor near a hero start) case where no
-   * tile validates, matching this project's degrade-gracefully convention.
+   * D-250 (Batch E gap 3, item 15): grants free PLACEMENT CHARGES instead of
+   * auto-placing the structure itself — Kevin's own flagged complaint was
+   * the system choosing the tile ("doesn't make the player feel good...
+   * don't trust the system to do that"), plus the bonus only ever being
+   * worth 1 structure against a gold alternative worth much more (his own
+   * suggested fix: "offer more than just 1"). The player places both
+   * themselves in ordinary build mode — reusing Batch A's
+   * `showBuildableHighlights`/`canPlace`/`place` wholesale, no new
+   * placement UI. `BuildSystem.consumeFreeCharge` (checked by `tryBuild`)
+   * waives the gold cost for exactly this many placements of `structureId`;
+   * an unused charge simply expires at the end of this chapter attempt,
+   * same as every other region bonus (re-offered fresh next attempt, no
+   * persisted state).
    */
   private grantRegionBonusStructure(structureId: string): void {
-    const heroPositions = this.heroes.filter((h) => h.isAlive()).map((h) => h.position);
-    for (let y = 0; y < this.map.rows; y++) {
-      for (let x = 0; x < this.map.cols; x++) {
-        const pos = { x, y };
-        if (!this.buildSystem.canPlace(structureId, pos, undefined, heroPositions).ok) continue;
-        const result = this.buildSystem.place(structureId, pos, undefined, heroPositions);
-        if (result.ok && result.structure) {
-          this.renderStructure(result.structure);
-          this.logCombat(`Region bonus: a free ${getStructureDefinition(structureId).name} is already on the field!`);
-        }
-        return;
-      }
-    }
+    const chargeCount = 2;
+    this.buildSystem.grantFreeCharge(structureId, chargeCount);
+    const name = getStructureDefinition(structureId).name;
+    this.logCombat(`Region bonus: ${chargeCount} free ${name} to place — enter Build mode (B) and place them yourself.`);
   }
 
   private presentPendingFastForwardChoices(onDone: () => void): void {
@@ -1849,6 +2143,20 @@ export class BattleScene extends Phaser.Scene {
     this.heroLevelUpPlans = new Map(
       baseDefinitions.filter((def) => def.levelUpPlan).map((def) => [def.id, def.levelUpPlan as LevelUpPlan]),
     );
+    // Batch F (item 18): `this.heroes` was already populated by
+    // `restoreBattleState` above — a restored hero is already at its
+    // correct (possibly mid-chapter) level/gear, so re-running the
+    // construction/fast-forward loop below would build a THROWAWAY
+    // chapter-start-level hero instead. Only its sprite needs (re)creating
+    // — Phaser objects don't survive a scene recreation regardless of
+    // whether the underlying Hero model is fresh or restored.
+    if (this.resumeSnapshot) {
+      for (const hero of this.heroes) {
+        const def = baseDefinitions.find((d) => d.id === hero.id);
+        if (def) this.createHeroToken(hero, def);
+      }
+      return;
+    }
     // Phase 12.3 (D-103): a coop battle overrides `controlledBy` per hero,
     // from the session's `heroOwners` — "human" for whichever heroes THIS
     // client's uid owns, "remote" for the partner's (never "ai": coop v1
@@ -1921,56 +2229,72 @@ export class BattleScene extends Phaser.Scene {
       if (def.preparedSpellIds) hero.choosePreparedSpells(def.preparedSpellIds);
       if (def.actionHotkeys) hero.setActionHotkeys(def.actionHotkeys);
       this.heroes.push(hero);
-      const c = this.grid.tileToWorldCenter(start);
-      const color = COLORS.hero;
-      const circle = this.add.circle(c.x, c.y, this.grid.tileSize * 0.34, color).setDepth(10);
-      const label = this.add
-        .text(c.x, c.y - 4, def.name[0], {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "22px",
-          color: "#0e0e14",
-          fontStyle: "bold",
-        })
-        .setOrigin(0.5)
-        .setDepth(10);
-      const hp = this.add
-        .text(c.x, c.y + this.grid.tileSize * 0.22, "", {
-          fontFamily: "monospace",
-          fontSize: "12px",
-          color: "#0e0e14",
-          fontStyle: "bold",
-        })
-        .setOrigin(0.5)
-        .setDepth(11);
-      const sprite = this.createTokenSprite(def.assetKey, circle, 10);
-      const token: Token = { circle, label, hp, sprite };
-      this.heroTokens.set(def.id, token);
-      this.updateHpText(token, hero.health, hero.effectiveMaxHealth);
-      // Phase 21 (D-112): a hero can now carry enemy-inflicted statuses too
-      // (e.g. "poisoned", "silenced") — same on-token badge shape as
-      // `enemyStatusBadges` (KI-027), just on the hero side.
-      const badge = this.add
-        .text(c.x, c.y - this.grid.tileSize * 0.34 - 14, "", {
-          fontFamily: "monospace",
-          fontSize: "11px",
-          color: "#0e0e14",
-          backgroundColor: "#f0e070",
-          padding: { left: 4, right: 4, top: 1, bottom: 1 },
-        })
-        .setOrigin(0.5)
-        .setDepth(11)
-        .setVisible(false);
-      this.heroStatusBadges.set(def.id, badge);
-      // Phase 22 (magic-item expansion): a hero created with a free starting
-      // Cape of Billowing (Phase 13.11's "every common/uncommon item is a
-      // free starting-gear option" rule) already has its cape flying before
-      // its first turn.
-      this.ensureHeroCape(hero);
-      // D-127: same rule can start a hero with a charge-based item already
-      // equipped (Wand of Magic Missile/Web are uncommon) — initialize its
-      // charge pool before its first turn, same as the cape above.
-      hero.onGearChanged();
+      this.createHeroToken(hero, def);
     });
+  }
+
+  /**
+   * Batch F (item 18): the sprite/token half of what `buildHeroes()`'s own
+   * construction loop used to do inline — extracted so a RESTORED hero
+   * (already at its correct level/position, no fresh construction needed)
+   * can get the exact same visual treatment a freshly-built one does.
+   * Placed at `hero.position` (not `def`'s map-defined start tile), so a
+   * resumed hero's sprite appears wherever it actually was at checkpoint
+   * time — for a freshly-constructed hero this is the same tile either way
+   * (`hero.position === start` at that point).
+   */
+  private createHeroToken(hero: Hero, def: HeroDefinition): void {
+    const c = this.grid.tileToWorldCenter(hero.position);
+    const color = COLORS.hero;
+    const circle = this.add.circle(c.x, c.y, this.grid.tileSize * 0.34, color).setDepth(10);
+    const label = this.add
+      .text(c.x, c.y - 4, hero.name[0], {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "22px",
+        color: "#0e0e14",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(10);
+    const hp = this.add
+      .text(c.x, c.y + this.grid.tileSize * 0.22, "", {
+        fontFamily: "monospace",
+        fontSize: "12px",
+        color: "#0e0e14",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(11);
+    const sprite = this.createTokenSprite(def.assetKey, circle, 10);
+    const token: Token = { circle, label, hp, sprite };
+    this.heroTokens.set(def.id, token);
+    this.updateHpText(token, hero.health, hero.effectiveMaxHealth);
+    // Phase 21 (D-112): a hero can now carry enemy-inflicted statuses too
+    // (e.g. "poisoned", "silenced") — same on-token badge shape as
+    // `enemyStatusBadges` (KI-027), just on the hero side.
+    const badge = this.add
+      .text(c.x, c.y - this.grid.tileSize * 0.34 - 14, "", {
+        fontFamily: "monospace",
+        fontSize: "11px",
+        color: "#0e0e14",
+        backgroundColor: "#f0e070",
+        padding: { left: 4, right: 4, top: 1, bottom: 1 },
+      })
+      .setOrigin(0.5)
+      .setDepth(11)
+      .setVisible(false);
+    this.heroStatusBadges.set(def.id, badge);
+    // Phase 22 (magic-item expansion): a hero created with a free starting
+    // Cape of Billowing (Phase 13.11's "every common/uncommon item is a
+    // free starting-gear option" rule) already has its cape flying before
+    // its first turn. `ensureHeroCape`/`onGearChanged` both derive purely
+    // from the hero's CURRENT equipped-gear/charge state, so they're just
+    // as correct to call for a restored hero as a freshly-built one.
+    this.ensureHeroCape(hero);
+    // D-127: same rule can start a hero with a charge-based item already
+    // equipped (Wand of Magic Missile/Web are uncommon) — initialize its
+    // charge pool before its first turn, same as the cape above.
+    hero.onGearChanged();
   }
 
   /**
@@ -2087,6 +2411,14 @@ export class BattleScene extends Phaser.Scene {
         fontFamily: "monospace",
         fontSize: "12px",
         color: "#8aa0c0",
+        align: "center",
+        // Batch C (item 10's remainder, KI-188): this joins EVERY spawn
+        // group in the next wave by name — a wave with several distinct
+        // enemy types had no safeguard against running off both edges of
+        // the canvas. Grows downward (origin's vertical anchor is the top),
+        // clear of anything below it since the grid itself starts well
+        // further down (see GRID_TOP_MARGIN in config.ts).
+        wordWrap: { width: GAME_WIDTH - 160 },
       })
       .setOrigin(0.5, 0)
       .setDepth(30);
@@ -2566,6 +2898,14 @@ export class BattleScene extends Phaser.Scene {
     // overlapping Build. Build's left edge is `bbx - 75`; step the same gap
     // and half-width past THAT to get Gear's center.
     const gbx = bbx - 75 - gapBetweenButtons - 75;
+    // D-245 (Plan 4): campaign battles never show the Gear button at all —
+    // the in-battle Armory is removed for them (gear moves to the
+    // between-missions CampaignArmoryScene, D-243). The button object is
+    // still created below (every other reference to `equipButton`/
+    // `equipLabel` in this file assumes it exists) but stays permanently
+    // hidden/non-interactive for a campaign battle, and the banner reclaims
+    // its space by measuring against Build's left edge instead of Gear's.
+    const isCampaignBattle = !!this.campaignId;
     // KI-033: the banner (centered on GAME_WIDTH/2) and this button (anchored
     // to the right margin) are positioned independently, so a wide banner
     // string ("Wave 10 / 10  ·  Between Waves") can reach right up to (or
@@ -2573,7 +2913,7 @@ export class BattleScene extends Phaser.Scene {
     // real safe half-width here and have fitBannerToWidth() shrink the
     // banner's font, using its ACTUAL measured width, to whatever fits —
     // correct regardless of font metrics or future label-text changes.
-    const gearLeftEdge = gbx - 75;
+    const gearLeftEdge = isCampaignBattle ? bbx - 75 : gbx - 75;
     const bannerSafetyGap = 12;
     this.bannerMaxWidth = 2 * (gearLeftEdge - GAME_WIDTH / 2 - bannerSafetyGap);
     this.equipButton = this.add
@@ -2593,6 +2933,10 @@ export class BattleScene extends Phaser.Scene {
     this.equipButton.on("pointerover", () => this.equipButton.setFillStyle(COLORS.woodPanelHover).setStrokeStyle(2, COLORS.gilt));
     this.equipButton.on("pointerout", () => this.equipButton.setFillStyle(COLORS.woodPanel).setStrokeStyle(2, COLORS.bronze));
     this.equipButton.on("pointerdown", () => this.openGearShop());
+    if (isCampaignBattle) {
+      this.equipButton.setVisible(false).disableInteractive();
+      this.equipLabel.setVisible(false);
+    }
 
     // Ghost preview rectangle for the tile under the cursor while building.
     this.buildGhost = this.add
@@ -2722,6 +3066,11 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(31)
         .setVisible(false);
+      // Batch C (item 10's remainder, KI-188): `item.label` is a structure/
+      // enemy/status name plus (for the shop) a cost suffix — no safeguard
+      // against a long one overflowing this shared grid's fixed 150px-wide
+      // button before this.
+      shrinkFontToFit(lbl, 12, 8, () => lbl.width > ITEM_GRID_BTN_W - 10);
       btn.on("pointerdown", () => onClick(item.id));
       if (onHover) {
         btn.on("pointerover", () => onHover(item.id));
@@ -2872,6 +3221,9 @@ export class BattleScene extends Phaser.Scene {
         this.time.delayedCall(this.scaledDuration(650), () => this.turns.transitionTo("player"));
         break;
       case "victory":
+        // Batch F (item 18): a completed run's checkpoint would otherwise
+        // linger forever as a stale "Continue" entry.
+        this.deleteAutosaveCheckpointIfAny();
         this.markCampaignCompletedIfAny();
         // D-177: a chapter's outroText (when written) shows before the end
         // screen, so a chapter's own closing beat lands before "Victory!".
@@ -2889,6 +3241,8 @@ export class BattleScene extends Phaser.Scene {
         );
         break;
       case "defeat":
+        // Batch F (item 18): a lost run's checkpoint has nothing left to resume into.
+        this.deleteAutosaveCheckpointIfAny();
         this.showEndScreen(
           this.defeatReason === "party"
             ? "Defeat — your party has fallen"
@@ -3054,7 +3408,7 @@ export class BattleScene extends Phaser.Scene {
       const def = s ? getStructureDefinition(s.defId) : null;
       const terrainType = s ? null : this.map.getTileType(t.position);
       const name = def?.name ?? (terrainType ? terrainType.charAt(0).toUpperCase() + terrainType.slice(1) : "Trap");
-      return { name, instanceId: s?.instanceId, singleUse: def?.singleUse === true };
+      return { name, instanceId: s?.instanceId, singleUse: this.buildSystem.trapIsSingleUseAt(t.position) };
     });
 
     for (const enemy of report.spawned) {
@@ -3242,6 +3596,9 @@ export class BattleScene extends Phaser.Scene {
     const reward = RewardSystem.waveReward(wave, completionTurn);
     // D-208: no single hero clears a wave — split evenly across every pool.
     this.creditGold(null, reward.total);
+    // Plan 2: tracked separately from the in-battle economy above — see
+    // `campaignRewardGoldEarned`'s own comment.
+    this.campaignRewardGoldEarned += reward.total;
     this.wavesCleared += 1;
     let msg = `Wave ${this.waveSystem.waveNumber} cleared: +${reward.completionGold}g`;
     if (reward.timeBonusGold > 0) msg += ` (+${reward.timeBonusGold}g time bonus)`;
@@ -3269,8 +3626,19 @@ export class BattleScene extends Phaser.Scene {
   private afterWaveCleared(): void {
     const afterSparableChoice = () => {
       const proceed = () => {
-        if (this.waveSystem.isLastWave()) this.turns.transitionTo("victory");
-        else this.turns.transitionTo("betweenWave");
+        if (this.waveSystem.isLastWave()) {
+          this.turns.transitionTo("victory");
+        } else {
+          // Batch F (item 18): checkpoint here — every post-wave choice
+          // above has already resolved, and `this.turns.history` still ends
+          // at whichever phase triggered this (`"resolution"` or, for an
+          // early wave-clear, `"player"`), strictly BEFORE the transition
+          // below — a resume re-enters via a real `transitionTo` of its own
+          // (see `create()`), so the checkpoint must capture the moment
+          // right before this one, not after.
+          this.maybeWriteAutosaveCheckpoint();
+          this.turns.transitionTo("betweenWave");
+        }
       };
       const afterLevelUp = () => {
         // Resting "before the next wave" is meaningless with no next wave.
@@ -3371,8 +3739,8 @@ export class BattleScene extends Phaser.Scene {
   /**
    * Phase 13.3 (D-089): advance every LIVING hero one real class level
    * (`Hero.levelUpClass`), logging each one that actually changed (a fallen
-   * hero gets nothing retroactively, same convention `ProgressionSystem
-   * .applyChoice` already uses) and marking the threshold granted so
+   * hero gets nothing retroactively — this method filters to living heroes
+   * itself) and marking the threshold granted so
    * `hasPendingLevelUp` won't refire for it. Phase 13.6 (D-091): returns
    * every hero whose NEW level grants an Ability Score Improvement, so the
    * caller can queue `showAsiChoiceQueue` for exactly those heroes. Phase
@@ -3633,12 +4001,7 @@ export class BattleScene extends Phaser.Scene {
   private fitBannerToWidth(): void {
     const baseFontSizePx = 20;
     const minFontSizePx = 10;
-    this.bannerText.setFontSize(baseFontSizePx);
-    let size = baseFontSizePx;
-    while (this.bannerText.width > this.bannerMaxWidth && size > minFontSizePx) {
-      size -= 1;
-      this.bannerText.setFontSize(size);
-    }
+    shrinkFontToFit(this.bannerText, baseFontSizePx, minFontSizePx, () => this.bannerText.width > this.bannerMaxWidth);
     this.redrawBannerChip();
   }
 
@@ -3686,10 +4049,16 @@ export class BattleScene extends Phaser.Scene {
     if (playerActive) this.buildButton.setInteractive({ useHandCursor: true });
     else this.buildButton.disableInteractive();
 
-    this.equipButton.setAlpha(playerActive ? 1 : 0.4);
-    this.equipLabel.setAlpha(playerActive ? 1 : 0.4);
-    if (playerActive) this.equipButton.setInteractive({ useHandCursor: true });
-    else this.equipButton.disableInteractive();
+    // D-245 (Plan 4): a campaign battle's Gear button stays permanently
+    // hidden/non-interactive (see buildShopHud) — never re-enabled here.
+    if (this.campaignId) {
+      this.equipButton.disableInteractive();
+    } else {
+      this.equipButton.setAlpha(playerActive ? 1 : 0.4);
+      this.equipLabel.setAlpha(playerActive ? 1 : 0.4);
+      if (playerActive) this.equipButton.setInteractive({ useHandCursor: true });
+      else this.equipButton.disableInteractive();
+    }
 
     this.updateGoldHud();
     this.updateWavePreview();
@@ -3779,6 +4148,12 @@ export class BattleScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setDepth(11);
+      // Batch C (item 10's remainder, KI-188): a long boss/legendary name
+      // (e.g. "The Hollow Empress (Legendary)") had no safeguard against
+      // spilling sideways over neighboring tiles/tokens — a single-line
+      // shrink (not a wrap, which would grow this board-anchored label
+      // upward into whatever's above it) keeps it legible in place.
+      shrinkFontToFit(banner, 13, 9, () => banner.width > this.grid.tileSize * 3);
       this.enemyBossBanners.set(enemy.instanceId, banner);
     }
 
@@ -3907,12 +4282,27 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * D-152: the in-battle pause menu's "Save Party"/"Save & Exit" action —
+   * D-248 (Batch F): whether this battle belongs to a campaign — used by
+   * `PauseMenuScene` to hide the "Save Party" button specifically (a
+   * campaign's party build already autosaves via `CompanionRosterSystem`
+   * at Start Battle, Party Creation Overhaul Plan 3.1, making a mid-battle
+   * re-save of the exact same pre-battle build redundant). Deliberately
+   * separate from `canSaveParty()`, which still gates "Save Game" — that
+   * button stays for a campaign battle (it's the only way to produce a
+   * campaign-linked save slot `Load Game` can resume).
+   */
+  isCampaignBattle(): boolean {
+    return !!this.campaignId;
+  }
+
+  /**
+   * D-152: the in-battle pause menu's "Save Party"/"Save Game" action —
    * saves the party's ORIGINAL (pre-battle) build, same as
    * `CharacterCreationScene.onSaveParty` does, via the same shared
    * `SaveSystem.saveOrUpdatePartySlot` decision. Does NOT capture this
-   * battle's own progress (wave/gold/structures) — no mechanism for that
-   * exists anywhere in this project yet (see D-152's own writeup). Returns
+   * battle's own progress (wave/gold/structures) — that's what
+   * `maybeWriteAutosaveCheckpoint` (Batch F, item 18) is for, an entirely
+   * separate mechanism this stays deliberately unaware of. Returns
    * `null` if `canSaveParty()` is false, or if the save slot cap was
    * reached while creating a new slot.
    */
@@ -3936,6 +4326,99 @@ export class BattleScene extends Phaser.Scene {
     saveSaveFile(window.localStorage, SAVE_STORAGE_KEY, result.file);
     this.loadedSlotId = result.slotId;
     return result;
+  }
+
+  /**
+   * Batch F (item 18): gates the actual checkpoint write to real Campaign/
+   * Free-Play runs — the same "is this a milestone-governed battle"
+   * condition `create()`'s own `levelMilestoneSystem` construction already
+   * uses — explicitly excluding Co-op and Test Mode, neither of which this
+   * batch covers. A classic "Create Party"/MapBuilder-or-shared-map Free
+   * Play run (no `freePlayRunLengthId`) fails this gate on its own too.
+   */
+  private maybeWriteAutosaveCheckpoint(): void {
+    const isRealRun = this.campaignId !== null || (this.freePlayMapId !== null && this.freePlayRunLengthId !== null);
+    if (!isRealRun || this.testMode || this.coopSession) return;
+    this.writeAutosaveCheckpoint();
+  }
+
+  /** A human-readable "Continue" list label — e.g. "Emberford Reach — Ch. 2 (Wave 4)" or "The Sundered Pass (Long) — Wave 6". */
+  private autosaveLabel(): string {
+    const wave = `Wave ${this.waveSystem.waveNumber}`;
+    if (this.campaignId) {
+      const campaign = getCampaignDefinition(this.campaignId);
+      return isChapteredCampaign(campaign) && this.currentChapter
+        ? `${campaign.name} — ${this.currentChapter.name} (${wave})`
+        : `${campaign.name} (${wave})`;
+    }
+    const mapName = this.freePlayMapId ? getMapById(this.freePlayMapId).name : "Free Play";
+    const runLabel = this.freePlayRunLengthId ? ` (${getRunLengthDefinition(this.freePlayRunLengthId).label})` : "";
+    return `${mapName}${runLabel} — ${wave}`;
+  }
+
+  /**
+   * The actual checkpoint write — builds an `AutosaveSlot` from live state
+   * via `captureBattleState` (Phase 12.1, D-101 — built for multiplayer-sync
+   * feasibility, never wired to any persistence until now) and persists it,
+   * upserting by this battle's own run id so repeated checkpoints of the
+   * SAME run never duplicate (`AutosaveSystem.checkpointAutosave`).
+   *
+   * "Disable actions while saving": `this.autosaving` participates in
+   * `inputLocked()` for the write's duration. "Warn if it takes more than
+   * half a second": today's write is a synchronous `localStorage.setItem`,
+   * reliably sub-millisecond even for a full battle snapshot — this branch
+   * is real, correct plumbing that won't visibly fire until/unless a slower
+   * persistence layer (e.g. a future cloud sync) sits behind it, same
+   * "genuinely working, nothing to observe yet" precedent as Settings
+   * volume before any audio asset existed.
+   */
+  private writeAutosaveCheckpoint(): void {
+    this.autosaving = true;
+    const startedAt = performance.now();
+    const runId = this.autosaveRunId ?? generateRunId(Date.now());
+    const now = Date.now();
+    const slot: AutosaveSlot = {
+      id: runId,
+      createdAt: now,
+      updatedAt: now,
+      label: this.autosaveLabel(),
+      mode: this.campaignId ? "campaign" : "freeplay",
+      heroDefinitions: this.heroDefinitions,
+      difficultyId: this.difficultyId,
+      campaignId: this.campaignId ?? undefined,
+      chapterIndex: this.campaignId ? this.chapterIndex : undefined,
+      freePlayMapId: this.freePlayMapId ?? undefined,
+      freePlayRunLengthId: this.freePlayRunLengthId ?? undefined,
+      freePlayBossEnemyId: this.freePlayBossEnemyId ?? undefined,
+      originalParty: this.originalParty,
+      resolvedWaves: this.currentWaves,
+      battleState: captureBattleState({
+        turns: this.turns,
+        economy: this.economy,
+        heroes: this.heroes,
+        waveSystem: this.waveSystem,
+        buildSystem: this.buildSystem,
+        restSystem: this.restSystem,
+        wavesCleared: this.wavesCleared,
+      }),
+      campaignRewardGoldEarned: this.campaignRewardGoldEarned,
+      temporaryStructures: [...this.temporaryStructures],
+    };
+    const file = loadAutosaveFile(window.localStorage, AUTOSAVE_STORAGE_KEY);
+    saveAutosaveFile(window.localStorage, AUTOSAVE_STORAGE_KEY, checkpointAutosave(file, slot));
+    const elapsedMs = performance.now() - startedAt;
+    this.autosaving = false;
+    if (elapsedMs > 500) {
+      this.logCombat(`Autosave took ${Math.round(elapsedMs)}ms — longer than expected.`);
+    }
+    this.logCombat("Autosaved.");
+  }
+
+  /** Batch F (item 18): removes this run's checkpoint on reaching a terminal phase, so a completed/lost run never lingers as a stale "Continue" entry. */
+  private deleteAutosaveCheckpointIfAny(): void {
+    if (!this.autosaveRunId) return;
+    const file = loadAutosaveFile(window.localStorage, AUTOSAVE_STORAGE_KEY);
+    saveAutosaveFile(window.localStorage, AUTOSAVE_STORAGE_KEY, deleteAutosaveSlot(file, this.autosaveRunId));
   }
 
   private breachEnemyToken(enemy: Enemy): void {
@@ -4226,6 +4709,13 @@ export class BattleScene extends Phaser.Scene {
       this.keyboardFocus = "board";
     }
     this.clearRange();
+    // KI-186: proactively highlight every legal tile for the selected
+    // structure the instant build mode opens (or a different shop item is
+    // picked), instead of only reacting one tile at a time as the mouse
+    // hovers (`updateBuildGhost`) — reuses the same `rangeTiles` array/
+    // `clearRange()` lifecycle move/attack range highlighting already uses,
+    // so leaving build mode (any `setInteraction` call) clears it for free.
+    if (next.kind === "building") this.showBuildableHighlights(next.defId);
     this.clearTargets();
     this.clearPath();
     this.pendingRect.setVisible(false);
@@ -4319,6 +4809,38 @@ export class BattleScene extends Phaser.Scene {
   private clearRange(): void {
     for (const r of this.rangeTiles) r.destroy();
     this.rangeTiles = [];
+  }
+
+  /**
+   * KI-186: a low-alpha highlight on every tile `defId` could legally be
+   * built on right now, reusing `BuildSystem.canPlace` exactly as the
+   * per-tile hover ghost (`updateBuildGhost`) already does — this just runs
+   * it over the whole map up front instead of one tile at a time. Pushed
+   * into `rangeTiles` so `clearRange()` (already called by every
+   * `setInteraction`) tears it down automatically when build mode ends or
+   * a different item is picked.
+   */
+  private showBuildableHighlights(defId: string): void {
+    const heroPositions = this.livingHeroes().map((h) => h.position);
+    for (let y = 0; y < this.map.rows; y++) {
+      for (let x = 0; x < this.map.cols; x++) {
+        const pos = { x, y };
+        const check = this.buildSystem.canPlace(
+          defId,
+          pos,
+          (p) => this.isUnitAt(p),
+          heroPositions,
+          this.attributionHeroIdFor(pos),
+        );
+        if (!check.ok) continue;
+        const c = this.grid.tileToWorldCenter(pos);
+        this.rangeTiles.push(
+          this.add
+            .rectangle(c.x, c.y, this.grid.tileSize - 4, this.grid.tileSize - 4, COLORS.buildValid, 0.22)
+            .setDepth(2),
+        );
+      }
+    }
   }
 
   /** Outline enemies a selected hero could basic-attack right now. */
@@ -6797,6 +7319,10 @@ export class BattleScene extends Phaser.Scene {
         fontSize: "26px",
         color: "#3a2a10",
         fontStyle: "bold",
+        align: "center",
+        // Batch C (item 10's remainder, KI-188): includes the hero's own
+        // (player-typed, arbitrary-length) name — no safeguard before this.
+        wordWrap: { width: GAME_WIDTH - 160 },
       })
       .setOrigin(0.5)
       .setDepth(42);
@@ -7233,6 +7759,8 @@ export class BattleScene extends Phaser.Scene {
     if (removed.length === 0) return;
     const gold = RewardSystem.killGold(removed);
     if (gold > 0) this.creditGold(creditOwnerId, gold);
+    // Plan 2: see `campaignRewardGoldEarned`'s own comment.
+    this.campaignRewardGoldEarned += gold;
     for (const enemy of removed) {
       this.playEnemyDeathVisual(enemy);
       // Phase 20 (D-111): a treasure-laden enemy's bonus is called out on
@@ -7350,6 +7878,19 @@ export class BattleScene extends Phaser.Scene {
         this.campaignLevelState = raised;
         saveCampaignLevel(window.localStorage, CAMPAIGN_LEVEL_STORAGE_KEY, raised);
       }
+    }
+    // `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 2: same "only at a real
+    // chapter-clear" timing as campaignLevel above — kill/wave/region-bonus
+    // gold earned this battle (`campaignRewardGoldEarned`) only becomes
+    // permanent now, never on a mid-chapter loss/quit.
+    if (this.campaignRewardGoldEarned > 0) {
+      const goldState = loadCampaignGold(window.localStorage, CAMPAIGN_GOLD_STORAGE_KEY);
+      const next = creditScaledCampaignGold(
+        goldState,
+        this.campaignRewardGoldEarned,
+        getDifficultyDefinition(this.difficultyId).campaignGoldMultiplier,
+      );
+      if (next !== goldState) saveCampaignGold(window.localStorage, CAMPAIGN_GOLD_STORAGE_KEY, next);
     }
     const campaign = getCampaignDefinition(this.campaignId);
     if (isChapteredCampaign(campaign)) {
@@ -7488,12 +8029,33 @@ export class BattleScene extends Phaser.Scene {
 
   private toggleBuildMode(): void {
     if (this.turns.current !== "player" || this.inputLocked()) return;
-    if (this.ui.kind === "building") this.exitBuildMode();
-    else this.setInteraction({ kind: "building", defId: SHOP_ORDER[0] });
+    if (this.ui.kind === "building") {
+      this.exitBuildMode();
+      return;
+    }
+    // KI-186: remember whichever hero was actually selected before entering
+    // build mode, if any — see `buildAttributionHeroId`'s own comment.
+    this.buildAttributionHeroId = this.ui.kind === "heroSelected" ? this.ui.heroId : undefined;
+    this.setInteraction({ kind: "building", defId: SHOP_ORDER[0] });
   }
 
   private exitBuildMode(): void {
+    this.buildAttributionHeroId = undefined;
     this.setInteraction({ kind: "idle" });
+  }
+
+  /**
+   * KI-186: which hero a structure placed at `pos` should be attributed to
+   * (for the per-hero structure cap) — the hero the player actually had
+   * selected before opening the build menu, if one was and they're still
+   * alive; otherwise the previous nearest-hero-to-tile fallback, unchanged.
+   */
+  private attributionHeroIdFor(pos: GridPosition): string | undefined {
+    if (this.buildAttributionHeroId) {
+      const selected = this.heroById(this.buildAttributionHeroId);
+      if (selected?.isAlive()) return selected.id;
+    }
+    return this.nearestLivingHeroId(pos);
   }
 
   private selectShopItem(defId: string): void {
@@ -7629,7 +8191,7 @@ export class BattleScene extends Phaser.Scene {
       tile,
       (p) => this.isUnitAt(p),
       this.livingHeroes().map((h) => h.position),
-      this.nearestLivingHeroId(tile),
+      this.attributionHeroIdFor(tile),
     );
     const ok = check.ok && this.economy.canAfford(this.economyOwnerFor(), def.cost);
     const c = this.grid.tileToWorldCenter(tile);
@@ -7663,23 +8225,29 @@ export class BattleScene extends Phaser.Scene {
     // D-208: a structure belongs to the board, not a hero — charged to
     // whichever participant is actually clicking on THIS client.
     const payerId = this.economyOwnerFor();
-    if (!this.economy.canAfford(payerId, def.cost)) {
+    // D-250 (Batch E gap 3): a region-bonus free charge (`grantRegionBonusStructure`)
+    // skips the afford check entirely — the player isn't spending gold at all.
+    const hasFreeCharge = this.buildSystem.freeChargesFor(defId) > 0;
+    if (!hasFreeCharge && !this.economy.canAfford(payerId, def.cost)) {
       this.rejectAt(tile, `Not enough gold for ${def.name} (need ${def.cost}g)`);
       return;
     }
     const heroPositions = this.livingHeroes().map((h) => h.position);
-    const builtBy = this.nearestLivingHeroId(tile);
+    const builtBy = this.attributionHeroIdFor(tile);
     const check = this.buildSystem.canPlace(defId, tile, (p) => this.isUnitAt(p), heroPositions, builtBy);
     if (!check.ok) {
       this.rejectAt(tile, check.reason ?? "You cannot build there.");
       return;
     }
-    // Spend once, then place. canPlace already guarantees place() succeeds, so
-    // gold changes exactly once per successful purchase.
-    this.economy.spend(payerId, def.cost);
-    const result = this.buildSystem.place(defId, tile, (p) => this.isUnitAt(p), heroPositions, builtBy);
+    // Spend once (or consume a free charge once), then place. canPlace already
+    // guarantees place() succeeds, so gold/charges change exactly once per
+    // successful placement. Charge consumed here (not above) so a rejected
+    // placement never wastes one.
+    const usedFreeCharge = hasFreeCharge && this.buildSystem.consumeFreeCharge(defId);
+    if (!usedFreeCharge) this.economy.spend(payerId, def.cost);
+    const result = this.buildSystem.place(defId, tile, (p) => this.isUnitAt(p), heroPositions, builtBy, usedFreeCharge);
     if (result.structure) this.renderStructure(result.structure);
-    this.logCombat(`Built ${def.name} for ${def.cost}g`);
+    this.logCombat(usedFreeCharge ? `Built ${def.name} (free — region bonus)` : `Built ${def.name} for ${def.cost}g`);
     this.updateGoldHud();
     // Stay in build mode to place several in a row.
     this.setInteraction({ kind: "building", defId });
@@ -7687,11 +8255,14 @@ export class BattleScene extends Phaser.Scene {
 
   private refundStructure(structure: PlacedStructure): void {
     const def = getStructureDefinition(structure.defId);
+    // D-250 (Batch E gap 3): a free-charge placement never spent gold — don't
+    // hand any back on removal, just take it off the board.
+    const wasFree = this.buildSystem.wasFreePlaced(structure.instanceId);
     const removed = this.buildSystem.remove(structure.instanceId);
     if (!removed) return;
-    this.economy.refund(this.economyOwnerFor(), def.cost);
+    if (!wasFree) this.economy.refund(this.economyOwnerFor(), def.cost);
     this.destroyStructureToken(structure.instanceId);
-    this.logCombat(`Removed ${def.name} (+${def.cost}g refunded)`);
+    this.logCombat(wasFree ? `Removed ${def.name} (no refund — this was a free region bonus)` : `Removed ${def.name} (+${def.cost}g refunded)`);
     this.updateGoldHud();
     this.setInteraction({ kind: "building", defId: this.currentBuildDefId() });
   }
@@ -7767,6 +8338,11 @@ export class BattleScene extends Phaser.Scene {
     const partnerUid = Object.values(this.coopSession.heroOwners).find((uid) => uid !== this.coopSession!.localUid);
     const partnerGold = partnerUid ? this.economy.gold(partnerUid) : 0;
     this.goldText.setText(`Gold: ${mine}g | ${this.coopSession.partnerName}: ${partnerGold}g`);
+    // Batch C (item 10's remainder, KI-188): `partnerName` is another
+    // player's own (arbitrary-length) display name — no safeguard against
+    // it pushing this left-anchored HUD line into the centered banner
+    // column before this.
+    shrinkFontToFit(this.goldText, 17, 11, () => this.goldText.width > GAME_WIDTH / 2 - 80 - this.grid.originX);
   }
 
   /** True if a living hero or an enemy stands on a tile (build occupancy). */
@@ -7798,7 +8374,7 @@ export class BattleScene extends Phaser.Scene {
   private visibleGearCatalog(): string[] {
     const avgLevel = averagePartyLevel(this.heroes.map((h) => h.level));
     return ALL_GEAR_CATALOG_IDS.filter((id) => {
-      const rarity = id in POTION_DEFINITIONS ? getPotionDefinition(id).rarity : getEquipmentDefinition(id).rarity;
+      const rarity = isPotionId(id) ? getPotionDefinition(id).rarity : getEquipmentDefinition(id).rarity;
       return isRarityUnlockedAtLevel(rarity, avgLevel);
     });
   }
@@ -7862,6 +8438,11 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private shopGateReason(hero: Hero): string | null {
+    // D-245 (Plan 4): campaign battles have no in-battle Armory at all —
+    // gear is bought/sold between missions instead (CampaignArmoryScene,
+    // D-243). Belt-and-suspenders: `openGearShop()`'s own campaignId gate
+    // should make every caller below unreachable in practice.
+    if (this.campaignId) return "Gear is managed between missions in the Armory during a campaign.";
     if (this.turns.current !== "player" || this.inputLocked()) return "It's not your turn.";
     if (!this.isAnyHeroNearShop()) return "No hero is near a Shop tile.";
     if (!this.shopHeroes().includes(hero)) return `${hero.name} can't shop right now.`;
@@ -7968,6 +8549,13 @@ export class BattleScene extends Phaser.Scene {
    */
   private openGearShop(): void {
     if (this.turns.current !== "player" || this.inputLocked()) return;
+    // D-245 (Plan 4): the in-battle Armory is removed entirely for campaign
+    // battles — gear is bought/sold between missions in CampaignArmoryScene
+    // (D-243) instead. Free Play is unaffected (this.campaignId is unset).
+    if (this.campaignId) {
+      this.logCombat("Gear is managed between missions in the Armory during a campaign.");
+      return;
+    }
     if (
       this.heroDrag ||
       this.choosingAsi ||
@@ -8801,6 +9389,7 @@ export class BattleScene extends Phaser.Scene {
       if (!h.isAlive()) {
         box.setFillStyle(COLORS.woodPanel, 0.5);
         this.heroSlotNameText[i].setText(`${h.name} (down)`).setColor("#7a6a4a");
+        shrinkFontToFit(this.heroSlotNameText[i], ROSTER_NAME_BASE_FONT_PX, ROSTER_NAME_MIN_FONT_PX, () => this.heroSlotNameText[i].width > ROSTER_NAME_MAX_WIDTH);
         this.heroSlotHpBarBg[i].setVisible(false);
         this.heroSlotHpBarFg[i].setVisible(false);
         this.heroSlotHpText[i].setVisible(false);
@@ -8811,6 +9400,11 @@ export class BattleScene extends Phaser.Scene {
       // Phase 13.3 (D-089): only a D&D-built hero has a meaningful class level to show.
       const level = h.classId !== undefined ? ` Lvl ${h.level}` : "";
       this.heroSlotNameText[i].setText(`${h.name}${level}`).setColor("#f0e6c8");
+      // Batch C (item 10's remainder, KI-188): `h.name` is player-typed and
+      // arbitrary-length, but this box (`rosterBoxWidth` in `buildHud`) is a
+      // fixed 272px — no safeguard against a long name spilling past it
+      // before this.
+      shrinkFontToFit(this.heroSlotNameText[i], ROSTER_NAME_BASE_FONT_PX, ROSTER_NAME_MIN_FONT_PX, () => this.heroSlotNameText[i].width > ROSTER_NAME_MAX_WIDTH);
       const fraction = h.effectiveMaxHealth > 0 ? Phaser.Math.Clamp(h.health / h.effectiveMaxHealth, 0, 1) : 0;
       const barMaxWidth = this.heroSlotHpBarBg[i].width;
       // D-210 (Phase 5 reskin, Kevin's explicit call): a two-state bar —
@@ -9383,6 +9977,10 @@ export class BattleScene extends Phaser.Scene {
         fontSize: "24px",
         color: "#3a2a10",
         fontStyle: "bold",
+        align: "center",
+        // Batch C (item 10's remainder, KI-188): includes the hero's own
+        // (player-typed, arbitrary-length) name — no safeguard before this.
+        wordWrap: { width: GAME_WIDTH - 160 },
       })
       .setOrigin(0.5)
       .setDepth(42);
@@ -9724,6 +10322,17 @@ export class BattleScene extends Phaser.Scene {
    * Phaser shapes and `system-ui` text. The choice-grid layout math (button
    * sizing, row wrapping, centering) is unchanged; only the drawing itself
    * changed, so none of this function's ~15 call sites needed to change.
+   *
+   * Batch C (item 10's remainder, KI-188): row height used to be a flat
+   * `hasDesc ? 100 : 56` constant, tall enough for roughly 2 lines of
+   * description — a longer one (a verbose feat/spell description) still
+   * overflowed past its own box. Now uses `uiTheme.measureChoiceRowHeights`,
+   * the same per-row real-measured-height approach `uiTheme.renderChoiceOverlay`
+   * already used, so a long description grows its OWN row instead of
+   * clipping. The whole grid still centers as one block around the same
+   * vertical point as before; `18` (this function's own default button font
+   * size, `"secondary"` variant, never explicitly overridden here) is passed
+   * so the measurement matches what actually renders.
    */
   private renderAsiPrompt(
     title: string,
@@ -9738,14 +10347,15 @@ export class BattleScene extends Phaser.Scene {
     const hasDesc = choices.some((c) => c.desc);
     const usableWidth = GAME_WIDTH - 40;
     const width = Math.min(300, Math.max(140, Math.floor(usableWidth / choices.length) - 16));
-    const height = hasDesc ? 100 : 56;
     const spacing = width + 16;
     const maxPerRow = Math.max(1, Math.floor(usableWidth / spacing));
-    const rows = Math.ceil(choices.length / maxPerRow);
-    const rowStartY = GAME_HEIGHT / 2 - 20 - ((rows - 1) * (height + 16)) / 2;
+    const rowGap = 16;
+    const rowHeights = measureChoiceRowHeights(this, choices, maxPerRow, width, hasDesc ? 100 : 56, 18);
+    const totalGridHeight = rowHeights.reduce((sum, h) => sum + h, 0) + (rowHeights.length - 1) * rowGap;
+    const gridTop = GAME_HEIGHT / 2 - 20 - totalGridHeight / 2;
 
     const titleY = GAME_HEIGHT / 2 - 160;
-    const gridBottom = rowStartY + (rows - 1) * (height + 16) + height / 2;
+    const gridBottom = gridTop + totalGridHeight;
     const panelTop = titleY - 36;
     const panelBottom = gridBottom + 28;
     const panel = drawParchmentPanel(
@@ -9764,30 +10374,42 @@ export class BattleScene extends Phaser.Scene {
         fontSize: "28px",
         color: "#3a2a10",
         fontStyle: "bold",
+        align: "center",
+        // Batch C (item 10's remainder, KI-188): most callers build this
+        // from `${hero.name} — ...` — a player-typed, arbitrary-length
+        // name — with no safeguard before this.
+        wordWrap: { width: GAME_WIDTH - 160 },
       })
       .setOrigin(0.5)
       .setDepth(42);
     this.asiOverlay.push(titleText);
 
-    choices.forEach((choice, i) => {
-      const row = Math.floor(i / maxPerRow);
-      const col = i % maxPerRow;
-      const itemsInRow = Math.min(maxPerRow, choices.length - row * maxPerRow);
+    let rowTop = gridTop;
+    let choiceIndex = 0;
+    rowHeights.forEach((rowHeight) => {
+      const rowChoices = choices.slice(choiceIndex, choiceIndex + maxPerRow);
+      const itemsInRow = rowChoices.length;
       const rowStartX = GAME_WIDTH / 2 - ((itemsInRow - 1) * spacing) / 2;
-      const x = rowStartX + col * spacing;
-      const y = rowStartY + row * (height + 16);
-      const label = choice.highlighted ? `★ ${choice.label}` : choice.label;
-      const handle = createOrnateButton(this, x, y, width, height, label, choice.onClick, {
-        variant: "secondary",
-        sublabel: choice.desc,
-        depth: 42,
+      const y = rowTop + rowHeight / 2;
+
+      rowChoices.forEach((choice, col) => {
+        const x = rowStartX + col * spacing;
+        const label = choice.highlighted ? `★ ${choice.label}` : choice.label;
+        const handle = createOrnateButton(this, x, y, width, rowHeight, label, choice.onClick, {
+          variant: "secondary",
+          sublabel: choice.desc,
+          depth: 42,
+        });
+        if (choice.highlighted) handle.setSelected(true);
+        this.asiOverlay.push(handle.container);
       });
-      if (choice.highlighted) handle.setSelected(true);
-      this.asiOverlay.push(handle.container);
+
+      rowTop += rowHeight + rowGap;
+      choiceIndex += maxPerRow;
     });
   }
 
-  /** True while a modal (ASI/feat choice, subclass choice, spell-pick choice, spell-prep swap choice, rest choice, the pre-region bonus choice, the spare-or-destroy miniboss choice, the tutorial, the technical log, or Test Mode's debug menu) should block board input. */
+  /** True while a modal (ASI/feat choice, subclass choice, spell-pick choice, spell-prep swap choice, rest choice, the pre-region bonus choice, the spare-or-destroy miniboss choice, the tutorial, the technical log, Test Mode's debug menu, or an autosave checkpoint in progress) should block board input. */
   private inputLocked(): boolean {
     return (
       this.choosingAsi ||
@@ -9803,8 +10425,31 @@ export class BattleScene extends Phaser.Scene {
       this.technicalLogOverlay.length > 0 ||
       this.debugMenuOverlay.length > 0 ||
       this.chapterDialogue !== null ||
-      this.movingIntoAttack
+      this.movingIntoAttack ||
+      this.autosaving
     );
+  }
+
+  /**
+   * KI-186: every chapter-boundary dialogue below routes through here
+   * instead of assigning `this.chapterDialogue` directly. Root-caused bug:
+   * with a bare assignment, any path that opened a second dialogue while an
+   * earlier one's `showDialogue(...)` call hadn't yet run its completion
+   * callback (which is what nulls the field) silently orphaned the first
+   * controller — its full-screen `scrim` never got `destroy()`ed, so it sat
+   * on top of the board forever, invisibly eating every pointer click while
+   * keyboard-bound hotkeys (which don't depend on display-list hit-testing)
+   * kept working — exactly Emberford Chapter 2's "clicks do nothing, hotkeys
+   * blindly build" report. Mirrors the same clear-before-you-draw guard
+   * `renderAsiPrompt`/`clearAsiOverlay` already use for the ASI/feat/region-
+   * bonus overlay, just applied to this field too.
+   */
+  private showChapterDialogue(lines: DialogueLine[], onComplete: () => void): void {
+    this.chapterDialogue?.destroy();
+    this.chapterDialogue = showDialogue(this, lines, () => {
+      this.chapterDialogue = null;
+      onComplete();
+    });
   }
 
   /**
@@ -9820,10 +10465,7 @@ export class BattleScene extends Phaser.Scene {
       onComplete();
       return;
     }
-    this.chapterDialogue = showDialogue(this, [{ text: introText }], () => {
-      this.chapterDialogue = null;
-      onComplete();
-    });
+    this.showChapterDialogue([{ text: introText }], onComplete);
   }
 
   /** D-177: the outroText counterpart to `showChapterIntroIfAny`, shown right before the victory end screen. */
@@ -9833,10 +10475,7 @@ export class BattleScene extends Phaser.Scene {
       onComplete();
       return;
     }
-    this.chapterDialogue = showDialogue(this, [{ text: outroText }], () => {
-      this.chapterDialogue = null;
-      onComplete();
-    });
+    this.showChapterDialogue([{ text: outroText }], onComplete);
   }
 
   /**
@@ -9855,26 +10494,28 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
     const lines = COMPANION_RECRUITMENT_DIALOGUE[companion.id] ?? [{ speakerName: companion.name, text: companion.hook }];
-    this.chapterDialogue = showDialogue(this, lines, () => {
-      this.chapterDialogue = null;
-      onComplete();
-    });
+    this.showChapterDialogue(lines, onComplete);
   }
 
   /**
    * KI-098 item 13 continuation: a Pool B companion's own reaction to their
-   * home region's Chapter 4 mirror boss going down — the "homecoming beat"
-   * CAMPAIGN_STORY_DESIGN.md §9 names explicitly. A no-op outside a region's
-   * own Chapter 4 finale, for a region with no companion (shouldn't happen —
-   * every region has one), or for a Lost companion (only ever Sorrel, whose
-   * fate is already resolved earlier this same chapter — see
-   * `resolveSorrelFateIfAny`). Two entries (Fenna/Isolde) pick between
-   * pre-written ashen/hollow variants via the shared mercy-tally helper
-   * instead of a single fixed sequence, giving dialogue tone real
-   * reactivity to earlier choices.
+   * home region's FINAL chapter's mirror boss going down — the "homecoming
+   * beat" CAMPAIGN_STORY_DESIGN.md §9 names explicitly. A no-op outside a
+   * region's own finale (D-253/Batch H fix: derived from `totalChapters`
+   * rather than a hardcoded `3`, since Emberford Reach's finale moved to
+   * index 2 when its Chapter 3 was cut — the sibling check at
+   * `markCampaignCompletedIfAny` already used this pattern; this one had
+   * drifted and would have silently stopped firing Tamsin Rourke's reaction
+   * forever), for a region with no companion (Shattered Causeway, since
+   * D-253 moved Dorian to a side mission — previously "shouldn't happen"),
+   * or for a Lost companion (only ever Sorrel, whose fate is already
+   * resolved earlier this same chapter — see `resolveSorrelFateIfAny`). Two
+   * entries (Fenna/Isolde) pick between pre-written ashen/hollow variants
+   * via the shared mercy-tally helper instead of a single fixed sequence,
+   * giving dialogue tone real reactivity to earlier choices.
    */
   private showMirrorBossReactionIfAny(onComplete: () => void): void {
-    if (this.chapterIndex !== 3 || !this.campaignId) {
+    if (!this.campaignId || this.chapterIndex !== totalChapters(getCampaignDefinition(this.campaignId)) - 1) {
       onComplete();
       return;
     }
@@ -9888,11 +10529,8 @@ export class BattleScene extends Phaser.Scene {
       onComplete();
       return;
     }
-    const lines = Array.isArray(entry) ? entry : entry[mercyTallyLeansHollow(this.worldFlags) ? "hollow" : "ashen"];
-    this.chapterDialogue = showDialogue(this, lines, () => {
-      this.chapterDialogue = null;
-      onComplete();
-    });
+    const lines = Array.isArray(entry) ? entry : entry[mercyTallyLeansHollow(this.worldFlags, this.causewayPlayed()) ? "hollow" : "ashen"];
+    this.showChapterDialogue(lines, onComplete);
   }
 
   /**
@@ -9907,15 +10545,12 @@ export class BattleScene extends Phaser.Scene {
       onComplete();
       return;
     }
-    const variant = resolveThroneVariant(this.worldFlags);
+    const variant = resolveThroneVariant(this.worldFlags, this.causewayPlayed());
     const flavor =
       variant === "ashen-sovereign"
         ? "The hall ahead still holds a shape you recognize — ash and ember, a throne that at least remembers being one."
         : "The hall ahead has gone quiet and cold in a way nothing else on this road has. Even the dust seems to have stopped remembering what it was.";
-    this.chapterDialogue = showDialogue(this, [{ text: flavor }], () => {
-      this.chapterDialogue = null;
-      onComplete();
-    });
+    this.showChapterDialogue([{ text: flavor }], onComplete);
   }
 
   /**
@@ -9950,10 +10585,7 @@ export class BattleScene extends Phaser.Scene {
             { text: "The Hollow Empress falls, and something that used to be a court falls quiet with her." },
             { text: "You go to say a name — anyone's — and find the shape of it is already gone." },
           ];
-    this.chapterDialogue = showDialogue(this, lines, () => {
-      this.chapterDialogue = null;
-      onComplete();
-    });
+    this.showChapterDialogue(lines, onComplete);
   }
 
   /**

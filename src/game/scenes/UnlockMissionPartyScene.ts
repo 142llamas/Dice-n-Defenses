@@ -82,7 +82,10 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
     // strand the player on a broken screen if that assumption somehow fails
     // (a stale link, a corrupted save). Falls back to the normal flow.
     if (!this.target) {
-      this.scene.start("CharacterCreationScene", {
+      // D-248 (Batch E): same `RegionBonusChoiceScene` routing as
+      // `CampaignSelectScene`'s own non-recruit path — that scene owns the
+      // Armory-vs-Character-Creation ternary now.
+      this.scene.start("RegionBonusChoiceScene", {
         campaignId: this.campaignId,
         chapterIndex: this.chapterIndex,
         difficultyId: this.difficultyId,
@@ -101,8 +104,12 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
     onViewportResize(this, () => this.rebuildLayout());
   }
 
+  // D-253 (Batch H, item 12): was a hardcoded jump straight to
+  // `CampaignSelectScene` — now that `ChapterSelectScene` sits between the
+  // region list and this screen, Back should return to that layer instead
+  // of skipping over it.
   private leave(): void {
-    this.scene.start("CampaignSelectScene");
+    this.scene.start("ChapterSelectScene", { campaignId: this.campaignId, difficultyId: this.difficultyId });
   }
 
   private rebuildLayout(): void {
@@ -308,7 +315,11 @@ export class UnlockMissionPartyScene extends Phaser.Scene {
       ready ? "Start Mission" : "Choose your other two companions",
       () => {
         if (!ready) return;
-        this.scene.start("CharacterCreationScene", {
+        // D-248 (Batch E): same `RegionBonusChoiceScene` routing — this
+        // hand-off's `requiredCompanionIds` forwards unchanged either way,
+        // so whichever scene is reached after the bonus pick resolves the
+        // exact same 3 companions Character Creation would have.
+        this.scene.start("RegionBonusChoiceScene", {
           campaignId: this.campaignId,
           chapterIndex: this.chapterIndex,
           requiredCompanionIds: [target.id, ...(this.flexIds as string[])],

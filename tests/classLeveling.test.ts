@@ -8,7 +8,7 @@ import {
 } from "../src/game/systems/CharacterBuildSystem";
 import { fixedHitDieGain, subclassGrantedAtLevel } from "../src/game/systems/CharacterSystem";
 import { getClassDefinition } from "../src/game/data/classes";
-import { ProgressionSystem } from "../src/game/systems/ProgressionSystem";
+import { ProgressionSystem, LEVEL_UP_WAVE_INTERVAL } from "../src/game/systems/ProgressionSystem";
 import { WIZARD_CANTRIP_IDS, WIZARD_LEVELED_SPELL_IDS } from "../src/game/data/characterCreation";
 import { getSpell } from "../src/game/data/spells";
 
@@ -177,8 +177,9 @@ describe("ProgressionSystem.acknowledgeLevelUp (Phase 13.3, D-089)", () => {
   it("marks the threshold granted without touching any hero", () => {
     const hero = heroFromBuild();
     const p = new ProgressionSystem();
+    expect(p.hasPendingLevelUp(LEVEL_UP_WAVE_INTERVAL)).toBe(true);
     p.acknowledgeLevelUp();
-    expect(p.levelsSoFar).toBe(1);
+    expect(p.hasPendingLevelUp(LEVEL_UP_WAVE_INTERVAL)).toBe(false); // threshold now granted
     expect(hero.level).toBe(1); // untouched — this method never calls into Hero
   });
 });

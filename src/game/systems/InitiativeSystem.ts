@@ -1,12 +1,14 @@
 import { RandomService } from "./RandomService";
 
 /**
- * InitiativeSystem — Phase 13.5 (DECISIONS D-086 item 6, D-090). Built
- * "framework only," per Kevin's explicit scoping: this exists so a real
- * per-unit turn order is available "if we need it in the future," WITHOUT
+ * InitiativeSystem — Phase 13.5 (DECISIONS D-086 item 6, D-090). Originally
+ * built "framework only," per Kevin's explicit scoping: existed so a real
+ * per-unit turn order was available "if we need it in the future," WITHOUT
  * rebuilding `TurnSystem`'s Player Phase/Enemy Phase block structure around
- * it. Nothing in `BattleScene` calls this yet — heroes still act as one
- * block, then enemies as one block, exactly as before this sub-phase.
+ * it. As of D-175, `WaveSystem.applyGroupInitiativeOrder` is a real caller —
+ * heroes still act as one block, then enemies as one block (per
+ * `TurnSystem`), but a wave's enemy GROUPS now spawn/act in a real rolled
+ * order within the enemy phase rather than a fixed data-array order.
  *
  * Deliberately entity-agnostic (like `CombatSystem`): it takes a plain
  * `{id, bonus}` list rather than importing `Hero`/`Enemy`, so it adds no new

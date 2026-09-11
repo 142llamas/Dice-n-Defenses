@@ -20,7 +20,6 @@ describe("ProgressionSystem cadence", () => {
     const p = new ProgressionSystem();
     expect(p.hasPendingLevelUp(LEVEL_UP_WAVE_INTERVAL)).toBe(true);
     p.acknowledgeLevelUp();
-    expect(p.levelsSoFar).toBe(1);
     // Not pending again until the NEXT threshold.
     expect(p.hasPendingLevelUp(LEVEL_UP_WAVE_INTERVAL)).toBe(false);
     expect(p.hasPendingLevelUp(LEVEL_UP_WAVE_INTERVAL * 2 - 1)).toBe(false);

@@ -1,6 +1,12 @@
 # Campaign Story Design — The Unremembering (Design Doc)
 
-**Status: DESIGN ONLY. No code, data, or docs outside this file have been changed. Nothing here is a locked decision (no D-NNN yet) — it's a framework for Kevin to react to, redirect, and approve piece by piece before any of it gets built.**
+**Status: originally DESIGN ONLY when written. This entire §2-§9 arc has
+since been built and shipped** — see §9's own "Addendum (D-184)" through
+"(D-253)" entries below for the full build history (companion roster,
+Sorrel Thane's fate arc, The Nameless Throne capstone, the dialogue/
+branch-choice pass, and the 19-chapter restructure). Kept as the living
+design reference for the campaign's narrative intent; treat `DECISIONS.md`
+as authoritative wherever the two disagree.
 
 ## 1. The throughline: a theme that was already hiding in the existing lore
 
@@ -31,14 +37,25 @@ Per your call — every region is a complete 1-20 story, not a fragment. Four ch
 
 `TEST_MAP` stays outside the story — it's the flavorless legacy/tutorial map and should stay Free-Play only, exactly as it is now.
 
+**Addendum (D-253, Batch H):** this section's original "6 regions, each a
+full 1-20 arc" framing was superseded by Kevin's own playtest feedback
+(item 13 of the 2026-09-09 19-item list): Shattered Causeway is now
+optional/non-mandatory side content (not one of the 5 MANDATORY regions),
+and Emberford Reach's Chapter 3 was cut (3 chapters, not 4) so the 5
+mandatory regions total exactly 19 chapters — a single level-up per chapter
+clear, order-independent, replaces this section's original per-region
+1-20 band model entirely (see D-253 in `DECISIONS.md`). §3's table below is
+annotated accordingly; it's kept as the historical record of the original
+6-region design rather than rewritten.
+
 ## 3. Region-by-region assignment
 
 Six existing boss-tier enemies, six existing themed maps, matched by what's already true about both (not arbitrary):
 
 | Order | Region (map) | Ch1 miniboss | Ch4 boss | Why it fits |
 |---|---|---|---|---|
-| 1 | Emberford Reach (volcanic) | Basalt Colossus | **Cinderlord** | Already paired; rockslide colossus as an early volcanic hazard before the smith-thing at the furnace |
-| 2 | Shattered Causeway (chasm/pit) | Juggernaut | **The Devourer** | A Juggernaut that "does not go around things" forced onto the one 2-tile bridge is a built-in joke the map's own gimmick sets up; a hoarding, swallowing thing at the far side of a pit-crossing map is the cleanest lore/mechanics match in the whole roster |
+| 1 | Emberford Reach (volcanic) | Basalt Colossus | **Cinderlord** | Already paired; rockslide colossus as an early volcanic hazard before the smith-thing at the furnace. **D-253: now 3 chapters, not 4 — the old Chapter 3 was cut (pure flavor text, no story hooks).** |
+| 2 | Shattered Causeway (chasm/pit) | Juggernaut | **The Devourer** | A Juggernaut that "does not go around things" forced onto the one 2-tile bridge is a built-in joke the map's own gimmick sets up; a hoarding, swallowing thing at the far side of a pit-crossing map is the cleanest lore/mechanics match in the whole roster. **D-253: demoted to optional/non-mandatory side content — still fully playable, just no longer required for the capstone; Dorian Wick's recruitment moved to his own side mission, see §6.** |
 | 3 | Cinderfall Rift (volcanic, collapsing bridge) | Gravemaw | **Warlord Korrath** | An old battlefield's remains (Gravemaw) guarding the approach to a warlord who's never had to fight himself — the bridge literally collapsing under his war is a good climax beat |
 | 4 | Drowning Vale (tidal marsh) | The Husk | **Blightmother** | The Husk ("was never the thing that was going to hurt you") makes a perfect decoy/red-herring Ch1 — reframe it as something Blightmother's ground already claimed, planted to test intruders before she shows herself |
 | 5 | Saltmere Shallows (tidal) | **returning miniboss** (see below) | **Tidelord** | Deliberately has no unique Ch1 miniboss of its own — see §4 |
@@ -76,7 +93,7 @@ Mechanically this is one `ParsedMap` with a fixed tile grid, and a terrain/enemy
 
 ## 6. Companion catalogue: 1 PC + 3 active, roster larger than the party
 
-Party size is already fixed at 4 in code (`MAX_PARTY_SIZE = 4`, `CharacterCreationScene.ts:142`) — 1 PC + 3 companions fits the existing engine exactly, no mechanical change needed there.
+Party size is already fixed at 4 in code (`MAX_PARTY_SIZE = 4` in `CharacterCreationScene.ts`) — 1 PC + 3 companions fits the existing engine exactly, no mechanical change needed there.
 
 **Extended to 12 companions, one per playable class (D-177).** Kevin's own call, after this doc's original six shipped as design text: the roster should double as a soft tour of every class over the course of the campaign, BG3-style, even though the player only ever has 3 active alongside the PC at once. The original six below keep their region-mirror story weight; six more (Brand Ashcairn/Barbarian, Wren Calloway/Bard, Perrin Holt/Cleric, Mira Quill/Monk, Cass Ferrow/Rogue, Ellery Vance/Sorcerer) were added as ordinary recruits with a one-line hook apiece — not boss-mirror companions, since only six regions/bosses exist for the original six to pair with. All 12 are real, playable `CharacterBuild` data as of D-177 (`data/companions.ts`) — dialogue/full arcs for the original six are still the separate writing pass §9 already flagged; the new six were never meant to carry that weight in the first place.
 
@@ -89,7 +106,7 @@ Per your call, the party needs to be full (PC + 3) starting in Region 1, Chapter
 
 **Recruitable trio (join as their region is reached):**
 4. **Tamsin Rourke** — a smith's apprentice, afraid that her own obsession with craft and vengeance is exactly how Cinderlord started. Joins Region 1 (Emberford).
-5. **Dorian Wick** — lost family to The Devourer; grief burning down slow, like a wick, into the same hollow hunger if left unchecked. Joins Region 2 (Causeway).
+5. **Dorian Wick** — lost family to The Devourer; grief burning down slow, like a wick, into the same hollow hunger if left unchecked. Originally joined via Region 2 (Causeway) Ch1; **D-253 moved his recruitment to his own standalone side mission** ("What the Causeway Kept") once Causeway was demoted to optional content — he's mechanically identical, just recruited like the six Pool A companions now rather than via a region's Chapter 1. His own "homecoming" mirror-boss reaction dialogue was removed as part of that move (Pool A companions don't carry that beat) — a deliberate, accepted loss, not an oversight.
 6. **Sorrel Thane** — a warden who's spent too long on Blightmother's ground and is visibly, slowly losing themselves to it. Joins Region 4 (Drowning Vale). See below — this one has its own branch chain rather than a single risk flag.
 
 Because the party is *always* full, every recruitment past the opening trio is inherently a bench decision — there's no such thing as a free slot to fill. Some of these should be **automatic** (the story forces a swap — e.g. a starting companion is unavailable for story reasons right when a new one arrives) and some should be **offered as a real choice** (the game stops and asks who to bench). Mechanically, each companion is just a named `HeroDefinition` with a preset starting build the player can keep customizing after recruitment — this reuses the existing custom-build hero system entirely rather than reintroducing a separate fixed-roster mechanic.
@@ -155,7 +172,9 @@ Before starting (or replaying) any region, offer a choice of 3 bonuses, HOMM3-st
   meant: (1) a real first-draft dialogue pass for all 6 original
   companions — an arrival beat (`data/companionDialogue.ts`'s
   `COMPANION_RECRUITMENT_DIALOGUE`) when their own home region's Chapter 1
-  clears, real `introText`/`outroText` on all 24 region chapters, and a
+  clears, real `introText`/`outroText` on all 24 region chapters (since
+  reduced to 19 mandatory-region chapters by D-253 below — Dorian Wick's own
+  two dialogue entries were removed as part of that change), and a
   "homecoming beat" (`COMPANION_MIRROR_REACTION_DIALOGUE`) when their
   region's own Ch4 mirror boss falls — two of which (Fenna/Saltmere,
   Isolde/Frostbound) react with genuinely different TONE depending on the
@@ -170,6 +189,22 @@ Before starting (or replaying) any region, offer a choice of 3 bonuses, HOMM3-st
   subclass selection, and no new branch-choice chains invented for the
   other 5 companions — only Sorrel has one, per this doc's own §6. See
   D-189 in `DECISIONS.md` for the full build.
+
+- **Addendum (D-253, Batch H):** Kevin's own playtest feedback (item 13 of
+  the 2026-09-09 19-item list) restructured this doc's original 6-region,
+  24-chapter, per-region-1-20-band model: Shattered Causeway demoted to
+  optional/non-mandatory content (still fully playable, just excluded from
+  `REGION_CAMPAIGN_IDS` and the capstone gate), Emberford Reach's Chapter 3
+  cut (3 chapters, not 4), landing the 5 mandatory regions at exactly 19
+  total chapters. Campaign leveling now grants exactly one level per
+  chapter clear, order-independent, replacing the per-region 1-20 band
+  model entirely — see §2/§3's own inline annotations above. Dorian Wick's
+  recruitment moved from Shattered Causeway's Chapter 1 to his own new side
+  mission (§6), which also meant removing his "homecoming beat" mirror
+  dialogue (Pool A companions don't carry that beat) — a deliberate,
+  accepted narrative loss, not an oversight. Item 12 of the same list (a
+  chapter-select submenu) shipped alongside this, unrelated to the story
+  content itself. See D-253 in `DECISIONS.md` for the full build.
 
 **Still open, carried into the next session:**
 - Exact bonus-choice pool contents and numeric budgets per region (§8).

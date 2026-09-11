@@ -66,6 +66,18 @@ export interface CompanionRosterState {
    * every pooled item has been claimed or resolved.
    */
   partyInventory?: PartyInventoryEntry[];
+  /**
+   * `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 3: gear the between-missions
+   * Armory purchased/sold for a companion, layered ON TOP of their authored
+   * baseline (`companionStartingGearForDifficulty(...)`) — keyed by
+   * companion id, then by slot. A `string` value is a purchased item pinned
+   * over the baseline; `null` means the player explicitly SOLD an authored
+   * item from that slot, so the baseline must not resurrect it. An absent
+   * slot key (or absent companion entry, or the whole field absent) means
+   * "no override, use the authored baseline as-is" — the default for every
+   * blob saved before this plan. See `applyPurchasedGearOverrides`.
+   */
+  companionPurchasedGear?: Record<string, Partial<Record<GearSlotId, string | null>>>;
 }
 
 export const DEFAULT_COMPANION_ROSTER_STATE: CompanionRosterState = {
@@ -130,6 +142,22 @@ function parsePartyInventory(value: unknown): PartyInventoryEntry[] | undefined 
   return entries.length > 0 ? entries : undefined;
 }
 
+/** Plan 3: same plausibility-check spirit as this file's other parsers — every value is a string (a pinned item) or null (an explicit sale). */
+function isPlausiblePurchasedGearMap(value: unknown): value is Partial<Record<GearSlotId, string | null>> {
+  if (typeof value !== "object" || value === null) return false;
+  return Object.values(value as Record<string, unknown>).every((v) => v === null || typeof v === "string");
+}
+
+function parseCompanionPurchasedGear(
+  value: unknown,
+): Record<string, Partial<Record<GearSlotId, string | null>>> | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>).filter(([, m]) =>
+    isPlausiblePurchasedGearMap(m),
+  ) as [string, Partial<Record<GearSlotId, string | null>>][];
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 /**
  * Read roster state from storage, falling back to the default (nobody
  * recruited) state on missing or corrupt data — same defensiveness as
@@ -149,6 +177,7 @@ export function loadCompanionRoster(storage: CompanionRosterStorage, key: string
       companionBuilds: parseCompanionBuilds(parsed.companionBuilds),
       pcBuild: isPlausibleCharacterBuild(parsed.pcBuild) ? parsed.pcBuild : undefined,
       partyInventory: parsePartyInventory(parsed.partyInventory),
+      companionPurchasedGear: parseCompanionPurchasedGear(parsed.companionPurchasedGear),
     };
   } catch {
     return DEFAULT_COMPANION_ROSTER_STATE;
@@ -300,4 +329,55 @@ export function getPartyInventory(state: CompanionRosterState): PartyInventoryEn
 /** Plan 2.3: replace the shared party inventory wholesale. An empty array is stored as `undefined` (matches this field's own "absent = empty" convention). */
 export function setPartyInventory(state: CompanionRosterState, entries: PartyInventoryEntry[]): CompanionRosterState {
   return { ...state, partyInventory: entries.length > 0 ? entries : undefined };
+}
+
+/** Plan 3: a companion's Armory purchase/sale overrides, or `undefined` if they have none. */
+export function getCompanionPurchasedGear(
+  state: CompanionRosterState,
+  companionId: string,
+): Partial<Record<GearSlotId, string | null>> | undefined {
+  return state.companionPurchasedGear?.[companionId];
+}
+
+/**
+ * Plan 3: set (or clear, with `itemId: null`) one companion's purchased-gear
+ * override for one slot — a `string` pins a purchased item over their
+ * authored baseline; `null` marks the slot explicitly emptied (an authored
+ * item sold outright), so the baseline can't resurrect it.
+ */
+export function setCompanionPurchasedGearSlot(
+  state: CompanionRosterState,
+  companionId: string,
+  slot: GearSlotId,
+  itemId: string | null,
+): CompanionRosterState {
+  const existing = state.companionPurchasedGear?.[companionId] ?? {};
+  return {
+    ...state,
+    companionPurchasedGear: {
+      ...state.companionPurchasedGear,
+      [companionId]: { ...existing, [slot]: itemId },
+    },
+  };
+}
+
+/**
+ * Plan 3: layer a companion's purchased-gear overrides on top of their
+ * (already difficulty-trimmed) authored baseline — a `string` override
+ * replaces that slot's baseline item; a `null` override removes it
+ * entirely; an absent override leaves the baseline slot untouched. Shared
+ * between `CharacterCreationScene` and the between-missions Armory scene so
+ * both agree on "what does this companion currently have."
+ */
+export function applyPurchasedGearOverrides(
+  baseline: Partial<Record<GearSlotId, string>>,
+  overrides: Partial<Record<GearSlotId, string | null>> | undefined,
+): Partial<Record<GearSlotId, string>> {
+  if (!overrides) return baseline;
+  const result: Partial<Record<GearSlotId, string>> = { ...baseline };
+  for (const [slot, itemId] of Object.entries(overrides)) {
+    if (itemId === null) delete result[slot as GearSlotId];
+    else result[slot as GearSlotId] = itemId;
+  }
+  return result;
 }

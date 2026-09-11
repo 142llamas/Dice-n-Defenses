@@ -53,9 +53,11 @@ export interface CampaignDefinition {
   lootPoolIds?: readonly string[];
   /**
    * D-118 (engine scaffolding for CAMPAIGN_STORY_DESIGN.md's "region"
-   * structure): a "region" campaign is 4 chapters (1-5/6-10/11-15/16-20)
-   * instead of one flat wave list. Optional and unused by both existing
-   * campaigns on purpose — they stay flat, single-chapter campaigns with
+   * structure): a "region" campaign is a chapter list (originally always 4,
+   * 1-5/6-10/11-15/16-20 — D-253 later cut Emberford Reach to 3, so this is
+   * no longer universal) instead of one flat wave list. Optional and unused
+   * by both original flat campaigns on purpose — they stay single-chapter
+   * campaigns with
    * zero behavior change. When present, `waves`/`bossEnemyId`/`lootPoolIds`
    * above should still describe the FINALE chapter (chapter index
    * `chapters.length - 1`), so any code that isn't chapter-aware yet keeps
@@ -105,7 +107,7 @@ export interface ChapterDefinition {
   /** Chapters 1 and 4 name a real miniboss/boss per the design doc's §2/§3; chapters 2-3 may still name one, but it's not required. */
   bossEnemyId?: string;
   lootPoolIds?: readonly string[];
-  /** Minimal chapter-boundary storytelling (CAMPAIGN_STORY_DESIGN.md §7's "no need for a full dialogue engine yet") — shown before/after the chapter's waves. No rendering exists for these yet; declared for content to fill in once that UI does. */
+  /** Minimal chapter-boundary storytelling (CAMPAIGN_STORY_DESIGN.md §7's "no need for a full dialogue engine yet") — shown before/after the chapter's waves via `BattleScene.showChapterIntroIfAny`/`showChapterOutroIfAny` (D-177). */
   introText?: string;
   outroText?: string;
   /**
@@ -163,18 +165,52 @@ export function getChapter(def: CampaignDefinition, chapterIndex: number): Chapt
 }
 
 /**
- * D-217 (item 3c/3d): the level-up milestone track for chapter
- * `chapterIndex` of `def` — a side mission always gets an empty track (no
- * XP/levels, structurally, regardless of what its waves/levelRange say);
- * otherwise an explicit `ChapterDefinition.levelMilestones` wins, and
- * absent that, a default even spread is derived from the chapter's own
- * `levelRange`/`waves.length` via `generateLevelMilestones` — the same
- * generator Free Play's Run Length presets use.
+ * D-253 (Batch H, item 13): the level context needed to compute a chaptered
+ * campaign's new one-level-per-chapter-clear cadence — `currentLevel` is
+ * `campaignLevelState.campaignLevel` BEFORE this chapter's own clear (regions
+ * unlock in parallel with no forced order, so this is the only sane anchor);
+ * `alreadyCompleted` is whether THIS chapter index was already cleared in an
+ * earlier playthrough. Without gating on `alreadyCompleted`, replaying an
+ * already-cleared chapter would grant another free level every time, since
+ * `LevelMilestoneSystem`'s starting level is always read fresh from
+ * `campaignLevelState` — this is the guard against farming level 20 by
+ * replaying Chapter 1 repeatedly.
  */
-export function chapterLevelMilestones(def: CampaignDefinition, chapterIndex: number): LevelMilestoneTrack {
+export interface ChapterClearLevelContext {
+  currentLevel: number;
+  alreadyCompleted: boolean;
+}
+
+/**
+ * D-217 (item 3c/3d), extended by D-253 (Batch H, item 13): the level-up
+ * milestone track for chapter `chapterIndex` of `def`. A side mission always
+ * gets an empty track (no XP/levels, structurally, regardless of what its
+ * waves/levelRange say); an explicit `ChapterDefinition.levelMilestones` wins
+ * next. Otherwise, for a REAL chaptered campaign (a region, or Shattered
+ * Causeway) when `levelContext` is supplied — the only production caller,
+ * `BattleScene.ts`, always supplies it for a chaptered campaign — this grants
+ * exactly ONE level after the chapter's last wave (order-independent, unlike
+ * the old per-wave ramp toward a fixed `levelRange` band), capped at 20, or
+ * nothing at all if this exact chapter was already completed before. Every
+ * other case (no `levelContext`, e.g. every existing 2-arg test call site, or
+ * a flat campaign like the Prologue/Nameless Throne) falls back to the
+ * original default-even-spread-from-`levelRange` behavior via
+ * `generateLevelMilestones` — the same generator Free Play's Run Length
+ * presets use, and completely unaffected by this change (Free Play never
+ * calls this function).
+ */
+export function chapterLevelMilestones(
+  def: CampaignDefinition,
+  chapterIndex: number,
+  levelContext?: ChapterClearLevelContext,
+): LevelMilestoneTrack {
   if (def.isSideMission) return [];
   const chapter = getChapter(def, chapterIndex);
   if (chapter.levelMilestones) return chapter.levelMilestones;
+  if (isChapteredCampaign(def) && levelContext) {
+    if (levelContext.alreadyCompleted) return [];
+    return [{ afterWave: chapter.waves.length, level: Math.min(levelContext.currentLevel + 1, 20) }];
+  }
   return generateLevelMilestones(chapter.waves.length, chapter.levelRange[1], chapter.levelRange[0]);
 }
 
@@ -193,14 +229,18 @@ export function chapterLevelMilestones(def: CampaignDefinition, chapterIndex: nu
 export const PROLOGUE_CAMPAIGN_ID = "prologue";
 
 /**
- * D-188: the 6 CAMPAIGN_STORY_DESIGN.md §3 regions — excludes the Proving
- * Ground prologue and the Nameless Throne capstone. Single source of truth
- * for both `CampaignSelectScene`'s capstone-gate check and
+ * D-253 (Batch H, item 13): the 5 MANDATORY CAMPAIGN_STORY_DESIGN.md §3
+ * regions — excludes the Proving Ground prologue and the Nameless Throne
+ * capstone, and (as of D-253) also excludes Shattered Causeway, demoted to
+ * optional/non-mandatory side content. Single source of truth for both
+ * `CampaignSelectScene`'s capstone-gate check and
  * `tests/campaigns.test.ts`'s own region filter, so the two can't drift.
+ * Shattered Causeway stays a full, playable `CampaignDefinition` in
+ * `CAMPAIGNS` below — it just isn't required for the Nameless Throne gate or
+ * counted by `CampaignLevelSystem.highestReachedCampaignLevel`'s backfill.
  */
 export const REGION_CAMPAIGN_IDS: string[] = [
   "emberford-reach",
-  "shattered-causeway",
   "cinderfall-rift",
   "drowning-vale",
   "saltmere-shallows",
@@ -209,6 +249,14 @@ export const REGION_CAMPAIGN_IDS: string[] = [
 
 /** D-188: the campaign capstone, CAMPAIGN_STORY_DESIGN.md §5. */
 export const NAMELESS_THRONE_CAMPAIGN_ID = "nameless-throne";
+
+/**
+ * D-254: named so `NamelessThroneSystem.computeMercyTally`'s caller can check
+ * whether this now-optional region was ever played, and exclude its miniboss
+ * entry from the mercy tally when it wasn't (a skipped region must never be
+ * silently counted as "finished it, showed no mercy").
+ */
+export const SHATTERED_CAUSEWAY_CAMPAIGN_ID = "shattered-causeway";
 
 // D-228 (KI-177 item 1): explicit `spawnIndex` per group across
 // `PROLOGUE_MAP`'s 2 spawn points (0=row2, 1=row5 — see that file's own
@@ -572,57 +620,6 @@ const EMBERFORD_CH2_WAVES: WaveDefinition[] = [
   },
 ];
 
-const EMBERFORD_CH3_WAVES: WaveDefinition[] = [
-  {
-    id: "emberford-ch3-wave-1",
-    turnLimit: 12,
-    spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 3 },
-      { enemyId: "hexer", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
-    ],
-    completionGold: 34,
-    timeBonusGold: 10,
-  },
-  {
-    id: "emberford-ch3-wave-2",
-    turnLimit: 13,
-    spawns: [
-      { enemyId: "brute", count: 1, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
-      { enemyId: "hexer", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 3 },
-      { enemyId: "ravager", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 2 },
-    ],
-    completionGold: 38,
-    timeBonusGold: 11,
-  },
-  {
-    id: "emberford-ch3-wave-3",
-    turnLimit: 14,
-    spawns: [
-      { enemyId: "warden", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 0 },
-      { enemyId: "warden", count: 1, startTurn: 1, intervalTurns: 2, spawnIndex: 2 },
-      { enemyId: "brute", count: 1, startTurn: 2, intervalTurns: 1, spawnIndex: 1 },
-      { enemyId: "marauder", count: 2, startTurn: 2, intervalTurns: 1, spawnIndex: 3 },
-    ],
-    completionGold: 42,
-    timeBonusGold: 12,
-  },
-  {
-    id: "emberford-ch3-wave-4",
-    turnLimit: 14,
-    spawns: [
-      { enemyId: "ravager", count: 3, startTurn: 1, intervalTurns: 1, spawnIndex: 0 },
-      { enemyId: "ravager", count: 2, startTurn: 1, intervalTurns: 1, spawnIndex: 2 },
-      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 2, spawnIndex: 1 },
-      { enemyId: "warden", count: 1, startTurn: 2, intervalTurns: 2, spawnIndex: 3 },
-    ],
-    completionGold: 46,
-    timeBonusGold: 13,
-  },
-];
-
 // D-228 (KI-177 item 1): same treatment as `EMBERFORD_CH1..4_WAVES` above —
 // explicit `spawnIndex` per group across `SALTMERE_MAP`'s 4 spawn points
 // (0=top, 1=left, 2=right, 3=bottom), several groups sharing a `startTurn`
@@ -791,6 +788,10 @@ const SALTMERE_CH3_WAVES: WaveDefinition[] = [
  * Frostbound Hollow (Bloodrage Warlord / Sundered King) — all eight enemies
  * already existed in `data/enemies.ts` (Phase 20/21), so unlike D-179's
  * Saltmere fallback, no new enemy was needed here.
+ *
+ * D-253 update: Shattered Causeway was later demoted from mandatory to
+ * optional/non-mandatory side content (removed from `REGION_CAMPAIGN_IDS`
+ * only) — its own 4-chapter structure below is otherwise untouched.
  */
 
 // ----- Shattered Causeway (chasm/pit crossing) -----------------------------
@@ -1866,16 +1867,14 @@ export const CAMPAIGNS: CampaignDefinition[] = [
           "Cinderlord retreats deeper into the furnace-heart of the Reach, wounded but far from finished. Whatever's left of the smith in him hasn't shown itself yet.",
       },
       {
+        // D-253 (Batch H, item 13): the old Chapter 3 ("Emberford's ash
+        // fields...") was cut — pure directional flavor text, no bossEnemyId,
+        // no world-flag/dialogue hooks, safest of the 3 viable candidates
+        // (Cinderfall Rift and Saltmere Shallows both carry real narrative
+        // weight their Ch3 would lose). This chapter is the old Ch4 (the
+        // real finale) renamed down one slot — content/waves/boss untouched.
         id: "emberford-ch3",
         name: "Emberford Reach — Chapter 3",
-        levelRange: [11, 15],
-        waves: EMBERFORD_CH3_WAVES,
-        introText: "Emberford's ash fields stretch wider than the maps say — every step here is a step Cinderlord's forge has already claimed.",
-        outroText: "The ash fields are cleared, and the road ahead runs straight for the furnace. There's no plausible detour left.",
-      },
-      {
-        id: "emberford-ch4",
-        name: "Emberford Reach — Chapter 4",
         levelRange: [16, 20],
         waves: EMBERFORD_WAVES,
         bossEnemyId: "cinderlord",
@@ -2150,9 +2149,10 @@ export const CAMPAIGNS: CampaignDefinition[] = [
     // returning miniboss is actually incoming).
     bossEnemyId: "ashen-sovereign",
     lootPoolIds: NAMELESS_THRONE_LOOT_POOL,
-    // D-217: gated behind clearing all 6 regions, so the player should
-    // already be at campaignLevel 20 by the time they reach it — fought
-    // entirely at the cap, no further ramp.
+    // D-217: gated behind clearing all mandatory regions (5, per
+    // `REGION_CAMPAIGN_IDS` — D-253 demoted Shattered Causeway to optional),
+    // so the player should already be at campaignLevel 20 by the time they
+    // reach it — fought entirely at the cap, no further ramp.
     levelRange: [20, 20],
   },
 ];
@@ -2334,7 +2334,49 @@ const ELLERY_VANCE_WAVES: WaveDefinition[] = [
   },
 ];
 
+// D-253 (Batch H, item 13): Dorian Wick moves from a Pool B (`homeRegionId`)
+// companion to Pool A (`sideMissionId`) now that Shattered Causeway is
+// optional/non-mandatory content — same 3-wave, no-`spawnIndex` shape as
+// every other side mission above. `side-wren-calloway` already proves
+// reusing `CAUSEWAY_MAP.id` for a side mission (despite Wren having no
+// region tie) is a safe, precedented pattern; doubly apt here since Dorian's
+// whole hook is Causeway-flavored grief.
+const DORIAN_WICK_WAVES: WaveDefinition[] = [
+  { id: "side-dorian-wave-1", turnLimit: 7, spawns: [{ enemyId: "runner", count: 2, startTurn: 1, intervalTurns: 1 }], completionGold: 9, timeBonusGold: 4 },
+  {
+    id: "side-dorian-wave-2",
+    turnLimit: 8,
+    spawns: [
+      { enemyId: "hexer", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "ravager", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 12,
+    timeBonusGold: 5,
+  },
+  {
+    id: "side-dorian-wave-3",
+    turnLimit: 9,
+    spawns: [
+      { enemyId: "grunt", count: 2, startTurn: 1, intervalTurns: 1 },
+      { enemyId: "marauder", count: 1, startTurn: 2, intervalTurns: 1 },
+    ],
+    completionGold: 16,
+    timeBonusGold: 6,
+  },
+];
+
 export const SIDE_MISSIONS: CampaignDefinition[] = [
+  {
+    id: "side-dorian-wick",
+    name: "Dorian Wick — What the Causeway Kept",
+    description:
+      "Dorian goes back to the Causeway alone, looking for anything The Devourer might have left behind that still remembers being a person.",
+    mapId: CAUSEWAY_MAP.id,
+    waves: DORIAN_WICK_WAVES,
+    bossEnemyId: "marauder",
+    lootPoolIds: SIDE_MISSION_LOOT_POOL,
+    isSideMission: true,
+  },
   {
     id: "side-brand-ashcairn",
     name: "Brand Ashcairn — A Fair Wage",

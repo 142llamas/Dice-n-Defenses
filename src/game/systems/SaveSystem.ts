@@ -34,7 +34,7 @@ export interface SaveSlot {
   difficultyId: DifficultyId;
   /**
    * D-201: set only when this party was saved from an active campaign run
-   * (the in-battle pause menu's "Save Party"/"Save & Exit", the only path
+   * (the in-battle pause menu's "Save Party"/"Save Game", the only path
    * that can produce a campaign-linked slot — `CharacterCreationScene`'s
    * own pre-battle Save Party is hidden in campaign mode, Plan 3.7).
    * Absent for a classic/Free Play save. `LoadGameScene` forwards both back

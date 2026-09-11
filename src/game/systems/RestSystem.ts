@@ -14,8 +14,8 @@ import type { Hero } from "../entities/Hero";
  * `takeLongRest` with the currently-living heroes. This class only tracks
  * the remaining charge counts and rejects a rest with none left; the actual
  * per-hero effects live on `Hero` (`shortRest`/`longRest`), the same
- * division of responsibility `ProgressionSystem.applyChoice` already uses
- * for level-up choices.
+ * division of responsibility `ProgressionSystem` uses for level-up cadence
+ * (it only tracks WHEN a level-up is due; `Hero.levelUpClass()` does it).
  */
 
 export interface RestOptions {

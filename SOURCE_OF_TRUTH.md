@@ -629,9 +629,16 @@ competitive mode initially.
 > specifically. A SEPARATE overworld/campaign-only leveling track (special
 > bonuses unlocked by story progress) is a distinct, deliberately
 > not-yet-designed thing that isn't part of this table's "Level cadence"
-> item at all — see `KNOWN_ISSUES.md` KI-098 item 13. Per the first
-> repo-note above, still genuinely OPEN: rest system, multiclassing,
-> structure destruction.
+> item at all — see `KNOWN_ISSUES.md` KI-098 item 13.
+>
+> **Repo note (added 2026-09-11, correcting the 2026-08-24 note above):** of
+> that note's three "still genuinely OPEN" items, two were already resolved
+> by the time it was written and one still isn't. A rest system shipped in
+> Phase 13.4 (D-088, `RestSystem.ts` — a per-run Short/Long Rest charge
+> pool), and structure destruction went from partially resolved (D-111,
+> Phase 20) to substantially built out by D-116 (Phase 25's opportunistic
+> wall-bash, any melee enemy) and D-145 (real siege wall-targeting) — both
+> predate 2026-08-24. Only **multiclassing** is still genuinely OPEN.
 
 ## 10. GitHub and Cross-Chat Handoff Workflow
 

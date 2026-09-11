@@ -126,7 +126,8 @@ export function isCampaignCompleted(progress: CampaignProgress, campaignId: stri
 
 /**
  * D-188: the capstone's own gating check — locked until every id in
- * `campaignIds` (the 6 regions) is individually completed. Vacuously true
+ * `campaignIds` (the mandatory regions — 5 as of D-253, since Shattered
+ * Causeway was demoted to optional) is individually completed. Vacuously true
  * for an empty list. The first "all of these ids" aggregate helper in this
  * system — every other query here checks one campaign id at a time.
  */

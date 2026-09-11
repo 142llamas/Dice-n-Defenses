@@ -6,6 +6,7 @@ import { CharacterCreationScene } from "./game/scenes/CharacterCreationScene";
 import { CompendiumScene } from "./game/scenes/CompendiumScene";
 import { BestiaryScene } from "./game/scenes/BestiaryScene";
 import { CampaignSelectScene } from "./game/scenes/CampaignSelectScene";
+import { ChapterSelectScene } from "./game/scenes/ChapterSelectScene";
 import { ModeEntryScene } from "./game/scenes/ModeEntryScene";
 import { KnowledgeBaseScene } from "./game/scenes/KnowledgeBaseScene";
 import { CompanionRosterScene } from "./game/scenes/CompanionRosterScene";
@@ -21,6 +22,8 @@ import { CharacterSheetScene } from "./game/scenes/CharacterSheetScene";
 import { PauseMenuScene } from "./game/scenes/PauseMenuScene";
 import { SettingsScene } from "./game/scenes/SettingsScene";
 import { GearShopScene } from "./game/scenes/GearShopScene";
+import { CampaignArmoryScene } from "./game/scenes/CampaignArmoryScene";
+import { RegionBonusChoiceScene } from "./game/scenes/RegionBonusChoiceScene";
 
 /**
  * Application entry point.
@@ -78,6 +81,7 @@ const config: Phaser.Types.Core.GameConfig = {
     BestiaryScene,
     KnowledgeBaseScene,
     CampaignSelectScene,
+    ChapterSelectScene,
     ModeEntryScene,
     CompanionRosterScene,
     UnlockMissionPartyScene,
@@ -92,6 +96,8 @@ const config: Phaser.Types.Core.GameConfig = {
     PauseMenuScene,
     SettingsScene,
     GearShopScene,
+    CampaignArmoryScene,
+    RegionBonusChoiceScene,
   ],
 };
 

@@ -108,6 +108,29 @@ describe("mercyTallyLeansHollow", () => {
   });
 });
 
+describe("computeMercyTally — Shattered Causeway exclusion (D-254)", () => {
+  // Shattered Causeway (D-253) is optional. A player who never plays it never
+  // sets `spared:juggernaut`, which used to be silently counted as "finished
+  // it, showed no mercy." `causewayPlayed` lets a genuinely-skipped Causeway
+  // be excluded from the tally entirely instead.
+  const nonCausewayIds = MINIBOSS_IDS.filter((id) => id !== "juggernaut");
+
+  it("excludes Causeway's miniboss from the tally when causewayPlayed is false, turning an otherwise-hollow-leaning tally into a tie", () => {
+    const flags = spareAll(nonCausewayIds.slice(0, 2)); // 2 of the 4 non-Causeway minibosses spared
+    // Counted (causewayPlayed defaults to true, matching every pre-D-254 call site): 2 ashen, 3 hollow -> Hollow.
+    expect(resolveThroneVariant(flags)).toBe("the-hollow-empress");
+    // Excluded (never played): 2 ashen, 2 hollow -> tie -> Ashen (the documented tie-break).
+    expect(resolveThroneVariant(flags, false)).toBe("ashen-sovereign");
+    expect(mercyTallyLeansHollow(flags, false)).toBe(false);
+  });
+
+  it("still counts Causeway as not-spared when causewayPlayed is true, even if it wasn't spared", () => {
+    const flags = spareAll(nonCausewayIds.slice(0, 2));
+    expect(resolveThroneVariant(flags, true)).toBe("the-hollow-empress");
+    expect(mercyTallyLeansHollow(flags, true)).toBe(true);
+  });
+});
+
 describe("withThroneVariant", () => {
   it("returns the SAME map reference for the Ashen variant (the base map is already Ashen-dressed)", () => {
     expect(withThroneVariant(NAMELESS_THRONE_MAP, "ashen-sovereign")).toBe(NAMELESS_THRONE_MAP);

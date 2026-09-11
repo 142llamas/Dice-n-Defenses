@@ -112,6 +112,13 @@ export function saveSettings(storage: SettingsStorage, key: string, settings: Se
   storage.setItem(key, JSON.stringify(settings));
 }
 
+/** Batch G (item 19): writes the defaults to storage and returns them, for a "Reset to Default" control. */
+export function resetSettings(storage: SettingsStorage, key: string): Settings {
+  const defaults = { ...DEFAULT_SETTINGS };
+  saveSettings(storage, key, defaults);
+  return defaults;
+}
+
 /** True once the player has dismissed the one-time tutorial prompt before. */
 export function hasSeenTutorial(storage: SettingsStorage, key: string): boolean {
   return storage.getItem(key) === "1";

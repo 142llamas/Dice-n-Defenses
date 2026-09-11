@@ -109,6 +109,13 @@ export function saveKeyBindings(storage: KeyBindingStorage, key: string, binding
   storage.setItem(key, JSON.stringify(bindings));
 }
 
+/** Batch G (item 19): writes the defaults to storage and returns them, for a "Reset to Default" control. */
+export function resetKeyBindings(storage: KeyBindingStorage, key: string): KeyBindings {
+  const defaults = { ...DEFAULT_KEY_BINDINGS };
+  saveKeyBindings(storage, key, defaults);
+  return defaults;
+}
+
 /**
  * Whether assigning `code` to `action` would conflict with something already
  * using it — the OTHER two rebindable actions, or the fixed reserved list.

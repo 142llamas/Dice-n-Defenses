@@ -43,15 +43,15 @@ describe("COMPANIONS", () => {
     COMPANIONS.forEach((c) => expect(() => heroDefinitionFromBuild(c.build)).not.toThrow());
   });
 
-  it("splits into two 6-companion pools by homeRegionId presence (KI-098 item 13 Phase 1)", () => {
-    expect(POOL_A_COMPANION_IDS).toHaveLength(6);
-    expect(POOL_B_COMPANION_IDS).toHaveLength(6);
+  it("splits into a 7-companion Pool A and a 5-companion Pool B by homeRegionId presence (D-253: Dorian Wick moved to Pool A)", () => {
+    expect(POOL_A_COMPANION_IDS).toHaveLength(7);
+    expect(POOL_B_COMPANION_IDS).toHaveLength(5);
     expect(new Set([...POOL_A_COMPANION_IDS, ...POOL_B_COMPANION_IDS]).size).toBe(12);
     POOL_A_COMPANION_IDS.forEach((id) => expect(getCompanionDefinition(id).homeRegionId).toBeUndefined());
     POOL_B_COMPANION_IDS.forEach((id) => expect(getCompanionDefinition(id).homeRegionId).toBeDefined());
   });
 
-  it("all 6 mirror companions now have a homeRegionId, and each resolves to a real campaign (D-180)", () => {
+  it("all 5 remaining mirror companions have a homeRegionId, and each resolves to a real campaign (D-180, D-253)", () => {
     const withRegion = COMPANIONS.filter((c) => c.homeRegionId);
     expect(withRegion.map((c) => c.homeRegionId).sort()).toEqual([
       "cinderfall-rift",
@@ -59,7 +59,6 @@ describe("COMPANIONS", () => {
       "emberford-reach",
       "frostbound-hollow",
       "saltmere-shallows",
-      "shattered-causeway",
     ]);
     withRegion.forEach((c) => expect(() => getCampaignDefinition(c.homeRegionId!)).not.toThrow());
   });
@@ -76,7 +75,7 @@ describe("COMPANIONS", () => {
       expect(() => getCampaignDefinition(sideMissionId!)).not.toThrow();
     });
     const sideMissionIds = POOL_A_COMPANION_IDS.map((id) => getCompanionDefinition(id).sideMissionId);
-    expect(new Set(sideMissionIds).size).toBe(6);
+    expect(new Set(sideMissionIds).size).toBe(7);
     POOL_B_COMPANION_IDS.forEach((id) => expect(getCompanionDefinition(id).sideMissionId).toBeUndefined());
   });
 });

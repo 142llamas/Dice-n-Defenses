@@ -7,7 +7,9 @@
  * .drawRegionBonusChoices`) from that region's own curated pool below.
  * Per §8, every pool covers all THREE categories (D-217 dropped "xp" — see
  * below) so a drawn triplet is never accidentally lopsided toward one kind
- * of advantage:
+ * of advantage — D-248 made this an actual guarantee of the draw itself
+ * (at most one option per category), not just a property of the pool's
+ * shape, after the two-gold-tiers-drawn-together dominance bug:
  *   - **gold** — a flat starting-gold grant (`goldAmount`). Two tiers per
  *     region now (a modest one and a bigger one), filling the slot the
  *     removed "xp" category left rather than shrinking the pool.

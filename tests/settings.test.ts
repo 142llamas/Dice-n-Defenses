@@ -6,6 +6,7 @@ import {
   loadSettings,
   markTutorialSeen,
   nextAnimationSpeed,
+  resetSettings,
   saveSettings,
   toggleMuted,
   type SettingsStorage,
@@ -54,6 +55,13 @@ describe("SettingsSystem", () => {
     const full = { animationSpeed: "fast" as const, masterVolume: 50, musicVolume: 25, sfxVolume: 100, muted: true };
     saveSettings(storage, "k", full);
     expect(loadSettings(storage, "k")).toEqual(full);
+  });
+
+  it("resetSettings writes defaults to storage and returns them", () => {
+    const storage = fakeStorage();
+    saveSettings(storage, "k", { animationSpeed: "instant", masterVolume: 0, musicVolume: 0, sfxVolume: 0, muted: true });
+    expect(resetSettings(storage, "k")).toEqual(DEFAULT_SETTINGS);
+    expect(loadSettings(storage, "k")).toEqual(DEFAULT_SETTINGS);
   });
 
   it("nextAnimationSpeed cycles normal -> fast -> instant -> normal", () => {

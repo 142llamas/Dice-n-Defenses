@@ -15,17 +15,18 @@ import { StandardArrayAllocator, subclassIdForNewBuild } from "../systems/Charac
  *
  * Two pools, split by `homeRegionId` presence (see `POOL_A_COMPANION_IDS`/
  * `POOL_B_COMPANION_IDS` below):
- * - **Pool B** (the original six mirror companions): each tied to one
- *   region's boss. None start in the party — each unlocks onto the bench
- *   the first time their own home region's Chapter 1 is completed
- *   (`BattleScene.maybeUnlockHomeRegionCompanion`).
- * - **Pool A** (six ordinary class-coverage recruits, no region tie): 3 are
- *   drawn at random to seed a brand-new campaign's starting party
- *   (`CompanionSeedSystem.seedStartingCompanions`); the other 3 stay
- *   locked, each with its own `sideMissionId` — a fixed, flat, one-time
- *   battle (`data/campaigns.ts`'s `SIDE_MISSIONS`) reachable from
- *   `CompanionRosterScene`'s own locked card, that recruits the companion
- *   onto the bench on victory (`BattleScene.maybeUnlockSideMissionCompanion`).
+ * - **Pool B** (five region-mirror companions, six originally — see D-253
+ *   below): each tied to one region's boss. None start in the party — each
+ *   unlocks onto the bench the first time their own home region's Chapter 1
+ *   is completed (`BattleScene.maybeUnlockHomeRegionCompanion`).
+ * - **Pool A** (seven ordinary class-coverage recruits, no region tie, six
+ *   originally — see D-253 below): 3 are drawn at random to seed a
+ *   brand-new campaign's starting party (`CompanionSeedSystem
+ *   .seedStartingCompanions`); the other 4 stay locked, each with its own
+ *   `sideMissionId` — a fixed, flat, one-time battle (`data/campaigns.ts`'s
+ *   `SIDE_MISSIONS`) reachable from `CompanionRosterScene`'s own locked
+ *   card, that recruits the companion onto the bench on victory
+ *   (`BattleScene.maybeUnlockSideMissionCompanion`).
  *
  * Per the design doc's own framing: "each companion is just a named
  * `HeroDefinition` with a preset starting build the player can keep
@@ -36,11 +37,14 @@ import { StandardArrayAllocator, subclassIdForNewBuild } from "../systems/Charac
  * into a playable `HeroDefinition`) plus the story metadata
  * `CompanionRosterSystem`/`CompanionRosterScene` need.
  *
- * `homeRegionId` is set for all six mirror companions now that every region
- * has a real `CampaignDefinition` id: Tamsin → "emberford-reach", Fenna →
+ * `homeRegionId` is set for the five remaining mirror companions, each tied
+ * to a real `CampaignDefinition` id: Tamsin → "emberford-reach", Fenna →
  * "saltmere-shallows" (both Phase 26/D-177), and, as of Phase 27 (D-180),
- * Dorian → "shattered-causeway", Hollis → "cinderfall-rift", Sorrel →
- * "drowning-vale", Isolde → "frostbound-hollow".
+ * Hollis → "cinderfall-rift", Sorrel → "drowning-vale", Isolde →
+ * "frostbound-hollow". Dorian Wick was originally Pool B ("shattered-
+ * causeway") too, until D-253 (Batch H, item 13) demoted that region to
+ * optional/non-mandatory content and moved him to Pool A (`sideMissionId:
+ * "side-dorian-wick"`) instead — see his entry below.
  *
  * Every subclass field below is set the same way `CharacterCreationScene`
  * sets one for a player-built hero: `subclassIdForNewBuild` only ever
@@ -144,25 +148,6 @@ export const COMPANIONS: CompanionDefinition[] = [
       abilityScores: new StandardArrayAllocator(["str", "cha", "con", "wis", "dex", "int"]).scores(),
       controlledBy: "ai",
       startingGearIds: { weapon: "warhammer", chest: "chain-mail", shield: "shield" },
-    },
-  },
-  {
-    id: "dorian-wick",
-    name: "Dorian Wick",
-    homeRegionId: "shattered-causeway",
-    hook: "Lost family to The Devourer; grief burning down slow, like a wick, into the same hollow hunger if left unchecked. Joins Region 2 (Shattered Causeway).",
-    build: {
-      id: "dorian-wick",
-      name: "Dorian Wick",
-      raceId: "tiefling",
-      backgroundId: "criminal",
-      backgroundAbilityChoice: { con: 2, dex: 1 },
-      classId: "warlock",
-      level: 1,
-      abilityScores: new StandardArrayAllocator(["cha", "con", "dex", "wis", "int", "str"]).scores(),
-      controlledBy: "ai",
-      subclassId: subclassIdForNewBuild("warlock"),
-      startingGearIds: { weapon: "dagger", chest: "leather-armor", shield: "component-pouch" },
     },
   },
   {
@@ -302,6 +287,30 @@ export const COMPANIONS: CompanionDefinition[] = [
       controlledBy: "ai",
       subclassId: subclassIdForNewBuild("sorcerer"),
       startingGearIds: { weapon: "dagger", chest: "padded-armor", shield: "arcane-focus" },
+    },
+  },
+  {
+    // D-253 (Batch H, item 13): moved from Pool B (`homeRegionId:
+    // "shattered-causeway"`) to Pool A now that Shattered Causeway is
+    // optional/non-mandatory content — same build, same mechanical identity,
+    // just recruited via his own side mission instead of a home region's
+    // Chapter 1.
+    id: "dorian-wick",
+    name: "Dorian Wick",
+    sideMissionId: "side-dorian-wick",
+    hook: "Lost family to The Devourer; grief burning down slow, like a wick, into the same hollow hunger if left unchecked.",
+    build: {
+      id: "dorian-wick",
+      name: "Dorian Wick",
+      raceId: "tiefling",
+      backgroundId: "criminal",
+      backgroundAbilityChoice: { con: 2, dex: 1 },
+      classId: "warlock",
+      level: 1,
+      abilityScores: new StandardArrayAllocator(["cha", "con", "dex", "wis", "int", "str"]).scores(),
+      controlledBy: "ai",
+      subclassId: subclassIdForNewBuild("warlock"),
+      startingGearIds: { weapon: "dagger", chest: "leather-armor", shield: "component-pouch" },
     },
   },
 ];

@@ -20,12 +20,15 @@
  * to `"normal"` (see `BattleScene`'s `difficultyId` default), so it always
  * gets this tier's Rest budget too.
  *
- * D-194: two more per-tier numbers, CAMPAIGN MODE ONLY (never read by Free
+ * D-194: one more per-tier number, CAMPAIGN MODE ONLY (never read by Free
  * Play/manual Create Party, which stays fully free-pick per D-193) —
- * `startingGearPoints` (the PC's starting-gear point-buy budget) and
  * `companionDiscretionaryGearSlots` (how many of a campaign companion's
  * non-essential gear slots survive at this tier). Same first-pass/untuned
- * standing as every other number on this file.
+ * standing as every other number on this file. (A sibling field,
+ * `startingGearPoints` — the campaign PC's point-buy budget — existed here
+ * too until `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 5, D-246, retired it
+ * in favor of a fixed per-class starting kit; see
+ * `data/characterCreation.ts`'s `defaultStartingGearForClass`.)
  *
  * D-217 (item 3b): the threat-budget fields below (`eliteFraction` through
  * `cadenceMultiplier`) are the difficulty side of the progression redesign —
@@ -34,6 +37,33 @@
  * Difficulty); it only shapes enemy-wave PRESSURE, via
  * `systems/ThreatBudgetSystem.ts`. Same first-pass/untuned standing as
  * every other number on this file — Kevin tunes these in-browser.
+ *
+ * `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 1: two more CAMPAIGN-MODE-ONLY
+ * fields, `startingCampaignGold` (a one-time starting kit budget, granted
+ * once before Chapter 2 — see `CampaignArmoryScene`) and
+ * `campaignGoldMultiplier` (a general "harder = more scarce" lever for gold
+ * credited into `CampaignGoldSystem` during a run — kill/wave/region-bonus
+ * gold, wired up by Plan 2/D-244).
+ *
+ * Plan 6 (D-247) is this doc's real tuning pass on `campaignGoldMultiplier`
+ * — found via a first-pass numeric analysis (no in-browser playtest existed
+ * yet, same standing every other number here carries) that the un-tuned
+ * D-242 defaults let a Normal-difficulty player likely afford most of the
+ * rare/veryRare gear ladder well before the mandatory campaign's missions
+ * end (24/~21 at the time of this analysis, pre-D-253's 19-mandatory-chapter
+ * restructure — the counts moved, the underlying gold-scarcity concern
+ * didn't), because `ShopSystem.RARITY_LEVEL_THRESHOLD` unlocks EVERY rarity
+ * tier by ~chapter 3 of the very FIRST region — gold, not level, is what
+ * actually needs to gate late-campaign gear for most of the campaign.
+ * D-242 had pinned Normal's multiplier to exactly 1.0 to match every other
+ * Normal-tier lever (`enemyCountMultiplier`/`enemyHpMultiplier`/
+ * `cadenceMultiplier` are all 1.0 there too) — confirmed with Kevin that
+ * breaking that convention specifically for this lever is fine, since
+ * Normal is the difficulty most players will actually pick, and leaving it
+ * unscaled would leave the actual concern unaddressed for most players.
+ * The tier-to-tier SHAPE is otherwise preserved (each step is still roughly
+ * a quarter of Easy's value apart), only the absolute scale moved. See
+ * `tests/difficulty.test.ts`'s own updated assertion for this.
  */
 
 export type DifficultyId = "easy" | "normal" | "hard" | "nightmare";
@@ -49,8 +79,6 @@ export interface DifficultyDefinition {
   shortRestCharges: number;
   /** Phase 13.4 (D-088): per-run Long Rest charges — a much smaller pool, per D-086. */
   longRestCharges: number;
-  /** D-194: campaign mode only — the PC's starting-gear point-buy budget (see `startingGearPointCost`, `data/characterCreation.ts`). */
-  startingGearPoints: number;
   /** D-194: campaign mode only — how many of a companion's discretionary gear slots (chest, then shield) survive at this tier; weapon and a caster's implement always survive regardless. See `companionStartingGearForDifficulty`. */
   companionDiscretionaryGearSlots: number;
   /** D-217: fraction of a scaled group's count converted to stat-boosted "elite" instances instead of regular ones (see `ThreatBudgetSystem`). */
@@ -65,6 +93,10 @@ export interface DifficultyDefinition {
   maxSimultaneousLanes: number;
   /** D-217: multiplies each spawn group's `intervalTurns` — the primary "intensity, not duration" lever for harder tiers (`startTurn`/`turnLimit` are never touched by difficulty). */
   cadenceMultiplier: number;
+  /** `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 1: campaign mode only — a flat persistent-gold starting kit budget, granted once at the first between-missions Armory visit (see `CampaignArmoryScene`/`CampaignGoldSystem`). */
+  startingCampaignGold: number;
+  /** `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 1/2: campaign mode only — multiplies gold credited into the persistent `CampaignGoldSystem` pool (kill/wave/region-bonus gold, wired by D-244). Plan 6 (D-247) is this file's real tuning pass on these values — see the module header comment above. */
+  campaignGoldMultiplier: number;
 }
 
 export const DIFFICULTY_IDS: DifficultyId[] = ["easy", "normal", "hard", "nightmare"];
@@ -77,7 +109,6 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     enemyHpMultiplier: 0.85,
     shortRestCharges: 4,
     longRestCharges: 2,
-    startingGearPoints: 12,
     companionDiscretionaryGearSlots: 2,
     eliteFraction: 0.05,
     eliteFractionCap: 0.15,
@@ -85,6 +116,8 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     extraLaneChance: 0,
     maxSimultaneousLanes: 1,
     cadenceMultiplier: 1.15,
+    startingCampaignGold: 90,
+    campaignGoldMultiplier: 0.65,
   },
   normal: {
     id: "normal",
@@ -93,7 +126,6 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     enemyHpMultiplier: 1,
     shortRestCharges: 3,
     longRestCharges: 1,
-    startingGearPoints: 9,
     companionDiscretionaryGearSlots: 2,
     eliteFraction: 0.1,
     eliteFractionCap: 0.25,
@@ -101,6 +133,8 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     extraLaneChance: 0.1,
     maxSimultaneousLanes: 2,
     cadenceMultiplier: 1,
+    startingCampaignGold: 70,
+    campaignGoldMultiplier: 0.5,
   },
   hard: {
     id: "hard",
@@ -109,7 +143,6 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     enemyHpMultiplier: 1.15,
     shortRestCharges: 2,
     longRestCharges: 1,
-    startingGearPoints: 6,
     companionDiscretionaryGearSlots: 1,
     eliteFraction: 0.2,
     eliteFractionCap: 0.35,
@@ -117,6 +150,8 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     extraLaneChance: 0.25,
     maxSimultaneousLanes: 2,
     cadenceMultiplier: 0.85,
+    startingCampaignGold: 50,
+    campaignGoldMultiplier: 0.4,
   },
   nightmare: {
     id: "nightmare",
@@ -125,7 +160,6 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     enemyHpMultiplier: 1.35,
     shortRestCharges: 1,
     longRestCharges: 0,
-    startingGearPoints: 4,
     companionDiscretionaryGearSlots: 0,
     eliteFraction: 0.3,
     eliteFractionCap: 0.5,
@@ -133,6 +167,8 @@ export const DIFFICULTY_DEFINITIONS: Record<DifficultyId, DifficultyDefinition> 
     extraLaneChance: 0.4,
     maxSimultaneousLanes: 3,
     cadenceMultiplier: 0.7,
+    startingCampaignGold: 30,
+    campaignGoldMultiplier: 0.25,
   },
 };
 

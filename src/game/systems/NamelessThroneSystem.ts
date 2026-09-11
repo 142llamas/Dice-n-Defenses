@@ -11,7 +11,8 @@ import { NAMELESS_THRONE_HAZARD_POSITIONS } from "../data/namelessThroneMap";
  * remaining item on the KI-098 item 13 epic).
  *
  * The capstone's ending is picked by the SAME choices the player already
- * made across the 6 regions — no new chapter-boundary prompts, per this
+ * made across the 5 mandatory regions (D-253: Shattered Causeway is optional
+ * and excluded) — no new chapter-boundary prompts, per this
  * session's own scoping call. The signal: the 5 "Finish or Spare?" flags
  * (`ReturningMinibossSystem.sparedFlagId`, one per home miniboss) plus
  * Sorrel Thane's resolved fate (`SorrelFateSystem`).
@@ -46,11 +47,21 @@ export interface MercyTally {
  * mercy-vs-expedience lean without duplicating this loop or waiting for the
  * capstone itself. Safe to call mid-campaign, before every region has been
  * played — an unresolved region's flags are simply absent, not miscounted.
+ *
+ * D-254 fix: Shattered Causeway is optional (D-253) — a player who never
+ * plays it never sets `spared:juggernaut`, which is indistinguishable from
+ * "played it and let the Juggernaut through." `causewayPlayed` (the caller's
+ * own `isChapterCompleted(progress, SHATTERED_CAUSEWAY_CAMPAIGN_ID, 0)`
+ * check) lets a skipped Causeway be excluded from the tally entirely instead
+ * of silently counting as "no mercy shown." Defaults to `true` so every
+ * existing call site (and every existing test) that doesn't pass it keeps
+ * counting Causeway, matching pre-fix behavior.
  */
-export function computeMercyTally(worldFlags: WorldFlagState): MercyTally {
+export function computeMercyTally(worldFlags: WorldFlagState, causewayPlayed = true): MercyTally {
   let ashen = 0;
   let hollow = 0;
-  for (const enemyId of Object.values(SPARABLE_MINIBOSS_CHAPTERS)) {
+  for (const [chapterId, enemyId] of Object.entries(SPARABLE_MINIBOSS_CHAPTERS)) {
+    if (chapterId === "causeway-ch1" && !causewayPlayed) continue;
     if (getWorldFlag(worldFlags, sparedFlagId(enemyId)) === true) ashen++;
     else hollow++;
   }
@@ -60,14 +71,14 @@ export function computeMercyTally(worldFlags: WorldFlagState): MercyTally {
   return { ashen, hollow };
 }
 
-export function resolveThroneVariant(worldFlags: WorldFlagState): ThroneVariant {
-  const { ashen, hollow } = computeMercyTally(worldFlags);
+export function resolveThroneVariant(worldFlags: WorldFlagState, causewayPlayed = true): ThroneVariant {
+  const { ashen, hollow } = computeMercyTally(worldFlags, causewayPlayed);
   return hollow > ashen ? "the-hollow-empress" : "ashen-sovereign";
 }
 
 /** Reusable outside the capstone — same lean as `resolveThroneVariant`, without its "tie defaults Ashen" ending-specific framing baked into a branded variant name. */
-export function mercyTallyLeansHollow(worldFlags: WorldFlagState): boolean {
-  const { ashen, hollow } = computeMercyTally(worldFlags);
+export function mercyTallyLeansHollow(worldFlags: WorldFlagState, causewayPlayed = true): boolean {
+  const { ashen, hollow } = computeMercyTally(worldFlags, causewayPlayed);
   return hollow > ashen;
 }
 

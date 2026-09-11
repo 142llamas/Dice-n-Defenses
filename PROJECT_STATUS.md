@@ -1,6 +1,638 @@
 # Project Status
 
-## URGENT, fixed this session: the deployed site was a black screen for every visitor (D-236)
+## Full-codebase cleanup pass DONE (D-255) + a real mercy-tally bug fix (D-254) — 2026-09-11
+
+Kevin asked for a "very thorough" cleanup pass across the entire project
+(every `src/` file, every test, every doc) before his next playtest round —
+not a scoped feature ask. Run via 14 parallel audit agents (8 for `src/`,
+2 for `tests/`, 4 for the docs), each grep-verifying its own findings
+against the whole repo before reporting them. Full detail in `DECISIONS.md`
+D-254/D-255 and `CHANGELOG.md`'s matching entry; summary here.
+
+- **A real bug found and fixed (D-254)**: the audit surfaced (not just
+  cleaned up) a genuine gameplay bug — `NamelessThroneSystem.computeMercyTally`
+  was silently counting a skipped Shattered Causeway (optional since D-253)
+  as "showed no mercy" toward the capstone's ending. Fixed to exclude an
+  unplayed Causeway from the tally entirely, per Kevin's own choice among 3
+  options presented directly. New playtest checklist: `KNOWN_ISSUES.md`
+  KI-202.
+- **Code**: removed 6 confirmed-dead functions/exports (zero production
+  callers anywhere in the repo, verified by grep before removal — e.g.
+  `GameMap.describe()`, `SpellPreparationSystem.isValidSelection()`),
+  consolidated 7 places where the same logic existed in 2-3 near-identical
+  copies (a tile-size formula, a target tie-break comparator, a sparse
+  class-table lookup, `isSpellcaster`, `featuresAtLevel`, `isPotionId`,
+  `maxCastableSpellLevel`) onto one shared implementation each, fixed 9
+  stale comments referencing removed/superseded systems, and removed 2
+  exact-duplicate test assertions. Every AMBIGUOUS finding (looked possibly
+  dead/redundant but not confirmed) was reported to Kevin rather than acted
+  on, per his own scoping call on this.
+- **Docs**: `CLAUDE.md` and `README.md` were both badly stale (README still
+  described the classic 4-hero/10-wave MVP with 157 tests) — both rewritten.
+  Also corrected `PHASE_12_MULTIPLAYER_FEASIBILITY.md`,
+  `CAMPAIGN_STORY_DESIGN.md`, `SOURCE_OF_TRUTH.md`, `FIREBASE_SETUP.md`,
+  `ASSET_PLAN.md`, `PARTY_CREATION_OVERHAUL_PLAN.md`, and `package.json`.
+  With Kevin's explicit sign-off (shown the exact proposed change first, per
+  this project's own "docs are permanent records" convention):
+  `DECISIONS.md` (one duplicated paragraph removed, 3 cross-reference notes
+  added — no decision's substance changed), `KNOWN_ISSUES.md` (3 stale/
+  contradictory checklist items corrected), and this file (a false header
+  claim fixed, a fossilized ~467-line MVP-era snapshot collapsed to a
+  pointer into `CHANGELOG.md`).
+- **Flagged, not fixed**: a UI-consistency gap in `BrowseSharedMapsScene.ts`/
+  `TestModeScene.ts`/`MapBuilderScene.ts` (never migrated to the shared
+  ornate-UI/scroll-list components every sibling scene uses) — a real,
+  visible change that needs a browser to verify, left for a future session.
+
+Verified: `npm run typecheck` clean; all **1868** tests pass (was 1872 —
+net -4 from removing dead-code tests, +2 new for the D-254 fix — see
+`DECISIONS.md` D-254/D-255 for the exact reconciliation); `npm run build`
+succeeds (**170 modules**, unchanged — this was a consolidation/deletion
+pass, no new source files). No browser available in this environment — the
+one behavior change (D-254) and the flagged UI-consistency gap both need
+Kevin's own pass.
+
+## Batch H DONE — chapter-select submenu + the 19-chapter campaign restructure (D-253) — CLOSES THE ENTIRE 2026-09-09 19-ITEM PLAYTEST LIST, FOR REAL THIS TIME
+
+Kevin: "do Batch H now." The last item on the whole 19-item list, and the
+single most disruptive one — content cuts, chapter renumbering, a new
+leveling model. (Batch F's own entry below claimed to close the list too;
+that was wrong at the time — Batch H was still fully unstarted. This entry
+is the actually-final one; `PLAYTEST_2026-09-09_BATCHES.md` is the
+authoritative, maintained tracker if the two ever seem to disagree again.)
+
+**Which region loses a Chapter 3** (item 13's own open question): compared
+Emberford Reach, Saltmere Shallows, and Cinderfall Rift's Ch3 content across
+two Explore passes plus a Plan-agent validation — all three were
+mechanically inert (no boss, no world-flag hooks, no dialogue), but Emberford
+had the least narrative debt to lose. Kevin confirmed the pick via
+`AskUserQuestion`. Drowning Vale and Frostbound Hollow were correctly
+excluded up front (Drowning Vale's Ch3 feeds the Sorrel Thane mercy tally;
+Frostbound's Ch3 precedes the Isolde-homecoming capstone beat).
+
+**Shipped**: Emberford Reach's old Chapter 3 cut, its old Chapter 4 (the real
+finale) renamed down to Chapter 3 — 3 chapters now. Shattered Causeway
+demoted to optional/non-mandatory (removed from `REGION_CAMPAIGN_IDS`, still
+a full playable campaign) — 5 mandatory regions × mostly-4 chapters = **19
+required chapters**. Dorian Wick (Causeway's own recruit) moves to a new Pool
+A side mission, matching the other 6 side-mission companions — a pure data
+change, since every consumer was already generic over `sideMissionId`/
+`homeRegionId`. New `ChapterSelectScene` (+ shared `missionRouting.ts` helper)
+gives every region a real chapter picker with locked/unlocked/completed
+status and replay, inserted ahead of the existing mission-routing flow.
+Campaign leveling now grants exactly one level per chapter clear
+(order-independent, capped at 20, farming-guarded), replacing the old
+per-wave ramp toward a fixed per-chapter band — Free Play is untouched.
+Campaign boss/enemy scaling was switched to key off the party's actual
+accumulated level instead of each chapter's static band, a companion fix the
+leveling change required (the old band-based scaling was only ever "close
+enough" thanks to the per-wave ramp this change removes).
+
+**Two real pre-existing bugs found and fixed along the way**: a hardcoded
+chapter-index-3 check in `BattleScene.showMirrorBossReactionIfAny` that would
+have silently broken Tamsin Rourke's mirror-boss dialogue the moment
+Emberford dropped to 3 chapters; and two Dorian Wick `companionDialogue.ts`
+entries that had to be deleted (not just left alone) since existing tests
+already assert no Pool A companion has either — his Causeway finale
+accordingly loses its own "homecoming beat," a deliberate, accepted loss, not
+an oversight.
+
+Tests: **1872** (1868 + 4 new — a new cadence-coverage describe block in
+`tests/campaigns.test.ts`, plus a clamp test in
+`tests/campaignLevelSystem.test.ts`). Typecheck clean, production build
+succeeds (**170 modules** — `ChapterSelectScene.ts`/`missionRouting.ts` are
+new). See `DECISIONS.md` D-253, `KNOWN_ISSUES.md` KI-201 (the full playtest
+checklist — chapter-select nav, the leveling cadence's actual feel, and boss
+difficulty at the party's real level all genuinely need Kevin's own pass),
+and `PLAYTEST_2026-09-09_BATCHES.md`'s Batch H section for full detail.
+
+## Batch F DONE — real mid-battle autosave for Campaign and Free Play (D-252) — superseded claim below, see Batch H above: this did NOT close the whole list, Batch H was still unstarted
+
+Kevin: "Finish up Batch F now." Item 18 (real autosave) was the one item
+left open on the whole 19-item list, previously deferred by D-249 for lack
+of a mid-battle persistence mechanism. Designed via `EnterPlanMode` with
+two research passes (broad exploration, then full line-by-line validation
+against the live source) given this lands in `BattleScene.create()` — this
+project's single highest-blast-radius area, with a documented history of
+regressions there (KI-177/D-228).
+
+The missing piece already existed: `BattleStateSnapshot.ts`
+(`captureBattleState`/`restoreBattleState`, Phase 12.1/D-101, built for
+multiplayer-sync feasibility) was fully JSON-serializable but never wired
+into any persistence — this reuses it as designed. New
+`AutosaveSystem.ts` holds a rotating pool of 3 checkpoints, upserted by a
+stable per-run id (not blind FIFO — a single long playthrough would
+otherwise evict its own earlier checkpoints). `BattleScene` checkpoints
+right after each wave clears (Kevin's own confirmed cadence), for real
+Campaign/Free-Play runs (his own confirmed scope — Free Play had zero
+run-continuity before this). `create()` gains an additive resume branch —
+the fresh-start path is byte-for-byte unchanged; a resume restores every
+live system from the checkpoint and skips the one-time pre-wave-1 setup
+that's always already resolved by the time a checkpoint can exist.
+`ModeEntryScene` gains a "Continue" button; `LoadGameScene` gains a third
+autosave list with Resume/Delete.
+
+Found and fixed one real gap during implementation review (not part of the
+original plan): a spell-placed temporary structure's auto-expiry countdown
+lives at the scene layer, separate from `BuildSystem`'s own model — without
+carrying it forward, a resumed structure would become permanent instead of
+temporary. Two OTHER gaps were found already pre-documented elsewhere in
+the codebase and left as-is rather than expanded into: an active summon
+won't survive a resume, and an already-claimed treasure tile could pay out
+twice — both flagged in the new playtest checklist, neither a crash risk.
+
+Tests: **1868** (1855 + 13 new, `tests/autosaveSystem.test.ts`). Typecheck
+clean, production build succeeds (**168 modules** — `AutosaveSystem.ts` is
+new, and `BattleStateSnapshot.ts` joins the bundle for the first time now
+that something finally imports it). New `KNOWN_ISSUES.md` playtest
+checklist: **KI-200** — flagged as the single riskiest change of the whole
+19-item arc; please prioritize this playtest. See `DECISIONS.md` D-252 and
+`PLAYTEST_2026-09-09_BATCHES.md` (Batch F section, updated to DONE) for
+full detail.
+
+**Batch F is now fully DONE — only Batch H (items 12/13, chapter-select
+submenu + the 19-chapter campaign restructure) remains on the whole
+2026-09-09 19-item playtest list.** It's flagged as the single most
+disruptive item on the list (content cuts, chapter renumbering, a new
+campaign-only leveling cadence) — budget it as its own dedicated session.
+Kevin's call on whether that's next.
+
+## Batch G DONE — "Reset to Default" for Settings and Controls (D-251)
+
+Kevin: "Batch G next." Item 19 of the 2026-09-09 19-item playtest list:
+defaults already existed as named constants (`DEFAULT_SETTINGS`,
+`DEFAULT_KEY_BINDINGS`) but nothing on `SettingsScene` ever wrote them
+back — reverting a changed volume/mute/Game-Speed/key-rebind meant editing
+`localStorage` by hand.
+
+New pure functions `SettingsSystem.resetSettings` /
+`KeyBindingSystem.resetKeyBindings` write the defaults back to storage and
+return them (2 new tests). `SettingsScene` gets a "Reset to Default"
+button, guarded by a confirmation prompt copying `PauseMenuScene`'s own
+message/Confirm/Cancel pattern (resetting a player's own choices is the
+same "don't lose this to a stray click" category as Load Game/Exit
+already treat that way). Confirming re-applies volume/mute live to
+`AudioManager`, and — when Settings is opened as the in-battle pause-menu
+overlay — also resets the live `BattleScene`'s own Game Speed, not just
+the stored value for next time.
+
+Item 19a (named/savable setting profiles) deliberately not built — Kevin's
+own phrasing was the softest hedge on the whole list ("I wouldn't
+hate..."), and no profile concept exists anywhere today. Flagged as an
+open nice-to-have.
+
+Tests: **1855** (1853 + 2 new: 1 in `tests/settings.test.ts`, 1 in
+`tests/keyBindings.test.ts`). Typecheck clean, production build succeeds
+(**166 modules**, unchanged — no new files this session). New
+`KNOWN_ISSUES.md` playtest checklist: **KI-199**. See `DECISIONS.md` D-251
+and `PLAYTEST_2026-09-09_BATCHES.md` (Batch G section, updated to DONE)
+for full detail.
+
+**Next up**: Batch H (items 12/13, the most disruptive item on the list —
+budget its own dedicated session) or Batch F's item 18 (real autosave),
+Kevin's call.
+
+## Batch E's real gaps RECONCILED — recipient choice, value-comparable equipment, player-placed structures (D-250)
+
+A new `PLAYTEST_2026-09-09_BATCHES.md` tracker (this session) caught that
+D-248's own "closes Batch E" claim was wrong — items 6b, 6c, and all of 15
+were never built. Kevin: "check what you did... then either reconcile
+those differences or move on." Reconciled all three.
+
+Item 6b: `RegionBonusChoiceScene` now follows up an "equipment" pick with
+"Who receives {item}?" (a named party member, or "First available hero"),
+threaded through to `BattleScene` as a party-slot index. Item 6c: traced
+the real numbers — every common/uncommon non-attunement item in the whole
+catalog cost 6-16g against 15-65g region gold tiers, always worse than
+either; 12 items repriced (Kevin's confirmed choice, via `AskUserQuestion`)
+so sell value lands between each region's two tiers, enforced by a new
+test. Item 15: `grantRegionBonusStructure` now grants 2 free BUILD-MODE
+placement charges (new `BuildSystem` bookkeeping, `grantFreeCharge`/
+`consumeFreeCharge`/`wasFreePlaced`) instead of auto-placing 1 structure —
+the player places both themselves, reusing Batch A's existing highlighting.
+
+Batch F's item 18 (real autosave) confirmed deferred to its own dedicated
+session (Kevin's choice, `AskUserQuestion`) — no mid-battle persistence
+mechanism exists yet to trigger it from.
+
+Tests: **1853** (1845 + 8 new: 6 in `tests/building.test.ts`, 2 in
+`tests/regionBonusSystem.test.ts`). Typecheck clean, production build
+succeeds (**166 modules**, unchanged). New `KNOWN_ISSUES.md` playtest
+checklist: **KI-198**. See `DECISIONS.md` D-250 and
+`PLAYTEST_2026-09-09_BATCHES.md` (Batch E section, updated to DONE) for
+full detail.
+
+**Next up**: Batch G or H, Kevin's call — or Batch F's item 18 (real
+autosave) if he wants that dedicated session instead.
+
+## Batch F DONE — "Save Party" dropped from the pause menu for a campaign battle (D-249)
+
+Kevin said "Batch F next," continuing straight from D-248. Closes the last
+open half of item 17 (Batch B/D-238 kept both save buttons specifically
+pending this: "dropping 'Save Party' is gated on Batch F's autosave
+actually covering campaign party state").
+
+That gate turned out to already be met: a campaign's party build already
+autosaves via `CompanionRosterSystem` at Start Battle (Party Creation
+Overhaul Plan 3.1, an earlier session, unrelated to the economy redesign) —
+a mid-battle "Save Party" only ever re-saved that same unchanged pre-battle
+build, so it was pure redundancy for a campaign run. `PauseMenuScene` now
+hides it entirely for a campaign battle (new `BattleScene
+.isCampaignBattle()` accessor), closing the gap with a second fixed
+row-position map rather than leaving an empty row. "Save Game" (saves +
+exits, the only path that produces a `Load Game`-resumable slot) is
+untouched. Free Play/Co-op are pixel-for-pixel unchanged.
+
+Tests: **1845**, unchanged (pure scene-layer change, no test coverage
+applies per this project's own architecture rule). Typecheck clean,
+production build succeeds (**166 modules**, unchanged — no new files this
+session). New `KNOWN_ISSUES.md` playtest checklist: **KI-197**. See
+`DECISIONS.md` D-249 for full detail.
+
+**Next up**: Batches G, H remain queued (see `DECISIONS.md` D-237/D-238),
+Kevin's call on which next.
+
+## Batch E DONE — region-bonus dominance fix + "Choose a Bonus" moved before Character Creation/the Armory (D-248)
+
+Continuing the same day as D-247, with no new Kevin playtest confirmations
+yet on the just-shipped economy arc — `PHASE_HANDOFF.md`'s own standing
+instructions named Batch E (of the 2026-09-09 19-item playtest list) as
+the next default.
+
+Two fixes, both already scoped in `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md`
+(flagged there since D-244): (1) `RegionBonusSystem.drawRegionBonusChoices`
+could draw both gold tiers (or both equipment/structure options) into the
+same 3-choice offer, leaving no real choice — rewritten as a two-pass draw
+guaranteeing one option per category first; (2) the "Choose a Bonus"
+prompt used to fire inside `BattleScene` at chapter-start, AFTER Character
+Creation/the Armory already ran — new `RegionBonusChoiceScene` now sits at
+the `CampaignSelectScene`/`UnlockMissionPartyScene` routing seam instead,
+asking BEFORE either of those, so a chosen equipment bonus no longer
+silently collides with a slot the player already filled shopping. Granting
+timing (gold/equipment/structure applied at chapter-start) is unchanged —
+only the ask moved. `LoadGameScene`'s direct-resume path still gets a
+bonus via a preserved in-battle fallback, since it bypasses the new scene.
+
+Tests: **1845** (+1 net — one existing fixed-RNG-order test rewritten to
+match the new deterministic one-per-category output, one new dominance
+test added). Typecheck clean, production build succeeds (**166 modules**,
++1 for the new `RegionBonusChoiceScene.ts`). New `KNOWN_ISSUES.md` playtest
+checklist: **KI-196**. See `DECISIONS.md` D-248 for full detail.
+
+**Next up**: Batches F, G, H remain queued (items 6, 12, 13, 15, 17's "drop
+Save Party", 18, 19 — see `DECISIONS.md` D-237/D-238), Kevin's call on
+which next.
+
+## `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 6 DONE — the ENTIRE economy redesign is complete: gold-scarcity tuning pass (D-247)
+
+Kevin said "Plan 6 now," continuing straight from D-246. **This closes
+`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` in its entirety** — all 6 plans have
+now shipped (D-242, D-244, D-243, D-245, D-246, D-247).
+
+Plan 6 is normally gated on a real playtest of Plans 1-5 first — none of
+KI-186 through KI-194 had a "-Confirmed" annotation yet. Asked Kevin
+directly via `AskUserQuestion`; he chose a reasoned first-pass tune anyway
+over waiting, same standing precedent every other balance pass in this
+project follows.
+
+A real numeric trace (not a guess) found the un-tuned D-242 defaults
+likely let a Normal-difficulty player afford most of the rare/veryRare
+gear ladder well before the campaign's 24 missions end — every rarity tier
+(`ShopSystem.RARITY_LEVEL_THRESHOLD`) unlocks by character level 13 at the
+latest, reached by ~chapter 3 of the very first region, so gold was never
+going to be the real gate for the ~21 missions after that. Fix:
+`campaignGoldMultiplier` (`data/difficulty.ts`) roughly halved at every
+tier (easy 1.25→0.65, normal 1.0→0.5, hard 0.75→0.4, nightmare 0.5→0.25),
+preserving the original relative shape. Normal's multiplier is no longer
+pinned to an unscaled 1.0x baseline — a deliberate D-242 convention broken
+here with Kevin's explicit confirmation, since Normal is the difficulty
+most players will actually pick. `startingCampaignGold` and
+`data/regionBonuses.ts`'s gold amounts were left untouched (both already
+flow through the same multiplier, so the fix lives there alone).
+
+Tests: **1844** (no count change — one existing assertion updated in
+place). Typecheck clean, production build succeeds (**165 modules**,
+unchanged — no new files, pure data/doc-comment changes). New
+`KNOWN_ISSUES.md` playtest checklist: **KI-195**. See `DECISIONS.md` D-247
+and `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` (status table — ALL 6 plans now
+DONE) for full detail.
+
+## `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 5 DONE: Gear Points retired — campaign PC gear is no longer player-editable in Character Creation (D-246)
+
+Kevin said "Plan 5 now," continuing straight from D-245. **This closes the
+entire gameplay-changing arc of the economy redesign** — Plans 1-5 are all
+done; only Plan 6 (a gold-scarcity tuning pass) remains, and it explicitly
+needs a real playtest of everything so far before it can start.
+
+A brand-new campaign PC (Chapter 1, no persisted build yet) now gets a
+fixed, non-editable starting kit derived from their class
+(`defaultStartingGearForClass`, `data/characterCreation.ts`) instead of a
+free pick from a "Gear Points" budget — confirmed directly with Kevin (the
+plan doc itself never addressed this Chapter-1 gap): no player choice, same
+treatment a companion's own fixed kit already gets. Each class's kit reuses
+the exact same item ids as that class's own established companion, so
+there's zero new content. A RETURNING campaign PC (Chapter 2+) also loses
+the free-pick Gear button — their gear is now managed only through the
+between-missions Armory (D-243) and the Pool claim button, same as a
+companion; nothing changes about how their persisted gear is READ, only
+whether Character Creation lets them freely re-pick it.
+
+"Gear Points" is fully deleted: `DifficultyDefinition.startingGearPoints`,
+`startingGearPointCost`, `CharacterCreationScene.gearPointsSpent`/
+`gearPointsOverBudget`, and `gearPickerView.ts`'s `pointsEconomy` economy
+shape — confirmed via a dedicated research pass that nothing else in the
+codebase referenced any of them. Free Play's own gear picker is completely
+unaffected (still free pick, no budget, every slot).
+
+Tests: **1844** (+1 net — a new `defaultStartingGearForClass` test block
+replaced the deleted `startingGearPointCost` one; existing difficulty-tier
+assertions trimmed rather than removed). Typecheck clean, production build
+succeeds (**165 modules**, unchanged — no new files this session). New
+`KNOWN_ISSUES.md` playtest checklist: **KI-194**. See `DECISIONS.md` D-246
+and `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` (status table updated, Plan 5 now
+DONE) for full detail.
+
+## `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 4 DONE: the in-battle Armory is removed for campaign battles (D-245)
+
+Kevin said "Plan 4 of economy next," continuing straight from D-244.
+Campaign battles no longer offer the in-battle "Gear (G)" shop at all —
+gear management for a campaign happens only in the between-missions
+`CampaignArmoryScene` (D-243). Free Play's in-battle Armory is completely
+unchanged (all gating is keyed on `this.campaignId`, which Free Play never
+sets).
+
+Purely subtractive, exactly as `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` scoped
+it — no new scene, no new system, no new files. All four gate points
+(button, keydown, HUD layout, and the shared `shopGateReason` belt-and-
+suspenders check behind all four buy/sell entry points) live in
+`BattleScene.ts` alone, confirmed via the plan doc's own research that
+`GearShopScene.ts` holds zero `campaignId` references or game-rule logic.
+
+Tests: **1843**, unchanged (pure scene-layer gating, no new pure-system
+logic). Typecheck clean, production build succeeds (**165 modules**,
+unchanged — no new files this session). New `KNOWN_ISSUES.md` playtest
+checklist: **KI-193** — this is the first session in the arc that
+genuinely REMOVES player-visible functionality, worth a direct
+confirmation. See `DECISIONS.md` D-245 and
+`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` (status table updated) for full detail.
+
+**Next up**: Plan 5 (retire Gear Points — PC equips from the owned pool
+like a companion, depends on Plan 3, done) is the only remaining
+un-started plan besides Plan 6 (gold-scarcity tuning, needs Plans 1-5 live
+in a real build + Kevin's playtest first). Batch E (mission bonus
+overhaul) also remains queued, independent of the economy plan.
+
+## `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 2 DONE: real gold sources feed the persistent pool (D-244)
+
+Kevin said "Plan 2 next." Kill/wave gold and region-bonus gold now
+actually credit the persistent `CampaignGoldSystem` balance (D-242) at
+chapter-victory, scaled by the difficulty's `campaignGoldMultiplier` — the
+Armory (D-243) now grows with real earned income, not just its one-time
+starting kit.
+
+**Two deliberate departures from the plan doc's original wording**, both
+correctness-motivated (full reasoning in `DECISIONS.md` D-244): (1) a new
+GROSS `campaignRewardGoldEarned` counter replaces the doc's suggested
+`goldEarned` (which nets against in-battle spending — using it directly
+would punish spending at the still-live in-battle Armory); (2) region
+bonus gold accumulates toward that same counter, credited only at a REAL
+chapter-victory, rather than immediately at grant time — avoids a
+lose-and-retry gold-farming exploit, since the bonus choice re-offers on
+every chapter attempt.
+
+Tests: **1843** (+5, all in `tests/campaignGoldSystem.test.ts` for the new
+`creditScaledCampaignGold`). Typecheck clean, production build succeeds
+(**165 modules**, unchanged — no new files this session). New
+`KNOWN_ISSUES.md` playtest checklist: **KI-192**. See `DECISIONS.md` D-244
+and `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` (status table updated) for full
+detail.
+
+**Next up**: Plan 4 (remove the in-battle Armory for campaign battles) is
+the doc's next recommended step — now safe to actually roll out publicly
+since Plan 3's Armory gives campaign players somewhere to buy gear
+without it. Plan 5 (retire Gear Points) is also unblocked. Batch E
+(mission bonus overhaul) remains queued — its dominance-check/reorder work
+touches the same `grantRegionBonusGold`/`showRegionBonusChoiceIfAny`
+functions this session touched, so the plan doc recommends sequencing it
+next rather than leaving it for later.
+
+## `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 3 DONE: the between-missions Armory scene (D-243)
+
+Kevin said "Plan 3 sounds good to me." Shipped the new `src/game/scenes
+/CampaignArmoryScene.ts` — a real, player-visible shop between missions,
+reached at the `CampaignSelectScene -> CharacterCreationScene` seam once a
+campaign PC build exists (never before Chapter 1). Shows the whole party
+(PC + every active companion) shopping against the persistent campaign
+gold balance (D-242), full rarity for both PC and companions — two design
+forks confirmed with Kevin before building (full rarity now, with a real
+fix for the PC's gear-persistence gap, rather than a safer common/uncommon
+cap; skip the scene entirely before Chapter 1, rather than showing a
+companions-only view). Reuses the shared `gearPickerView.ts` component
+(Batch D, D-241) as a THIRD backend — not a fourth hand-rolled
+gear-shopping UI. Also adds a Sell action for unclaimed party-inventory
+pool items.
+
+**A real bug fixed along the way**: the campaign PC's gear used to
+silently drop any rare-or-better item on the next Character Creation
+visit (its picker only understood a common/uncommon lookup table) — a new
+`pinnedGearIds` mechanism closes this, and incidentally fixes the same
+latent gap for Free Play saves too.
+
+**This IS player-visible** — unlike D-242, a real `KNOWN_ISSUES.md`
+playtest checklist was added (KI-191) and needs Kevin's own click-through.
+Tests: **1838**, unchanged from D-242 (new pure-system functions got real
+unit tests; the new scene and its 3 touched existing scenes are all
+scene-layer, no coverage applies per this project's architecture rule).
+Typecheck clean, production build succeeds (**165 modules**, +1 for the
+new scene file). See `DECISIONS.md` D-243, `KNOWN_ISSUES.md` KI-191, and
+`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` (status table updated) for full detail.
+
+**Next up**: Plan 2 (wire real gold sources into the persistent pool) and
+Plan 4 (remove the in-battle Armory for campaign battles) are both fully
+unblocked — Kevin's call on which to pick up next, or switch to one of
+Batches E-H from the original 19-item playtest list.
+
+## `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 1 DONE: `CampaignGoldSystem` (D-242)
+
+Kevin picked up the economy redesign arc next (his call, per the prior
+handoff). Shipped exactly Plan 1's scope: `src/game/systems
+/CampaignGoldSystem.ts` (a persistent, shared campaign gold balance, same
+pure/storage-agnostic shape as `CampaignLevelSystem`) plus two new
+campaign-mode-only `DifficultyDefinition` fields, `startingCampaignGold`
+(90/70/50/30 per tier) and `campaignGoldMultiplier` (1.25/1/0.75/0.5) —
+defined now so Plans 2/3 have something to read, **not wired into any
+scene's gold-earning/spending path yet**. One small wiring point: the
+"Reset Campaign Progress" button now also resets gold to default, matching
+the existing `campaignLevel` reset.
+
+**No player-visible surface** — no scene displays, earns, or spends
+campaign gold yet, so no new `KNOWN_ISSUES.md` playtest entry (same
+precedent as D-134's foundational Phase 1). Tests: **1820** (+17: 14 new
+in `tests/campaignGoldSystem.test.ts`, 3 added to `tests/difficulty.test.ts`).
+Typecheck clean, production build succeeds (**164 modules**, +1 for the
+new system file). See `DECISIONS.md` D-242 and
+`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` (status table updated) for full detail.
+
+**Next up**: Plan 3 (between-missions Armory — both its dependencies, Plan
+1 and Batch D, are now done) is the natural next step in the doc's own
+recommended order, though Plan 2 (wire real gold sources) or Plan 4
+(remove the in-battle Armory) could also go next. Batches E-H (Kevin's
+original 2026-09-09 19-item list) remain queued, unaffected by this
+session.
+
+## Kevin's 2026-09-09 19-item playtest list: Batch D fully DONE (D-240, D-241); Batches E-H planned, not started
+
+**Batch D closed out this session.** Item 1 (D-240) locked the campaign
+PC's identity/ability scores once a build persists, matching a companion
+(reverses D-213). Items 3/5 (D-241) rebuilt Character Creation's gear
+picker to structurally match The Armory — sidebar, Hands/Rings
+consolidation with independent unequip buttons, rarity/proficiency
+filters, a compare strip — via a new shared `src/game/scenes
+/gearPickerView.ts` component both `GearShopScene` and Character Creation
+now drive (no more duplicated gear-shopping UI code). This shared
+component also directly sets up `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md`'s
+Plan 3 (the future between-missions Armory) to reuse it rather than build
+a third implementation.
+
+Tests: **1803**, unchanged (all scene-layer/Phaser-rendering changes, no
+test coverage applies per this project's architecture rule). Typecheck
+clean, production build succeeds (**163 modules**, +1 for the new shared
+file). Headless-verified only — needs Kevin's playtest; this is the
+biggest pure-UI change since D-216/D-217. See `DECISIONS.md` D-240/D-241,
+`KNOWN_ISSUES.md` KI-189/KI-190.
+
+**Next up**: Batches E through H (unstarted, fully scoped in
+`PHASE_HANDOFF.md`), or `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md`'s Plan 1
+(persistent campaign gold — no dependency on anything, can start any
+time) — Kevin's call on which to pick up next.
+
+## Kevin's 2026-09-09 19-item playtest list: item 1 shipped (D-240); Batch D PAUSED — campaign economy redesign scoped instead
+
+**Item 1 shipped this session (D-240)**: the campaign PC's identity/
+ability scores now lock once a campaign persists a build, matching a
+companion (reverses D-213) — Gear/Spells/Level Plan/Name stay editable.
+Also fixed a real bug this surfaced: the Subclass picker had no lock guard
+at all (affected companions too).
+
+**Batch D (items 3/5, gear-picker unification) is PAUSED, not abandoned.**
+While scoping item 1's "PC-locking" question and the Party Inventory
+generalization, Kevin redirected toward a much bigger idea: persistent
+gold that carries across the whole campaign, replacing the PC's Gear
+Points point-buy system entirely, with the in-battle Armory removed for
+campaign battles (gear only handled between missions; Free Play
+unaffected). This session's job was to SCOPE that redesign, not build it
+— see the new `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` (6 plans, dependency
+order, open questions for Kevin). Batch D's shared gear-picker rendering
+component turns out to be a genuine prerequisite for that plan's Plan 3
+(the new between-missions Armory scene) — recommended sequencing is
+Batch D → Plan 1 → Plan 3 → Plan 4 → Plan 5 → Plan 2 → Plan 6, all
+detailed in the new doc.
+
+Tests: **1803**, unchanged (scene-layer change only, no test coverage
+applies). Typecheck clean. Headless-verified only — needs Kevin's
+playtest. See `DECISIONS.md` D-240, `KNOWN_ISSUES.md` KI-189.
+
+## Kevin's 2026-09-09 19-item playtest list: Batches A, B, and C of 8 DONE (D-237, D-238, D-239); Batches D-H planned, not started
+
+**Batch C shipped this session (D-239)** — item 10's remainder (item 11
+stays open, flagged multi-session by the plan itself):
+- Consolidated 4 duplicate "shrink font until it fits" implementations into
+  one shared `uiTheme.shrinkFontToFit`.
+- Fixed `BattleScene.renderAsiPrompt`'s fixed-height rows (every ASI/feat/
+  subclass/spell-pick screen) to size dynamically per row, same approach
+  `uiTheme.renderChoiceOverlay` already used (now also shared, as
+  `measureChoiceRowHeights`).
+- Read all 66 raw `.text()` calls in `BattleScene.ts` and fixed the ones
+  carrying real unbounded/player-typed content with no existing safeguard:
+  roster hero names, the boss/legendary on-token banner, shop/debug
+  item-grid labels, the co-op Gold HUD partner-name line, the multi-enemy
+  wave-preview line, and three hero-name-bearing overlay titles. Left
+  everything bounded/fixed alone (HP numbers, status-code badges, fixed
+  button labels, the victory/defeat screen, etc.) rather than touching text
+  that was never actually at risk.
+
+Tests: **1803**, unchanged (scene-layer changes only, no test coverage
+applies). Typecheck clean, production build succeeds (162 modules,
+unchanged). Headless-verified only — needs Kevin's playtest, especially a
+long typed hero/co-op-partner name and a verbose feat description during
+level-up. See `DECISIONS.md` D-239, `KNOWN_ISSUES.md` KI-188.
+
+**Batches D through H are still planned but NOT started** — see
+`PHASE_HANDOFF.md` for the full remaining plan.
+
+## Kevin's 2026-09-09 19-item playtest list: Batches A and B of 8 DONE (D-237, D-238); Batches C-H planned, not started
+
+**Batch B shipped this session (D-238)** — high-leverage UI fixes, six
+independent changes:
+- Item 10's root cause: `uiTheme.createOrnateButton`'s sublabel now wraps
+  to its own button width instead of overflowing unbounded — shared by
+  ~20 scenes, expected to silently fix a large fraction of the
+  "overlapping text" complaints project-wide.
+
+**Batch B shipped this session (D-238)** — high-leverage UI fixes, six
+independent changes:
+- Item 10's root cause: `uiTheme.createOrnateButton`'s sublabel now wraps
+  to its own button width instead of overflowing unbounded — shared by
+  ~20 scenes, expected to silently fix a large fraction of the
+  "overlapping text" complaints project-wide.
+- Item 9: `uiTheme.renderChoiceOverlay`/`openChoiceList` (the other shared
+  "pick one from a list" overlay, behind class/level-selection and
+  `CampaignSelectScene`'s difficulty picker among others) reskinned to
+  match the wood-panel/parchment theme.
+- Item 4: `GearCompareSystem`'s compare panel now reports damage-dice,
+  saving-throw, movement, ability-score, status-immunity, and
+  charged-spell deltas, not just AC/attack bonus.
+- Item 2: Character Creation's Gear button always reads "Gear" now.
+- Item 14: dialogue box gained a pulsing "Click anywhere to continue"
+  hint; Skip moved from top-left to the bottom row.
+- Item 17 (reorder half): pause menu reordered to Kevin's requested
+  Resume/Controls/Settings/Save Party/Save Game/Load Game/Exit; "Save &
+  Exit" renamed to "Save Game" (Kevin's own naming call, asked live this
+  session). Dropping "Save Party" itself stays Batch F's job.
+
+Tests: **1803** (1795 + 8 new in `tests/gearCompareSystem.test.ts`).
+Typecheck clean, production build succeeds (162 modules, unchanged).
+Headless-verified only — needs Kevin's playtest to confirm the visual
+reskins and menu reorder read well on screen. See `DECISIONS.md` D-238,
+`KNOWN_ISSUES.md` KI-187.
+
+**Batches C through H are still planned but NOT started** — see
+`PHASE_HANDOFF.md` for the full remaining plan.
+
+## Kevin's 2026-09-09 19-item playtest list: Batch A of 8 DONE (D-237); Batches B-H planned, not started
+
+Kevin's largest playtest note yet — 19 numbered items covering campaign
+locking, gear-screen UX, mission bonuses, in-battle bugs, UI/text theming,
+campaign chapter structure, and save/settings. Researched across the whole
+codebase first (six parallel investigations), then batched into 8 delivery
+groups (A-H) by shared code area and risk — full batch breakdown and item
+mapping in `PHASE_HANDOFF.md`.
+
+**Batch A shipped this session (D-237)** — the three items that were both
+confirmed bugs and fully independent of everything else, all in
+`BattleScene.ts`:
+- Item 7: build mode now proactively highlights every legal tile on open,
+  not just whatever tile the mouse hovers.
+- Item 8: a placed structure is now attributed to the hero the player
+  actually had selected, not silently whichever living hero happens to be
+  closest to the tile.
+- Item 16: Emberford Reach Chapter 2's "clicks do nothing, hotkeys skip
+  straight to building" bug — root-caused to an orphaned, click-eating
+  dialogue overlay; fixed with a defensive destroy-before-replace guard
+  matching the pattern the ASI/feat overlay already used.
+
+Tests: **1795**, unchanged (scene-layer fixes, no new test coverage applies).
+Typecheck clean, production build succeeds (162 modules, unchanged — no
+files added). Headless-verified only — needs Kevin's playtest, especially a
+Emberford Chapter 2 replay. See `DECISIONS.md` D-237, `KNOWN_ISSUES.md`
+KI-186.
+
+**Batches B through H are planned but NOT started** — see `PHASE_HANDOFF.md`
+for the full plan (one item, D-237's Cinderfall-region-cut decision for
+item 13, already resolved with Kevin: cut Shattered Causeway to optional
+side content + trim one other region's Chapter 3, landing at 19 chapters).
+
+## Prior session: the deployed site was a black screen for every visitor (D-236)
 
 Kevin came back to playtest (first time since the D-234/D-235 session) and
 found the live link (dice-n-defenses.web.app) loading to a black screen,
@@ -4488,470 +5120,14 @@ checkpoint), **multiple named slots** (not one autosave slot), and
   59). `npm run dev` HTTP 200. Not yet confirmed by a human — see
   KNOWN_ISSUES **KI-046**.
 
-## Phase 11 roadmap — COMPLETE (11.1 through 11.10 all built — see Phase 11.10 section above for the last one)
+## Historical: Phase 0 through Phase 11 (v0.0.1 through v0.1.1 MVP, and the Phase 11 D&D-system rollout)
 
-Kevin outlined a large long-term vision for the rest of the project — a
-real D&D 5.5e character system (classes/subclasses, races, feats, spells,
-magic items/potions) driving individual hero level-ups, a freeform party
-builder, a bestiary, a map system overhaul, boss-themed campaigns, a
-free-play mode, AI-controlled party members, an in-game rules index, a map
-builder, and a full visual overhaul. This has been scoped as ten Phase 11
-sub-phases (11.1–11.10) — see **D-070**/**D-071** in `DECISIONS.md` and the
-repo-note under Phase 11 in `SOURCE_OF_TRUTH.md` for the full breakdown and
-sequencing.
-
-**Sub-phase 11.1 (D&D character rules engine + character-creation UI) —
-DONE.** First slice: ability scores + modifiers, proficiency bonus by
-level, and one fully-built class table (Fighter, levels 1–20), pure and
-tested (`src/game/data/abilityScores.ts`, `src/game/data/classes.ts`,
-`src/game/systems/CharacterSystem.ts` — see **D-072**). Second slice, this
-chat: a working character-creation UI — a new `CharacterCreationScene`
-reachable from the main menu's **"Create Party (new)"** button, where the
-player builds a full 4-hero party (name, ability-score allocation via a
-swap-cycle allocator, and a signature ability), with a live derived-stats
-preview, before starting a battle with that custom roster — see **D-073**.
-**Deliberately additive, not a replacement:** the original START button
-still goes straight to `BattleScene` with the unchanged fixed 4-hero roster
-(Ash/Wren/Bram/Mira) — with only one class and no new abilities yet, fully
-replacing the roster now would be a real variety regression, and would put
-Kevin's still-open browser-verification items at risk of needing rework.
-Several Fighter features remain data-only/inert (`mechanicallyActive:
-false`) until systems they depend on (action economy, saving throws,
-subclasses, feats) exist.
-
-**Sub-phase 11.2 (spellcasting engine + a second class) — DONE, this chat.**
-Added **Wizard**: d6 hit die, INT casting, a full level 1-20 feature table,
-and a real spell-slot/cantrips-known progression table
-(`data/classes.ts`'s new `spellcasting` field). New pure engine,
-`systems/SpellcastingSystem.ts` (known cantrips, spell slots by level,
-prepared-spell count — see **D-074**). A curated 5-spell list lives in the
-new `data/spells.ts`: two cantrips (Fire Bolt, Ray of Frost) are
-mechanically playable today — cast at-will, no slot cost, so they need no
-new resource system — via two new entries in `data/abilities.ts` that
-`BattleScene` already knows how to read; three 1st-level spells (Magic
-Missile, Burning Hands, Mage Armor) exist as real data but stay uncastable
-until this game has a spell-slot economy. `CharacterCreationScene` gained a
-class-cycle button so a hero can be built as either class; a Wizard's
-cantrip attack now correctly scales off INT instead of STR/DEX. Kevin
-confirmed the class-cycle button works in-browser (KI-038).
-
-**Sub-phase 11.3 (starter class/race/feat roster) — DONE, this chat.** Two
-further classes, **Rogue** (d8, DEX, Sneak Attack as a flat rider damage via
-a new generic `bonusDamageByLevel` field) and **Cleric** (d8, WIS, subclass
-choice at level 1 — earlier than every other class — reusing Wizard's entire
-spellcasting engine and cantrips-known/spell-slot tables verbatim).
-`CLASS_DEFINITIONS` is now four classes covering melee (Fighter),
-ranged/skirmish (Rogue), ranged control (Wizard), and support (Cleric). All
-six SRD starter races (`data/races.ts`): speed is the one mechanically
-active trait — Dwarf/Halfling move one tile slower — resolving the exact
-"race-based speed is Phase 11.3" TODO the code had flagged since 11.1. A
-starter feat list (`data/feats.ts`: Tough, Alert, Lucky, Athlete) exists as
-real, tested data but is deliberately NOT wired into any UI — no created
-character can reach level 4 (where a feat would first be choosable) yet, so
-a feat-picker would be dead scaffolding. See **D-075**.
-
-**Subclass content — DONE (D-076).** One real, named subclass per class:
-**Champion** (Fighter), **School of Evocation** (Wizard), **Thief** (Rogue),
-**Life Domain** (Cleric) — see `data/subclasses.ts`. Every subclass feature
-is honestly `mechanicallyActive: false`: none lands before its class's
-subclass-choice level, and every created character is always level 1, so
-nothing here is reachable yet regardless. Pure rules-engine data, no
-scene/UI changes.
-
-**Sub-phase 11.4 (party assembly + AI-controlled heroes) — DONE, this
-chat.** Per D-071's roadmap: party size selection, human-vs-AI mix per
-slot, a "human picks level-ups, AI plays" mode, and difficulty scaling by
-party size — see **D-077**.
-- `CharacterCreationScene` gained a per-hero Human/AI toggle (folded into
-  the existing "Hero N" header), a Party Size selector (1-4, capped at
-  today's four hero-start tiles — a true variable-size map is 11.7), and a
-  Difficulty selector (Easy/Normal/Hard/Nightmare).
-- New pure `HeroAISystem`: an AI-controlled hero's turn deliberately mirrors
-  `WaveSystem`'s own enemy-phase choice (attack if something's in range,
-  else advance toward the nearest enemy). `BattleScene.runAIHeroTurns()`
-  runs it automatically at the start of each player phase, through the same
-  action-resolution code a human's click already uses.
-- New `data/difficulty.ts`: flat per-tier multipliers plus a party-size
-  scaling factor (linear against the roster's balanced size of 4), combined
-  in `WaveSystem`'s two new (optional, default-1) `enemyCountMultiplier`/
-  `enemyHpMultiplier` options.
-- The classic fixed-roster START button is untouched — it never reaches
-  `CharacterCreationScene`, so it always plays at party-size-4/Normal
-  exactly as before this phase. Not yet verified by a human — see
-  KNOWN_ISSUES KI-040.
-
-**Sub-phase 11.5 (multi-slot equipment, potions, and a Compendium) — DONE,
-this chat.** Per D-071's roadmap: "equipment/magic items/potions expansion,
-plus an in-game Compendium." Kevin was asked directly whether equipment
-should stay one slot or grow to two — he asked for something bigger than
-either: the classic RPG loadout (Head/Chest/Legs/2 Rings/Amulet/Footwear,
-plus 2 General slots for potions), and confirmed adding potions. See
-**D-078**.
-- `data/equipment.ts` grew from a 3-item, 1-slot catalogue to 12 items
-  across seven gear-slot instances (six slot types — both rings share
-  `"ring"`); `Hero.equippedItems` sums bonuses across every filled slot.
-  Still flat `attackDamage`/`defense` only — no dice/proc system exists yet
-  for a "chance to X" magic item to hook into (D-047 addendum).
-- `data/potions.ts` (new): two consumable general slots per hero. A potion
-  spends the hero's ACTION — Healing Draught heals, Vigor Tonic gives a
-  permanent-for-the-battle attack buff (reusing the same mechanism as a
-  level-up Might choice).
-- `BattleScene`'s Gear grid now shops equipment AND potions together (14
-  items); equipping auto-places into the right slot instance. A new Potion
-  (P) button drinks a carried potion. `GAME_HEIGHT` raised 1000 → 1080 (the
-  Gear grid is now taller than the Shop grid).
-- A new `CompendiumScene` (read-only, reached from a new MainMenuScene
-  button) renders every existing Phase 11 data file — classes, subclasses,
-  races, feats, spells, equipment, potions, status effects — across 8
-  category tabs. Not yet verified by a human — see KNOWN_ISSUES KI-041.
-  Next: any of 11.6–11.10, or returning to character-system depth.
-
-**Sub-phases 11.6 through 11.9 — DONE, one long same-day session.** Kevin
-asked to handle 11.6-11.9 as one batch; per D-071's own ordering these four
-build on each other (roster before terrain, terrain before campaigns,
-campaigns before free-play's unlock gating), so they were built and
-verified sequentially rather than in parallel. **11.10 (map builder +
-sharing) was deliberately SKIPPED this session** — Kevin confirmed when
-asked directly — since D-071 says it depends on Phase 10 (Firebase
-hosting), which hasn't started; a map builder with nothing to save/share
-through would be dead scaffolding. See **D-081/D-082** for 11.7/11.9 (D-079/
-D-080 for 11.6/11.8 were already logged the same session).
-
-- **11.6 (roster + Bestiary, D-079):** two new minions (Hexer, Ravager) and
-  a new `"boss"` role tier above miniboss, with two true bosses —
-  **Cinderlord** (fire) and **Tidelord** (water), themed for 11.7/11.8.
-  New `BestiarySystem` (localStorage SEEN/KILLED tracking) and a
-  `BestiaryScene` (unseen enemies show as locked "???"). Not yet confirmed
-  by a human — KI-042.
-- **11.7 (map overhaul, D-081):** four new terrain types (`cliff`/`water`/
-  `fire`/`acid` — cliff blocks ground/lets flyers cross for free; water/
-  fire/acid reuse the existing "slowed"/"burning" statuses on enemies
-  only, via the same trap-callback contract traps already used). Two new
-  maps (Emberford Reach, Saltmere Shallows) with shop/treasure tiles.
-  `BuildSystem` gained proximity-gated building (a hero must be within 3
-  tiles) and a 3-structures-per-hero carry limit; the Gear/shop HUD is now
-  locked unless a hero is near a shop tile (maps with none, i.e. `TEST_MAP`,
-  stay ungated). Not yet confirmed by a human — KI-043.
-- **11.8 (campaigns, D-080):** two boss-themed campaigns, **Emberford
-  Reach** (6 waves, Cinderlord finale) and **Saltmere Shallows** (6 waves,
-  Tidelord finale), assembled from 11.6's roster and 11.7's maps. New
-  `CampaignProgressSystem` (completion persistence) and a
-  `CampaignSelectScene`. The classic START path and `TEST_MAP`/`WAVES`
-  stay completely untouched. Not yet confirmed by a human — KI-044.
-- **11.9 (free-play, D-082):** a `FreePlayScene` config screen (map/boss/
-  wave-count/minion-source/difficulty pickers) driving a new pure,
-  deterministic `FreePlayWaveGenerator`. Unlock gating ties Emberford/
-  Saltmere's map+boss options to having completed that campaign at least
-  once; `TEST_MAP`/basalt-colossus are always available. Not yet confirmed
-  by a human — KI-045.
-- **Tests grew from 283 to 354** across the four sub-phases (11.6 +13,
-  11.7 +31, 11.8 +20, 11.9 +7). Typecheck and build stayed clean after
-  every sub-phase; `npm run dev` was not re-verified this session beyond
-  the earlier phases' checks (no reason to expect it to have changed).
-
-- **Current version:** 0.2.0-dev (Phase 7 content-complete; Phase 8 now
-  underway — see below. Phase 7's balance/feel pass is still the one
-  outstanding item from that phase and Phase 8's UX work doesn't depend on
-  it, so Kevin chose to start Phase 8 in parallel rather than wait.)
-- **Current phase:** Phase 11 (sub-phases 11.1 through 11.10, ALL DONE) is
-  complete. **Phase 13 (Full D&D Character-System Depth) is COMPLETE —
-  all eleven sub-phases shipped:** 13.1 (dice core + Armor Class, D-086),
-  13.2 (action economy first slice, D-087), 13.4 (Rest system, D-088), 13.3
-  (real per-class leveling + Extra Attack, D-089), 13.5 (saving throws/
-  skills/framework-only initiative, D-090), 13.6 (real ASI-or-feat choice,
-  D-091), 13.7 (real spell depth — spellbook/spell slots/ally healing,
-  D-092), 13.8 (the remaining eight core SRD classes, each with a real
-  iconic mechanic, D-093), 13.9 (loot/equipment expansion — rarity,
-  attunement, real on-hit/on-kill procs, D-094), 13.10 (enemy roster
-  expansion — every tier, full role tagging, first real enemy mechanic,
-  D-095), and 13.11 (character-creation flow overhaul — real subclass
-  choice, free starting gear, D-096). **Phase 14 (Subclass Roster
-  Expansion) is now also DONE this session, in two parts:** 14 (D-097) gave
-  every remaining class a modeled subclass plus three real hookups
-  (Draconic Resilience, Colossus Slayer, Dark One's Blessing); 14.1 (D-098)
-  corrected Druid's subclass to the real SRD one (Circle of the Land, not
-  Circle of the Moon); 14.2 (D-099) gave every class a SECOND, original
-  subclass plus a real multi-option choice UI. **Phase 12 (Cooperative
-  Multiplayer Feasibility) kicked off as a DESIGN DOC ONLY (D-100)**, then
-  **Phase 12.1 (`BattleStateSnapshot`, D-101)** shipped a pure, tested
-  full-battle serialize/restore round trip, **Phase 12.2 (cooperative
-  session lobby, D-102)** shipped create/join-by-code UI (this project's
-  first free-text input), and **Phase 12.3 (turn-lock ownership, D-103)
-  shipped this session** — `controlledBy: "remote"`, a host-only
-  "Start Battle" handoff, and hero-selection ownership gating in
-  `BattleScene`, with result-broadcast (live two-client board sync)
-  explicitly deferred to a follow-up sub-phase. See this file's Phase
-  12.3/12.2/12.1/Phase 12 sections above, `PHASE_12_MULTIPLAYER_FEASIBILITY.md`,
-  and `PHASE_HANDOFF.md` for what's next.
-  Phase 8 — UX, Accessibility, and Presentation — remains complete pending
-  Kevin's browser pass. Delivered across two chats: settings (animation
-  speed/reduced motion), partial keyboard hotkeys, tooltips,
-  color-independent indicators, a tutorial overlay, an asset plan doc, and
-  full keyboard-only play (D-066, resolves KI-030). Not yet done: volume
-  controls are blocked on there being no audio system — KI-029 — and actual
-  art production is a future call per `ASSET_PLAN.md`. Phase 7's in-browser
-  balance pass (KI-015/KI-022/KI-028) remains open and unrelated to this
-  work.
-- **Last complete milestone:** Phase 6 — Integrated Five-Wave MVP (`v0.1.1`)
-- **Stack:** TypeScript + Phaser 3 + Vite, tested with Vitest
-- **Tests:** 648 passing (+31 this session for Phase 14.2's second original
-  subclass per class and real choice UI — re-expanded `subclasses.test.ts`
-  to all 24 subclasses plus new `classLeveling.test.ts` cases for all
-  twelve new hookups; was 617 at the end of Phase 14, +21 for its subclass
-  roster expansion — expanded `subclasses.test.ts` plus new
-  `classLeveling.test.ts` cases for Draconic Resilience/Colossus
-  Slayer/Dark One's Blessing; 596 at the end of Phase 13.11, +27 for its
-  character-creation flow
-  overhaul; 569 at the end of Phase 13.10, +15 for its enemy roster
-  expansion; 554 at the end of Phase 13.9, +10 for its loot/equipment
-  expansion; 544 at the end of Phase 13.8, +30 for its eight new classes;
-  514 at the end of Phase 13.7, +22 for its real spell depth; 492 at the
-  end of Phase 13.6, +17 for its real ASI-or-feat choice; 475 at the end of
-  Phase 13.5, +27 for its saving throws/skills/initiative; 448 at the end
-  of Phase 13.3, +14 for its real per-class leveling; 434 at the end of
-  Phase 13.4, +13 for its Rest system; 421 at the end of Phase 13.2, +23
-  for its action-economy slice; 398 at the end of Phase 13.1, +7 for its
-  dice/AC systems; 385 at the end of Phase 11.10, +15 for that phase's map
-  builder/sharing systems; 370 at the end of Phase 10, +2 for that phase's
-  cloud save merge primitive; 368 at the end of Phase 9, +14 for that
-  phase's local save system; 354 at the end of the 11.6-11.9 batch).
-  Typecheck + build clean (91 modules, unchanged this session).
-- **Last updated:** August 2, 2026 (Phase 14.2 / D-099)
-
-## Loss condition and spawn-tile access updated (D-068, D-069)
-
-Kevin reported a real playtest bug and requested a rule change, both fixed
-this chat:
-- **D-068 — the game now also ends in defeat if every hero falls**, even
-  with Stronghold Integrity above 0 (previously the ONLY loss condition,
-  D-034 — this is an explicit, Kevin-approved reversal of that LOCKED rule).
-  The end screen distinguishes the two causes ("your party has fallen" vs.
-  "the stronghold has fallen").
-- **D-069 — the spawn ("In") tile is now fully inaccessible to heroes**
-  (movement — building on it was already rejected). This was the root cause
-  of a reported bug: a hero standing exactly on the spawn tile let a freshly
-  spawned enemy land co-located with it and hold there indefinitely (it's
-  immediately in attack range), which read as enemies "stacking" at the
-  spawn point.
-
-Not yet seen in a browser — see `KNOWN_ISSUES.md` KI-036.
-
-## Movement rules updated (D-067): same-type units may pass through each other
-
-Cross-cutting engine change, not tied to a specific phase: heroes may now walk
-THROUGH a tile another living hero occupies, and enemies may now walk THROUGH
-a tile another living enemy occupies — but in both cases, a unit may still
-never END its move on a tile another unit of the same type already stands on.
-Hero-vs-enemy blocking is unchanged (heroes still fully block enemy routing,
-D-033; enemies still fully block hero movement). This replaces the
-single-file "traffic jam" feel from D-018 (heroes) and D-045 (enemies) with a
-"pass but don't stack" rule — a party can file past each other in a
-one-tile-wide corridor, and a lane of enemies queued behind a stopped one can
-now walk around/past it rather than backing up indefinitely. See D-067 in
-`DECISIONS.md` for the full implementation notes and `tests/movement.test.ts`
-/ `tests/enemyCollision.test.ts` for the new coverage. Not yet seen in a
-browser — see `KNOWN_ISSUES.md` KI-035.
-
-## Phase 7 progress
-
-- **Done: flying enemies + their counter.** The engine now supports
-  `movementType: "flying"` — a flyer routes over walls and barricades toward the
-  exit, still confined to the map and still stopped by units (D-048). Traps are
-  now movement-type aware (D-049): the **Spike Trap** hits ground only, and a
-  new buyable **Sky Snare** catches flyers only — the anti-air answer a
-  wall-proof enemy needs. See `tests/flying.test.ts`.
-- **Done: expanded enemy roster (D-050).** Four new regular enemies, each built
-  as the answer to one of the two heroes' tools — **Brute** (tanky, focus-fire),
-  **Swarmling** (fragile pack, area damage / traps), **Warden** (armoured,
-  Wren's pierce), **Razorwing** (tougher flyer, Sky Snare). Seven regular
-  enemies now, all data-driven; no engine/scene changes.
-- **Done: ten-wave campaign with a miniboss finale (D-051).** Waves 1–5 are the
-  frozen v0.1.1 loop; waves 6–10 are new and layer the roster in one idea at a
-  time, ending on the **Basalt Colossus** miniboss (a `role`-tagged data
-  enemy). Proven coherent, winnable through the real build/spend loop, and
-  losable-if-idle by `tests/campaign.test.ts` (+ the now-ten-wave
-  `mvp-integration.test.ts`).
-- **Resolved by Kevin (browser):** the KI-001 checklist — confirmed working;
-  and the "Dice visibility" §9 decision — deterministic combat stays for now, a
-  dice-based hit-chance system is later (D-047's clarification note).
-- **Done (this chat): the rest of Phase 7's content list.**
-  - **Heroes 2→4 (D-052):** Bram (guardian) and Mira (frostcaller), each with
-    one spell-like, status-applying ability.
-  - **More structures (D-054) + shop relayout (D-055):** Gate, Melee Platform,
-    Ranged Perch, and the third trap (Tangle Root); the shop/Gear UI is now a
-    generic, reusable item grid instead of 3 fixed slots.
-  - **Status effects (D-053):** Slowed, Stunned, Burning — applied by two new
-    hero abilities, one trap, and interpreted by `WaveSystem`.
-  - **Level-up choices (D-056):** Vigor vs Might, every 2 waves cleared.
-  - **Limited equipment (D-057):** one slot per hero, a 3-item catalogue.
-  - **Spell-like abilities:** delivered via the status-applying abilities
-    above (Taunting Slam, Frost Bolt) rather than a separate spell system.
-  - **Improved wave preview & shop (D-058):** a "Next: Wave N — ..." line, and
-    a `description` field on every structure/equipment item.
-- **Still blocked on Kevin (browser):** real balance/feel tuning across ALL of
-  the above — under the headless upper-bound sim the ten-wave campaign still
-  clears with full integrity and ends gold-rich (same shape as the MVP), and
-  the new content's numbers are first-pass, unverified by play
-  (KI-015/KI-022/KI-028). This is genuinely blocked on a browser and is now the
-  ONLY thing left in Phase 7. The miniboss also has **no distinct visual yet**
-  (KI-023), and status effects have no on-token visual marker yet (KI-027) —
-  both Phase 8 UX.
-
-## Phase 8 progress
-
-Kevin started Phase 8 mid-Phase-7-balance-pass, specifically asking for the
-Gear/Build button overlap to be fixed along the way. Delivered this chat, all
-in-scope except volume controls and actual art production:
-
-- **Fixed: Gear button overlapped Build button (D-059).** A one-line
-  x-position math bug; see KNOWN_ISSUES KI-032.
-- **Done: settings — animation speed doubles as reduced motion (D-060).** One
-  local setting (`SettingsSystem`, `tests/settings.test.ts`), cycled from a
-  new main-menu button: Normal / Fast / Instant (Instant skips animation
-  entirely). No volume control — there is no audio system to control yet
-  (KI-029).
-- **Done: keyboard support (D-061).** Number keys 1-4 select a hero by fixed
-  roster position; H opens the new tutorial overlay; the ability button now
-  labels its hotkey. Still pointer-only for tile movement/targeting and shop
-  item selection (KI-030, stated honestly rather than implied complete).
-- **Done: tooltips (D-062).** Hovering a Build/Gear item previews its
-  description without needing to select it first.
-- **Done: color-independent indicators (D-063) — resolves KI-023 and
-  KI-027.** The miniboss is now larger with a name banner; active status
-  effects show a persistent on-token badge; the build ghost and ability
-  targets get glyphs, not just colour; low Integrity gets warning text.
-- **Done: tutorial prompt (D-064).** A dismissible how-to-play overlay,
-  shown once automatically and reopenable via H.
-- **Done: original asset plan (D-065).** `ASSET_PLAN.md` — a plan, not
-  production; art direction is still Kevin's call.
-- **Not yet verified by a human:** none of the first Phase 8 chat's work has
-  been seen in a browser (see KNOWN_ISSUES KI-031 for the specific
-  checklist).
-- **Done (this chat): full keyboard-only play (D-066) — resolves KI-030.**
-  Arrow keys move a tile cursor across the board; Enter/Space act on
-  whatever's focused (select/move/attack/aim/build/equip) via the same
-  dispatch a mouse click already used. In Build/Gear mode, Tab switches
-  arrow keys between navigating the item grid (a new focus ring) and the
-  board cursor. A full battle should now be completable with no mouse.
-  **Not yet verified by a human** — see KNOWN_ISSUES KI-034.
-- **Still open, not part of this chat:** Phase 7's balance/feel pass
-  (KI-015/KI-022/KI-028) is unrelated and still outstanding.
-
-## What this is now
-
-The first **complete, playable game loop**. From the title screen you start a
-game, move and fight with two heroes, earn and spend gold to build a wall and a
-trap that reroute and damage enemies, defend Stronghold Integrity across five
-waves, reach a **win or lose** screen, and **restart**. Phase 6 added **no new
-mechanics** — it integrated the Phase 0–5 systems into a whole and verified the
-loop end to end.
-
-## Implemented so far
-
-- **Phase 0** — runnable Phaser+TS+Vite scaffold, strict TS, folder structure,
-  scenes, `GridSystem`, npm scripts, docs.
-- **Phase 1** — data-driven map, pure `GameMap`, grid prototype with hover /
-  click-to-select / invalid-tile rejection.
-- **Phase 2** — pure `TurnSystem` (phase state machine), pure `MovementSystem`,
-  pure `Hero` (one move + one action); selection, range, path preview,
-  confirm/cancel, End Turn.
-- **Phase 3** — pure `PathfindingSystem` (route around walls), pure `WaveSystem`
-  (scheduled spawns, advance, breach-once, completion/defeat), pure `Enemy`.
-- **Phase 4** — pure `CombatSystem` (deterministic range/damage/targeting);
-  hero attacks + one ability each; enemies fight back; victory reachable.
-- **Phase 5** — pure `EconomySystem`, `BuildSystem` (placement + path-block
-  rule), `RewardSystem`; a Barricade (wall) and Spike Trap; wall-aware routing;
-  trap damage on the enemy phase; gold HUD, shop, ghost preview, refund.
-- **Phase 6 (this phase)** — integration, verification, and polish:
-  - Title-screen copy refreshed for the MVP (no longer a "test screen") with a
-    short how-to-play line.
-  - Explicit input-listener teardown on scene `shutdown`, so the
-    menu→battle→menu→battle cycle can never accumulate duplicate listeners
-    (belt-and-suspenders on top of Phaser's per-scene teardown and the full
-    field reset already done in `create()`).
-  - A headless **full-loop simulation** (`tests/mvp-integration.test.ts`) that
-    drives all five real waves through every system: one run reaches **victory**
-    with integrity intact, one does nothing and reaches **defeat**.
-  - Version bumped to 0.1.0, then **0.1.1** after the playtest-fix round below.
-    Tests now **101**.
-
-## Playtest fixes (v0.1.1)
-
-Kevin played the `v0.1.0` MVP and reported six observations. Two were confirmed
-working as designed and left unchanged (see below); four were real bugs, now
-fixed:
-
-- **Enemies could stack on the same tile** (mid-lane and at the spawn point).
-  Fixed: enemies now block each other when routing; a boxed-in enemy holds
-  rather than overlaps; a blocked spawn retries next phase. (D-045)
-- **An extra, empty turn was needed** when a hero's own attack/ability killed
-  the last enemy of an already-fully-spawned wave. Fixed: the game now resolves
-  to Victory/Between Waves immediately instead of waiting for a pointless Enemy
-  Phase. (D-044)
-- **No way to leave the victory/defeat screen** except an undiscoverable Esc
-  shortcut. Fixed: added a real, clickable "Return to Menu" button. (D-047)
-- **HUD text and buttons could overlap.** Fixed: taller canvas, status text and
-  the combat log stacked vertically with word-wrap instead of side-by-side, and
-  the Build/End Turn buttons anchored to the canvas edge instead of the grid's
-  width. Verified with a bounding-box check against worst-case content strings
-  (no browser available here). (D-046)
-
-Left unchanged, by design, not bugs:
-- **Enemies don't avoid traps** — intentional (D-039); that's the whole point
-  of a trap.
-- **Combat has no misses ("automatic hit")** — intentional (D-030), though this
-  surfaced a real documentation inconsistency worth Kevin's attention: the
-  Source of Truth's own rules table still lists "Dice visibility" as OPEN. See
-  the clarification note under D-047 in `DECISIONS.md`.
-
-## Acceptance criteria for Phase 6 — met
-
-- **A clean install can play from start to win/lose.** The build/tests pass from
-  a clean source copy, the dev server serves the game, and the integrated
-  simulation demonstrates both a winning run (all ten waves cleared, integrity
-  intact) and a losing run (integrity reaches 0). The one thing a machine can't
-  do — confirm the on-screen feel — is left for Kevin's browser pass (KI-001).
-- **Restart does not duplicate state or listeners.** `create()` resets every
-  mutable field; all display/button listeners live on recreated Game Objects;
-  pointer/keyboard listeners are removed on `shutdown` and there are no global
-  listeners anywhere (audited — no `this.scale.on`/`window` handlers). See
-  DECISIONS D-043.
-- **Build and tests pass.** See Verified below.
-
-## Basic balancing pass — done (finding: errs easy / gold-rich)
-
-The balancing pass took the form of the simulation. Under *perfect* focus-fire
-play the current numbers yield **0 breaches and ~191 surplus gold**, with every
-wave earning the time bonus — the loop is winnable and losable, but tuning
-currently leans easy and gold-rich. The gameplay numbers were deliberately left
-**unchanged** for v0.1.0 (the simulation is an upper bound and can't set the
-correct difficulty; only in-browser play can). In-browser tuning is the first
-Phase 7 task — see KNOWN_ISSUES KI-015 and DECISIONS D-042.
-
-## Verified
-
-- `npm install` — pass (0 vulnerabilities)
-- `npm run typecheck` — pass
-- `npm test` — pass (101/101)
-- `npm run build` — pass (creates `dist/`; 30 modules)
-- `npm run dev` — pass (serves the page; HTTP 200)
-
-## Not yet verified (needs a human in a browser)
-
-On-screen rendering and *feel* of the whole loop, and the balance under real
-(imperfect) play. Run `npm run dev`, click START, and walk the manual regression
-checklist in `KNOWN_ISSUES.md` (KI-001) — especially: restart several times from
-the win/lose screen using the new **Return to Menu** button and confirm nothing
-doubles up (units, gold, listeners); confirm no HUD text/buttons visually
-overlap (verified by bounding-box math here, not by eye); confirm enemies never
-visibly stack; confirm a wave-clearing kill ends the wave immediately without an
-extra End Turn click; and judge whether the difficulty/economy feel right
-(KI-015).
-
-## Explicitly NOT implemented yet (by design)
-
-More heroes/enemies, flying, gates/platforms/perches and more traps, status
-effects, level-ups, equipment (Phase 7); UX & accessibility (Phase 8); saving
-(Phase 9); Firebase (Phase 10); campaign expansion (Phase 11); multiplayer
-(Phase 12). Structure destruction (enemies attacking walls) remains OPEN —
-enemies route around walls instead.
+This section used to hold a full prose snapshot of the project's state as of
+each of these phases (a fossilized "current state" write-up from BEFORE this
+file's "newest section on top" convention solidified — by the time this was
+collapsed, it described a 4-class/5-spell/no-Firebase/no-campaign state many
+hundreds of decisions out of date). That detail is already fully preserved,
+in more structured and dated form, in `CHANGELOG.md`'s own `[0.0.1]` through
+`[0.1.1]` entries (Phase 0-6) and Phase 11.1-11.10 entries — read there for
+the real history. See `DECISIONS.md` D-067 through D-103 for the individual
+decisions from this same span.

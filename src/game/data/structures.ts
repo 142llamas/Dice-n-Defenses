@@ -1,4 +1,3 @@
-import type { GridPosition } from "../systems/GridSystem";
 import type { StatusEffectId } from "./statusEffects";
 
 /**
@@ -525,6 +524,3 @@ export const STRUCTURE_COLORS: Record<string, number> = {
   "low-perch": 0x7aa0c0,
   "sky-bastion": 0x2a5a7a,
 };
-
-/** Re-export so callers can type positions without reaching into GridSystem. */
-export type { GridPosition };

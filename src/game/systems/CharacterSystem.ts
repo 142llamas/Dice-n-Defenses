@@ -32,6 +32,22 @@ function assertValidLevel(level: number): void {
 }
 
 /**
+ * Shared sparse-table lookup: the highest key at or below `level`, or
+ * `undefined` if none. Every class-table field that only records the levels
+ * where something CHANGES (attacks-per-action, bonus damage,
+ * `SpellcastingSystem`'s cantrips-known/spell-slots) reads through this one
+ * implementation instead of each hand-rolling the same filter/sort.
+ */
+export function lookupSparse<T>(table: Record<number, T>, level: number): T | undefined {
+  const eligibleLevels = Object.keys(table)
+    .map(Number)
+    .filter((lvl) => lvl <= level)
+    .sort((a, b) => b - a);
+  if (eligibleLevels.length === 0) return undefined;
+  return table[eligibleLevels[0]];
+}
+
+/**
  * Standard SRD proficiency-bonus-by-level progression: +2 at levels 1-4,
  * rising by 1 every 4 levels, capping at +6 at level 17-20.
  */
@@ -75,14 +91,11 @@ export function maxHitPointsForClass(
  */
 export function attacksPerActionForClassAtLevel(classDef: CharacterClassDefinition, level: number): number {
   assertValidLevel(level);
-  const eligibleLevels = Object.keys(classDef.attacksPerActionByLevel)
-    .map(Number)
-    .filter((lvl) => lvl <= level)
-    .sort((a, b) => b - a);
-  if (eligibleLevels.length === 0) {
+  const attacks = lookupSparse(classDef.attacksPerActionByLevel, level);
+  if (attacks === undefined) {
     throw new Error(`Class "${classDef.id}" has no attacksPerActionByLevel entry at or below level ${level}.`);
   }
-  return classDef.attacksPerActionByLevel[eligibleLevels[0]];
+  return attacks;
 }
 
 /**
@@ -123,12 +136,7 @@ export function activeFeaturesUpToLevel(source: HasFeatures, level: number): Cla
 export function bonusDamageForClassAtLevel(classDef: CharacterClassDefinition, level: number): number {
   assertValidLevel(level);
   if (!classDef.bonusDamageByLevel) return 0;
-  const eligibleLevels = Object.keys(classDef.bonusDamageByLevel)
-    .map(Number)
-    .filter((lvl) => lvl <= level)
-    .sort((a, b) => b - a);
-  if (eligibleLevels.length === 0) return 0;
-  return classDef.bonusDamageByLevel[eligibleLevels[0]];
+  return lookupSparse(classDef.bonusDamageByLevel, level) ?? 0;
 }
 
 const BASE_WEAPON_DAMAGE = 2;

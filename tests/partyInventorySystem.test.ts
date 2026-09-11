@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   dropPoolEntriesForLostCompanion,
   resolvePartyInventory,
+  sellPartyInventoryEntry,
   unequipAllBenchedGear,
   visibleGearForOrigin,
 } from "../src/game/systems/PartyInventorySystem";
@@ -148,12 +149,34 @@ describe("PartyInventorySystem", () => {
     });
   });
 
+  describe("sellPartyInventoryEntry", () => {
+    it("removes the matching entry and returns its itemId", () => {
+      const state = setPartyInventory(DEFAULT_COMPANION_ROSTER_STATE, [
+        entry({ id: "pool-1", itemId: "longsword" }),
+        entry({ id: "pool-2", itemId: "chain-shirt", originSlot: "chest" }),
+      ]);
+      const result = sellPartyInventoryEntry(state, "pool-1");
+      expect(result?.itemId).toBe("longsword");
+      expect(getPartyInventory(result!.state)).toEqual([entry({ id: "pool-2", itemId: "chain-shirt", originSlot: "chest" })]);
+    });
+
+    it("returns null and leaves the pool untouched for an unknown entry id", () => {
+      const state = setPartyInventory(DEFAULT_COMPANION_ROSTER_STATE, [entry()]);
+      expect(sellPartyInventoryEntry(state, "nonexistent")).toBeNull();
+    });
+
+    it("is a no-op-safe null on an empty pool", () => {
+      expect(sellPartyInventoryEntry(DEFAULT_COMPANION_ROSTER_STATE, "pool-1")).toBeNull();
+    });
+  });
+
   it("does not mutate the state object passed in", () => {
     const original = setPartyInventory(DEFAULT_COMPANION_ROSTER_STATE, [entry()]);
     const snapshot = { ...original, partyInventory: [...(original.partyInventory ?? [])] };
     unequipAllBenchedGear(original, ["fenna"], kitFor({ fenna: FENNA_KIT }), idCounter());
     resolvePartyInventory(original);
     dropPoolEntriesForLostCompanion(original, "hollis");
+    sellPartyInventoryEntry(original, "pool-1");
     expect(original).toEqual(snapshot);
   });
 });

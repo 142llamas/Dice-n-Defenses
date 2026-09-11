@@ -11,6 +11,7 @@ import {
   createSectionLabel,
   getViewport,
   onViewportResize,
+  shrinkFontToFit,
   FONT_DISPLAY,
   FONT_BODY,
   type OrnateButtonHandle,
@@ -38,8 +39,9 @@ import {
  * Phase 1 of the 2026-08-28 playtest batch: reorganized again per Kevin's
  * own proposed grouping (Campaign / Free Play / Co-op / Party Creation /
  * Knowledge Base / the 3 creator tools). Campaign is now the hero primary
- * action (bigger than a blank Free Play or Party Creation build — 6 regions,
- * 24 chapters, companions, a capstone), replacing the old "New Game" button;
+ * action (bigger than a blank Free Play or Party Creation build — 5 regions,
+ * 19 chapters, companions, a capstone, plus Shattered Causeway as optional
+ * side content — D-253), replacing the old "New Game" button;
  * "New Game" and "Build Party" both started `CharacterCreationScene` with no
  * init data (the exact same destination), so they're consolidated into one
  * "Party Creation" button rather than kept as two labels for one screen.
@@ -157,23 +159,16 @@ export class MainMenuScene extends Phaser.Scene {
     // rendered width can reach into the top-right Settings/Account corner
     // controls' bounding box. Rather than guess a fixed font size that
     // happens to clear whatever font actually loads, measure the real
-    // bounds (same approach `uiTheme.fitLabelToWidth` already uses for
-    // buttons) and shrink until they no longer overlap. D-154: the region
-    // itself is now computed from the live viewport width (`
-    // computeCornerControlsRegion`, unit-tested in
+    // bounds (`uiTheme.shrinkFontToFit`, Batch C/KI-188 — this used to be
+    // its own hand-rolled loop) and shrink until they no longer overlap.
+    // D-154: the region itself is now computed from the live viewport width
+    // (`computeCornerControlsRegion`, unit-tested in
     // `tests/mainMenuLayout.test.ts`) instead of a fixed-1280-canvas magic
     // rectangle, so this still holds if the corner controls ever move with
     // the canvas.
     const region = computeCornerControlsRegion(width);
     const cornerControlsRegion = new Phaser.Geom.Rectangle(region.x, region.y, region.width, region.height);
-    let titleFontSize = 58;
-    while (
-      titleFontSize > 40 &&
-      Phaser.Geom.Rectangle.Overlaps(titleText.getBounds(), cornerControlsRegion)
-    ) {
-      titleFontSize -= 2;
-      titleText.setFontSize(titleFontSize);
-    }
+    shrinkFontToFit(titleText, 58, 40, () => Phaser.Geom.Rectangle.Overlaps(titleText.getBounds(), cornerControlsRegion), 2);
 
     const g = this.add.graphics().setDepth(1);
     const y = 156;

@@ -2,7 +2,7 @@ import { ABILITY_SCORE_IDS, type AbilityScoreId } from "../data/abilityScores";
 import { getClassDefinition } from "../data/classes";
 import { subclassesForClass } from "../data/subclasses";
 import { getSpell } from "../data/spells";
-import { asiFeatureGrantedAtLevel, subclassGrantedAtLevel } from "./CharacterSystem";
+import { asiFeatureGrantedAtLevel, subclassGrantedAtLevel, featuresAtLevel } from "./CharacterSystem";
 import { heroDefinitionFromBuild, type CharacterBuild } from "./CharacterBuildSystem";
 import {
   eligibleCantripPool,
@@ -386,7 +386,7 @@ export function levelUpDeltaSummary(
     parts.push(`attack ${fmt(before.attackBonus)}→${fmt(after.attackBonus)}`);
   }
   if (classId) {
-    for (const feature of getClassDefinition(classId).features.filter((f) => f.level === newLevel)) {
+    for (const feature of featuresAtLevel(getClassDefinition(classId), newLevel)) {
       parts.push(`new feature: ${feature.name}`);
     }
   }

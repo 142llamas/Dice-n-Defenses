@@ -18,7 +18,9 @@ import {
   getPcBuild,
   setPcBuild,
   getPartyInventory,
+  applyPurchasedGearOverrides,
   type PartyInventoryEntry,
+  type CompanionRosterState,
 } from "../systems/CompanionRosterSystem";
 import { visibleGearForOrigin, resolvePartyInventory } from "../systems/PartyInventorySystem";
 import { seedStartingCompanions } from "../systems/CompanionSeedSystem";
@@ -32,13 +34,12 @@ import {
   clearChoiceOverlay,
   drawScreenBackdrop,
   drawParchmentPanel,
+  shrinkFontToFit,
   FONT_DISPLAY,
   FONT_BODY,
   type OrnateButtonHandle,
 } from "./uiTheme";
-import { clampScrollOffset, contentHeight as scrollContentHeight } from "../systems/ScrollListMath";
-import { renderScrollListRows, renderScrollbarVisual, attachWheelScroll, type ScrollListRect, type ScrollRegion } from "./uiScrollList";
-import { isProficientWithHandsItem } from "../systems/ProficiencySystem";
+import { GearPickerView, FREE_ECONOMY, type GearPickerBackend } from "./gearPickerView";
 import {
   ABILITY_SCORE_IDS,
   ABILITY_SCORE_NAMES,
@@ -50,14 +51,14 @@ import {
   CHARACTER_NAME_POOL,
   CREATABLE_CLASS_IDS,
   startingGearIdsForSlotType,
-  startingGearPointCost,
+  defaultStartingGearForClass,
   companionStartingGearForDifficulty,
 } from "../data/characterCreation";
 import { getAbility } from "../data/abilities";
 import { getClassDefinition } from "../data/classes";
 import { getSpell } from "../data/spells";
 import { combatStatsForClassLevel } from "../systems/CharacterSystem";
-import { cantripsKnownForClassAtLevel, spellSlotsForClassAtLevel } from "../systems/SpellcastingSystem";
+import { cantripsKnownForClassAtLevel } from "../systems/SpellcastingSystem";
 import {
   spellPickStepsForClass,
   eligibleCantripPool,
@@ -65,6 +66,7 @@ import {
   wizardSpellbookSizeAtLevel,
   preparedSpellCountForClassAtLevel,
   defaultFill,
+  maxCastableSpellLevel,
   type SpellPickStepKind,
   type SpellSwapStepKind,
 } from "../systems/SpellPreparationSystem";
@@ -75,11 +77,8 @@ import {
   isTwoHandedWeapon,
   GEAR_SLOT_IDS,
   GEAR_SLOT_LABELS,
-  RARITY_LABELS,
   type GearSlotId,
 } from "../data/equipment";
-import { previewGearSlotChange, formatGearDelta } from "../systems/GearCompareSystem";
-import { decideSlotPairPlacement } from "../systems/GearFilterSystem";
 import { FEAT_IDS, getFeat } from "../data/feats";
 import { RACE_IDS, getRaceDefinition } from "../data/races";
 import { BACKGROUND_IDS, getBackgroundDefinition, backgroundAbilityChoices } from "../data/backgrounds";
@@ -276,11 +275,6 @@ function columnCenterX(width: number, slot: number): number {
   return firstColumnLeft + slot * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_WIDTH / 2;
 }
 
-/** D-228 (KI-177 item 4): the gear picker's own Ring 1/Ring 2 consolidation check. */
-function isRingSlot(slot: GearSlotId): boolean {
-  return slot === "ring1" || slot === "ring2";
-}
-
 /**
  * D-202 (Plan 0.6's actual fix): a "plain" entry (Main Menu's New Game/
  * Build Party — no campaign, no Free Play/custom map) resumes the last
@@ -328,6 +322,18 @@ interface SlotState {
    * replaces the old single `startingGearIndex`.
    */
   gearIndices: Partial<Record<GearSlotId, number>>;
+  /**
+   * `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 3: any `startingGearIds` entry
+   * `gearIndicesFromBuild` couldn't represent as a Gear-Points index (a
+   * rare-or-better item, e.g. bought via the between-missions Armory —
+   * that catalog is common/uncommon-only). Preserved verbatim so it
+   * round-trips through a Character Creation visit untouched instead of
+   * silently vanishing at the next Start Battle. `applyGearPickToSlot`
+   * clears a slot's pin the moment the player touches that slot here
+   * (buy or sell) — an explicit Gear-Points pick always wins over a pin.
+   * See `startingGearIdsFromIndices`.
+   */
+  pinnedGearIds: Partial<Record<GearSlotId, string>>;
   /**
    * D-194: a companion's (`identityLocked`) authored "normal"-difficulty
    * kit, snapshotted (defensive copy, never a bare reference into
@@ -384,13 +390,19 @@ interface SlotState {
    * Party Creation Overhaul Plan 3.2: whether GEAR specifically is locked to
    * a fixed/economy-derived kit. For a companion this is always equal to
    * `identityLocked` (D-194: a real campaign companion never gets a free
-   * player-editable kit). For a returning PC (identity-locked once a
-   * persisted `pcBuild` exists) this stays false — the PC's gear/spells/
-   * level-plan/name remain editable "like a normal PC always could," only
-   * class/race/ability-scores freeze. Split into its own field because
-   * `identityLocked` alone can't distinguish "companion" from "returning
-   * PC" for the Gear button/`baselineGearIds`/`buildsFromSlots` checks that
-   * only ever wanted the companion behavior.
+   * player-editable kit). For the PC (slot 0) this stays false ALWAYS —
+   * even now that `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 5 (D-246) also
+   * retired the PC's free gear pick, "gear is no longer freely editable"
+   * for a campaign PC is enforced by a separate, slot-0-specific check (the
+   * Gear button's own guard, and `resolveGearIdsForSlot`'s dedicated PC
+   * branch) rather than by flipping this field — a PC's actual gear
+   * resolution has none of a companion's machinery (no per-companion
+   * identity, no difficulty-trim, no purchased-gear overlay layer; Armory
+   * purchases write straight into the persisted `startingGearIds` instead),
+   * so routing it through the `gearLocked`-branch below would be wrong, not
+   * just redundant. Split into its own field because `identityLocked` alone
+   * can't distinguish "companion" from "PC" for the `baselineGearIds`/
+   * `buildsFromSlots` checks that only ever wanted the companion behavior.
    */
   gearLocked: boolean;
   /**
@@ -529,6 +541,10 @@ export class CharacterCreationScene extends Phaser.Scene {
    * (a normal chapter replay, the Prologue, Free Play, Co-op, a loaded save).
    */
   private requiredCompanionIds?: string[];
+  /** D-248 (Batch E): the region-bonus pick `RegionBonusChoiceScene` already made — forwarded unchanged to `BattleScene`, which applies it at chapter-start with no second prompt. `undefined` for any campaign without a bonus pool, and for every non-campaign entry point. */
+  private pendingRegionBonusId?: string;
+  /** D-250 (Batch E gap 1): the equipment bonus's chosen recipient party-slot index, if `pendingRegionBonusId` is an equipment grant and the player picked a specific hero rather than "First available" — forwarded unchanged to `BattleScene`. */
+  private pendingRegionBonusHeroSlot?: number;
   /**
    * Party Creation Overhaul Plan 3.1: which companion id (if any) each slot
    * was prefilled from — the write side of persisted companion builds needs
@@ -545,6 +561,15 @@ export class CharacterCreationScene extends Phaser.Scene {
    * always empty for Free Play (no `campaignId`, no roster/pool concept).
    */
   private partyInventorySnapshot: PartyInventoryEntry[] = [];
+  /**
+   * `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 3: a companion's Armory
+   * purchase/sale overrides, keyed by companion id — read once, alongside
+   * `partyInventorySnapshot`'s own roster load (same "no second
+   * `localStorage` read" discipline). Layered on top of a companion's
+   * difficulty-trimmed authored baseline in `resolveGearIdsForSlot`. Always
+   * empty for Free Play (no `campaignId`, no roster concept).
+   */
+  private companionPurchasedGearSnapshot: NonNullable<CompanionRosterState["companionPurchasedGear"]> = {};
   /** Phase 11.9 (D-071): forwarded unchanged to BattleScene; `undefined`
    * unless reached from `FreePlayScene`. */
   private freePlayMapId?: string;
@@ -583,28 +608,15 @@ export class CharacterCreationScene extends Phaser.Scene {
    */
   private levelPlanOverlay: Phaser.GameObjects.GameObject[] = [];
   /**
-   * D-213: the Armory-style gear picker (see `openGearPicker`/
-   * `refreshGearPicker`) — a self-contained overlay in the same
-   * destroy-and-rebuild style as `levelPlanOverlay`, kept separate since it
-   * has its own multi-part state (which slot, which paperdoll cell, which
-   * catalog page) that doesn't fit the generic `renderPlanPrompt` shape.
+   * D-241 (Batch D, items 3/5 of the 2026-09-09 playtest list): the gear
+   * picker now drives the shared `GearPickerView` (also used by
+   * `GearShopScene`/"The Armory") instead of a bespoke overlay — one
+   * instance lives for this scene's whole life (constructed in `create()`),
+   * reopened via `.open(heroId)` each time a "Gear" button is clicked
+   * rather than rebuilt from scratch. `null` only before `create()` finishes
+   * wiring it up.
    */
-  private gearPickerOverlay: Phaser.GameObjects.GameObject[] = [];
-  /** D-234: set each `refreshGearPicker()` call so the persistent wheel handler (registered once in `create()`) always reflects the current picker state; null while the picker is closed. */
-  private gearPickerViewportRect: ScrollListRect | null = null;
-  private gearPickerContentHeight = 0;
-  private gearPickerSlotIndex = 0;
-  private gearPickerGearSlot: GearSlotId = "weapon";
-  /** D-234: scroll offset (px) replacing the old page index — see `uiScrollList.ts`. */
-  private gearPickerScrollOffset = 0;
-  /**
-   * D-228 (KI-177 item 4): Ring 1/Ring 2 consolidation, mirroring the
-   * Armory's (`GearShopScene`) same-session fix — a new ring pick that
-   * can't auto-resolve (both physical ring slots already occupied) waits
-   * here until the player clicks WHICH paperdoll ring cell to place it in,
-   * rather than silently guessing (see `feedback_no_silent_choice_defaults`).
-   */
-  private pendingRingPick: string | null = null;
+  private gearPickerView: GearPickerView | null = null;
   private planningSlot: number | null = null;
   private planningDraft: LevelUpPlan = emptyLevelUpPlan();
   private planningSteps: LevelUpChoiceStep[] = [];
@@ -668,6 +680,8 @@ export class CharacterCreationScene extends Phaser.Scene {
     campaignId?: string;
     chapterIndex?: number;
     requiredCompanionIds?: string[];
+    pendingRegionBonusId?: string;
+    pendingRegionBonusHeroSlot?: number;
     freePlayMapId?: string;
     freePlayWaves?: WaveDefinition[];
     freePlayRunLengthId?: RunLengthId;
@@ -681,6 +695,8 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.campaignId = data?.campaignId;
     this.chapterIndex = data?.chapterIndex;
     this.requiredCompanionIds = data?.requiredCompanionIds;
+    this.pendingRegionBonusId = data?.pendingRegionBonusId;
+    this.pendingRegionBonusHeroSlot = data?.pendingRegionBonusHeroSlot;
     this.freePlayMapId = data?.freePlayMapId;
     this.freePlayWaves = data?.freePlayWaves;
     this.freePlayRunLengthId = data?.freePlayRunLengthId;
@@ -716,18 +732,25 @@ export class CharacterCreationScene extends Phaser.Scene {
     this.scale.refresh();
     fixDomContainerAlignment(this);
     onViewportResize(this, () => fixDomContainerAlignment(this));
-    // D-234: registered once (not per-refresh) since this is a scene-level
-    // subscription, not a GameObject — `activeGearPickerScrollRegion` is
-    // re-read on every wheel event so it always reflects the current picker
-    // state (or is null while the picker is closed).
-    attachWheelScroll(
-      this,
-      () => this.activeGearPickerScrollRegion(),
-      (offset) => {
-        this.gearPickerScrollOffset = offset;
-        this.refreshGearPicker();
+    // D-241 (Batch D): one `GearPickerView` instance for this scene's whole
+    // life — reopened via `.open(heroId)` per "Gear" button click, matching
+    // the reusable-instance pattern this file's OTHER overlays don't need
+    // (they're rebuilt fresh each time) but this one does, since its own
+    // wheel-scroll subscription (`attachInput`, below) must be registered
+    // exactly once, not once per open.
+    this.gearPickerView = new GearPickerView(this, this.buildGearPickerBackend(), {
+      onClose: () => {
+        this.gearPickerView?.destroy();
+        this.refreshAll();
       },
-    );
+      closeLabel: "Done",
+      depthBase: 60,
+      drawBackdrop: (scene) => {
+        const { width: vw, height: vh } = getViewport(scene);
+        scene.add.rectangle(vw / 2, vh / 2, vw, vh, 0x000000, 0.85).setInteractive();
+      },
+    });
+    this.gearPickerView.attachInput();
 
     this.slots = [];
     this.widgets = [];
@@ -796,6 +819,10 @@ export class CharacterCreationScene extends Phaser.Scene {
       // second `localStorage` read.
       const roster = loadCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY);
       this.partyInventorySnapshot = getPartyInventory(roster);
+      // Plan 3: same "read once alongside this roster load" discipline —
+      // companion purchases the between-missions Armory made since the last
+      // visit.
+      this.companionPurchasedGearSnapshot = roster.companionPurchasedGear ?? {};
 
       // Party Creation Overhaul Plan 3.1: prefer a persisted build (this
       // playthrough's own edited gear/spells/level-plan/name) over the
@@ -842,16 +869,19 @@ export class CharacterCreationScene extends Phaser.Scene {
       // lock exactly like a fresh campaign entry. Harmless for a loaded
       // classic/Free Play party: `companionBuildsForSlots` stays empty
       // there since the block above only populates it `if (this.campaignId)`.
-      // D-213: the PC (slot 0) is EXCLUDED here — Kevin's own explicit call.
-      // D-195/Plan 3.2 originally locked a returning PC's identity too (only
-      // gear/spells/level-plan/name stayed editable), but that's not what he
-      // wants: his own character's class/race/background/stats should always
-      // stay editable, every visit, for the life of the campaign. Only a
-      // companion (slot !== 0) still locks identity to its authored build.
-      const identityLocked = slot !== 0 && companionBuildsForSlots[slot] !== undefined;
-      // `identityLocked` already implies `slot !== 0`, so a companion's gear
-      // stays locked to D-194's fixed economy kit exactly like before.
-      const gearLocked = identityLocked;
+      // D-2xx (2026-09-09 playtest list, item 1): reverses D-213. The PC
+      // (slot 0) is NO LONGER excluded — Kevin's explicit follow-up call is
+      // that his own character's Class/Race/Background/ability scores
+      // SHOULD freeze once a campaign actually persists a build, exactly
+      // like a companion. This is really Plan 3.2's original design
+      // (D-195) — D-213 had carved the PC out of it, and that carve-out is
+      // what's being reversed here.
+      const identityLocked = companionBuildsForSlots[slot] !== undefined;
+      // Gear/spells/level-plan/name stay editable for a locked PC (only
+      // identity/stats freeze) — `SlotState.gearLocked`'s own doc comment
+      // anticipated exactly this split. A companion (slot !== 0) still
+      // locks gear 1:1 with identity, same as D-194.
+      const gearLocked = identityLocked && slot !== 0;
       // Party Creation Overhaul Plan 3.4: a companion's (never the PC's —
       // 3.4 doesn't apply to slot 0) ability-score lock lifts once this
       // campaign has been fully cleared once.
@@ -891,6 +921,7 @@ export class CharacterCreationScene extends Phaser.Scene {
               // control mix was actually saved, unaffected by this default.
               controlledBy: slot === 0 ? "human" : "ai",
               gearIndices: {},
+              pinnedGearIds: {},
               subclassIndex: 0,
               startingLevel: 1,
               // Party Creation Overhaul Plan 5.1 (D-198): an AI-controlled
@@ -1467,10 +1498,16 @@ export class CharacterCreationScene extends Phaser.Scene {
       () => {
         // D-194: a campaign companion's gear is fixed (difficulty-scaled,
         // never player-edited) — same guard style Class/Race already use.
-        // Party Creation Overhaul Plan 3.2: checks `gearLocked`, not
-        // `identityLocked` — a returning PC has identity locked but gear
-        // stays editable, unlike a companion (see `SlotState.gearLocked`).
         if (this.slots[slot].gearLocked) return;
+        // `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 5 (D-246): the campaign
+        // PC (slot 0) no longer gets a free-pick catalog either, fresh OR
+        // returning — reversed from Party Creation Overhaul Plan 3.2's
+        // original call (`gearLocked` deliberately stays false for the PC;
+        // see `SlotState.gearLocked`'s own doc comment). A fresh PC's gear
+        // is now a fixed per-class kit (`resolveGearIdsForSlot`); a
+        // returning PC's real gear comes only from the between-missions
+        // Armory (D-243) and the Pool button below, same as a companion.
+        if (slot === 0 && this.campaignId) return;
         this.openGearPicker(slot);
       },
       { variant: "tab" },
@@ -1509,6 +1546,7 @@ export class CharacterCreationScene extends Phaser.Scene {
       "",
       () => {
         const s = this.slots[slot];
+        if (s.identityLocked) return;
         const classId = CREATABLE_CLASS_IDS[s.classIndex];
         const options = subclassesForClass(classId);
         if (getClassDefinition(classId).subclassChoiceLevel !== 1 || options.length < 2) return;
@@ -1936,6 +1974,8 @@ export class CharacterCreationScene extends Phaser.Scene {
           difficultyId: this.difficultyId,
           campaignId: this.campaignId,
           chapterIndex: this.chapterIndex,
+          pendingRegionBonusId: this.pendingRegionBonusId,
+          pendingRegionBonusHeroSlot: this.pendingRegionBonusHeroSlot,
           freePlayMapId: this.freePlayMapId,
           freePlayWaves: this.freePlayWaves,
           freePlayRunLengthId: this.freePlayRunLengthId,
@@ -2043,8 +2083,10 @@ export class CharacterCreationScene extends Phaser.Scene {
   private leaveToMainMenu(): void {
     // Don't abandon the scene while a picker/wizard overlay is open — Esc
     // (or a stray click) shouldn't discard in-progress choices; Cancel/Back
-    // inside the overlay itself is the way out of it.
-    if (this.levelPlanOverlay.length > 0) return;
+    // (or, for the gear picker, Done) inside the overlay itself is the way
+    // out of it. D-241: the gear picker didn't have this guard before —
+    // pressing Esc while it was open used to jump straight to Main Menu.
+    if (this.levelPlanOverlay.length > 0 || this.gearPickerView?.isOpen()) return;
     // D-202: capture the draft `init()` will resume on the next plain
     // entry — a loaded classic party is fair game too (no lock to leak),
     // a campaign/Free-Play/custom-map session is not (would otherwise let
@@ -2078,6 +2120,25 @@ export class CharacterCreationScene extends Phaser.Scene {
       if (index > 0) indices[slotId] = index;
     }
     return indices;
+  }
+
+  /**
+   * `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 3: the sibling of
+   * `gearIndicesFromBuild` above — collects every `startingGearIds` entry
+   * THAT method can't represent (rare-or-better, since
+   * `startingGearIdsForSlotType` is common/uncommon-only), so it can be
+   * preserved verbatim instead of silently dropped. See `pinnedGearIds`.
+   */
+  private pinnedGearIdsFromBuild(build: CharacterBuild): Partial<Record<GearSlotId, string>> {
+    const gearIds: Partial<Record<GearSlotId, string>> = { ...build.startingGearIds };
+    const pinned: Partial<Record<GearSlotId, string>> = {};
+    for (const slotId of GEAR_SLOT_IDS) {
+      const id = gearIds[slotId];
+      if (!id) continue;
+      const index = startingGearIdsForSlotType(gearSlotType(slotId)).indexOf(id) + 1;
+      if (index === 0) pinned[slotId] = id;
+    }
+    return pinned;
   }
 
   /**
@@ -2126,6 +2187,7 @@ export class CharacterCreationScene extends Phaser.Scene {
       abilityScoreMethod: build.abilityScoreMethod === "pointBuy" ? "pointBuy" : "standardArray",
       controlledBy: build.controlledBy,
       gearIndices: this.gearIndicesFromBuild(build),
+      pinnedGearIds: this.pinnedGearIdsFromBuild(build),
       // D-194: a defensive spread copy (never a bare reference into
       // companions.ts's shared singleton build) of this companion's
       // authored "normal" kit — undefined for a non-gear-locked slot, where
@@ -2156,9 +2218,17 @@ export class CharacterCreationScene extends Phaser.Scene {
     };
   }
 
-  /** D-193: the inverse of `gearIndicesFromBuild` — all 10 gear-slot indices back into a `startingGearIds` map. */
+  /**
+   * D-193: the inverse of `gearIndicesFromBuild` — all 10 gear-slot indices
+   * back into a `startingGearIds` map. Plan 3: seeded from `s.pinnedGearIds`
+   * first (a rare-or-better item the Gear-Points catalog can't represent,
+   * left untouched this visit), then overlaid with whatever `gearIndices`
+   * actually holds — an explicit Gear-Points pick for a slot always wins
+   * over a pin (`applyGearPickToSlot` clears the pin the instant that slot
+   * is touched, so the two never disagree in practice).
+   */
   private startingGearIdsFromIndices(s: SlotState): Partial<Record<GearSlotId, string>> {
-    const ids: Partial<Record<GearSlotId, string>> = {};
+    const ids: Partial<Record<GearSlotId, string>> = { ...s.pinnedGearIds };
     for (const slotId of GEAR_SLOT_IDS) {
       const index = s.gearIndices[slotId];
       if (!index) continue;
@@ -2169,23 +2239,46 @@ export class CharacterCreationScene extends Phaser.Scene {
 
   /**
    * Party Creation Overhaul Plan 2.3: `slotIndex`'s finished gear-id map,
-   * folding the shared party inventory pool in on top of whatever
-   * `s.gearLocked` would normally produce. A `gearLocked` slot's base kit is
+   * folding the shared party inventory pool in on top of whatever the base
+   * branch below produces. A `gearLocked` (companion) slot's base kit is
    * run through `visibleGearForOrigin` (keyed on THIS slot's own companion
    * id, whoever currently occupies it — not only while they're benched) so
    * a reactivated companion never shows an item simultaneously claimable by
-   * someone else from the pool. Then, for EVERY slot (locked or not), this
-   * session's own pool picks (`s.poolGearIds`) override the base kit
-   * slot-by-slot — a pool pick always wins.
+   * someone else from the pool. `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 5
+   * (D-246) added a second, PC-only branch alongside it — see below. Then,
+   * for EVERY slot (any branch), this session's own pool picks
+   * (`s.poolGearIds`) override the base kit slot-by-slot — a pool pick
+   * always wins.
    */
   private resolveGearIdsForSlot(s: SlotState, slotIndex: number): Partial<Record<GearSlotId, string>> {
-    const baseGearIds = s.gearLocked
-      ? visibleGearForOrigin(
-          this.companionIdForSlot[slotIndex] ?? "",
+    let baseGearIds: Partial<Record<GearSlotId, string>>;
+    if (s.gearLocked) {
+      baseGearIds = visibleGearForOrigin(
+        this.companionIdForSlot[slotIndex] ?? "",
+        // Plan 3: the between-missions Armory's purchases/sales for this
+        // companion layer on top of the difficulty-trimmed authored
+        // baseline — applied AFTER the trim so a purchased item survives
+        // regardless of difficulty (money spent should stick; it's not
+        // part of the trimmable "free starting kit").
+        applyPurchasedGearOverrides(
           companionStartingGearForDifficulty(s.baselineGearIds ?? {}, this.difficultyId),
-          this.partyInventorySnapshot,
-        )
-      : this.startingGearIdsFromIndices(s);
+          this.companionPurchasedGearSnapshot[this.companionIdForSlot[slotIndex] ?? ""],
+        ),
+        this.partyInventorySnapshot,
+      );
+    } else if (slotIndex === 0 && !!this.campaignId && !s.identityLocked) {
+      // Plan 5 (D-246): a brand-new campaign PC (no persisted `pcBuild` yet)
+      // has no free gear pick anymore — a fixed, non-editable kit derived
+      // from their (still freely pickable) class, same "no player choice"
+      // treatment a companion gets. Reacts live to a class change since
+      // this recomputes every call. A RETURNING PC (`identityLocked` true)
+      // falls through to the `else` branch below instead — their real gear
+      // is whatever's already persisted in `startingGearIds` (which already
+      // reflects any between-missions Armory purchases, D-243).
+      baseGearIds = defaultStartingGearForClass(CREATABLE_CLASS_IDS[s.classIndex]);
+    } else {
+      baseGearIds = this.startingGearIdsFromIndices(s);
+    }
     const withPool: Partial<Record<GearSlotId, string>> = { ...baseGearIds };
     for (const [poolSlotId, entryId] of Object.entries(s.poolGearIds ?? {})) {
       const claimedEntry = this.partyInventorySnapshot.find((e) => e.id === entryId);
@@ -2228,13 +2321,17 @@ export class CharacterCreationScene extends Phaser.Scene {
       // `s.gearIndices` (their Gear button is a no-op, see the guard
       // above) — their kit is always freshly derived from their
       // authored baseline + the CURRENT difficulty instead, so a live
-      // Difficulty change updates it immediately. Party Creation Overhaul
-      // Plan 3.2: checks `gearLocked`, not `identityLocked` — a returning
-      // PC has identity locked but keeps its own freely-edited gear.
-      // Plan 2.3: see `resolveGearIdsForSlot` — a `gearLocked` slot's base
-      // kit is stripped of anything currently sitting claimable in the
-      // pool, then this session's own pool picks (`s.poolGearIds`) are
-      // applied on top for every slot, locked or not.
+      // Difficulty change updates it immediately. `CAMPAIGN_ECONOMY_
+      // REDESIGN_PLAN.md` Plan 5 (D-246): a campaign PC's Gear button is
+      // ALSO now a no-op (fresh or returning) — a fresh PC's kit is
+      // derived from their class instead (`defaultStartingGearForClass`,
+      // reacts live to a class change same as a companion reacts to
+      // Difficulty); a returning PC's kit is whatever's persisted in
+      // `startingGearIds` already, including any Armory purchases.
+      // Plan 2.3: see `resolveGearIdsForSlot` — any locked/fixed slot's
+      // base kit is stripped of anything currently sitting claimable in
+      // the pool, then this session's own pool picks (`s.poolGearIds`) are
+      // applied on top for every slot regardless of branch.
       startingGearIds: this.resolveGearIdsForSlot(s, i),
       startingLevel: s.startingLevel,
       // D-133: undefined for a "fresh"/never-planned hero — identical to
@@ -2349,16 +2446,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     // index 0 default), but its ability-score bonus must be explicitly
     // spent, not silently defaulted.
     const unspentBackgroundSlot = this.slots.slice(0, this.partySize).findIndex((s) => !s.backgroundAbilityChoice);
-    // D-194: the PC's (slot 0) gear point-buy budget — checked ONLY in
-    // campaign mode, and ONLY against slot 0 specifically (a companion's
-    // `gearIndices` is reconstructed but never actually spent from, see
-    // `buildsFromSlots`, so it must never factor into this check). Reachable
-    // in practice: raising Difficulty after already spending gear points
-    // shrinks the budget without touching existing picks.
-    const gearPointsOverBudget =
-      !!this.campaignId &&
-      this.gearPointsSpent(this.slots[0]) > getDifficultyDefinition(this.difficultyId).startingGearPoints;
-    const valid = !invalidNames && incompleteSlot === -1 && unspentBackgroundSlot === -1 && !gearPointsOverBudget;
+    const valid = !invalidNames && incompleteSlot === -1 && unspentBackgroundSlot === -1;
     this.partyValid = valid;
 
     // Party Creation Overhaul Plan 8: `OrnateButtonHandle` has no direct
@@ -2508,20 +2596,13 @@ export class CharacterCreationScene extends Phaser.Scene {
         : "",
     );
 
-    // D-193: summarize every populated slot (skipping "None" ones). A short
-    // list (<=3, the common case) is spelled out by name; more than that
-    // (up to all 10) collapses to a count instead — 10 full item names
-    // would never fit a hero-column button even at the auto-shrink floor.
-    const gearNames = GEAR_SLOT_IDS.map((slotId) => build.startingGearIds?.[slotId])
-      .filter((id): id is string => !!id)
-      .map((id) => getEquipmentDefinition(id).name);
-    w.gearHandle.setLabel(
-      gearNames.length === 0
-        ? "Gear: None"
-        : gearNames.length <= 3
-          ? `Gear: ${gearNames.join(", ")}`
-          : `Gear: ${gearNames.length}/${GEAR_SLOT_IDS.length} equipped`,
-    );
+    // Item 2 (Batch B, KI-187): previously summarized equipped items (a
+    // short list by name, or a "N/10 equipped" count once past 3) — Kevin's
+    // playtest feedback was that this reads as noise, not useful information,
+    // on a button whose whole job is "open the gear picker." Always plain
+    // "Gear" now; the picker itself is still the place to see what's
+    // equipped.
+    w.gearHandle.setLabel("Gear");
 
     // Party Creation Overhaul Plan 2.3: how many of this slot's gear slots
     // are currently drawing from the shared pool this session — the pool
@@ -2682,455 +2763,126 @@ export class CharacterCreationScene extends Phaser.Scene {
    * every remaining caller is Point Buy's ability-score value readout,
    * squeezed into the narrower gap between the minus/plus buttons rather
    * than the full column width the default still assumes.
+   *
+   * Batch C (KI-188): the shrink loop itself now delegates to
+   * `uiTheme.shrinkFontToFit` — this was one of four near-identical
+   * hand-rolled copies of the same loop, now a single shared primitive.
    */
   private fitLabelToColumnWidth(
     label: Phaser.GameObjects.Text,
     baseFontSizePx = 13,
     maxWidthPx = COLUMN_WIDTH - 20 - 8,
   ): void {
-    const maxWidth = maxWidthPx;
     const minFontSizePx = 9;
-    label.setFontSize(baseFontSizePx);
-    let size = baseFontSizePx;
-    while (label.width > maxWidth && size > minFontSizePx) {
-      size -= 1;
-      label.setFontSize(size);
-    }
+    shrinkFontToFit(label, baseFontSizePx, minFontSizePx, () => label.width > maxWidthPx);
   }
 
   /**
-   * D-194: total point-buy cost of everything currently in `s.gearIndices`
-   * — only meaningful for the campaign PC (a companion never populates
-   * `gearIndices` at all, see the `identityLocked` guard on the Gear
-   * button), but harmless to call for any slot.
-   */
-  private gearPointsSpent(s: SlotState): number {
-    return GEAR_SLOT_IDS.reduce((total, slotId) => {
-      const index = s.gearIndices[slotId];
-      if (!index) return total;
-      const itemId = startingGearIdsForSlotType(gearSlotType(slotId))[index - 1];
-      return total + startingGearPointCost(getEquipmentDefinition(itemId).rarity);
-    }, 0);
-  }
-
-  /**
-   * D-213: replaces the old plain-list Gear picker with a real Armory-style
-   * paperdoll+catalog overlay — matching `GearShopScene` ("The Armory")'s
-   * visual language, which Kevin already approved and expected this screen
-   * to match. This is a self-contained in-scene overlay (like
-   * `renderPlanPrompt`'s choice overlays), NOT a second Phaser Scene: unlike
-   * the Armory, there's no paused `BattleScene` to sit on top of and no gold
-   * economy to guard with a delayed confirm — a click here just assigns the
-   * item to the slot directly. See `refreshGearPicker` for the actual draw.
+   * D-241 (Batch D, items 3/5): opens the shared `GearPickerView` (also
+   * driving `GearShopScene`/"The Armory" — see `gearPickerView.ts`) with
+   * this hero preselected. A `gearLocked` companion never reaches this (the
+   * Gear button's own guard stops it before this is even called), and
+   * neither does a campaign PC anymore (`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md`
+   * Plan 5, D-246) — in practice this is Free-Play-only now.
    */
   private openGearPicker(slot: number): void {
-    this.gearPickerSlotIndex = slot;
-    this.gearPickerGearSlot = "weapon";
-    this.gearPickerScrollOffset = 0;
-    this.pendingRingPick = null;
-    this.refreshGearPicker();
+    this.closeDropdown();
+    this.blurNameField();
+    this.gearPickerView?.open(String(slot));
   }
 
   /**
-   * D-213: destroy-and-rebuild, same convention as every other overlay in
-   * this file. Layout: header + Done, a 5x2 paperdoll of the 10
-   * `GEAR_SLOT_IDS` (row 1: weapon/shield/head/chest/legs, row 2: back/
-   * ring1/ring2/amulet/footwear — no potions, those aren't a pre-battle
-   * concept), then a catalog panel filtered to whichever slot is selected.
+   * D-241: this backend is built ONCE, in `create()` — every method is a
+   * closure over `this`, so it always reads whatever `this.slots`/etc.
+   * currently hold; nothing here is a snapshot. `CAMPAIGN_ECONOMY_REDESIGN
+   * _PLAN.md` Plan 5 (D-246): this used to also drive the campaign PC's
+   * "Gear Points" budgeted pick (a `pointBuy` flag choosing between a
+   * `pointsEconomy` and `FREE_ECONOMY`) — now that the campaign PC never
+   * reaches `openGearPicker` at all (see its own guard), `FREE_ECONOMY` is
+   * the only economy this backend ever needs; Free Play is its sole caller.
    *
-   * D-194: a campaign companion never reaches this (the Gear button's own
-   * `gearLocked` guard stops it before `openGearPicker` is even called) —
-   * the only slot that can reach it in campaign mode is the PC, so
-   * `this.campaignId` alone still means "point-buy applies here," same as
-   * the picker this replaces.
-   *
-   * Deliberately does NOT touch `s.poolGearIds` — matches the exact
-   * pre-existing behavior of the picker this replaces (a catalog pick only
-   * ever writes `s.gearIndices`; the separate "Pool" button/picker owns
-   * `poolGearIds`). A slot currently filled by a pool draw can look odd
-   * here (the paperdoll/catalog "current occupant" reads off `gearIndices`
-   * alone, same as before), which is a pre-existing quirk, not a
-   * regression introduced by this rebuild.
+   * Deliberately does NOT touch `s.poolGearIds` — matches the pre-D-241
+   * picker's own behavior (a catalog pick only ever writes `s.gearIndices`;
+   * the separate "Pool" button/picker owns `poolGearIds`).
    */
-  private activeGearPickerScrollRegion(): ScrollRegion | null {
-    if (!this.gearPickerViewportRect) return null;
-    return { rect: this.gearPickerViewportRect, totalContentHeight: this.gearPickerContentHeight, scrollOffset: this.gearPickerScrollOffset };
+  private buildGearPickerBackend(): GearPickerBackend {
+    return {
+      title: "Party Gear",
+      // No Potions column — not a pre-battle concept here, same as before D-241.
+      paperdollRows: [GEAR_SLOT_IDS.slice(0, 5), GEAR_SLOT_IDS.slice(5, 10)],
+      economy: FREE_ECONOMY,
+      heroes: () =>
+        this.slots
+          .map((s, i) => ({ s, i }))
+          .filter(({ i, s }) => i < this.partySize && !s.gearLocked)
+          .map(({ s, i }) => {
+            const hero = this.previewHeroForGearPicker(i);
+            return {
+              id: String(i),
+              name: s.name || `Hero ${i + 1}`,
+              subtitle: `${getClassDefinition(CREATABLE_CLASS_IDS[s.classIndex]).name} · Lv ${hero.level}`,
+            };
+          }),
+      heroForPreview: (heroId) => {
+        const i = Number(heroId);
+        return this.slots[i] ? this.previewHeroForGearPicker(i) : null;
+      },
+      candidateItemIds: () => Array.from(new Set(GEAR_SLOT_IDS.flatMap((id) => startingGearIdsForSlotType(gearSlotType(id))))),
+      buyGear: (heroId, slot, itemId) => this.applyGearPickToSlot(Number(heroId), slot, itemId),
+      sellGear: (heroId, slot) => this.applyGearPickToSlot(Number(heroId), slot, null),
+      // Unreachable — `paperdollRows` above never includes a Potions slot.
+      buyPotion: () => {},
+      sellPotion: () => {},
+    };
   }
 
-  private refreshGearPicker(): void {
-    clearChoiceOverlay(this.gearPickerOverlay);
-    this.closeDropdown();
-    this.blurNameField();
-    const overlay = this.gearPickerOverlay;
-    const slot = this.gearPickerSlotIndex;
-    const s = this.slots[slot];
-    if (!s) {
-      this.gearPickerViewportRect = null;
+  /** The simulated `Hero` behind party-slot `i`'s gear-picker entry — AC/attack-delta previews and the sidebar's class/level subtitle both read off this. */
+  private previewHeroForGearPicker(i: number): Hero {
+    const s = this.slots[i];
+    const build = this.buildFromSlot(i);
+    return simulateHeroForPlanning(build, s.levelUpPlan, build.startingLevel ?? 1);
+  }
+
+  /**
+   * D-241: the actual gear-index write, ported unchanged from the picker
+   * this replaces — a catalog pick only ever writes `s.gearIndices` (an
+   * index into `startingGearIdsForSlotType`'s pool), never a real `Hero`.
+   */
+  private applyGearPickToSlot(partySlotIndex: number, targetSlot: GearSlotId, id: string | null): void {
+    const s = this.slots[partySlotIndex];
+    if (!s) return;
+    // Plan 3: any explicit touch of this slot (buy OR sell) clears a pinned
+    // rare-or-better item — an explicit Gear-Points pick always wins.
+    delete s.pinnedGearIds[targetSlot];
+    if (id === null) {
+      delete s.gearIndices[targetSlot];
       return;
     }
-    const build = this.buildFromSlot(slot);
-    const { width: viewportWidth, height: viewportHeight } = getViewport(this);
-    const pointBuy = !!this.campaignId;
-
-    const dim = this.add
-      .rectangle(viewportWidth / 2, viewportHeight / 2, viewportWidth, viewportHeight, 0x000000, 0.85)
-      .setDepth(60)
-      .setInteractive();
-    overlay.push(dim);
-
-    const closeAndApply = (): void => {
-      clearChoiceOverlay(this.gearPickerOverlay);
-      this.gearPickerViewportRect = null;
-      this.refreshAll();
-    };
-
-    const title = this.add
-      .text(viewportWidth / 2, 46, `${build.name || "Hero"}'s Gear`, {
-        fontFamily: FONT_DISPLAY,
-        fontSize: "26px",
-        color: "#f0dfa8",
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5)
-      .setDepth(61);
-    overlay.push(title);
-
-    const doneHandle = createOrnateButton(this, viewportWidth - 110, 46, 160, 44, "Done", closeAndApply, {
-      variant: "secondary",
-      depth: 61,
-    });
-    overlay.push(doneHandle.container);
-
-    if (pointBuy) {
-      const pointsText = this.add
-        .text(
-          viewportWidth / 2,
-          80,
-          `Gear Points: ${this.gearPointsSpent(s)}/${getDifficultyDefinition(this.difficultyId).startingGearPoints}`,
-          { fontFamily: FONT_BODY, fontSize: "15px", color: "#b8a074" },
-        )
-        .setOrigin(0.5)
-        .setDepth(61);
-      overlay.push(pointsText);
+    const targetPool = startingGearIdsForSlotType(gearSlotType(targetSlot));
+    s.gearIndices[targetSlot] = targetPool.indexOf(id) + 1;
+    // D-204: the SRD grip rule — a Two-Handed weapon needs both hands, so it
+    // can't coexist with anything in the other hand slot. Force-clears the
+    // conflicting slot instead of rejecting the pick (BattleScene's
+    // mid-battle equip flow rejects instead — this is Character Creation's
+    // own, more forgiving, pre-battle picker).
+    if (targetSlot === "weapon" && isTwoHandedWeapon(id)) {
+      delete s.gearIndices.shield;
+      delete s.pinnedGearIds.shield;
     }
-
-    // ----- Paperdoll: 5 cols x 2 rows, the 10 GEAR_SLOT_IDS in their own
-    // established order (no potions — not a pre-battle concept here).
-    const panelCenterX = viewportWidth / 2;
-    const paperdollTop = pointBuy ? 106 : 92;
-    const cellHeight = 108;
-    const cellGap = 8;
-    const gridPad = 16;
-    const cols = 5;
-    const panelWidth = Math.min(760, viewportWidth - 140);
-    const cellWidth = (panelWidth - gridPad * 2 - cellGap * (cols - 1)) / cols;
-    const paperdollPanelHeight = gridPad * 2 + cellHeight * 2 + cellGap;
-    overlay.push(drawParchmentPanel(this, panelCenterX, paperdollTop + paperdollPanelHeight / 2, panelWidth, paperdollPanelHeight, 61));
-
-    const paperdollRows: GearSlotId[][] = [GEAR_SLOT_IDS.slice(0, 5), GEAR_SLOT_IDS.slice(5, 10)];
-    paperdollRows.forEach((row, rowIdx) => {
-      row.forEach((slotId, colIdx) => {
-        const sx = panelCenterX - panelWidth / 2 + gridPad + colIdx * (cellWidth + cellGap) + cellWidth / 2;
-        const sy = paperdollTop + gridPad + rowIdx * (cellHeight + cellGap) + cellHeight / 2;
-        const cellIndex = s.gearIndices[slotId] ?? 0;
-        const cellPool = startingGearIdsForSlotType(gearSlotType(slotId));
-        const occupantId = cellIndex > 0 ? cellPool[cellIndex - 1] : undefined;
-        // D-228 (KI-177 item 4): Ring 1/Ring 2 share one catalog view, so
-        // BOTH cells read as "active" together whenever either is selected
-        // — same consolidation `GearShopScene` got this session.
-        const isActive = slotId === this.gearPickerGearSlot || (isRingSlot(slotId) && isRingSlot(this.gearPickerGearSlot));
-
-        const cellG = this.add.graphics().setDepth(62);
-        cellG.fillStyle(0x1a1108, 1);
-        cellG.fillRoundedRect(sx - cellWidth / 2, sy - cellHeight / 2, cellWidth, cellHeight, 4);
-        cellG.lineStyle(isActive ? 2 : 1, isActive ? 0xe8c25a : occupantId ? 0x9a7a3e : 0x5a4222, 1);
-        cellG.strokeRoundedRect(sx - cellWidth / 2, sy - cellHeight / 2, cellWidth, cellHeight, 4);
-        overlay.push(cellG);
-
-        const hit = this.add
-          .rectangle(sx, sy, cellWidth, cellHeight, 0xffffff, 0)
-          .setInteractive({ useHandCursor: true })
-          .setDepth(63);
-        hit.on("pointerdown", () => {
-          // A pending ring pick (both ring slots were full) resolves the
-          // instant this specific physical cell is clicked — Kevin's own
-          // spec: show both spots, let the player choose which to replace.
-          if (this.pendingRingPick !== null && isRingSlot(slotId)) {
-            const pick = this.pendingRingPick;
-            this.pendingRingPick = null;
-            applyPickToSlot(pick, slotId);
-            return;
-          }
-          this.gearPickerGearSlot = slotId;
-          this.gearPickerScrollOffset = 0;
-          this.pendingRingPick = null;
-          this.refreshGearPicker();
-        });
-        overlay.push(hit);
-
-        overlay.push(
-          this.add
-            .text(sx, sy - cellHeight / 2 + 10, GEAR_SLOT_LABELS[slotId], {
-              fontFamily: FONT_BODY,
-              fontSize: "11px",
-              color: isActive ? "#fff3d0" : "#a89058",
-              align: "center",
-              wordWrap: { width: cellWidth - 8 },
-            })
-            .setOrigin(0.5, 0)
-            .setDepth(64),
-        );
-        overlay.push(
-          this.add
-            .text(sx, sy + 6, occupantId ? getEquipmentDefinition(occupantId).name : "— empty —", {
-              fontFamily: FONT_BODY,
-              fontSize: "11px",
-              color: occupantId ? "#f0e6c8" : "#5a4a34",
-              align: "center",
-              wordWrap: { width: cellWidth - 8 },
-            })
-            .setOrigin(0.5, 0)
-            .setDepth(64),
-        );
-      });
-    });
-
-    // ----- Catalog: filtered to the active paperdoll slot.
-    const gearSlot = this.gearPickerGearSlot;
-    const pool = startingGearIdsForSlotType(gearSlotType(gearSlot));
-    const currentIndex = s.gearIndices[gearSlot] ?? 0;
-    const currentItemId = currentIndex > 0 ? pool[currentIndex - 1] : undefined;
-    // D-228 (KI-177 item 4): the OTHER physical ring slot's own occupant,
-    // when `gearSlot` is a ring — used below both to show "Equipped" on
-    // its row too and to decide whether a new pick can auto-place (one
-    // ring free) or needs the player to choose (both full).
-    const otherRingSlot: GearSlotId | null = isRingSlot(gearSlot) ? (gearSlot === "ring1" ? "ring2" : "ring1") : null;
-    const otherRingIndex = otherRingSlot ? (s.gearIndices[otherRingSlot] ?? 0) : 0;
-    const otherRingItemId = otherRingSlot && otherRingIndex > 0 ? pool[otherRingIndex - 1] : undefined;
-    const budget = pointBuy ? getDifficultyDefinition(this.difficultyId).startingGearPoints : Infinity;
-    const currentCost = currentItemId ? startingGearPointCost(getEquipmentDefinition(currentItemId).rarity) : 0;
-    // Points available for a NEW pick in this slot: the budget minus
-    // everything spent elsewhere (i.e. minus everything spent, plus back
-    // whatever this slot itself currently costs) — unchanged math from the
-    // picker this replaces.
-    const availableForThisSlot = budget - this.gearPointsSpent(s) + currentCost;
-
-    // D-235 (item 7): weapon proficiency — fully hidden, same "simply
-    // doesn't appear in the list" convention the point-buy budget filter
-    // right above already uses, plus a one-line hidden-count footer below
-    // instead of a toggle.
-    const budgetFilteredPool = pool.filter((id) => !pointBuy || startingGearPointCost(getEquipmentDefinition(id).rarity) <= availableForThisSlot);
-    const proficientPool = build.classId ? budgetFilteredPool.filter((id) => isProficientWithHandsItem(build.classId!, id)) : budgetFilteredPool;
-    const proficiencyHiddenCount = budgetFilteredPool.length - proficientPool.length;
-    const list: (string | null)[] = [null, ...proficientPool];
-
-    if (this.pendingRingPick !== null && isRingSlot(gearSlot)) {
-      overlay.push(
-        this.add
-          .text(
-            panelCenterX,
-            paperdollTop + paperdollPanelHeight + 10,
-            `Click Ring 1 or Ring 2 above to place ${getEquipmentDefinition(this.pendingRingPick).name}.`,
-            { fontFamily: FONT_BODY, fontSize: "13px", color: "#e8c25a" },
-          )
-          .setOrigin(0.5)
-          .setDepth(61),
-      );
-    }
-
-    const catalogTop = paperdollTop + paperdollPanelHeight + 20;
-    const rowHeight = 58;
-    const rowGap = 8;
-    const visibleRowCount = 6;
-    const listHeight = visibleRowCount * (rowHeight + rowGap) - rowGap + 24;
-
-    overlay.push(drawParchmentPanel(this, panelCenterX, catalogTop + listHeight / 2, panelWidth, listHeight, 61));
-
-    const previewHero = simulateHeroForPlanning(build, s.levelUpPlan, build.startingLevel ?? 1);
-
-    // D-228 (KI-177 item 4): generalized to an explicit target slot so a
-    // ring pick resolved via the paperdoll (see the pointerdown handler
-    // above) can write into whichever specific physical slot the player
-    // clicked, not just whatever `gearSlot` happened to be selected.
-    const applyPickToSlot = (id: string | null, targetSlot: GearSlotId): void => {
-      const targetPool = startingGearIdsForSlotType(gearSlotType(targetSlot));
-      if (id === null) {
-        delete s.gearIndices[targetSlot];
-      } else {
-        const i = targetPool.indexOf(id);
-        s.gearIndices[targetSlot] = i + 1;
-        // D-204: the SRD grip rule — a Two-Handed weapon needs both hands,
-        // so it can't coexist with anything in the other hand slot.
-        // Force-clears the conflicting slot instead of rejecting the pick
-        // (BattleScene's mid-battle equip flow rejects instead — this is
-        // Character Creation's own, more forgiving, pre-battle picker).
-        if (targetSlot === "weapon" && isTwoHandedWeapon(id)) delete s.gearIndices.shield;
-        if (targetSlot === "shield") {
-          const weaponIndex = s.gearIndices.weapon;
-          const weaponId = weaponIndex ? startingGearIdsForSlotType("weapon")[weaponIndex - 1] : undefined;
-          if (weaponId && isTwoHandedWeapon(weaponId)) delete s.gearIndices.weapon;
-        }
+    if (targetSlot === "shield") {
+      const weaponIndex = s.gearIndices.weapon;
+      const weaponId = weaponIndex ? startingGearIdsForSlotType("weapon")[weaponIndex - 1] : undefined;
+      if (weaponId && isTwoHandedWeapon(weaponId)) {
+        delete s.gearIndices.weapon;
+        delete s.pinnedGearIds.weapon;
       }
-      this.refreshGearPicker();
-    };
-    const applyPick = (id: string | null): void => applyPickToSlot(id, gearSlot);
-
-    // D-234: scrollable instead of paginated — see `uiScrollList.ts`.
-    const rowHeights = list.map(() => rowHeight);
-    const totalRowsHeight = scrollContentHeight(rowHeights, rowGap);
-    const rowsRect: ScrollListRect = {
-      x: panelCenterX - panelWidth / 2 + 10,
-      y: catalogTop + 12,
-      width: panelWidth - 20,
-      height: listHeight - 24,
-    };
-    this.gearPickerScrollOffset = clampScrollOffset(this.gearPickerScrollOffset, totalRowsHeight, rowsRect.height);
-    this.gearPickerViewportRect = rowsRect;
-    this.gearPickerContentHeight = totalRowsHeight;
-
-    renderScrollListRows(
-      this,
-      rowsRect,
-      rowHeights,
-      rowGap,
-      this.gearPickerScrollOffset,
-      63,
-      (index, rowX, rowTopY, rowWidth) => {
-        const id = list[index];
-        const objs: Phaser.GameObjects.GameObject[] = [];
-        const rowCenterX = rowX + rowWidth / 2;
-        const rowCenterY = rowTopY + rowHeight / 2;
-        const isCurrent = id === (currentItemId ?? null) || (id !== null && id === otherRingItemId);
-        const leftX = rowX + 16;
-        const def = id ? getEquipmentDefinition(id) : undefined;
-        const rarityTag = def && def.rarity !== "common" ? ` · ${RARITY_LABELS[def.rarity]}` : "";
-
-        objs.push(
-          this.add
-            .text(leftX, rowCenterY - 8, `${def ? def.name : "None"}${rarityTag}`, {
-              fontFamily: FONT_BODY,
-              fontSize: "15px",
-              color: "#2a1a10",
-              fontStyle: isCurrent ? "bold" : "normal",
-            })
-            .setDepth(64),
-        );
-
-        // A one-line delta so every candidate's effect is visible without a
-        // separate compare step (no economic risk to guard against here — a
-        // click IS the equip action, unlike the Armory's delayed Purchase).
-        let subline = "";
-        if (id && !isCurrent) {
-          subline = formatGearDelta(previewGearSlotChange(previewHero, gearSlot, id));
-        } else if (id === null && currentItemId) {
-          subline = `Removes ${getEquipmentDefinition(currentItemId).name}`;
-        } else if (def) {
-          subline = def.description;
-        }
-        objs.push(
-          this.add
-            .text(leftX, rowCenterY + 12, subline, {
-              fontFamily: FONT_BODY,
-              fontSize: "11px",
-              color: "#6a4a2a",
-              wordWrap: { width: rowWidth - 260 },
-            })
-            .setDepth(64),
-        );
-
-        if (isCurrent) {
-          objs.push(
-            this.add
-              .text(rowCenterX + rowWidth / 2 - 130, rowCenterY, "Equipped", {
-                fontFamily: FONT_BODY,
-                fontSize: "11px",
-                color: "#fff3d0",
-                backgroundColor: "#2a1a10",
-                padding: { x: 6, y: 2 },
-              })
-              .setOrigin(0, 0.5)
-              .setDepth(64),
-          );
-        } else {
-          if (pointBuy && id) {
-            const cost = startingGearPointCost(getEquipmentDefinition(id).rarity);
-            objs.push(
-              this.add
-                .text(rowCenterX + rowWidth / 2 - 220, rowCenterY, `${cost} pt${cost === 1 ? "" : "s"}`, {
-                  fontFamily: FONT_BODY,
-                  fontSize: "12px",
-                  color: "#6a4a2a",
-                })
-                .setOrigin(0, 0.5)
-                .setDepth(64),
-            );
-          }
-          const actionHandle = createOrnateButton(
-            this,
-            rowCenterX + rowWidth / 2 - 90,
-            rowCenterY,
-            140,
-            34,
-            id === null ? "Unequip" : "Equip",
-            () => {
-              // D-228 (KI-177 item 4): a new ring pick with both physical
-              // slots already full can't auto-resolve — arm it and wait for
-              // an explicit paperdoll-cell click (see that handler above)
-              // instead of guessing which ring to replace.
-              if (id !== null && isRingSlot(gearSlot) && otherRingSlot) {
-                const decision = decideSlotPairPlacement(currentItemId ?? null, otherRingItemId ?? null, gearSlot, otherRingSlot);
-                if (decision.kind === "autoPlace") applyPickToSlot(id, decision.slot);
-                else {
-                  this.pendingRingPick = id;
-                  this.refreshGearPicker();
-                }
-                return;
-              }
-              applyPick(id);
-            },
-            { variant: "tool", fontSize: 12, depth: 64 },
-          );
-          objs.push(actionHandle.container);
-        }
-
-        return objs;
-      },
-      overlay,
-    );
-
-    renderScrollbarVisual(
-      this,
-      rowsRect,
-      totalRowsHeight,
-      this.gearPickerScrollOffset,
-      63,
-      (offset) => {
-        this.gearPickerScrollOffset = offset;
-        this.refreshGearPicker();
-      },
-      overlay,
-    );
-
-    // D-235 (item 7): a one-line footer rather than a toggle, same as the Armory's own.
-    if (proficiencyHiddenCount > 0) {
-      overlay.push(
-        this.add
-          .text(panelCenterX, catalogTop + listHeight + 14, `${proficiencyHiddenCount} hidden — not proficient`, {
-            fontFamily: FONT_BODY,
-            fontSize: "12px",
-            color: "#6a4a2a",
-            fontStyle: "italic",
-          })
-          .setOrigin(0.5)
-          .setDepth(64),
-      );
     }
   }
 
   /**
    * Party Creation Overhaul Plan 2.3: this hero's "draw from the shared
    * party inventory" menu — one row per gear slot, same two-level shape as
-   * `openGearPicker`/`openGearItemPicker` above, just sourced from
+   * `openGearPicker` above, just sourced from
    * `this.partyInventorySnapshot` instead of the static catalogue. Available
    * to every active slot regardless of `gearLocked` — a companion's fixed
    * catalogue kit and the pool are two independent gear sources.
@@ -4006,7 +3758,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     const current = kind === "cantrips" ? hero.knownCantripIds : hero.preparedSpellIds;
     const label = kind === "cantrips" ? "Cantrip" : "Prepared Spell";
     const existing = this.planningDraft.spellSwaps[step.level]?.find((c) => c.kind === kind);
-    const maxLevel = this.maxCastableSpellLevel(classId, step.level);
+    const maxLevel = maxCastableSpellLevel(classId, step.level);
     const replacementPool = selectedDropId
       ? (
           kind === "cantrips"
@@ -4155,16 +3907,6 @@ export class CharacterCreationScene extends Phaser.Scene {
   // confirm, since a spell pick is a multi-select up to a cap.
   // ---------------------------------------------------------------------
 
-  /** Highest spell level this class can actually cast at `level` — a Character-Creation-only DISPLAY filter (the canonical eligible pool in `SpellPreparationSystem` is unchanged) so the picker doesn't show a level-1 hero 100+ spells it can't cast for another 10+ levels. */
-  private maxCastableSpellLevel(classId: string, level: number): number {
-    const slots = spellSlotsForClassAtLevel(getClassDefinition(classId), level);
-    let max = 0;
-    slots.forEach((count, i) => {
-      if (count > 0) max = i + 1;
-    });
-    return max;
-  }
-
   private openSpellPicker(slot: number): void {
     const classId = CREATABLE_CLASS_IDS[this.slots[slot].classIndex];
     const level = this.slots[slot].startingLevel;
@@ -4172,7 +3914,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     if (this.spellPickSteps.length === 0) return; // nothing this class can actually pick — see spellPickStepsForClass's own doc comment
     this.spellPickSlot = slot;
     const existing = this.slots[slot].spellPicks;
-    const maxLevel = this.maxCastableSpellLevel(classId, level);
+    const maxLevel = maxCastableSpellLevel(classId, level);
 
     // Seed each field from the hero's existing pick if it has one, else
     // reproduce `Hero.growSpellSelections()`'s own `defaultFill` math over
@@ -4261,7 +4003,7 @@ export class CharacterCreationScene extends Phaser.Scene {
     const slot = this.spellPickSlot as number;
     const classId = CREATABLE_CLASS_IDS[this.slots[slot].classIndex];
     const level = this.slots[slot].startingLevel;
-    const maxLevel = this.maxCastableSpellLevel(classId, level);
+    const maxLevel = maxCastableSpellLevel(classId, level);
 
     let title: string;
     let pool: string[];

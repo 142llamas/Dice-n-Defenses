@@ -1,8 +1,14 @@
 # Fantasy Tower Defense — Claude Code Instructions
 
 A turn-based, grid-based fantasy wave-defense tactics game. TypeScript +
-Phaser 3 + Vite, tested with Vitest. Currently **v0.2.0-dev**, Phase 7
-(Vertical Slice) content-complete; the in-browser balance pass is what's left.
+Phaser 3 + Vite, tested with Vitest. Currently **v0.2.0-dev**, well past the
+original Phase 0–12 roadmap (see `SOURCE_OF_TRUTH.md` for that original plan
+and `DECISIONS.md`/`PHASE_HANDOFF.md` for what actually shipped since —
+a full D&D-depth character system, a 6-region story campaign, a persistent
+campaign economy, co-op scaffolding, a map builder, and more). Live and
+auto-deployed at https://dice-n-defenses.web.app. Always check
+`PHASE_HANDOFF.md` first for the actual current state — this file only
+covers the rules that don't change session to session.
 
 ## Read these first, every session
 
@@ -10,8 +16,10 @@ Before changing any code, read (in this order):
 
 1. `PHASE_HANDOFF.md` — what the last chat did and what's next.
 2. `PROJECT_STATUS.md` — current version/phase and what's implemented.
-3. `DECISIONS.md` — permanent decisions (D-NNN, highest number so far: D-058).
-   Do not reverse a decision marked LOCKED without Kevin's explicit approval.
+3. `DECISIONS.md` — permanent decisions (D-NNN; check `PHASE_HANDOFF.md`'s
+   "Next available" line for the current highest number rather than trusting
+   a number hardcoded here, which will drift). Do not reverse a decision
+   marked LOCKED without Kevin's explicit approval.
 4. `KNOWN_ISSUES.md` — known bugs, deferred items, and things confirmed
    "working as designed." Kevin records his own playtest findings here
    directly (e.g. "-Confirmed" annotations) rather than in chat — check it for
@@ -57,10 +65,24 @@ the current authority when the two disagree (see the repo-note inside
    - New original content (heroes/enemies/items/etc., or anything
      SRD-derived) → `CONTENT_SOURCES.md`. No D&D branding/logos/setting
      material anywhere — see `SOURCE_OF_TRUTH.md` §3.
+   - A large batch (roughly 5+ items, or anything likely to span more than
+     one session) → its own dedicated tracking doc at the repo root (e.g.
+     `PARTY_CREATION_OVERHAUL_PLAN.md`, `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md`,
+     `PLAYTEST_<date>_BATCHES.md`): a status table plus per-item/per-batch
+     detail, updated IN PLACE as work ships. `PHASE_HANDOFF.md`'s own
+     "rewrite fully every session" rule (below) is exactly why this matters
+     — itemized status left only in that file's prose gets compressed away
+     over enough rewrite cycles (this happened for real: a 19-item playtest
+     list's original wording was lost this way before
+     `PLAYTEST_2026-09-09_BATCHES.md` was created to fix it). `PHASE_HANDOFF.md`
+     should link to the tracking doc, not restate its contents.
 8. Use strict TypeScript, clear names, and avoid `any` without a documented
    reason.
-9. There is no git repository in this environment — Kevin manages Git via
-   GitHub Desktop separately. Don't expect or run `git` commands here.
+9. A real `.git` directory with a working remote exists in this environment,
+   usable for READ-ONLY inspection (`log`/`show`/`status`/`fetch`/`diff`).
+   Kevin manages actual Git operations (commit/push/branch) via GitHub
+   Desktop separately, and GitHub Actions auto-deploys on push to `main` —
+   never `commit`, `push`, or otherwise write to the repository from here.
 10. No secrets, `node_modules`, or `dist` belong in anything you produce.
 
 ## Quick reference
@@ -69,7 +91,7 @@ the current authority when the two disagree (see the repo-note inside
 npm install        # first time / after dependency changes
 npm run dev         # local dev server
 npm run typecheck   # TypeScript check only
-npm test            # Vitest (150+ tests as of Phase 7 content-complete)
+npm test            # Vitest (check PHASE_HANDOFF.md for the current count)
 npm run build       # typecheck + production build
 ```
 

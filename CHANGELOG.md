@@ -2,6 +2,586 @@
 
 All notable changes to this project are recorded here.
 
+## [Unreleased] — 0.2.0-dev — Full-codebase cleanup pass (D-255) + a real mercy-tally bug fix (D-254)
+
+A "very thorough" file-by-file, line-by-line cleanup pass across the whole
+project (149 `src/` files, 113 test files, and every doc), run via 14
+parallel audit agents. See `DECISIONS.md` D-254/D-255 for the complete
+accounting — summary here.
+
+Fixed:
+- **A real gameplay bug (D-254)**: `NamelessThroneSystem.computeMercyTally`
+  was silently counting a skipped, now-optional Shattered Causeway as
+  "showed no mercy" toward the capstone's ending. Fixed to exclude an
+  unplayed Causeway from the tally entirely (Kevin's own choice among 3
+  presented options). See `KNOWN_ISSUES.md` KI-202.
+- 9 stale comments/doc-comments across `InitiativeSystem.ts`,
+  `WorldFlagSystem.ts`, `ProgressionSystem.ts`, `RestSystem.ts`,
+  `BattleScene.ts`, `Hero.ts`, `data/campaigns.ts` (×2), `data/difficulty.ts`,
+  `UnlockMissionSystem.ts`, and `CharacterCreationScene.ts` — all referenced
+  removed/superseded systems or a nonexistent method/scene.
+
+Removed (confirmed dead — zero production callers, verified by grepping the
+whole repo, not just the assigned file):
+- `GameMap.describe()`, `SpellPreparationSystem.isValidSelection()`,
+  `ProgressionSystem.levelsSoFar`, `BuildSystem.removeAt()`, and two dead
+  `export type { GridPosition }` re-exports (`data/structures.ts`,
+  `data/enemies.ts`).
+
+Changed (duplicated logic consolidated onto one shared implementation):
+- `MapBuilderScene`'s tile-size formula now calls the existing
+  `GridSystem.computeFittedTileSize` instead of hand-duplicating it.
+- `CombatSystem.chooseTarget`/`attackArea` now share one
+  `compareTargetPriority` comparator instead of two copies of the same
+  nearest/health/id tie-break.
+- `SpellcastingSystem`'s sparse-table lookup helper moved to
+  `CharacterSystem.ts` (exported) and is now shared by both files' own
+  per-level lookups instead of 3 separate copies.
+- `ClassProgressionSystem`/`ProficiencySystem` now call
+  `SpellcastingSystem.isSpellcaster` instead of reimplementing it;
+  `ClassProgressionSystem`/`LevelUpPlanSystem` now call
+  `CharacterSystem.featuresAtLevel` instead of reimplementing it;
+  `gearPickerView.ts`/`BattleScene.ts` now call `LootSystem.isPotionId`
+  instead of reimplementing it; `BattleScene.ts` now calls the existing
+  `BuildSystem.trapIsSingleUseAt` instead of computing it independently;
+  `CharacterCreationScene`'s exact-duplicate private `maxCastableSpellLevel`
+  was deleted in favor of the shared `SpellPreparationSystem` export.
+- 2 exact-duplicate test assertions removed from `campaign.test.ts`
+  (already covered, more precisely, by `enemyRoster.test.ts`).
+
+Documentation: `CLAUDE.md` and `README.md` were both badly stale (README
+still described the classic 4-hero/10-wave MVP with 157 tests) — both
+rewritten to reflect the current game. Also corrected:
+`PHASE_12_MULTIPLAYER_FEASIBILITY.md`/`CAMPAIGN_STORY_DESIGN.md` (stale
+"design only" banners), `SOURCE_OF_TRUTH.md` (a repo-note wrongly claiming
+2 already-resolved items were still open), `FIREBASE_SETUP.md` (framed as
+not-yet-done), `ASSET_PLAN.md` (missing system), `PARTY_CREATION_OVERHAUL_PLAN.md`
+(missing status banner), `package.json`'s description, and — with Kevin's
+explicit sign-off per this project's own doc-history conventions —
+`DECISIONS.md` (one duplicated paragraph removed, 3 missing cross-reference
+notes added), `KNOWN_ISSUES.md` (3 stale/contradictory checklist items
+corrected), and `PROJECT_STATUS.md` (a false header claim fixed, a
+fossilized ~467-line MVP-era snapshot collapsed to a pointer).
+
+Flagged, not fixed: a UI-consistency gap in `BrowseSharedMapsScene.ts`/
+`TestModeScene.ts`/`MapBuilderScene.ts` (never migrated to the shared
+`uiTheme.ts`/`uiScrollList.ts` components every sibling scene uses) needs a
+browser to verify, so it's a recommendation for a future session.
+
+## [Unreleased] — 0.2.0-dev — Batch H: chapter-select submenu + the 19-chapter campaign restructure (D-253) — CLOSES THE ENTIRE 2026-09-09 19-ITEM PLAYTEST LIST
+
+Items 12/13, the last item on Kevin's 2026-09-09 19-item playtest list — the
+single most disruptive item on it (content cuts, chapter renumbering, a new
+leveling model). Emberford Reach loses its old Chapter 3 (folds 4→3
+chapters); Shattered Causeway is demoted to optional/non-mandatory content
+(5 regions × mostly-4 chapters = 19 required chapters total).
+
+Added:
+- `src/game/scenes/ChapterSelectScene.ts` — a new chapter-picker submenu
+  between a region card click and the existing mission-routing flow, listing
+  every chapter of a region with locked/unlocked/completed status and replay
+  of anything already cleared.
+- `src/game/scenes/missionRouting.ts` — the shared 2-branch routing logic
+  (unlock-mission vs. straight-to-bonus-choice) `CampaignSelectScene` and the
+  new `ChapterSelectScene` both use.
+- Dorian Wick's new side mission ("What the Causeway Kept") — he now
+  recruits via his own mission (Pool A) instead of Shattered Causeway's
+  Chapter 1 (Pool B), matching the other 6 side-mission companions.
+
+Changed:
+- Campaign leveling: a chapter clear now grants exactly ONE character level
+  (capped at 20, order-independent — regions already unlock in parallel with
+  no forced sequence), replacing the old continuous per-wave ramp toward a
+  fixed per-chapter level band. Free Play's own leveling is completely
+  unaffected. Gated against farming free levels by replaying an
+  already-cleared chapter.
+- Campaign boss/enemy scaling now keys off the party's actual accumulated
+  campaign level instead of each chapter's static level band — a companion
+  fix the leveling change required, since the old band-based scaling was
+  only ever "close enough" thanks to the per-wave ramp this change removes.
+- `REGION_CAMPAIGN_IDS` (the Nameless Throne capstone gate + legacy-save
+  level backfill) drops Shattered Causeway — it stays a full, playable
+  campaign, just no longer mandatory.
+
+Fixed (found during this batch, not part of the original ask):
+- `BattleScene.showMirrorBossReactionIfAny` hardcoded chapter index 3 as
+  every region's finale — silently broken for Emberford Reach's new 3-chapter
+  shape; now derives the finale index correctly for every region.
+
+Known, accepted narrative loss (not a bug): Shattered Causeway's finale no
+longer plays Dorian Wick's "homecoming beat" dialogue — moving him to a side
+mission (required so existing tests treat him like every other Pool A
+companion) means he doesn't get that beat. See `KNOWN_ISSUES.md` KI-201 for
+the full playtest checklist.
+
+## [Unreleased] — 0.2.0-dev — Batch F: real mid-battle autosave for Campaign and Free Play (D-252)
+
+Item 18 of Kevin's 2026-09-09 19-item playtest list — the last item on the
+whole list. Two scope forks confirmed with Kevin before design: checkpoint
+after each wave clear, covering both Campaign and Free Play.
+
+Added:
+- `src/game/systems/AutosaveSystem.ts` — a rotating pool of up to 3
+  mid-battle checkpoints, upserted by a stable per-run id (so repeated
+  checkpoints of the same run never duplicate, and only a genuinely new
+  run evicts the oldest other one once full).
+- `BattleScene` checkpoints via the previously-unused `BattleStateSnapshot`
+  (`captureBattleState`/`restoreBattleState`, built in Phase 12.1/D-101 for
+  multiplayer-sync feasibility) right after each wave clears, for real
+  Campaign/Free-Play runs only (not Co-op/Test Mode).
+- `ModeEntryScene` gains a "Continue" button per mode (shown only when an
+  in-progress run exists); `LoadGameScene` gains a third `"autosave"` list
+  mode with "Resume"/"Delete" actions, resuming straight into `BattleScene`
+  without re-entering Character Creation.
+
+Changed:
+- `BattleScene.create()` gains an additive resume branch — the fresh-start
+  path is unchanged; a resume restores heroes/wave/gold/structures/rests
+  from the checkpoint and skips the one-time pre-wave-1 setup (chapter
+  intro, region bonus, fast-forward choices) that's always already resolved
+  by the time a checkpoint can exist.
+- "Disable actions while saving" / "warn if it takes >0.5s" (both literal
+  asks from item 18): a new `autosaving` flag joins `inputLocked()`'s
+  existing OR-chain; a slow write logs a warning via the combat log — real,
+  correct plumbing that won't visibly fire until a slower persistence layer
+  (e.g. a future cloud sync) exists, same as today's synchronous
+  `localStorage` write.
+
+Known, accepted gaps (not part of this decision, see `DECISIONS.md` D-252):
+an active summon won't survive a resume (`SummonSystem` was already a
+documented `BattleStateSnapshot` gap); an already-claimed treasure tile
+could pay out a second time after a resume (`consumedTreasureTiles` was
+already documented as not persisted). See `KNOWN_ISSUES.md` KI-200 for the
+full playtest checklist — this is the riskiest change of the whole 19-item
+arc, touching `BattleScene.create()`'s core setup.
+
+## [Unreleased] — 0.2.0-dev — Batch G: "Reset to Default" for Settings and Controls (D-251)
+
+Item 19 of Kevin's 2026-09-09 19-item playtest list. Defaults already
+existed as named constants; nothing wrote them back until now.
+
+Added:
+- `SettingsSystem.resetSettings` / `KeyBindingSystem.resetKeyBindings` —
+  pure functions writing each system's `DEFAULT_*` constant back to
+  storage and returning it, mirroring the existing `load`/`save` shape.
+- `SettingsScene` gains a "Reset to Default" button (Controls section,
+  above Back), guarded by a confirmation prompt copying `PauseMenuScene`'s
+  own message/Confirm/Cancel pattern.
+
+Changed:
+- Confirming Reset re-applies volume/mute live to `AudioManager`, and — in
+  the in-battle pause-menu overlay entry mode — also resets the live
+  `BattleScene`'s own Game Speed, not just the stored value.
+
+Deliberately not built: item 19a's named/savable setting profiles (Kevin's
+own softer "I wouldn't hate..." phrasing) — no profile concept exists
+anywhere today; flagged as an open nice-to-have, not part of this pass.
+
+See `DECISIONS.md` D-251 for the full design and `KNOWN_ISSUES.md` KI-199
+for the playtest checklist.
+
+## [Unreleased] — 0.2.0-dev — Reconciled Batch E's real gaps: equipment-bonus recipient choice, value-comparable pricing, player-placed free structures (D-250)
+
+A new `PLAYTEST_2026-09-09_BATCHES.md` tracker (this session) surfaced that
+D-248's own "closes Batch E" claim was wrong — items 6b/6c/15 were never
+built. This closes all three.
+
+Added:
+- `RegionBonusChoiceScene` now asks "Who receives {item}?" (party member by
+  name, or "First available hero") whenever the chosen bonus is equipment —
+  threaded through as `pendingRegionBonusHeroSlot`, same passthrough chain
+  `pendingRegionBonusId` already uses. Load Game's live in-battle fallback
+  prompt gained the same follow-up.
+- `BuildSystem.grantFreeCharge`/`freeChargesFor`/`consumeFreeCharge`/
+  `wasFreePlaced` — free placement-charge bookkeeping, reused by a region's
+  structure/trap bonus (now player-placed via ordinary Build mode, 2
+  charges instead of 1 auto-placed structure).
+
+Changed:
+- `grantEquipmentOrSellForGold` narrows to exactly the chosen hero when a
+  recipient was picked, selling for gold instead of redirecting elsewhere
+  if that hero no longer has room by battle-start.
+- 12 equipment items referenced by region bonuses (`data/equipment.ts`)
+  repriced so their sell value lands between their region's two gold
+  tiers, instead of always being worth less than either (every
+  common/uncommon non-attunement item in the catalog was priced 6-16g
+  against 15-65g gold tiers). Also sold at the new price in the general
+  Armory/GearShop.
+- `tryBuild`/`refundStructure` are charge-aware: a free-charge placement
+  skips the gold cost, and does NOT refund gold if later removed.
+
+See `DECISIONS.md` D-250 for the full design (including the two forks
+confirmed with Kevin) and `KNOWN_ISSUES.md` KI-198 for the playtest
+checklist. Batch F's item 18 (real autosave) confirmed deferred to its own
+session, not part of this pass.
+
+## [Unreleased] — 0.2.0-dev — Batch F: "Save Party" dropped from the pause menu for a campaign battle (D-249)
+
+Continuing from D-248 (same day). Closes the last open half of item 17
+(Batch B/D-238 kept both save buttons specifically pending this).
+
+Changed:
+- `PauseMenuScene` no longer shows "Save Party" during a campaign battle —
+  a campaign's party build already autosaves via `CompanionRosterSystem` at
+  Start Battle (Party Creation Overhaul Plan 3.1), so a mid-battle re-save
+  of the same pre-battle build was redundant there. "Save Game" (which
+  saves and exits, and is the only path that produces a `Load Game`-
+  resumable slot) is untouched. Free Play/Co-op keep "Save Party" exactly
+  as before — they have no equivalent autosave.
+
+Added:
+- `BattleScene.isCampaignBattle()` — a small new accessor, deliberately
+  separate from `canSaveParty()` (which still gates "Save Game").
+
+See `DECISIONS.md` D-249 for the full reasoning and `KNOWN_ISSUES.md`
+KI-197 for the playtest checklist.
+
+## [Unreleased] — 0.2.0-dev — Batch E: region-bonus dominance fix + "Choose a Bonus" moved before Character Creation/the Armory (D-248)
+
+Continuing from D-247 (same day). With no new Kevin playtest confirmations
+yet on the just-shipped economy arc, Batch E of the 2026-09-09 19-item
+playtest list was next per `PHASE_HANDOFF.md`'s own standing instructions.
+
+Fixed:
+- `RegionBonusSystem.drawRegionBonusChoices` could draw both gold tiers (or
+  both equipment, or both structure options) into the same 3-choice offer,
+  leaving no real choice between them (the bigger one always won). Rewrote
+  as a two-pass draw: one option per category first (guaranteed for the
+  real 3-category/`count=3` call), then a fallback pass only reached if
+  `count` exceeds the category count.
+
+Added:
+- `RegionBonusChoiceScene` (new, registered in `main.ts`) — the "Choose a
+  Bonus" pick now happens BEFORE Character Creation (Chapter 1) or the
+  between-missions Armory (Chapter 2+), instead of after the battle has
+  already started. Reached from all three campaign-entry routing sites
+  (`CampaignSelectScene`, `UnlockMissionPartyScene`'s two sites), which now
+  consolidate their duplicated `getPcBuild` Armory-vs-Character-Creation
+  ternary into this one scene. No-ops straight through for the Prologue and
+  Nameless Throne capstone (neither has a bonus pool).
+
+Changed:
+- The chosen bonus's id now threads through as `pendingRegionBonusId`
+  (`CampaignArmoryScene` → `CharacterCreationScene` → `BattleScene`, same
+  passthrough `campaignId`/`chapterIndex` already use).
+  `BattleScene.showRegionBonusChoiceIfAny` applies a pending pick directly
+  (no second prompt), falling back to the original live draw-and-ask only
+  for `LoadGameScene`'s direct-resume path (which bypasses the new scene).
+  Granting timing is unchanged — gold/equipment/structure still apply at
+  chapter-start exactly as before; only the ASKING moved earlier.
+
+See `DECISIONS.md` D-248 for the full design and `KNOWN_ISSUES.md` KI-196
+for the playtest checklist.
+
+## [Unreleased] — 0.2.0-dev — `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 6: gold-scarcity tuning pass, closes the entire economy redesign (D-247)
+
+Kevin said "Plan 6 now," continuing straight from D-246. Plan 6 is normally
+gated on a real playtest of Plans 1-5 first (none of KI-186 through KI-194
+had been confirmed yet) — asked Kevin directly, and he chose to have a
+reasoned first-pass tune done anyway rather than wait.
+
+Changed:
+- `campaignGoldMultiplier` (`data/difficulty.ts`) roughly halved at every
+  difficulty tier, preserving the original relative shape: easy 1.25→0.65,
+  normal 1.0→0.5, hard 0.75→0.4, nightmare 0.5→0.25. Normal is no longer
+  pinned to an unscaled 1.0x baseline (a deliberate D-242 convention,
+  broken here with Kevin's explicit confirmation) — a numeric analysis
+  found the old numbers likely let a Normal-difficulty player afford most
+  of the rare/veryRare gear ladder well before the campaign's 24 missions
+  end, since every rarity tier unlocks by level 13 at the latest — reached
+  by ~chapter 3 of the very first region.
+
+`startingCampaignGold` and `data/regionBonuses.ts`'s gold-bonus amounts
+were left untouched — both already flow through the same (now-halved)
+multiplier, so the fix lives in the multiplier alone.
+
+See `DECISIONS.md` D-247 for the full analysis and `KNOWN_ISSUES.md`
+KI-195 for the playtest checklist. **This closes
+`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` in its entirety** — all 6 plans shipped.
+
+## [Unreleased] — 0.2.0-dev — `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 5: Gear Points retired, campaign PC gear no longer player-editable in Character Creation (D-246)
+
+Kevin said "Plan 5 now," continuing straight from D-245 — this closes the
+entire gameplay-changing arc of the economy redesign (only Plan 6, a
+tuning pass, remains).
+
+Added:
+- `defaultStartingGearForClass(classId)` (`data/characterCreation.ts`) — a
+  fixed, non-editable starting kit for a brand-new campaign PC, one per
+  class, matching that class's own established companion's kit exactly
+  (confirmed with Kevin: no player choice, same as a companion's floor
+  loadout).
+
+Changed:
+- A campaign PC's "Gear" button in Character Creation is now inert, fresh
+  or returning — the same "no free pick" treatment a companion already
+  got. A fresh PC's gear is the new fixed per-class kit (reacts live to a
+  class change); a returning PC's real gear is whatever they've actually
+  bought in the between-missions Armory (D-243), unchanged from before.
+  The "Pool" button (claim unclaimed party-inventory items) is unaffected.
+- Free Play's gear picker is completely unaffected — still free pick, no
+  budget, every slot.
+
+Removed:
+- "Gear Points" entirely — `DifficultyDefinition.startingGearPoints`,
+  `startingGearPointCost`, `CharacterCreationScene.gearPointsSpent`/
+  `gearPointsOverBudget`, and `gearPickerView.ts`'s `pointsEconomy` economy
+  shape. Nothing else in the codebase referenced any of these.
+
+See `DECISIONS.md` D-246 for the full design (including the Chapter-1
+starting-kit design fork resolved directly with Kevin) and
+`KNOWN_ISSUES.md` KI-194 for the playtest checklist.
+
+## [Unreleased] — 0.2.0-dev — `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 4: the in-battle Armory is removed for campaign battles (D-245)
+
+Kevin said "Plan 4 of economy next," continuing straight from D-244. A
+campaign battle no longer offers the in-battle "Gear (G)" shop at all —
+gear is bought/sold only in the between-missions `CampaignArmoryScene`
+(D-243) now. Free Play's in-battle Armory is completely unchanged.
+
+Changed:
+- `BattleScene`'s "Gear (G)" button/key are hidden and non-functional for
+  any campaign battle (`this.campaignId` set) — pressing G, or the button
+  (which no longer even renders), logs "Gear is managed between missions
+  in the Armory during a campaign." instead of opening the shop.
+- The top banner's safe-width math reclaims the space the Gear button used
+  to occupy for a campaign battle, so it still never overlaps Build/End
+  Turn.
+
+Purely subtractive — no new files, no new persisted state. See
+`DECISIONS.md` D-245 for full detail and `KNOWN_ISSUES.md` KI-193 for the
+playtest checklist.
+
+## [Unreleased] — 0.2.0-dev — `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 2: real gold sources feed the persistent pool (D-244)
+
+Kevin said "Plan 2 next." Kill/wave gold and region-bonus gold now actually
+credit the persistent campaign gold balance (D-242) at chapter-victory,
+instead of only ever inflating the doomed-to-be-discarded per-battle
+economy.
+
+Added:
+- `BattleScene`'s `campaignRewardGoldEarned` — a running GROSS total of
+  this battle's kill/wave/region-bonus gold, credited to `CampaignGoldSystem`
+  (scaled by `campaignGoldMultiplier`) at a real chapter-victory only, via
+  a new pure `CampaignGoldSystem.creditScaledCampaignGold` function.
+
+Fixed / changed from the original plan doc wording (see `DECISIONS.md`
+D-244 for the full reasoning):
+- Uses a GROSS earned counter instead of the victory screen's `goldEarned`
+  (which nets against in-battle spending) — spending gold at the still-live
+  in-battle Armory mid-battle no longer reduces your persistent credit.
+- Region bonus gold now credits the persistent pool too, but only at
+  chapter-victory (not immediately when picked) — the bonus choice
+  re-offers on every chapter retry, so crediting immediately would let a
+  lose-and-retry loop farm free permanent gold.
+
+See `KNOWN_ISSUES.md` KI-192 for the playtest checklist.
+
+## [Unreleased] — 0.2.0-dev — `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 3: the between-missions Armory scene (D-243)
+
+Kevin said "Plan 3 sounds good to me." The first genuinely player-visible
+piece of the economy redesign — a new scene where the party shops with
+persistent campaign gold before the next mission.
+
+Added:
+- `src/game/scenes/CampaignArmoryScene.ts` — a new scene at the
+  `CampaignSelectScene -> CharacterCreationScene` seam (and
+  `UnlockMissionPartyScene`'s equivalent hand-off points), shown only once
+  a campaign PC build exists (never before Chapter 1). Shows the whole
+  party (PC + every active companion) shopping against the persistent
+  `CampaignGoldSystem` balance, full rarity (matching the in-battle
+  Armory's level-gated catalog), via a THIRD backend for the shared
+  `gearPickerView.ts` component. Also adds a "Party Inventory" Sell action
+  for a currently-unclaimed shared-pool item.
+- `CompanionRosterSystem.companionPurchasedGear` (+ `getCompanionPurchasedGear`/
+  `setCompanionPurchasedGearSlot`/`applyPurchasedGearOverrides`) — lets a
+  companion's Armory purchases/sales survive a later Character Creation
+  visit, layered on top of their authored/difficulty-trimmed baseline.
+- `PartyInventorySystem.sellPartyInventoryEntry` — the pool-entry Sell
+  primitive the Armory's list uses.
+
+Fixed:
+- `CharacterCreationScene`'s campaign PC gear used to silently drop any
+  rare-or-better item on the next visit (its gear-slot picker only ever
+  understood a common/uncommon lookup table) — a new `pinnedGearIds`
+  mechanism on `SlotState` now preserves anything that table can't
+  represent, so a rare+ Armory purchase survives untouched. General fix,
+  not campaign-PC-specific — also closes the same latent gap for a Free
+  Play `loadedParty` save carrying an unmappable gear id.
+
+See `DECISIONS.md` D-243 and `KNOWN_ISSUES.md` KI-191 (a real playtest
+checklist this time) for full detail, including the two design forks
+confirmed with Kevin before building (full rarity now vs. later; skipping
+this scene before Chapter 1).
+
+## [Unreleased] — 0.2.0-dev — `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 1: `CampaignGoldSystem`, the new persistent campaign gold currency (D-242)
+
+Kevin said "let's work on the economy plan now." First of the plan doc's 6
+sub-plans — the persistent-gold system itself and its difficulty levers,
+not yet wired into any scene's earning/spending path (Plans 2-4's job).
+
+Added:
+- `src/game/systems/CampaignGoldSystem.ts` — a persistent, shared campaign
+  gold balance (`CampaignGoldState`), same pure/storage-agnostic shape as
+  `CampaignLevelSystem`. `loadCampaignGold`/`saveCampaignGold` (own
+  `CAMPAIGN_GOLD_STORAGE_KEY`), `earnCampaignGold`, `spendCampaignGold`
+  (fails cleanly, unchanged state, when unaffordable), `canAffordCampaignGold`.
+- `DifficultyDefinition.startingCampaignGold` (90/70/50/30 per tier) and
+  `.campaignGoldMultiplier` (1.25/1/0.75/0.5) — campaign-mode-only, defined
+  now so Plans 2/3 have a lever to read once they exist; not yet applied
+  anywhere.
+
+Changed:
+- `CampaignSelectScene`'s "Reset Campaign Progress" button now also resets
+  `CampaignGoldSystem` to its default, matching the existing `campaignLevel`
+  reset it already performed.
+
+No player-visible surface yet — no scene displays, earns, or spends
+campaign gold. See `DECISIONS.md` D-242 and
+`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` (Plan 1 now marked DONE) for full
+detail.
+
+## [Unreleased] — 0.2.0-dev — Batch D DONE: gear-picker unification (items 3/5) via a new shared `gearPickerView.ts` component (D-241)
+
+Kevin resumed Batch D after confirming `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md`'s
+3 open questions. Closes items 3/5 of the 2026-09-09 playtest list.
+
+Added:
+- `src/game/scenes/gearPickerView.ts` — the shared gear-shopping rendering
+  component (`GearPickerView`, `GearPickerBackend`/`GearPickerEconomy`,
+  `goldEconomy`/`pointsEconomy`/`FREE_ECONOMY`) extracted from
+  `GearShopScene.ts`. Both `GearShopScene` ("The Armory") and
+  `CharacterCreationScene`'s gear picker now drive this one component
+  instead of two separate hand-rolled implementations.
+
+Changed:
+- `GearShopScene.ts`: rewritten to a thin `GearPickerBackend` adapter over
+  `BattleScene` — behavior unchanged from before this split.
+- `CharacterCreationScene`'s gear picker: rebuilt to structurally match The
+  Armory — a multi-hero sidebar (switch heroes without closing/reopening),
+  Hands (Weapon/Shield) and Rings both consolidated with independent
+  per-occupant Sell/Unequip buttons (item 5's fix), rarity/magic/hands
+  category filters, a real compare strip. The campaign PC's Gear Points
+  economy now shows unaffordable items greyed out ("Need N pts") instead of
+  silently hiding them — a deliberate parity change with the Armory's gold
+  pattern. Weapon-proficiency filtering now goes through the same shared
+  `GearFilterSystem.applyCatalogFilters` call the Armory already used.
+- Fixed a real gap: pressing Esc/Back while the gear picker was open used
+  to jump straight to Main Menu — now guarded like every other overlay.
+
+See `DECISIONS.md` D-241 and `KNOWN_ISSUES.md` KI-190 for full detail,
+including the deliberate design calls (economy shapes, the one accepted
+approximation, why Gear Points' UX changed).
+
+## [Unreleased] — 0.2.0-dev — Playtest list item 1: campaign PC identity/ability-score lock reverses D-213 (D-240); Batch D paused, campaign economy redesign scoped instead
+
+Kevin's 2026-09-09 playtest list, item 1 (confirmed directly with Kevin: it
+reverses D-213, not just companions). Batch D's items 3/5 (gear-picker
+unification) are PAUSED — mid-session Kevin redirected toward scoping a
+much bigger campaign-economy redesign (persistent gold replacing Gear
+Points, in-battle Armory removed for campaign battles) — see
+`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` (new document, scoping only).
+
+Changed:
+- `CharacterCreationScene`: the campaign PC's Class/Race/Background/
+  ability-score controls now lock once a campaign persists a build
+  (`identityLocked`/`abilityScoreLocked`), matching a companion — Gear,
+  Spells, Level Plan, and Name stay editable (`gearLocked` stays false for
+  the PC).
+- Fixed a bug this surfaced: the Subclass picker had no lock guard at all
+  (every other identity control did) — a locked companion of a
+  level-1-subclass-choice class could freely change subclass before this
+  fix.
+
+Added:
+- `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` — a 6-plan scoping document for the
+  persistent-campaign-gold redesign Kevin proposed this session. Nothing
+  in it is implemented yet.
+
+See `DECISIONS.md` D-240 and `KNOWN_ISSUES.md` KI-189 for full detail.
+
+## [Unreleased] — 0.2.0-dev — Playtest batch, Batch C: shrink-to-fit consolidation, renderAsiPrompt dynamic row heights, targeted text-overflow sweep (D-239)
+
+Kevin's 2026-09-09 playtest list, continued (item 10's remainder — see
+`PHASE_HANDOFF.md` for the full 8-batch plan; item 11 stays open, flagged
+as multi-session in the plan itself).
+
+Added:
+- `uiTheme.shrinkFontToFit`: the shared "measure the real rendered size,
+  shrink until it fits" primitive four call sites each used to hand-roll
+  independently.
+- `uiTheme.measureChoiceRowHeights`: the per-row dynamic height measurement
+  `uiTheme.renderChoiceOverlay` already used, pulled out so
+  `BattleScene.renderAsiPrompt` (previously a flat height constant) can use
+  it too.
+
+Changed:
+- `BattleScene.renderAsiPrompt` (every ASI/feat/subclass/spell-pick screen):
+  row height now sizes to its own tallest choice instead of a shared fixed
+  constant — a long feat/spell description no longer overflows its box.
+- Fixed a targeted set of real dynamic-content overflow risks in
+  `BattleScene.ts`: the roster HUD's hero-name text, the boss/legendary
+  on-token name banner, the shop/debug item-grid button label, the co-op
+  Gold HUD line's partner-name variant, the multi-enemy-type wave-preview
+  line, and three hero-name-bearing overlay titles (spellbook, spell-swap,
+  and `renderAsiPrompt`'s own title).
+
+See `DECISIONS.md` D-239 and `KNOWN_ISSUES.md` KI-188 for full detail,
+including what was deliberately left alone and why.
+
+## [Unreleased] — 0.2.0-dev — Playtest batch, Batch B: shared-overlay reskins, gear-compare deltas, Gear button label, dialogue-box hint/Skip move, pause-menu reorder (D-238)
+
+Kevin's 2026-09-09 playtest list, continued (items 2, 4, 9, 10's root cause,
+14, 17's reorder — see `PHASE_HANDOFF.md` for the full 8-batch plan).
+
+Changed:
+- `uiTheme.createOrnateButton`: its `sublabel` text now wraps to its
+  button's own width instead of overflowing it unbounded — the single
+  biggest lever on the "overlapping/spilling text" complaint, since this
+  function is shared by ~20 scenes.
+- `uiTheme.renderChoiceOverlay`/`openChoiceList`: reskinned from plain
+  `add.rectangle()` boxes and `system-ui` text to the shared wood-panel/
+  parchment theme (`createOrnateButton`, `FONT_DISPLAY`) — the one shared
+  "pick one from a list" overlay that missed the earlier D-221/D-225 pass.
+- `GearCompareSystem.formatGearDelta`/`previewGearSlotChange`: now reports
+  damage-dice, saving-throw, movement, ability-score-setting, status-
+  immunity, and charged-spell deltas, not just AC/attack bonus. The
+  "nothing changed" fallback text is now "No change" (was "No AC/attack
+  change").
+- `CharacterCreationScene`'s Gear button always reads "Gear" now, instead
+  of a preview of currently-equipped items.
+- `dialogueBox.ts`: added a pulsing "Click anywhere to continue" hint;
+  moved the Skip button from top-left to the bottom row (left-of-center).
+- `PauseMenuScene`: reordered to Resume Battle, Controls, Settings, Save
+  Party, Save Game, Load Game, Exit to Main Menu; "Save & Exit" renamed to
+  "Save Game" (same behavior, per Kevin's own naming call this session).
+
+See `DECISIONS.md` D-238 and `KNOWN_ISSUES.md` KI-187 for full detail and
+Kevin's confirmation checklist.
+
+## [Unreleased] — 0.2.0-dev — Playtest batch, Batch A: build-mode tile highlighting, correct build attribution, Emberford Ch2 unplayable bug (D-237)
+
+Kevin's 2026-09-09 playtest list (19 items, planned as 8 batches — see
+`PHASE_HANDOFF.md`). Batch A: the three confirmed bugs that were fully
+independent of everything else.
+
+Added:
+- `BattleScene.showBuildableHighlights`: highlights every legal tile the
+  instant build mode opens (or a different item is selected), instead of
+  only reacting one tile at a time as the mouse hovers.
+- `BattleScene.attributionHeroIdFor`: a placed structure is now attributed
+  to whichever hero the player actually had selected before opening the
+  build menu, falling back to the previous nearest-hero-to-tile behavior
+  only when no hero was selected.
+- `BattleScene.showChapterDialogue`: a defensive helper that destroys any
+  still-open chapter dialogue before opening the next one, closing the
+  structural gap behind Emberford Reach Chapter 2 becoming unclickable
+  (an orphaned, invisible, full-screen dialogue overlay silently eating
+  every board click while hotkeys kept working).
+
+See `DECISIONS.md` D-237 and `KNOWN_ISSUES.md` KI-186 for full detail and
+Kevin's confirmation checklist.
+
 ## [Unreleased] — 0.2.0-dev — Fix: live site loaded to a black screen (D-236)
 
 Kevin reported the deployed link loading to a black screen immediately, on

@@ -6,6 +6,7 @@ import {
   saveKeyBindings,
   keyBindingConflict,
   formatKeyCode,
+  resetKeyBindings,
   type KeyBindingStorage,
 } from "../src/game/systems/KeyBindingSystem";
 
@@ -45,6 +46,13 @@ describe("KeyBindingSystem", () => {
     const full = { confirm: "NumpadEnter", cancel: "Backspace", bonusAction: "KeyV" };
     saveKeyBindings(storage, "k", full);
     expect(loadKeyBindings(storage, "k")).toEqual(full);
+  });
+
+  it("resetKeyBindings writes defaults to storage and returns them", () => {
+    const storage = fakeStorage();
+    saveKeyBindings(storage, "k", { confirm: "KeyJ", cancel: "Backspace", bonusAction: "KeyV" });
+    expect(resetKeyBindings(storage, "k")).toEqual(DEFAULT_KEY_BINDINGS);
+    expect(loadKeyBindings(storage, "k")).toEqual(DEFAULT_KEY_BINDINGS);
   });
 
   describe("keyBindingConflict", () => {

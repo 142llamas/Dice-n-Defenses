@@ -228,15 +228,8 @@ export function eligibleLeveledSpellPool(classId: string): string[] {
 }
 
 // ---------------------------------------------------------------------
-// Validation + the interim default-fill helper.
+// The interim default-fill helper.
 // ---------------------------------------------------------------------
-
-/** True if `selectedIds` is a legal selection: no duplicates, every id drawn from `pool`, and no more than `maxCount` of them. Used to validate a real player pick (a future phase's job) — never chooses FOR the player. */
-export function isValidSelection(pool: readonly string[], selectedIds: readonly string[], maxCount: number): boolean {
-  if (selectedIds.length > maxCount) return false;
-  if (new Set(selectedIds).size !== selectedIds.length) return false;
-  return selectedIds.every((id) => pool.includes(id));
-}
 
 /**
  * Deterministically extends `alreadySelected` with the first not-yet-picked

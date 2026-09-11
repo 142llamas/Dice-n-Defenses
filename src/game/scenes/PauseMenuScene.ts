@@ -144,84 +144,54 @@ export class PauseMenuScene extends Phaser.Scene {
 
   // ----- Main menu ---------------------------------------------------------
 
-  // Fixed row Y positions (not incrementally computed) so the reserved
-  // result-text slot between Save Party and Save & Exit never risks
-  // crowding either button regardless of how many lines it wraps to.
+  // Item 17 (Batch B, KI-187): reordered to Kevin's requested Resume,
+  // Controls, Settings, Save Party, Save Game, Load Game, Exit — "Save
+  // Game" is "Save & Exit" renamed (Kevin's own call when asked to
+  // disambiguate). Fixed row Y positions (not incrementally computed) so the
+  // reserved result-text slot never risks crowding a button regardless of
+  // how many lines it wraps to.
+  //
+  // D-248 (Batch F): "Save Party" is dropped entirely for a campaign battle
+  // — a campaign's party build already autosaves via `CompanionRosterSystem`
+  // at Start Battle (Party Creation Overhaul Plan 3.1), so a mid-battle
+  // re-save of the same pre-battle build is redundant there (Free Play/Co-op
+  // have no such autosave, so they keep it unchanged). A second Y-map closes
+  // the gap that leaves rather than rendering an empty row.
   private static readonly ROW_Y = {
     resume: 170,
-    saveParty: 260,
-    saveResult: 310,
-    saveAndExit: 362,
-    loadGame: 432,
-    exitToMainMenu: 502,
-    controls: 572,
-    settings: 642,
+    controls: 260,
+    settings: 330,
+    saveParty: 400,
+    saveResult: 450,
+    saveGame: 502,
+    loadGame: 572,
+    exitToMainMenu: 642,
+  };
+
+  /** D-248 (Batch F): same rows, minus "Save Party" — used for a campaign battle. */
+  private static readonly ROW_Y_NO_SAVE_PARTY = {
+    resume: 170,
+    controls: 260,
+    settings: 330,
+    saveGame: 400,
+    saveResult: 450,
+    loadGame: 540,
+    exitToMainMenu: 610,
   };
 
   private renderMenu(): void {
     const cx = getViewport(this).width / 2;
     const width = 340;
-    const { resume, saveParty, saveResult, saveAndExit, loadGame, exitToMainMenu, controls, settings } =
-      PauseMenuScene.ROW_Y;
+    const showSaveParty = !this.battleScene.isCampaignBattle();
+    const { resume, controls, settings, saveGame, loadGame, exitToMainMenu } = showSaveParty
+      ? PauseMenuScene.ROW_Y
+      : PauseMenuScene.ROW_Y_NO_SAVE_PARTY;
+    const saveResult = showSaveParty ? PauseMenuScene.ROW_Y.saveResult : PauseMenuScene.ROW_Y_NO_SAVE_PARTY.saveResult;
+    const saveParty = PauseMenuScene.ROW_Y.saveParty;
 
     this.contentObjects.push(
       createOrnateButton(this, cx, resume, width, 64, "Resume Battle", () => this.resumeBattle(), {
         variant: "primary",
-        depth: 5,
-      }).container,
-    );
-
-    const canSave = this.battleScene.canSaveParty();
-    this.contentObjects.push(
-      createOrnateButton(
-        this,
-        cx,
-        saveParty,
-        width,
-        54,
-        canSave ? "Save Party" : "Save Party (unavailable in Co-op)",
-        () => this.onSaveParty(),
-        { variant: "secondary", depth: 5, disabled: !canSave },
-      ).container,
-    );
-    if (this.saveResultText) {
-      this.contentObjects.push(
-        this.add
-          .text(cx, saveResult, this.saveResultText, {
-            fontFamily: FONT_BODY,
-            fontSize: "14px",
-            color: "#a8c890",
-            align: "center",
-            wordWrap: { width: 500 },
-          })
-          .setOrigin(0.5)
-          .setDepth(5),
-      );
-    }
-
-    this.contentObjects.push(
-      createOrnateButton(
-        this,
-        cx,
-        saveAndExit,
-        width,
-        54,
-        canSave ? "Save & Exit" : "Save & Exit (unavailable in Co-op)",
-        () => this.onSaveAndExit(),
-        { variant: "secondary", depth: 5, disabled: !canSave },
-      ).container,
-    );
-
-    this.contentObjects.push(
-      createOrnateButton(this, cx, loadGame, width, 54, "Load Game", () => this.onLoadGame(), {
-        variant: "secondary",
-        depth: 5,
-      }).container,
-    );
-
-    this.contentObjects.push(
-      createOrnateButton(this, cx, exitToMainMenu, width, 54, "Exit to Main Menu", () => this.onExitToMainMenu(), {
-        variant: "secondary",
         depth: 5,
       }).container,
     );
@@ -257,6 +227,63 @@ export class PauseMenuScene extends Phaser.Scene {
         { variant: "secondary", depth: 5 },
       ).container,
     );
+
+    const canSave = this.battleScene.canSaveParty();
+    if (showSaveParty) {
+      this.contentObjects.push(
+        createOrnateButton(
+          this,
+          cx,
+          saveParty,
+          width,
+          54,
+          canSave ? "Save Party" : "Save Party (unavailable in Co-op)",
+          () => this.onSaveParty(),
+          { variant: "secondary", depth: 5, disabled: !canSave },
+        ).container,
+      );
+    }
+    if (this.saveResultText) {
+      this.contentObjects.push(
+        this.add
+          .text(cx, saveResult, this.saveResultText, {
+            fontFamily: FONT_BODY,
+            fontSize: "14px",
+            color: "#a8c890",
+            align: "center",
+            wordWrap: { width: 500 },
+          })
+          .setOrigin(0.5)
+          .setDepth(5),
+      );
+    }
+
+    this.contentObjects.push(
+      createOrnateButton(
+        this,
+        cx,
+        saveGame,
+        width,
+        54,
+        canSave ? "Save Game" : "Save Game (unavailable in Co-op)",
+        () => this.onSaveGame(),
+        { variant: "secondary", depth: 5, disabled: !canSave },
+      ).container,
+    );
+
+    this.contentObjects.push(
+      createOrnateButton(this, cx, loadGame, width, 54, "Load Game", () => this.onLoadGame(), {
+        variant: "secondary",
+        depth: 5,
+      }).container,
+    );
+
+    this.contentObjects.push(
+      createOrnateButton(this, cx, exitToMainMenu, width, 54, "Exit to Main Menu", () => this.onExitToMainMenu(), {
+        variant: "secondary",
+        depth: 5,
+      }).container,
+    );
   }
 
   private onSaveParty(): void {
@@ -267,7 +294,7 @@ export class PauseMenuScene extends Phaser.Scene {
     this.renderView();
   }
 
-  private onSaveAndExit(): void {
+  private onSaveGame(): void {
     const result = this.battleScene.saveParty();
     if (!result) {
       this.saveResultText = "Could not save — all save slots are full. Delete one from Load Game first.";

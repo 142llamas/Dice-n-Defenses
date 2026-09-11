@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { centeredRowX, clearChoiceOverlay, getViewport, onViewportResize, openChoiceList, renderChoiceOverlay } from "./uiTheme";
-import { GridSystem, type GridPosition } from "../systems/GridSystem";
+import { GridSystem, computeFittedTileSize, type GridPosition } from "../systems/GridSystem";
 import { GameMap, type TileRole } from "../systems/GameMap";
 import type { ParsedMap, TileType } from "../data/testMap";
 import { ENEMY_DEFINITIONS, getEnemyDefinition, type EnemyRole } from "../data/enemies";
@@ -470,7 +470,7 @@ export class MapBuilderScene extends Phaser.Scene {
     const gridAreaRight = getViewport(this).width - 40;
     const availableWidth = gridAreaRight - GRID_AREA_LEFT;
     const availableHeight = GRID_AREA_BOTTOM - GRID_AREA_TOP;
-    const tileSize = Math.floor(Math.min(64, availableWidth / this.draft.cols, availableHeight / this.draft.rows));
+    const tileSize = computeFittedTileSize(this.draft.cols, this.draft.rows, availableWidth, availableHeight, 64);
     const originX = Math.round(GRID_AREA_LEFT + (availableWidth - this.draft.cols * tileSize) / 2);
     const originY = Math.round(GRID_AREA_TOP + (availableHeight - this.draft.rows * tileSize) / 2);
     this.builderGrid = new GridSystem(this.draft.cols, this.draft.rows, tileSize, originX, originY);

@@ -1,160 +1,71 @@
 # Fantasy Tower Defense
 
 A turn-based, grid-based fantasy wave-defense tactics game (working title).
-This repository is at **v0.2.0-dev** — Phase 7 (Vertical Slice), now
-content-complete on top of the **v0.1.1** integrated MVP. It is a
-**complete, playable loop** grown to a ten-wave campaign with a miniboss,
-**four heroes**, seven buildable structures, status effects, level-up choices,
-and limited equipment. From the title screen you start a game, move and fight
-with your party, **earn and spend gold** in a shop to build walls, gates, traps,
-and platforms that **reroute, damage, and empower**, **gear up** each hero with
-one item, pick a **level-up bonus** every couple of waves, and defend your
-**Stronghold Integrity** across **ten waves** until you **win or lose**, then
-**restart**. Phase 7's in-browser balance pass is still outstanding — every
-gameplay number here is a first-pass starting point. Phase 8 (UX &
-presentation) is now well underway alongside it: a settings control
-(animation speed, doubling as reduced motion), hover tooltips, a first-time
-how-to-play overlay, clearer status-effect/miniboss visuals, and **full
-keyboard-only play** — the whole game is completable with no mouse at all.
-Saving and Firebase are still later phases.
+This repository is at **v0.2.0-dev** — well past its original Phase 0–12 MVP
+roadmap (see `SOURCE_OF_TRUTH.md` for that original plan) and now a full
+D&D-5e-depth tactics game built entirely on original, non-D&D-branded content
+(see `CONTENT_SOURCES.md`). Live and auto-deployed at
+**<https://dice-n-defenses.web.app>**; read `PHASE_HANDOFF.md` and
+`DECISIONS.md` for exactly what's shipped and what's next — this file only
+covers what's stable enough to describe without going stale every session.
 
-Built with **TypeScript + Phaser + Vite**, tested with **Vitest**.
+Built with **TypeScript + Phaser + Vite**, tested with **Vitest**, deployed to
+**Firebase Hosting** via GitHub Actions on every push to `main`.
 
 ---
 
-## What you should see when it runs
+## What the game is today
 
-1. A title screen that says **FANTASY TOWER DEFENSE** with a green **START**
-   button and, top-right, a **settings button** that cycles the animation
-   speed (Normal / Fast / Instant — Instant is reduced motion) and remembers
-   your choice next time.
-2. On your very first battle, a **How to Play** overlay explaining the
-   controls — dismiss it with the button or Esc; press **H** any time to see
-   it again.
-2. After clicking START, the **battlefield** with:
-   - a tile grid where **floor** and **wall** tiles look different,
-   - an **IN** (spawn) marker on the left and an **OUT** (exit) marker on the
-     right, and four hero tokens (**Ash**, **Wren**, **Bram**, **Mira**) near
-     the lane,
-   - a top banner like `Wave 1 / 10 · Player Phase`, a "Next: Wave 2 — ..."
-     preview line, a `Stronghold Integrity: 20 / 20` readout, and a
-     **`Gold: 20g`** counter,
-   - a status line under the grid showing each hero (HP, gear, ready/used) and
-     how many enemies are on the field, plus **End Turn**, **Gear**, **Build**,
-     and **Ability** buttons.
+From the Main Menu you can:
 
-Each hero gets **one move and one action** per turn (in either order). The action
-is a basic attack **or** an ability.
+- **Character Library / Create Party** — build a party by hand: 12 classes
+  (each with 2 modeled subclasses), ability scores (Standard Array or Point
+  Buy), race, background, feats, starting gear, and — for a caster — a real
+  SRD spell-preparation economy (known/prepared spells, swap cadence, spell
+  slots). A level-by-level progression planner lets you pre-plan every future
+  choice (Auto/Prompt/Fresh modes) or make each one live as you level up.
+- **Campaign** — a 6-region story campaign (5 mandatory regions plus one
+  optional side region), each a multi-chapter arc with its own bosses,
+  dialogue, a returning-miniboss mechanic tied to mercy-or-expedience choices
+  you make along the way, companion recruitment, and a capstone finale whose
+  ending reflects the pattern of those choices. A persistent per-campaign
+  economy (gold, gear, party progress) carries across missions via a
+  between-missions Armory.
+- **Free Play** — a standalone run at a chosen Run Length (Quick/Short/
+  Medium/Long, each with its own level cap) and difficulty, with a full
+  in-battle Armory and no campaign persistence — pick up and play.
+- **Co-op** — a shared-session lobby for playing a battle with another player.
+- **Map Builder** — design and playtest your own battle map (terrain, spawn
+  points, hand-authored enemy waves), then publish it for others to find and
+  play under **Browse Shared Maps**.
+- **Compendium / Bestiary** — browse every class, race, background, feat,
+  spell, piece of equipment, and enemy in the game.
+- **Settings** — volume controls (ahead of real audio content), game speed,
+  and rebindable controls.
 
-### Taking a turn (during the Player Phase)
+A battle itself is the core loop this project started with: move and act
+with your party each turn (D&D-style actions — attack, cast a spell, use a
+class feature, and more, not just one fixed ability), spend gold in an
+in-battle Armory or Build menu, defend your Stronghold Integrity against
+waves of enemies, and win or lose. The whole game is playable keyboard-only
+(arrow-key tile cursor, Enter/Esc to confirm/cancel) as well as with a mouse.
 
-Keyboard shortcuts: **1-4** select Ash/Wren/Bram/Mira directly, **Q** uses the
-selected hero's ability, **E** ends the turn, **B**/**G** open Build/Gear,
-**Enter**/**Esc** confirm/cancel, and **H** reopens the how-to-play overlay.
-The status line at the bottom always lists the ones relevant right now.
+For a genuine step-by-step interface walkthrough (which buttons do what),
+play it — the game explains itself via tooltips and its own How to Play
+overlay (press **H** in battle) far more reliably than a README can keep up
+with a project shipping new content this often. `SOURCE_OF_TRUTH.md` and
+`CAMPAIGN_STORY_DESIGN.md` cover the design intent in depth if you want the
+full rules reference.
 
-**Playing with no mouse:** the **arrow keys** move a highlighted tile cursor
-around the board; **Enter or Space** act on whatever it's over — select a
-hero, pick/confirm a move, attack or aim an ability at an outlined enemy,
-build/refund a structure, or equip/unequip a hero — exactly like clicking
-that tile. In Build/Gear mode, arrow keys navigate the item grid by default
-(a white ring marks the highlighted button); **Tab** switches them to move
-the board cursor instead, so you can pick an item and then aim it with no
-click at all.
+### Editing or authoring a map
 
-1. **Click a hero** (or press its number). A bright ring appears, the tiles it can reach light up
-   **blue**, and any enemy it can attack is outlined in **red**. Ash and Bram
-   are melee (range 1); Wren and Mira are ranged (range 3).
-2. **Move:** hover a blue tile to preview the path, click it, then **Confirm**
-   (Enter) or **Cancel** (Esc). A moved hero shows `move:used`. Heroes can
-   walk past each other in a narrow lane — you just can't end your move
-   standing on a teammate's tile (the same rule applies to enemies). The
-   **IN** (spawn) tile itself is off-limits to heroes entirely — it never
-   lights up as a reachable tile.
-3. **Basic attack:** click a **red-outlined** enemy. It flashes, its HP label
-   drops, and the combat log records the hit. Clicking an enemy out of range
-   flashes red and says why. Standing on a **Melee Platform** or **Ranged
-   Perch** (see Building, below) boosts this attack.
-4. **Ability** (the purple **Ability** button, or press **Q**): Ash's **Cleave**
-   strikes every adjacent enemy; Wren's **Piercing Shot** enters aim mode
-   (enemies in range outline **orange**, click one to fire — it ignores
-   defense); Bram's **Taunting Slam** strikes every adjacent enemy AND stuns
-   them for a turn; Mira's **Frost Bolt** enters aim mode and slows its target
-   for two turns. Attacking or using an ability spends the hero's action
-   (`act:used`).
-
-### Sending the enemies (End Turn)
-
-5. **End Turn** (button or **E**) runs the **Enemy Phase**. Each enemy either:
-   - **attacks a hero** it can reach — the hero flashes and its HP drops, or
-   - **advances toward OUT**, routing **around your heroes and walls** (a
-     stunned enemy holds in place; a slowed one covers less ground; a burning
-     one takes damage before it does anything else), by its speed.
-   An enemy that reaches OUT flashes red, disappears, and lowers Stronghold
-   Integrity by its Breach Damage (exactly once per enemy).
-6. **Removal:** an enemy at 0 HP vanishes; a hero at 0 HP is removed and shows
-   **(down)**. When a wave's enemies are gone the wave number rises (`Wave 2 / 10`).
-7. **Level-up choice:** every 2 waves cleared, a **Level Up!** prompt pauses the
-   game — pick **Vigor** (+3 max HP to every living hero, healing them) or
-   **Might** (+1 basic-attack damage to every living hero).
-8. **Winning and losing:** clear all ten waves with Integrity above 0 for a
-   **Victory** overlay. **Defeat** happens either way: if Stronghold Integrity
-   reaches zero, or if every hero falls, whichever happens first — the end
-   screen says which one ("the stronghold has fallen" vs. "your party has
-   fallen"). Press **Esc** for the menu, then START to play again.
-
-### Building and spending gold (the Build button, or press B)
-
-During your Player Phase, click **Build** (or press **B**) to open the shop: a
-grid of buttons, one per structure — **Barricade**, **Gate**, **Spike Trap**,
-**Sky Snare**, **Tangle Root**, **Melee Platform**, **Ranged Perch** — each
-labelled with its cost. Click one to select it (affordable items are bright,
-unaffordable ones dimmed); the status line under the grid names the selected
-item's effect.
-
-- **Preview:** the tile under your cursor shows a **green** ghost when the build
-  is legal and affordable, or a **red** ghost when it isn't.
-- **Buy & place:** click a legal floor tile. Your gold drops by the cost (once),
-  and the structure appears with its own glyph. You stay in build mode to place
-  several.
-- **Walls (Barricade, Gate):** enemies always route around them; a wall that
-  would block the enemies' *only* path is **rejected** (red ghost, with a
-  message). A **Gate** blocks enemies the same way but heroes can walk straight
-  through it — a Barricade blocks heroes too.
-- **Traps (Spike Trap, Sky Snare, Tangle Root):** on the Enemy Phase, any
-  enemy that steps onto one takes damage (the tile flashes and the combat log
-  notes it) — Spike Trap and Tangle Root hit ground units only, Sky Snare hits
-  flyers only, and Tangle Root also **slows** whatever it hits.
-- **Platforms (Melee Platform, Ranged Perch):** don't block anything; a hero
-  standing on a Melee Platform hits harder, and one standing on a Ranged Perch
-  reaches one tile further, on their basic attack.
-- **Refund:** click one of your own structures to remove it and get its full cost
-  back. Press **Esc** or click **Done** to leave build mode.
-- **Earning gold:** defeating an enemy grants its reward gold; clearing a wave
-  grants completion gold, plus a **time bonus** if you clear it within the wave's
-  turn limit.
-
-### Gearing up (the Gear button, or press G)
-
-Click **Gear** (or press **G**) to open the equipment panel: three items —
-**Iron Buckler** (+2 defense), **Whetstone Blade** (+2 attack damage),
-**Traveler's Cloak** (+1/+1). Click an item, then click a hero to equip it
-(gold spent once); the hero's name in the status line shows `[ItemName]`.
-Clicking the same item on that hero again — or a different item, then a
-geared hero — unequips or swaps it, refunding the old item's full cost. Each
-hero holds exactly one item at a time. Press **Esc** or click **Done** to leave.
-
-That is the fighting-building-gearing-spending loop where purchases update
-gold exactly once, illegal path-blocking builds are rejected, and traps
-trigger correctly. Saving comes in a later phase.
-
-### Editing the map
-
-The battlefield is data. Open `src/game/data/testMap.ts` and edit the picture made
-of characters: `.` = floor, `#` = wall, `S` = spawn, `X` = exit, `H` = hero start,
-`E` = enemy start. Keep every row the same length. Save and the dev server reloads.
-The first four `H` tiles become Ash, Wren, Bram, and Mira, in that order; extra
-`H` tiles are ignored for now.
+Most map authoring now happens in-game via **Map Builder** (terrain palette,
+spawn/marker placement, a wave editor) rather than hand-editing data files.
+For a hand-authored fixed map, the format in `src/game/data/testMap.ts` and
+its siblings (`src/game/data/*Map.ts`) is still how they're expressed: a grid
+of characters (`.` = floor, `#` = wall, `S` = spawn, `X` = exit, and several
+more for hazard/build-restricted terrain — see `src/game/data/terrain.ts`),
+parsed at load time. Keep every row the same length.
 
 ---
 
@@ -239,11 +150,13 @@ production version works, then prints a local address to open.
 npm test
 ```
 
-**What it does:** runs the logic tests (grid math, map/selection, movement, the
-turn state machine, combat, economy, building/traps, status effects, the hero
-roster, level-up progression, equipment, rewards, locally-persisted settings,
-and a full ten-wave integrated run to both victory and defeat).
-**What success looks like:** `Tests  157 passed (157)`.
+**What it does:** runs the full logic test suite — one file per system/feature
+area in `tests/` (nearly 2,000 tests as of this writing; see `PHASE_HANDOFF.md`
+for the exact current count), covering everything from grid math up through
+character creation, spellcasting, the campaign systems, and full-loop
+integration runs.
+**What success looks like:** `Test Files  N passed (N)` / `Tests  N passed (N)`
+with no failures.
 
 ### Optional: type-check only
 
@@ -257,14 +170,16 @@ Checks the TypeScript types without building. Useful to catch mistakes quickly.
 
 ## Available npm scripts
 
-| Command             | Purpose                                              |
-| ------------------- | ---------------------------------------------------- |
-| `npm run dev`       | Start the local development server                   |
-| `npm run build`     | Type-check and build the production `dist` folder    |
-| `npm run preview`   | Serve and preview the production build               |
-| `npm test`          | Run the automated tests once                         |
-| `npm run test:watch`| Re-run tests automatically as files change           |
-| `npm run typecheck` | Check TypeScript types without building              |
+| Command              | Purpose                                                          |
+| --------------------- | ----------------------------------------------------------------- |
+| `npm run dev`        | Start the local development server                              |
+| `npm run build`      | Type-check and build the production `dist` folder               |
+| `npm run preview`    | Serve and preview the production build                          |
+| `npm test`           | Run the automated tests once                                     |
+| `npm run test:watch` | Re-run tests automatically as files change                      |
+| `npm run test:rules` | Run the Firestore security-rules tests (needs the Firebase emulator/JDK) |
+| `npm run typecheck`  | Check TypeScript types without building                          |
+| `npm run deploy`     | Build and deploy hosting + Firestore rules to Firebase (normally handled by the GitHub Actions pipeline instead — see `FIREBASE_SETUP.md`) |
 
 ---
 
@@ -272,40 +187,34 @@ Checks the TypeScript types without building. Useful to catch mistakes quickly.
 
 ```text
 index.html              The single web page that loads the game
-src/main.ts             Entry point: creates the Phaser game
+src/main.ts             Entry point: creates the Phaser game, registers every scene
 src/game/config.ts      Shared numbers (tile size, colours, resolution)
-src/game/scenes/        Screens: Boot, Main Menu, Battle
-src/game/systems/        Pure game logic — no visuals, fully testable:
-                          GridSystem         coordinate/bounds math
-                          GameMap            tile types, walkable, roles
-                          MovementSystem     hero range, pathfinding, legality
-                          TurnSystem         the phase state machine
-                          PathfindingSystem  enemy routing to the nearest exit
-                          WaveSystem         spawns, enemy advance/attacks, traps,
-                                             status effects, breaches
-                          CombatSystem       range, damage, targeting (deterministic)
-                          BuildSystem        wall/trap/platform placement + path-block rule
-                          EconomySystem      the gold balance (spend/award/refund)
-                          RewardSystem       kill gold + wave/time-bonus rewards
-                          ProgressionSystem  level-up cadence + choices
-                          SettingsSystem     locally-persisted settings (animation
-                                             speed/reduced motion, tutorial-seen)
-src/game/entities/      Pure unit models — Hero and Enemy (position, HP, combat,
-                          equipment/level-ups, status effects)
-src/game/data/          Data files: test map, enemies.ts, waves.ts,
-                          heroes.ts (hero stats), abilities.ts (hero abilities),
-                          structures.ts (walls/gates/traps/platforms),
-                          statusEffects.ts (slow/stun/burn), equipment.ts
-src/firebase/           Empty for now; Firebase is a much later phase
-tests/                  Automated tests (grid, map, movement, turns, pathfinding,
-                          waves, combat, economy, building/traps, status effects,
-                          hero roster, progression, equipment, rewards,
-                          and full-loop defeat + victory runs)
+src/game/scenes/        Phaser screens — rendering and input only, no game rules.
+                          BattleScene is the big one (the core turn loop); the rest
+                          are menus/pickers (Main Menu, Character Creation, Campaign
+                          Select, the Armory, Map Builder, Compendium/Bestiary,
+                          Settings, Co-op Lobby, and more).
+src/game/systems/       Pure game-rule engines — NO Phaser dependency, fully unit-
+                          testable. Grid/movement/pathfinding/combat/turns, the
+                          character/class/spellcasting math, the campaign/economy/
+                          save systems, map building/sharing, and more — one file
+                          per concern (see the folder itself; it's the actual source
+                          of truth for what exists).
+src/game/entities/      Pure unit models — Hero, Enemy, Summon.
+src/game/data/          All data-driven content: classes/subclasses/races/
+                          backgrounds/feats/spells/equipment/enemies/waves/maps/
+                          the campaign's regions and chapters, and more. Kept out
+                          of scenes/systems on purpose (Operating rule 3 in
+                          CLAUDE.md) so content changes don't require code changes.
+src/game/cloud/         Firebase-backed sync: auth, cloud save, map sharing,
+                          co-op sessions.
+tests/                  One test file per system/feature area, mirroring src/'s
+                          own organization.
 ```
 
 The pattern throughout: **rules live in `systems/` and `entities/` (no Phaser,
 fully testable); scenes only draw and take input.** See `DECISIONS.md` for why,
-and the Project Source of Truth document for the full architecture and roadmap.
+and `SOURCE_OF_TRUTH.md` for the full architecture and original roadmap.
 
 ---
 
@@ -315,5 +224,6 @@ and the Project Source of Truth document for the full architecture and roadmap.
   above and are already excluded by `.gitignore`.
 - **Never commit secrets** (Firebase service-account files, private keys). `.gitignore`
   already blocks the common filenames, but stay careful.
-- Firebase, accounts, and cloud saving are **not** part of this phase. The `src/firebase/`
-  folder is a placeholder for a much later phase.
+- Firebase (auth, cloud save, map sharing, co-op) is live and already deployed —
+  see `src/game/cloud/` and `FIREBASE_SETUP.md`. Deploys are automatic via
+  GitHub Actions on every push to `main`.

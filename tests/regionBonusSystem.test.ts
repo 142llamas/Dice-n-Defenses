@@ -5,6 +5,7 @@ import { RandomService } from "../src/game/systems/RandomService";
 import { CAMPAIGNS, PROLOGUE_CAMPAIGN_ID, NAMELESS_THRONE_CAMPAIGN_ID } from "../src/game/data/campaigns";
 import { getEquipmentDefinition } from "../src/game/data/equipment";
 import { getStructureDefinition } from "../src/game/data/structures";
+import { sellValueForCost } from "../src/game/systems/EconomySystem";
 
 /**
  * D-181 (KI-098 item 13, CAMPAIGN_STORY_DESIGN.md §8) — the pre-region
@@ -88,6 +89,19 @@ describe("REGION_BONUS_POOLS", () => {
     }
   });
 
+  it("D-250 (Batch E gap 2): every equipment option's sell value falls within its own pool's gold-tier band — never strictly worse or better than either gold tier", () => {
+    for (const [campaignId, pool] of Object.entries(REGION_BONUS_POOLS)) {
+      const goldAmounts = pool.filter((o) => o.category === "gold").map((o) => o.goldAmount!);
+      const lowTier = Math.min(...goldAmounts);
+      const highTier = Math.max(...goldAmounts);
+      for (const option of pool.filter((o) => o.category === "equipment")) {
+        const sellValue = sellValueForCost(getEquipmentDefinition(option.equipmentId!).cost);
+        expect(sellValue, `${campaignId}: ${option.id}`).toBeGreaterThanOrEqual(lowTier);
+        expect(sellValue, `${campaignId}: ${option.id}`).toBeLessThanOrEqual(highTier);
+      }
+    }
+  });
+
   it("both gold bonus tiers escalate through CAMPAIGN_STORY_DESIGN.md §3's own region order", () => {
     const order = [
       "emberford-reach",
@@ -130,9 +144,23 @@ describe("drawRegionBonusChoices", () => {
     expect(new Set(drawn.map((o) => o.id)).size).toBe(pool.length);
   });
 
-  it("under a fixed RandomService (always index 0), draws the pool's first N in order", () => {
+  it("under a fixed RandomService (always index 0), draws the first option of each category, one per category", () => {
+    // D-248: category order is first-seen-in-pool (gold, equipment,
+    // structure for every real region), and `rollIndex` under `fixed()`
+    // always returns 0 — so this is the first gold, first equipment, and
+    // first structure option, in that order.
     const drawn = drawRegionBonusChoices(pool, RandomService.fixed());
-    expect(drawn).toEqual(pool.slice(0, 3));
+    expect(drawn).toEqual([pool[0], pool[2], pool[4]]);
+  });
+
+  it("D-248: never draws two options from the same category, across every region and many seeds (the dominance fix)", () => {
+    for (const regionPool of Object.values(REGION_BONUS_POOLS)) {
+      for (let seed = 0; seed < 20; seed++) {
+        const drawn = drawRegionBonusChoices(regionPool, RandomService.seeded(seed));
+        const categories = drawn.map((o) => o.category);
+        expect(new Set(categories).size, `pool categories, seed ${seed}`).toBe(categories.length);
+      }
+    }
   });
 
   it("different seeds can produce different draws (not hardcoded to one order)", () => {

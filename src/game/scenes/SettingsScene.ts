@@ -3,8 +3,10 @@ import { SETTINGS_STORAGE_KEY, KEYBINDINGS_STORAGE_KEY } from "../config";
 import {
   ANIMATION_SPEEDS,
   ANIMATION_SPEED_LABELS,
+  DEFAULT_SETTINGS,
   VOLUME_STEPS,
   loadSettings,
+  resetSettings,
   saveSettings,
   toggleMuted,
   type Settings,
@@ -12,6 +14,7 @@ import {
 import {
   loadKeyBindings,
   saveKeyBindings,
+  resetKeyBindings,
   keyBindingConflict,
   formatKeyCode,
   REBINDABLE_ACTION_LABELS,
@@ -19,6 +22,7 @@ import {
   type RebindableAction,
 } from "../systems/KeyBindingSystem";
 import {
+  FONT_BODY,
   FONT_DISPLAY,
   createOrnateButton,
   drawScreenBackdrop,
@@ -54,6 +58,9 @@ export interface SettingsSceneData {
   battleScene?: BattleScene;
 }
 
+/** Batch G (item 19): same shape/pattern as `PauseMenuScene`'s own confirm-before-destructive-action prompt. */
+type ConfirmPrompt = { message: string; confirmLabel: string; onConfirm: () => void };
+
 export class SettingsScene extends Phaser.Scene {
   private returnScene = "MainMenuScene";
   private battleScene: BattleScene | null = null;
@@ -69,6 +76,8 @@ export class SettingsScene extends Phaser.Scene {
   private awaitingRebindFor: RebindableAction | null = null;
   /** A transient rejection message (conflict) shown under the Controls rows, cleared on the next successful/cancelled rebind. */
   private keyBindingMessage: string | null = null;
+  /** Batch G (item 19): set while the "Reset to Default" confirmation is showing. */
+  private confirmPrompt: ConfirmPrompt | null = null;
 
   constructor() {
     super("SettingsScene");
@@ -81,6 +90,7 @@ export class SettingsScene extends Phaser.Scene {
     this.keyBindings = loadKeyBindings(window.localStorage, KEYBINDINGS_STORAGE_KEY);
     this.awaitingRebindFor = null;
     this.keyBindingMessage = null;
+    this.confirmPrompt = null;
   }
 
   create(): void {
@@ -92,6 +102,11 @@ export class SettingsScene extends Phaser.Scene {
     // also back out of Settings entirely.
     this.input.keyboard?.on("keydown-ESC", () => {
       if (this.awaitingRebindFor) return;
+      if (this.confirmPrompt) {
+        this.confirmPrompt = null;
+        this.render();
+        return;
+      }
       this.back();
     });
     // The rebind capture itself: any key while `awaitingRebindFor` is set.
@@ -168,6 +183,12 @@ export class SettingsScene extends Phaser.Scene {
     this.contentObjects = [];
 
     const cx = getViewport(this).width / 2;
+
+    if (this.confirmPrompt) {
+      this.renderConfirmPrompt(this.confirmPrompt, cx);
+      return;
+    }
+
     const width = 380;
     const rows = {
       gameSpeed: 190,
@@ -179,7 +200,8 @@ export class SettingsScene extends Phaser.Scene {
       cancel: 620,
       bonusAction: 690,
       keyBindingMessage: 730,
-      back: 800,
+      reset: 800,
+      back: 880,
     };
 
     this.contentObjects.push(this.buildGameSpeedButton(cx, rows.gameSpeed, width).container);
@@ -236,11 +258,88 @@ export class SettingsScene extends Phaser.Scene {
       );
     }
 
+    // Batch G (item 19): defaults already exist as named constants
+    // (`DEFAULT_SETTINGS`/`DEFAULT_KEY_BINDINGS`) — this just exposes a way
+    // back to them without deleting localStorage by hand. Confirmed first,
+    // same as any other destructive-feeling action on this screen (Load
+    // Game/Exit follow the identical `ConfirmPrompt` pattern in
+    // `PauseMenuScene`).
+    this.contentObjects.push(
+      createOrnateButton(
+        this,
+        cx,
+        rows.reset,
+        width,
+        54,
+        "Reset to Default",
+        () => {
+          this.confirmPrompt = {
+            message: "This resets Game Speed, Volume, Mute, and Key Bindings to their defaults. Continue?",
+            confirmLabel: "Reset to Default",
+            onConfirm: () => this.resetToDefaults(),
+          };
+          this.render();
+        },
+        { variant: "secondary", depth: 5 },
+      ).container,
+    );
+
     this.contentObjects.push(
       createOrnateButton(this, cx, rows.back, 200, 48, "Back", () => this.back(), {
         variant: "secondary",
         depth: 5,
       }).container,
+    );
+  }
+
+  /** Batch G (item 19): resets Settings and Key Bindings to their defaults, syncing a live in-battle `BattleScene`'s Game Speed too if this is the overlay entry mode. */
+  private resetToDefaults(): void {
+    this.settings = resetSettings(window.localStorage, SETTINGS_STORAGE_KEY);
+    this.keyBindings = resetKeyBindings(window.localStorage, KEYBINDINGS_STORAGE_KEY);
+    if (this.battleScene) {
+      this.battleScene.setAnimationSpeed(DEFAULT_SETTINGS.animationSpeed);
+    }
+    audioManager.applySettings(this, this.settings);
+    this.confirmPrompt = null;
+    this.awaitingRebindFor = null;
+    this.keyBindingMessage = null;
+    this.render();
+  }
+
+  /** Same layout `PauseMenuScene.renderConfirm` established for a destructive-action prompt — message plus Confirm/Cancel side by side. */
+  private renderConfirmPrompt(prompt: ConfirmPrompt, cx: number): void {
+    this.contentObjects.push(
+      this.add
+        .text(cx, 400, prompt.message, {
+          fontFamily: FONT_BODY,
+          fontSize: "20px",
+          color: "#e8c06a",
+          align: "center",
+          wordWrap: { width: 700 },
+        })
+        .setOrigin(0.5)
+        .setDepth(5),
+    );
+    this.contentObjects.push(
+      createOrnateButton(this, cx - 170, 500, 280, 56, prompt.confirmLabel, () => prompt.onConfirm(), {
+        variant: "secondary",
+        depth: 5,
+      }).container,
+    );
+    this.contentObjects.push(
+      createOrnateButton(
+        this,
+        cx + 170,
+        500,
+        280,
+        56,
+        "Cancel",
+        () => {
+          this.confirmPrompt = null;
+          this.render();
+        },
+        { variant: "secondary", depth: 5 },
+      ).container,
     );
   }
 

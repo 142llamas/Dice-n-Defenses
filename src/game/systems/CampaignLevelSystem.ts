@@ -20,7 +20,7 @@
  * so a mid-chapter loss/quit never locks in a level gain.
  */
 
-import { getCampaignDefinition, getChapter } from "../data/campaigns";
+import { getCampaignDefinition, totalChapters } from "../data/campaigns";
 import { getHighestCompletedChapter, type CampaignProgress } from "./CampaignProgressSystem";
 
 export interface CampaignLevelState {
@@ -78,33 +78,37 @@ export function raiseCampaignLevel(state: CampaignLevelState, newLevel: number):
 }
 
 /**
- * D-223 gap 5: a best-effort backfill for a save that predates
- * `campaignLevel` entirely — `loadCampaignLevel` defaults such a save to
- * level 1, which is a real regression for anyone already mid-campaign (their
- * roster would suddenly re-field at level 1 despite `CampaignProgress`
- * showing several chapters already cleared).
+ * D-223 gap 5, reworked by D-253 (Batch H, item 13): a best-effort backfill
+ * for a save that predates `campaignLevel` entirely — `loadCampaignLevel`
+ * defaults such a save to level 1, which is a real regression for anyone
+ * already mid-campaign (their roster would suddenly re-field at level 1
+ * despite `CampaignProgress` showing several chapters already cleared).
  *
  * Derives the level the party would ALREADY be at, had `campaignLevel` been
- * tracked from the start: the highest chapter completed in ANY of the 6
- * region campaigns, mapped to that chapter's own `levelRange[1]` (the level
- * the party reaches by clearing it — the same value `campaignLevel` writes
- * back to at real chapter-clear, see `raiseCampaignLevel`'s own callers),
- * taking the max across regions since `campaignLevel` is one shared number
- * for the whole roster regardless of play order. Pure — takes progress data
- * in, returns a level out; the caller decides whether/when to apply it (via
- * `raiseCampaignLevel`, which already no-ops if the state doesn't need
- * raising — a fresh save with no completed chapters returns 1, a no-op).
+ * tracked from the start, using the SAME "+1 level per chapter clear,
+ * order-independent" cadence `chapterLevelMilestones` now grants live: the
+ * total count of distinct completed chapters across every id in
+ * `regionCampaignIds`, plus the starting level of 1, capped at 20. (Before
+ * D-253 this maxed each region's highest-completed chapter's `levelRange[1]`
+ * instead — that formula matched the old per-chapter-band leveling model,
+ * which no longer exists.) The `Math.min(chapterIndex, totalChapters(def) -
+ * 1)` clamp defends a stale save whose recorded chapter index no longer
+ * exists after a region's chapter count changed (Emberford Reach's Ch3 cut).
+ * Pure — takes progress data in, returns a level out; the caller decides
+ * whether/when to apply it (via `raiseCampaignLevel`, which already no-ops
+ * if the state doesn't need raising — a fresh save with no completed
+ * chapters returns 1, a no-op).
  */
 export function highestReachedCampaignLevel(
   progress: CampaignProgress,
   regionCampaignIds: readonly string[],
 ): number {
-  let highest = 1;
+  let clearedChapters = 0;
   for (const campaignId of regionCampaignIds) {
     const chapterIndex = getHighestCompletedChapter(progress, campaignId);
     if (chapterIndex < 0) continue;
     const def = getCampaignDefinition(campaignId);
-    highest = Math.max(highest, getChapter(def, chapterIndex).levelRange[1]);
+    clearedChapters += Math.min(chapterIndex, totalChapters(def) - 1) + 1;
   }
-  return highest;
+  return Math.min(20, 1 + clearedChapters);
 }

@@ -110,7 +110,7 @@ describe("BuildSystem removal and refund support", () => {
     build.place("spike-trap", { x: 1, y: 1 });
     const profile = build.trapProfileAt({ x: 1, y: 1 });
     expect(profile?.damage).toBe(3);
-    build.removeAt({ x: 1, y: 1 });
+    build.remove(build.structureAt({ x: 1, y: 1 })!.instanceId);
     expect(build.trapProfileAt({ x: 1, y: 1 })).toBeNull();
   });
 });
@@ -250,6 +250,68 @@ describe("BuildSystem per-hero structure carry limit (MAX_STRUCTURES_PER_HERO)",
     for (const x of [1, 2, 3, 4]) {
       expect(build.place("spike-trap", { x, y: 0 }).ok).toBe(true);
     }
+  });
+});
+
+// ----- D-250 (Batch E gap 3, item 15): region-bonus free placement charges -----
+
+describe("BuildSystem free placement charges (grantFreeCharge/consumeFreeCharge)", () => {
+  it("starts with zero charges for any def id", () => {
+    const { build } = buildOn(["S..X"]);
+    expect(build.freeChargesFor("barricade")).toBe(0);
+    expect(build.consumeFreeCharge("barricade")).toBe(false);
+  });
+
+  it("grants and consumes charges one at a time, false once exhausted", () => {
+    const { build } = buildOn(["S..X"]);
+    build.grantFreeCharge("barricade", 2);
+    expect(build.freeChargesFor("barricade")).toBe(2);
+    expect(build.consumeFreeCharge("barricade")).toBe(true);
+    expect(build.freeChargesFor("barricade")).toBe(1);
+    expect(build.consumeFreeCharge("barricade")).toBe(true);
+    expect(build.freeChargesFor("barricade")).toBe(0);
+    expect(build.consumeFreeCharge("barricade")).toBe(false);
+  });
+
+  it("grants are additive, not a reset", () => {
+    const { build } = buildOn(["S..X"]);
+    build.grantFreeCharge("spike-trap", 2);
+    build.consumeFreeCharge("spike-trap");
+    build.grantFreeCharge("spike-trap", 1);
+    expect(build.freeChargesFor("spike-trap")).toBe(2);
+  });
+
+  it("tracks each def id independently", () => {
+    const { build } = buildOn(["S..X"]);
+    build.grantFreeCharge("barricade", 1);
+    expect(build.freeChargesFor("spike-trap")).toBe(0);
+    expect(build.consumeFreeCharge("spike-trap")).toBe(false);
+  });
+
+  it("place() itself is unaffected by charges — still never touches gold, and a free-consumed placement still counts toward the per-hero cap", () => {
+    const { build } = buildOn(["S..........X"]);
+    build.grantFreeCharge("spike-trap", 1);
+    build.consumeFreeCharge("spike-trap");
+    const tiles: GridPosition[] = [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }];
+    for (let i = 0; i < MAX_STRUCTURES_PER_HERO; i++) {
+      expect(build.place("spike-trap", tiles[i], undefined, undefined, "hero-a").ok).toBe(true);
+    }
+    expect(build.canPlace("spike-trap", tiles[3], undefined, undefined, "hero-a").ok).toBe(false);
+  });
+
+  it("wasFreePlaced marks only a placement whose `free` flag was true", () => {
+    // Two traps (not walls) so routing rules never enter into it — this test
+    // is only about the free-vs-paid bookkeeping.
+    const { build } = buildOn(["S..X"]);
+    const paid = build.place("spike-trap", { x: 1, y: 0 }).structure!;
+    const free = build.place("spike-trap", { x: 2, y: 0 }, undefined, undefined, undefined, true).structure!;
+    expect(build.wasFreePlaced(paid.instanceId)).toBe(false);
+    expect(build.wasFreePlaced(free.instanceId)).toBe(true);
+  });
+
+  it("wasFreePlaced is false for an unknown instance id", () => {
+    const { build } = buildOn(["S..X"]);
+    expect(build.wasFreePlaced("nonexistent#1")).toBe(false);
   });
 });
 

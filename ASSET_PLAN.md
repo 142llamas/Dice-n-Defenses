@@ -92,6 +92,13 @@ since that's where a viewer's eye spends the most time:
   per-token mutation logic (stealth dimming, aura rings, boss-size variants)
   worth reconciling with a sprite swap once real art exists to test against,
   not speculatively (see KNOWN_ISSUES KI-074).
+- **A second, separate piece of empty plumbing exists for dialogue portraits
+  (D-119).** `data/portraitManifest.ts` exports the (currently EMPTY)
+  `PORTRAIT_MANIFEST`, in the same `Record<key, imagePath>` shape as
+  `SPRITE_MANIFEST` above, for a front-facing NPC/companion portrait shown
+  alongside chapter-boundary and companion dialogue (`scenes/dialogueBox.ts`)
+  — a different asset from a battle token, same "add the image, add one
+  manifest entry, done" pattern once real art exists.
 - A texture atlas (one sheet, multiple frames) is the standard way to keep
   many small sprites from bloating load time once there are enough of them
   to matter, and pairs naturally with "replace tokens first" above (one hero

@@ -1,16 +1,19 @@
 # Phase 12 — Cooperative Multiplayer Feasibility (Design Doc)
 
-**Status: DESIGN ONLY. No code written for this phase yet.** Per
-`SOURCE_OF_TRUTH.md`'s own framing, Phase 12's goal is to "determine
-whether synchronized co-op is worth the complexity," not to commit to
-shipping it. Kevin asked for this design doc before any implementation,
-and named the state-sync model up front: **client-authoritative**,
-enforced by Firestore security rules, staying on the free Spark plan (no
-Cloud Functions, no billing decision required to prototype this).
+**Status update (2026-09-11): this doc was DESIGN ONLY when written, but
+12.1-12.3 have since actually shipped** — `BattleStateSnapshot` (D-100),
+the session lobby (`CoopSessionSystem.ts`/`CoopLobbyScene.ts`, D-101),
+and turn-lock ownership (`controlledBy: "remote"`, D-102/D-103) are all
+real, live code. Only 12.3's result-broadcast/live-board-sync half and
+12.4 (reconnect) remain undone — see `KNOWN_ISSUES.md` KI-063. The
+feasibility analysis and state-sync model below (client-authoritative,
+enforced by Firestore security rules, Spark plan) is what was actually
+built against, so it's kept as real design history, not just a proposal.
 
-This doc is the feasibility analysis. It does not change any shipped
-behavior — `PROJECT_STATUS.md`/`CHANGELOG.md` note that this exists, but
-nothing here is "DONE" in the sense every other phase entry means.
+Per `SOURCE_OF_TRUTH.md`'s own framing, Phase 12's goal was to "determine
+whether synchronized co-op is worth the complexity" — Kevin asked for this
+design doc before any implementation, and named the state-sync model up
+front.
 
 ## 1. What Phase 12 is actually scoped to (from `SOURCE_OF_TRUTH.md` §Phase 12)
 

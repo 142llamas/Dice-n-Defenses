@@ -7,7 +7,6 @@ import {
   wizardSpellbookSizeAtLevel,
   eligibleCantripPool,
   eligibleLeveledSpellPool,
-  isValidSelection,
   defaultFill,
   spellPickStepsForClass,
   spellSwapStepsForClass,
@@ -160,26 +159,6 @@ describe("eligibleCantripPool / eligibleLeveledSpellPool", () => {
       expect(eligibleCantripPool(id)).toEqual([]);
       expect(eligibleLeveledSpellPool(id)).toEqual([]);
     }
-  });
-});
-
-describe("isValidSelection", () => {
-  const pool = ["a", "b", "c"];
-
-  it("accepts a selection within the pool and under the max count", () => {
-    expect(isValidSelection(pool, ["a", "b"], 2)).toBe(true);
-  });
-
-  it("rejects too many selections", () => {
-    expect(isValidSelection(pool, ["a", "b", "c"], 2)).toBe(false);
-  });
-
-  it("rejects a duplicate", () => {
-    expect(isValidSelection(pool, ["a", "a"], 2)).toBe(false);
-  });
-
-  it("rejects an id not in the pool", () => {
-    expect(isValidSelection(pool, ["z"], 2)).toBe(false);
   });
 });
 

@@ -1,11 +1,19 @@
 # Firebase Setup Checklist (Phase 10, D-084)
 
-This is the part of Phase 10 that only Kevin can do — creating cloud
-infrastructure and logging into it both require a real Google account and
-a real browser, neither of which this environment has. Everything else
-(the actual code) is already built and passes typecheck/tests/build with
-no Firebase project at all — the game keeps working exactly as it did at
-the end of Phase 9 until every step below is done.
+**Already done as of Phase 10 — kept for reference.** The project is live at
+https://dice-n-defenses.web.app and deploys are now automatic via GitHub
+Actions on every push to `main` (see `.github/workflows/` in the repo root)
+— Step 9's manual "give me the go-ahead to deploy" flow below is no longer
+how deploys happen day to day. This doc is still useful if you ever need to
+provision a SECOND Firebase environment (a staging project, a fresh clone on
+another machine) from scratch.
+
+This was originally the part of Phase 10 that only Kevin could do — creating
+cloud infrastructure and logging into it both require a real Google account
+and a real browser, neither of which this environment has. Everything else
+(the actual code) was already built and passed typecheck/tests/build with
+no Firebase project at all — the game kept working exactly as it did at the
+end of Phase 9 until every step below was done.
 
 Do these in order. Nothing here costs money on its own — Hosting, Auth,
 and Firestore at this game's scale all fit comfortably in Firebase's free

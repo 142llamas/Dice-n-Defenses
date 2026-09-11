@@ -1,5 +1,7 @@
 import Phaser from "phaser";
 import { createOrnateButton, drawScreenBackdrop, getViewport, onViewportResize, FONT_DISPLAY, FONT_BODY } from "./uiTheme";
+import { AUTOSAVE_STORAGE_KEY } from "../config";
+import { loadAutosaveFile, autosaveSlotsForMode } from "../systems/AutosaveSystem";
 
 export type ModeEntryMode = "campaign" | "freeplay";
 
@@ -24,6 +26,13 @@ interface ModeEntryData {
  * `CampaignSelectScene`/`FreePlayScene`/`LoadGameScene` (its two immediate
  * downstream neighbors) haven't been reskinned yet, so this screen is
  * visually ahead of them for now.
+ *
+ * Batch F (item 18): a third "Continue" button, shown only when at least
+ * one in-progress autosave exists for this mode — routes to `LoadGameScene`
+ * with `filterMode: "autosave"` (a third, unrelated list from its own
+ * "Load X" — see that scene's own header comment). Hidden entirely rather
+ * than shown-and-disabled when there's nothing to resume, so this screen's
+ * layout is unchanged for anyone who hasn't started an in-progress run yet.
  */
 export class ModeEntryScene extends Phaser.Scene {
   private mode: ModeEntryMode = "campaign";
@@ -107,6 +116,23 @@ export class ModeEntryScene extends Phaser.Scene {
       },
       { variant: "secondary", depth: 5 },
     );
+
+    const hasAutosave =
+      autosaveSlotsForMode(loadAutosaveFile(window.localStorage, AUTOSAVE_STORAGE_KEY), this.mode).length > 0;
+    if (hasAutosave) {
+      createOrnateButton(
+        this,
+        width / 2,
+        cy + 190,
+        340,
+        60,
+        "Continue",
+        () => {
+          this.scene.start("LoadGameScene", { filterMode: "autosave", mode: this.mode });
+        },
+        { variant: "secondary", depth: 5 },
+      );
+    }
 
     const created = this.children.list.filter((c) => !before.has(c));
     this.layoutRoot = this.add.container(0, 0);

@@ -1,4 +1,3 @@
-import type { GridPosition } from "../systems/GridSystem";
 import type { StatusEffectId } from "./statusEffects";
 import type { DamageType } from "./weapons";
 
@@ -2306,6 +2305,3 @@ export const ENEMY_COLORS: Record<string, number> = {
   saboteur: 0x6a7a4a,
   "warren-stalker": 0x4a5a3a,
 };
-
-/** Re-export so callers can type positions without reaching into GridSystem. */
-export type { GridPosition };

@@ -3,8 +3,10 @@ import {
   DEFAULT_COMPANION_ROSTER_STATE,
   MAX_ACTIVE_COMPANIONS,
   activateCompanion,
+  applyPurchasedGearOverrides,
   benchCompanion,
   getCompanionBuild,
+  getCompanionPurchasedGear,
   getPartyInventory,
   getPcBuild,
   isCompanionActive,
@@ -16,6 +18,7 @@ import {
   recruitCompanion,
   saveCompanionRoster,
   setCompanionBuild,
+  setCompanionPurchasedGearSlot,
   setPartyInventory,
   setPcBuild,
   type CompanionRosterState,
@@ -319,5 +322,83 @@ describe("CompanionRosterSystem — party inventory (Plan 2.3)", () => {
 
   it("DEFAULT_COMPANION_ROSTER_STATE has no partyInventory (Reset Campaign Progress wipes the pool for free)", () => {
     expect(DEFAULT_COMPANION_ROSTER_STATE.partyInventory).toBeUndefined();
+  });
+});
+
+/** `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 3: the between-missions Armory's companion purchase/sale layer. */
+describe("CompanionRosterSystem — purchased gear overrides (Plan 3)", () => {
+  it("getCompanionPurchasedGear is undefined on the default state", () => {
+    expect(getCompanionPurchasedGear(DEFAULT_COMPANION_ROSTER_STATE, "hollis")).toBeUndefined();
+  });
+
+  it("setCompanionPurchasedGearSlot/getCompanionPurchasedGear round-trip without clobbering other companions or roster lists", () => {
+    let state = fullActiveState();
+    state = setCompanionPurchasedGearSlot(state, "hollis", "weapon", "greatsword");
+    expect(getCompanionPurchasedGear(state, "hollis")).toEqual({ weapon: "greatsword" });
+    expect(getCompanionPurchasedGear(state, "fenna")).toBeUndefined();
+    expect(state.activeIds).toEqual(["hollis", "fenna", "isolde"]);
+  });
+
+  it("setCompanionPurchasedGearSlot merges into an existing map instead of replacing it", () => {
+    let state = setCompanionPurchasedGearSlot(DEFAULT_COMPANION_ROSTER_STATE, "hollis", "weapon", "greatsword");
+    state = setCompanionPurchasedGearSlot(state, "hollis", "chest", "plate-armor");
+    expect(getCompanionPurchasedGear(state, "hollis")).toEqual({ weapon: "greatsword", chest: "plate-armor" });
+  });
+
+  it("setCompanionPurchasedGearSlot with null records an explicit sale, distinct from an absent key", () => {
+    const state = setCompanionPurchasedGearSlot(DEFAULT_COMPANION_ROSTER_STATE, "hollis", "weapon", null);
+    expect(getCompanionPurchasedGear(state, "hollis")).toEqual({ weapon: null });
+  });
+
+  it("loadCompanionRoster/saveCompanionRoster round-trip includes companionPurchasedGear, including null entries", () => {
+    const storage = fakeStorage();
+    let state = setCompanionPurchasedGearSlot(DEFAULT_COMPANION_ROSTER_STATE, "hollis", "weapon", "greatsword");
+    state = setCompanionPurchasedGearSlot(state, "hollis", "chest", null);
+    saveCompanionRoster(storage, "k", state);
+    expect(getCompanionPurchasedGear(loadCompanionRoster(storage, "k"), "hollis")).toEqual({
+      weapon: "greatsword",
+      chest: null,
+    });
+  });
+
+  it("a pre-Plan-3 blob (no companionPurchasedGear key at all) loads as undefined — proves no migration is needed", () => {
+    const storage = fakeStorage();
+    storage.setItem("k", JSON.stringify({ activeIds: ["hollis"], benchedIds: [], lostIds: [] }));
+    expect(getCompanionPurchasedGear(loadCompanionRoster(storage, "k"), "hollis")).toBeUndefined();
+  });
+
+  describe("applyPurchasedGearOverrides", () => {
+    it("returns the baseline unchanged when there are no overrides", () => {
+      const baseline = { weapon: "shortsword", chest: "leather-armor" };
+      expect(applyPurchasedGearOverrides(baseline, undefined)).toEqual(baseline);
+    });
+
+    it("overlays a string override on top of the baseline", () => {
+      const baseline = { weapon: "shortsword", chest: "leather-armor" };
+      expect(applyPurchasedGearOverrides(baseline, { weapon: "greatsword" })).toEqual({
+        weapon: "greatsword",
+        chest: "leather-armor",
+      });
+    });
+
+    it("a null override removes that slot from the baseline entirely, even if the baseline had it", () => {
+      const baseline = { weapon: "shortsword", chest: "leather-armor" };
+      expect(applyPurchasedGearOverrides(baseline, { weapon: null })).toEqual({ chest: "leather-armor" });
+    });
+
+    it("leaves a baseline slot with no matching override key untouched", () => {
+      const baseline = { weapon: "shortsword", chest: "leather-armor" };
+      expect(applyPurchasedGearOverrides(baseline, { chest: "plate-armor" })).toEqual({
+        weapon: "shortsword",
+        chest: "plate-armor",
+      });
+    });
+
+    it("does not mutate the baseline object passed in", () => {
+      const baseline = { weapon: "shortsword" };
+      const snapshot = { ...baseline };
+      applyPurchasedGearOverrides(baseline, { weapon: null, chest: "plate-armor" });
+      expect(baseline).toEqual(snapshot);
+    });
   });
 });

@@ -74,6 +74,40 @@ const VARIANT_SIZE: Record<ButtonVariant, { radius: number; fontSize: number }> 
 };
 
 /**
+ * Batch C (item 10's remainder, KI-188): the shared "measure the real
+ * rendered size, shrink one step at a time until it fits" primitive four
+ * call sites each hand-rolled independently before this — this button's own
+ * label, `BattleScene.fitBannerToWidth`, `CharacterCreationScene
+ * .fitLabelToColumnWidth`, and `MainMenuScene`'s title-vs-corner-controls
+ * check. All four already used the identical technique (their own comments
+ * cross-reference each other as "the same approach") but never shared code.
+ *
+ * `stillTooBig` is a predicate, not a fixed max width, since not every
+ * caller's stopping condition IS a max width — `MainMenuScene`'s title
+ * shrinks until it no longer overlaps a corner-controls rectangle, a
+ * genuinely different check than "wider than N pixels." Re-measures
+ * `text`'s real bounds itself each call (via whatever the predicate reads —
+ * `.width`, `.getBounds()`, etc.), never a guessed/precomputed size.
+ *
+ * Always resets to `baseFontSizePx` first, so a later SHORT string renders
+ * at full size again rather than staying shrunk from a prior long one.
+ */
+export function shrinkFontToFit(
+  text: Phaser.GameObjects.Text,
+  baseFontSizePx: number,
+  minFontSizePx: number,
+  stillTooBig: () => boolean,
+  stepPx = 1,
+): void {
+  text.setFontSize(baseFontSizePx);
+  let size = baseFontSizePx;
+  while (size > minFontSizePx && stillTooBig()) {
+    size -= stepPx;
+    text.setFontSize(size);
+  }
+}
+
+/**
  * A carved-wood-and-bronze plaque button: idle/hover/pressed/disabled/
  * selected states, a soft press "click" tween, and a hover brighten+lift
  * tween. One shared implementation for every button in the three restyled
@@ -119,27 +153,30 @@ export function createOrnateButton(
   // Compendium tabs, 12 classes), but the label text itself never shrank to
   // match, so a normal-length label could still render wider than its own
   // now-narrower box and spill into its neighbors. Shrinks the font (down to
-  // a readable floor) against the button's REAL measured text width, the
-  // same "measure, don't guess" approach `BattleScene.fitBannerToWidth` uses.
+  // a readable floor) against the button's REAL measured text width — see
+  // `shrinkFontToFit` above.
   const labelPadding = 10;
   const minLabelFontSizePx = 9;
   const fitLabelToWidth = (): void => {
-    text.setFontSize(fontSize);
-    let size = fontSize;
-    while (text.width > width - labelPadding && size > minLabelFontSizePx) {
-      size -= 1;
-      text.setFontSize(size);
-    }
+    shrinkFontToFit(text, fontSize, minLabelFontSizePx, () => text.width > width - labelPadding);
   };
   fitLabelToWidth();
 
   let sub: Phaser.GameObjects.Text | undefined;
   if (opts.sublabel) {
+    // Item 10 (Batch B, KI-187) root cause: this text had NO `wordWrap` at
+    // all, so any sublabel wider than the button (a 70-140 char feat
+    // description in a 140px-wide button, e.g.) rendered past the button's
+    // own edges and spilled into whatever sat next to it — the single
+    // biggest lever on the "overlapping/spilling text" playtest complaint,
+    // since `createOrnateButton` is shared by ~20 scenes.
     sub = scene.add
       .text(0, 15, opts.sublabel, {
         fontFamily: FONT_BODY,
         fontSize: "12px",
         color: "#a89058",
+        align: "center",
+        wordWrap: { width: Math.max(40, width - labelPadding * 2) },
       })
       .setOrigin(0.5);
     container.add(sub);
@@ -549,19 +586,84 @@ export interface ChoiceOverlayOption {
  * picker. Every created object is pushed onto the caller-owned `overlay`
  * array (cleared first) rather than returned, so `clearChoiceOverlay` can
  * destroy exactly what was drawn without the caller tracking anything else.
+ *
+ * Item 9 (Batch B, KI-187): this was the one remaining shared overlay still
+ * drawing plain `add.rectangle()` boxes and `system-ui` text instead of the
+ * theme this file otherwise defines — `BattleScene`'s own separate
+ * `renderAsiPrompt` overlay already got this treatment in D-221/D-225, but
+ * THIS function (behind class/level-selection and `CampaignSelectScene`'s
+ * difficulty picker, among others) got missed. Each choice is now a real
+ * `createOrnateButton` (wood panel, bronze/gilt border, hover/press feedback)
+ * sized to the same dynamically-measured row height as before — the
+ * measurement logic itself (a long `desc` needs more than 2 lines) is
+ * unchanged, just re-pointed at the real render font so its estimate stays
+ * accurate.
  */
+/**
+ * Batch C (item 10's remainder, KI-188): the "measure each choice's real
+ * wrapped label+desc height, then size each ROW to its own tallest item"
+ * logic this function already used — pulled out so `BattleScene
+ * .renderAsiPrompt` (previously a flat `height = hasDesc ? 100 : 56`
+ * constant, tall enough for roughly 2 lines and overflowing past its own
+ * box for anything longer) can use the exact same approach instead of a
+ * second hand-rolled copy. `nameFontSizePx` is a parameter (not hardcoded)
+ * because the two callers render their name label at different sizes —
+ * this overlay's own buttons at 13px, `renderAsiPrompt`'s at its
+ * `"secondary"` variant default of 18px — and the measurement has to match
+ * whatever will actually render or it under/over-estimates.
+ */
+export function measureChoiceRowHeights(
+  scene: Phaser.Scene,
+  choices: ChoiceOverlayOption[],
+  maxPerRow: number,
+  width: number,
+  minHeight: number,
+  nameFontSizePx = 13,
+): number[] {
+  const topPad = 10;
+  const nameDescGap = 6;
+  const rowHeights: number[] = [];
+  for (let i = 0; i < choices.length; i += maxPerRow) {
+    const rowChoices = choices.slice(i, i + maxPerRow);
+    const tallest = rowChoices.reduce((max, choice) => {
+      const nameProbe = scene.add.text(0, 0, choice.label, {
+        fontFamily: FONT_BODY,
+        fontSize: `${nameFontSizePx}px`,
+        fontStyle: "bold",
+        align: "center",
+        wordWrap: { width: width - 14 },
+      });
+      let contentHeight = nameProbe.height;
+      nameProbe.destroy();
+      if (choice.desc) {
+        const descProbe = scene.add.text(0, 0, choice.desc, {
+          fontFamily: FONT_BODY,
+          fontSize: "12px",
+          align: "center",
+          wordWrap: { width: width - 14 },
+        });
+        contentHeight += nameDescGap + descProbe.height;
+        descProbe.destroy();
+      }
+      return Math.max(max, contentHeight + topPad * 2);
+    }, minHeight);
+    rowHeights.push(tallest);
+  }
+  return rowHeights;
+}
+
 export function renderChoiceOverlay(scene: Phaser.Scene, overlay: Phaser.GameObjects.GameObject[], title: string, choices: ChoiceOverlayOption[]): void {
   clearChoiceOverlay(overlay);
   const { width: viewportWidth, height: viewportHeight } = getViewport(scene);
   const dim = scene.add
-    .rectangle(viewportWidth / 2, viewportHeight / 2, viewportWidth, viewportHeight, 0x000000, 0.85)
+    .rectangle(viewportWidth / 2, viewportHeight / 2, viewportWidth, viewportHeight, 0x000000, 0.65)
     .setDepth(60)
     .setInteractive();
   const titleText = scene.add
     .text(viewportWidth / 2, 90, title, {
-      fontFamily: "system-ui, Arial, sans-serif",
-      fontSize: "24px",
-      color: "#f0e070",
+      fontFamily: FONT_DISPLAY,
+      fontSize: "26px",
+      color: "#e8c25a",
       fontStyle: "bold",
       align: "center",
       wordWrap: { width: viewportWidth - 160 },
@@ -577,42 +679,13 @@ export function renderChoiceOverlay(scene: Phaser.Scene, overlay: Phaser.GameObj
   const spacing = width + 14;
   const maxPerRow = Math.max(1, Math.floor(usableWidth / spacing));
   const rowGap = 14;
-  const topPad = 10;
-  const nameDescGap = 6;
 
   // Playtest fix (Party Creation Overhaul, Plan 0): the old fixed `height`
   // constant assumed every `desc` fit in ~2 lines — a long one (e.g. a
   // class's `previewSummary`) wraps to far more and used to run into the
-  // next row. Measure each choice's real wrapped height first (via
-  // throwaway probe Text objects, destroyed immediately after), then size
-  // each ROW to its own tallest item instead of a shared constant.
-  const rowHeights: number[] = [];
-  for (let i = 0; i < choices.length; i += maxPerRow) {
-    const rowChoices = choices.slice(i, i + maxPerRow);
-    const tallest = rowChoices.reduce((max, choice) => {
-      const nameProbe = scene.add.text(0, 0, choice.label, {
-        fontFamily: "system-ui, Arial, sans-serif",
-        fontSize: "13px",
-        fontStyle: "bold",
-        align: "center",
-        wordWrap: { width: width - 14 },
-      });
-      let contentHeight = nameProbe.height;
-      nameProbe.destroy();
-      if (choice.desc) {
-        const descProbe = scene.add.text(0, 0, choice.desc, {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "12px",
-          align: "center",
-          wordWrap: { width: width - 14 },
-        });
-        contentHeight += nameDescGap + descProbe.height;
-        descProbe.destroy();
-      }
-      return Math.max(max, contentHeight + topPad * 2);
-    }, minHeight);
-    rowHeights.push(tallest);
-  }
+  // next row. `measureChoiceRowHeights` sizes each ROW to its own tallest
+  // item instead of a shared constant — see its own comment above.
+  const rowHeights = measureChoiceRowHeights(scene, choices, maxPerRow, width, minHeight);
 
   let rowTop = 170;
   let choiceIndex = 0;
@@ -625,39 +698,16 @@ export function renderChoiceOverlay(scene: Phaser.Scene, overlay: Phaser.GameObj
 
     rowChoices.forEach((choice, col) => {
       const x = rowStartX + col * spacing;
-      const btn = scene.add
-        .rectangle(x, boxCenterY, width, rowHeight, 0x3a5a8a)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(61);
-      if (choice.highlighted) btn.setStrokeStyle(3, 0xf0c040);
-      const name = scene.add
-        .text(x, boxTop + topPad, choice.highlighted ? `★ ${choice.label}` : choice.label, {
-          fontFamily: "system-ui, Arial, sans-serif",
-          fontSize: "13px",
-          color: choice.highlighted ? "#ffe58a" : "#e8e8f0",
-          fontStyle: "bold",
-          align: "center",
-          wordWrap: { width: width - 14 },
-        })
-        .setOrigin(0.5, 0)
-        .setDepth(62);
-      overlay.push(btn, name);
-      if (choice.desc) {
-        const desc = scene.add
-          .text(x, boxTop + topPad + name.height + nameDescGap, choice.desc, {
-            fontFamily: "system-ui, Arial, sans-serif",
-            fontSize: "12px",
-            color: "#c8c8d8",
-            align: "center",
-            wordWrap: { width: width - 14 },
-          })
-          .setOrigin(0.5, 0)
-          .setDepth(62);
-        overlay.push(desc);
-      }
-      btn.on("pointerover", () => btn.setFillStyle(0x4a6a9a));
-      btn.on("pointerout", () => btn.setFillStyle(0x3a5a8a));
-      btn.on("pointerdown", () => choice.onClick());
+      const label = choice.highlighted ? `★ ${choice.label}` : choice.label;
+      const handle = createOrnateButton(scene, x, boxCenterY, width, rowHeight, label, choice.onClick, {
+        variant: "secondary",
+        font: FONT_BODY,
+        fontSize: 13,
+        sublabel: choice.desc,
+        depth: 61,
+      });
+      if (choice.highlighted) handle.setSelected(true);
+      overlay.push(handle.container);
     });
 
     rowTop += rowHeight + rowGap;

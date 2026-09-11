@@ -90,6 +90,7 @@ export class DialogueBoxController {
   private bodyText!: Phaser.GameObjects.Text;
   private counterText!: Phaser.GameObjects.Text;
   private continueLabel!: Phaser.GameObjects.Text;
+  private continueHintText!: Phaser.GameObjects.Text;
 
   private readonly onKeyAdvance = (): void => this.advance();
 
@@ -193,12 +194,39 @@ export class DialogueBoxController {
       .setDepth(45);
     continueButton.on("pointerdown", () => this.advance());
 
+    // Item 14 (Batch B, KI-187): the scrim/panel are always clickable to
+    // advance (D-120), but nothing ever told the player that — the only
+    // visible affordance was the Continue button's own label. A faint,
+    // gently pulsing hint on its own row (clear of both bottom buttons
+    // horizontally, so it never needs to reason about which one is visible)
+    // makes that discoverable without competing with the real controls.
+    this.continueHintText = scene.add
+      .text(cx, buttonY - 34, "Click anywhere to continue", {
+        fontFamily: "system-ui, Arial, sans-serif",
+        fontSize: "12px",
+        fontStyle: "italic",
+        color: "#8a6a42",
+      })
+      .setOrigin(0.5)
+      .setDepth(42);
+    scene.tweens.add({
+      targets: this.continueHintText,
+      alpha: { from: 0.5, to: 1 },
+      duration: 1100,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+
     // D-120: "skip the whole talking section" — only ever shown when no
     // line in this sequence requires a decision (see `canSkipSequence`).
-    // Top-left, mirroring the counter's top-right placement, since the
-    // bottom-left corner is the portrait's territory.
-    const skipY = cy - PANEL_HEIGHT / 2 + 20;
-    const skipX = cx - PANEL_WIDTH / 2 + 75;
+    // Item 14: moved from top-left to the bottom row (left-of-center,
+    // clear of both the portrait/name-plate's bottom-left territory and
+    // Continue's bottom-right spot) — Kevin's playtest feedback was that a
+    // control affecting how you leave the whole screen belongs with the
+    // other "leave this screen" control, not off on its own up top.
+    const skipY = buttonY;
+    const skipX = cx - 90;
     const skipButton = scene.add
       .rectangle(skipX, skipY, 130, 30, COLORS.parchmentBorder)
       .setStrokeStyle(1, 0x2a1a10)
@@ -230,6 +258,7 @@ export class DialogueBoxController {
       this.counterText,
       continueButton,
       this.continueLabel,
+      this.continueHintText,
       skipButton,
       skipLabel,
     );

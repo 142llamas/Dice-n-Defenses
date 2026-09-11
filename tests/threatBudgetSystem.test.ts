@@ -14,7 +14,6 @@ function makeTier(overrides: Partial<DifficultyDefinition> = {}): DifficultyDefi
     enemyHpMultiplier: 1,
     shortRestCharges: 3,
     longRestCharges: 1,
-    startingGearPoints: 9,
     companionDiscretionaryGearSlots: 2,
     eliteFraction: 0,
     eliteFractionCap: 0,
@@ -22,6 +21,8 @@ function makeTier(overrides: Partial<DifficultyDefinition> = {}): DifficultyDefi
     extraLaneChance: 0,
     maxSimultaneousLanes: 1,
     cadenceMultiplier: 1,
+    startingCampaignGold: 70,
+    campaignGoldMultiplier: 1,
     ...overrides,
   };
 }

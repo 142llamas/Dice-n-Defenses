@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.2.0-dev",
   "type": "module",
-  "description": "Turn-based grid fantasy wave-defense tactics game. 0.2.0-dev — Phase 7 (vertical slice) in progress; part 1 adds flying enemies on top of the v0.1.1 MVP.",
+  "description": "Turn-based grid fantasy wave-defense tactics game with a full D&D-depth character system and a 6-region story campaign. Live at https://dice-n-defenses.web.app.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

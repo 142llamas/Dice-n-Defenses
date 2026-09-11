@@ -45,8 +45,9 @@ describe("resolveUnlockMissionCompanion", () => {
     const companion = resolveUnlockMissionCompanion("emberford-reach", 0, DEFAULT_COMPANION_ROSTER_STATE);
     expect(companion?.id).toBe("tamsin-rourke");
     expect(resolveUnlockMissionCompanion("emberford-reach", 1, DEFAULT_COMPANION_ROSTER_STATE)).toBeUndefined();
+    // Emberford Reach's real finale, index 2 (D-253: was index 3 before its
+    // old Chapter 3 was cut) — still correctly not index 0.
     expect(resolveUnlockMissionCompanion("emberford-reach", 2, DEFAULT_COMPANION_ROSTER_STATE)).toBeUndefined();
-    expect(resolveUnlockMissionCompanion("emberford-reach", 3, DEFAULT_COMPANION_ROSTER_STATE)).toBeUndefined();
   });
 
   it("returns undefined for a Pool B region's Chapter 1 once that companion is already recruited or lost", () => {

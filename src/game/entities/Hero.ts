@@ -722,8 +722,13 @@ export class Hero implements Combatant {
    * higher"). Falls back to the raw score with no override equipped, same
    * as every hero before this decision. 0 for the classic fixed roster (no
    * ability scores at all).
+   *
+   * Public (not private, unlike its sibling `effectiveAbilityScores()`
+   * below) — Batch B's `GearCompareSystem.previewGearSlotChange` needs a
+   * single ability's before/after value to diff a `setsAbilityScore` item's
+   * effect, and this is the one already-computed getter that reflects it.
    */
-  private effectiveAbilityScore(ability: AbilityScoreId): number {
+  effectiveAbilityScore(ability: AbilityScoreId): number {
     if (!this.abilityScores) return 0;
     return Math.max(this.abilityScores[ability], this.abilityScoreOverrides[ability] ?? -Infinity);
   }
@@ -2776,7 +2781,7 @@ export class Hero implements Combatant {
    * spending a Hit Die, which this game doesn't track; see
    * `SHORT_REST_HEAL_FRACTION`). Called by `RestSystem.takeShortRest` for
    * every LIVING hero — the caller is responsible for filtering out the
-   * fallen, same convention `ProgressionSystem.applyChoice` already uses.
+   * fallen.
    */
   shortRest(): void {
     this.secondWindUsed = false;

@@ -359,11 +359,23 @@ function synthesizeEnchantedDefinition(base: EquipmentDefinition, level: Enchant
 }
 
 export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
+  // D-250 (Batch E gap 2): 6 of these 12 items' `cost` was raised from its
+  // original 6-16g starter-tier value — every common/uncommon non-attunement
+  // item in the catalog was priced in that same narrow band, which left
+  // every region-bonus equipment option worth only 3-8g if sold (see
+  // `EconomySystem.sellValueForCost`), always worse than either of that
+  // region's gold-tier bonus options (15-65g). New cost = that region's own
+  // low + high gold-tier amounts (`data/regionBonuses.ts`), so the sell
+  // value lands exactly at the midpoint of the two — comparable to
+  // whichever tier a given draw actually shows, never strictly dominated or
+  // dominating. First-pass reasoned numbers, same standing caveat every
+  // other balance value in this project carries — not verified play data.
+  // Enforced going forward by `tests/regionBonusSystem.test.ts`.
   "leather-cap": {
     id: "leather-cap",
     name: "Leather Cap",
     description: "+1 AC.",
-    cost: 8,
+    cost: 50, // was 8 — Causeway region bonus (20g+30g gold tiers)
     slot: "head",
     rarity: "common",
     armorClass: 1,
@@ -373,7 +385,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "circlet-of-focus",
     name: "Circlet of Focus",
     description: "+1 AC and +1 basic-attack damage.",
-    cost: 14,
+    cost: 65, // was 14 — Cinderfall region bonus (25g+40g gold tiers)
     slot: "head",
     rarity: "uncommon",
     armorClass: 1,
@@ -384,7 +396,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "iron-buckler",
     name: "Iron Buckler",
     description: "+2 AC (harder to hit).",
-    cost: 10,
+    cost: 40, // was 10 — Emberford region bonus (15g+25g gold tiers)
     slot: "chest",
     rarity: "common",
     armorClass: 2,
@@ -394,7 +406,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "chainmail-vest",
     name: "Chainmail Vest",
     description: "+3 AC.",
-    cost: 16,
+    cost: 85, // was 16 — Saltmere region bonus (35g+50g gold tiers)
     slot: "chest",
     rarity: "uncommon",
     armorClass: 3,
@@ -404,7 +416,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "travelers-cloak",
     name: "Traveler's Cloak",
     description: "+1 AC and +1 basic-attack damage.",
-    cost: 14,
+    cost: 65, // was 14 — Cinderfall region bonus (25g+40g gold tiers)
     slot: "legs",
     rarity: "uncommon",
     armorClass: 1,
@@ -415,7 +427,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "swift-greaves",
     name: "Swift Greaves",
     description: "+1 AC.",
-    cost: 10,
+    cost: 40, // was 10 — Emberford region bonus (15g+25g gold tiers)
     slot: "legs",
     rarity: "common",
     armorClass: 1,
@@ -425,7 +437,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "whetstone-band",
     name: "Whetstone Band",
     description: "+2 basic-attack damage.",
-    cost: 10,
+    cost: 85, // was 10 — Saltmere region bonus (35g+50g gold tiers)
     slot: "ring",
     rarity: "common",
     attackDamage: 2,
@@ -435,7 +447,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "band-of-vigor",
     name: "Band of Vigor",
     description: "+1 AC and +1 basic-attack damage.",
-    cost: 12,
+    cost: 110, // was 12 — Frostbound region bonus (45g+65g gold tiers)
     slot: "ring",
     rarity: "uncommon",
     armorClass: 1,
@@ -446,7 +458,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "amulet-of-warding",
     name: "Amulet of Warding",
     description: "+2 AC.",
-    cost: 12,
+    cost: 110, // was 12 — Frostbound region bonus (45g+65g gold tiers)
     slot: "amulet",
     rarity: "uncommon",
     armorClass: 2,
@@ -456,7 +468,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "amulet-of-fury",
     name: "Amulet of Fury",
     description: "+2 basic-attack damage.",
-    cost: 12,
+    cost: 75, // was 12 — Drowning Vale region bonus (30g+45g gold tiers)
     slot: "amulet",
     rarity: "uncommon",
     attackDamage: 2,
@@ -566,7 +578,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "boots-of-striding",
     name: "Boots of Striding",
     description: "+1 AC.",
-    cost: 8,
+    cost: 50, // was 8 — D-250 (Batch E gap 2): Causeway region bonus (20g+30g gold tiers)
     slot: "footwear",
     rarity: "common",
     armorClass: 1,
@@ -576,7 +588,7 @@ export const EQUIPMENT_DEFINITIONS: Record<string, EquipmentDefinition> = {
     id: "boots-of-the-brawler",
     name: "Boots of the Brawler",
     description: "+1 AC and +1 basic-attack damage.",
-    cost: 12,
+    cost: 75, // was 12 — D-250 (Batch E gap 2): Drowning Vale region bonus (30g+45g gold tiers)
     slot: "footwear",
     rarity: "uncommon",
     armorClass: 1,

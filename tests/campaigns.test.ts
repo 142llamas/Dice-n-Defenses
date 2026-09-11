@@ -55,10 +55,19 @@ const CAMPAIGN_MAP_BY_ID: Record<string, { id: string; name: string }> = {
 const REGIONS = CAMPAIGNS.filter((c) => REGION_CAMPAIGN_IDS.includes(c.id));
 
 describe("CAMPAIGNS", () => {
-  it("has the six CAMPAIGN_STORY_DESIGN.md §3 regions, the D-184 prologue, and the D-188 capstone", () => {
+  it("has the six CAMPAIGN_STORY_DESIGN.md §3 regions (5 mandatory + Shattered Causeway as optional, D-253), the D-184 prologue, and the D-188 capstone", () => {
     expect(CAMPAIGNS.length).toBe(8);
+    // All 6 regions (including optional Shattered Causeway) still resolve as
+    // real campaigns and real maps — `CAMPAIGN_MAP_BY_ID` stays 6 entries.
+    const allCampaignIds = CAMPAIGNS.map((c) => c.id);
+    for (const id of Object.keys(CAMPAIGN_MAP_BY_ID)) {
+      expect(allCampaignIds).toContain(id);
+    }
+    // `REGIONS` (filtered by `REGION_CAMPAIGN_IDS`) is the 5 MANDATORY
+    // regions only — Shattered Causeway is deliberately excluded since D-253.
     const regionIds = REGIONS.map((c) => c.id);
-    expect(regionIds.sort()).toEqual(Object.keys(CAMPAIGN_MAP_BY_ID).sort());
+    expect(regionIds.sort()).toEqual([...REGION_CAMPAIGN_IDS].sort());
+    expect(regionIds).not.toContain("shattered-causeway");
     expect(CAMPAIGNS.some((c) => c.id === PROLOGUE_CAMPAIGN_ID)).toBe(true);
     expect(CAMPAIGNS.some((c) => c.id === NAMELESS_THRONE_CAMPAIGN_ID)).toBe(true);
   });
@@ -238,24 +247,35 @@ describe("Chapters (D-118)", () => {
  * finale-wave).
  */
 describe("Chapters (D-177): real chapter content", () => {
-  it("every region is genuinely chaptered with exactly 4 chapters, levels 1-20 with no gaps", () => {
+  it("every region is genuinely chaptered; Emberford Reach has 3 chapters (Ch3 cut, D-253) since levelRange is now decorative for a real chaptered region, every other mandatory region keeps 4, levels 1-20", () => {
     for (const campaign of REGIONS) {
       expect(isChapteredCampaign(campaign)).toBe(true);
-      expect(totalChapters(campaign)).toBe(4);
       const ranges = campaign.chapters!.map((c) => c.levelRange);
-      expect(ranges).toEqual([
-        [1, 5],
-        [6, 10],
-        [11, 15],
-        [16, 20],
-      ]);
+      if (campaign.id === "emberford-reach") {
+        expect(totalChapters(campaign)).toBe(3);
+        expect(ranges).toEqual([
+          [1, 5],
+          [6, 10],
+          [16, 20],
+        ]);
+      } else {
+        expect(totalChapters(campaign)).toBe(4);
+        expect(ranges).toEqual([
+          [1, 5],
+          [6, 10],
+          [11, 15],
+          [16, 20],
+        ]);
+      }
     }
   });
 
-  it("chapter 4 is an exact reuse of the existing flat finale (zero regression risk)", () => {
+  it("the final chapter of each region is an exact reuse of the existing flat finale (zero regression risk)", () => {
     const emberford = getCampaignDefinition("emberford-reach");
     const saltmere = getCampaignDefinition("saltmere-shallows");
-    expect(getChapter(emberford, 3).waves).toBe(emberford.waves);
+    // D-253: Emberford's finale moved from index 3 to index 2 when its old
+    // Chapter 3 was cut — its waves/boss are byte-for-byte unchanged.
+    expect(getChapter(emberford, 2).waves).toBe(emberford.waves);
     expect(getChapter(saltmere, 3).waves).toBe(saltmere.waves);
   });
 
@@ -453,10 +473,10 @@ describe("The Nameless Throne (D-188 capstone)", () => {
  * exercises that array directly rather than `CAMPAIGNS`.
  */
 describe("Side missions (KI-098 item 13)", () => {
-  it("has exactly 6 missions, one per Pool A companion's own sideMissionId, none overlapping CAMPAIGNS' ids", () => {
-    expect(SIDE_MISSIONS).toHaveLength(6);
+  it("has exactly 7 missions (D-253: Dorian Wick joined Pool A), one per Pool A companion's own sideMissionId, none overlapping CAMPAIGNS' ids", () => {
+    expect(SIDE_MISSIONS).toHaveLength(7);
     const poolA = COMPANIONS.filter((c) => !c.homeRegionId);
-    expect(poolA).toHaveLength(6);
+    expect(poolA).toHaveLength(7);
     expect(SIDE_MISSIONS.map((m) => m.id).sort()).toEqual(poolA.map((c) => c.sideMissionId).sort());
     const campaignIds = new Set(CAMPAIGNS.map((c) => c.id));
     SIDE_MISSIONS.forEach((m) => expect(campaignIds.has(m.id)).toBe(false));
@@ -537,10 +557,18 @@ describe("Side missions (KI-098 item 13)", () => {
 /**
  * D-217 (item 3a/3c): every REGION chapter's default (unauthored)
  * `levelMilestones` track — derived from its own `levelRange`/`waves.length`
- * via `chapterLevelMilestones` — reaches exactly that chapter's target level
- * after clearing its second-to-last wave, same guarantee
- * `tests/levelMilestones.test.ts` already covers for Free Play's Run Length
- * presets, now exercised across all 24 real region chapters.
+ * via `chapterLevelMilestones`'s original 2-arg fallback path — reaches
+ * exactly that chapter's target level after clearing its second-to-last
+ * wave, same guarantee `tests/levelMilestones.test.ts` already covers for
+ * Free Play's Run Length presets, now exercised across the 19 real mandatory-
+ * region chapters (Emberford Reach dropped to 3 in Batch H/D-253; Shattered
+ * Causeway, still chaptered, is excluded from `REGIONS` here since D-253
+ * removed it from `REGION_CAMPAIGN_IDS`). This 2-arg path is deliberately
+ * UNUSED by `BattleScene.ts` for a real campaign chapter as of D-253 — see
+ * the describe block below for the 3-arg cadence that replaced it in
+ * production — but stays correct and covered since a bare `ChapterDefinition
+ * .levelMilestones` override or a future non-`BattleScene` caller could still
+ * reach it.
  */
 describe("Level milestones (D-217, item 3c)", () => {
   it("reaches exactly levelRange[1] after the second-to-last wave, for every chapter of every region", () => {
@@ -568,6 +596,45 @@ describe("Level milestones (D-217, item 3c)", () => {
           expect(track[j].afterWave).toBeGreaterThan(track[j - 1].afterWave);
         }
       }
+    });
+  });
+});
+
+/**
+ * D-253 (Batch H, item 13): the REAL cadence a campaign chapter clear grants
+ * in production — one level after the chapter's own last wave, order-
+ * independent (no reliance on `levelRange` at all), gated on `alreadyCompleted`
+ * so replaying a cleared chapter can't farm free levels. `REGIONS` here
+ * deliberately includes Shattered Causeway too — the new cadence applies to
+ * every chaptered campaign, mandatory or optional (only the capstone gate
+ * and the legacy-save backfill care about `REGION_CAMPAIGN_IDS` membership).
+ */
+describe("Campaign-only chapter-clear cadence (Batch H, item 13, D-253)", () => {
+  it("grants exactly one level after the chapter's last wave when it hasn't been completed before, capped at 20", () => {
+    CAMPAIGNS.filter(isChapteredCampaign).forEach((region) => {
+      for (let i = 0; i < totalChapters(region); i++) {
+        const chapter = getChapter(region, i);
+        expect(chapterLevelMilestones(region, i, { currentLevel: 5, alreadyCompleted: false })).toEqual([
+          { afterWave: chapter.waves.length, level: 6 },
+        ]);
+        expect(chapterLevelMilestones(region, i, { currentLevel: 20, alreadyCompleted: false })).toEqual([
+          { afterWave: chapter.waves.length, level: 20 },
+        ]);
+      }
+    });
+  });
+
+  it("grants no level when this exact chapter was already completed before (replay-farming guard)", () => {
+    CAMPAIGNS.filter(isChapteredCampaign).forEach((region) => {
+      for (let i = 0; i < totalChapters(region); i++) {
+        expect(chapterLevelMilestones(region, i, { currentLevel: 5, alreadyCompleted: true })).toEqual([]);
+      }
+    });
+  });
+
+  it("still returns [] for a side mission even when a levelContext is passed", () => {
+    SIDE_MISSIONS.forEach((mission) => {
+      expect(chapterLevelMilestones(mission, 0, { currentLevel: 5, alreadyCompleted: false })).toEqual([]);
     });
   });
 });

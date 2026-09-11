@@ -94,10 +94,6 @@ describe("Phase 23 (D-114): pit — parsing and GameMap", () => {
     expect(pitMap.terrainEffectAt({ x: 2, y: 0 })).toBeNull();
   });
 
-  it("describe() reports the pit hazard", () => {
-    expect(pitMap.describe({ x: 2, y: 0 })).toMatch(/pit/);
-  });
-
   it("encodeMapRows round-trips '@' for pit", () => {
     expect(encodeMapRows(pitParsed)).toEqual(pitRows);
   });
@@ -174,11 +170,6 @@ describe("Phase 24 (D-115): sand — parsing and GameMap", () => {
 
   it("terrainEffectAt returns null for sand (a build restriction, not a hazard)", () => {
     expect(sandMap.terrainEffectAt({ x: 2, y: 0 })).toBeNull();
-  });
-
-  it("describe() reports sand as walkable but not buildable", () => {
-    expect(sandMap.describe({ x: 2, y: 0 })).toMatch(/sand/);
-    expect(sandMap.describe({ x: 2, y: 0 })).toMatch(/not buildable/);
   });
 
   it("encodeMapRows round-trips 'D' for sand", () => {

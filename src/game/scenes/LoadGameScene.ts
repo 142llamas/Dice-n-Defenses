@@ -1,10 +1,17 @@
 import Phaser from "phaser";
-import { SAVE_STORAGE_KEY, CAMPAIGN_PROGRESS_STORAGE_KEY } from "../config";
+import { SAVE_STORAGE_KEY, CAMPAIGN_PROGRESS_STORAGE_KEY, AUTOSAVE_STORAGE_KEY } from "../config";
 import { getClassDefinition } from "../data/classes";
 import { getDifficultyDefinition } from "../data/difficulty";
 import { getCampaignDefinition, totalChapters } from "../data/campaigns";
 import { loadCampaignProgress, getHighestCompletedChapter } from "../systems/CampaignProgressSystem";
 import { deleteSaveSlot, loadSaveFile, saveSaveFile, type SaveSlot } from "../systems/SaveSystem";
+import {
+  loadAutosaveFile,
+  saveAutosaveFile,
+  deleteAutosaveSlot,
+  autosaveSlotsForMode,
+  type AutosaveSlot,
+} from "../systems/AutosaveSystem";
 import { firebaseReady } from "../cloud/firebaseApp";
 import { initAuth, type AuthState } from "../cloud/AuthClient";
 import { deleteSlotFromCloud, syncNow } from "../cloud/CloudSaveSync";
@@ -58,9 +65,21 @@ import {
  * `scene.restart()` `deleteSlot` already used. Deleting a slot now also
  * mirrors the delete to the cloud when signed in, so a synced-away slot
  * doesn't reappear on the next sync.
+ *
+ * Batch F (item 18): `filterMode: "autosave"` is a third, unrelated list —
+ * mid-battle checkpoints (`AutosaveSystem`, not `SaveSystem`), reached via
+ * `ModeEntryScene`'s new "Continue" button. `mode` travels alongside it
+ * (the autosave pool is one shared store filtered for display by mode) so
+ * `leave()` can still route back through `ModeEntryScene` correctly — that
+ * scene only ever accepts `"campaign"`/`"freeplay"`, never the literal
+ * `"autosave"` filter value. Each card's "Resume" button starts
+ * `BattleScene` directly, skipping `CharacterCreationScene` entirely (a
+ * resume needs no party-building step).
  */
 interface LoadGameData {
-  filterMode?: "campaign" | "freeplay";
+  filterMode?: "campaign" | "freeplay" | "autosave";
+  /** Only meaningful (and required) when `filterMode === "autosave"` — which mode's own slots to show, and where "Back" returns to. */
+  mode?: "campaign" | "freeplay";
 }
 
 export class LoadGameScene extends Phaser.Scene {
@@ -68,7 +87,8 @@ export class LoadGameScene extends Phaser.Scene {
   private syncButtonHandle?: OrnateButtonHandle;
   private syncStatusLabel?: Phaser.GameObjects.Text;
   private layoutRoot?: Phaser.GameObjects.Container;
-  private filterMode?: "campaign" | "freeplay";
+  private filterMode?: "campaign" | "freeplay" | "autosave";
+  private mode?: "campaign" | "freeplay";
 
   constructor() {
     super("LoadGameScene");
@@ -76,6 +96,7 @@ export class LoadGameScene extends Phaser.Scene {
 
   init(data: LoadGameData): void {
     this.filterMode = data?.filterMode;
+    this.mode = data?.mode;
   }
 
   create(): void {
@@ -112,7 +133,8 @@ export class LoadGameScene extends Phaser.Scene {
 
     drawScreenBackdrop(this);
 
-    const title = this.filterMode === "campaign" ? "Load Campaign" : "Load Game";
+    const title =
+      this.filterMode === "autosave" ? "Continue" : this.filterMode === "campaign" ? "Load Campaign" : "Load Game";
     this.add
       .text(width / 2, 42, title, {
         fontFamily: FONT_DISPLAY,
@@ -128,11 +150,13 @@ export class LoadGameScene extends Phaser.Scene {
     createOrnateButton(this, 120, 42, 160, 44, "Back (Esc)", () => this.leave(), { variant: "tool", depth: 5 });
 
     const subtitle =
-      this.filterMode === "campaign"
-        ? "Load a saved campaign party, or delete one you no longer need."
-        : this.filterMode === "freeplay"
-          ? "Load a saved Free Play/classic party, or delete one you no longer need."
-          : "Load a previously saved party, or delete one you no longer need.";
+      this.filterMode === "autosave"
+        ? "Resume an in-progress run, or delete one you no longer need."
+        : this.filterMode === "campaign"
+          ? "Load a saved campaign party, or delete one you no longer need."
+          : this.filterMode === "freeplay"
+            ? "Load a saved Free Play/classic party, or delete one you no longer need."
+            : "Load a previously saved party, or delete one you no longer need.";
     this.add
       .text(width / 2, 90, subtitle, {
         fontFamily: FONT_BODY,
@@ -152,6 +176,12 @@ export class LoadGameScene extends Phaser.Scene {
   }
 
   private leave(): void {
+    // Batch F: `"autosave"` isn't a valid `ModeEntryMode` — route back using
+    // the underlying mode it was opened with instead of the filter itself.
+    if (this.filterMode === "autosave" && this.mode) {
+      this.scene.start("ModeEntryScene", { mode: this.mode });
+      return;
+    }
     if (this.filterMode) {
       this.scene.start("ModeEntryScene", { mode: this.filterMode });
       return;
@@ -208,8 +238,12 @@ export class LoadGameScene extends Phaser.Scene {
       });
   }
 
-  /** One clickable card per save slot, stacked vertically below the intro text, or an empty-state line. */
+  /** One clickable card per slot, stacked vertically below the intro text, or an empty-state line. */
   private buildSlotCards(width: number): void {
+    if (this.filterMode === "autosave") {
+      this.buildAutosaveSlotCards(width);
+      return;
+    }
     const file = loadSaveFile(window.localStorage, SAVE_STORAGE_KEY);
     const filtered = file.slots.filter((slot) => {
       if (this.filterMode === "campaign") return slot.campaignId !== undefined;
@@ -298,7 +332,7 @@ export class LoadGameScene extends Phaser.Scene {
     //
     // D-228 (KI-177 item 9 bug): `chapterIndex` is NO LONGER taken verbatim
     // from the slot — `slot.chapterIndex` is whatever chapter was being
-    // fought the moment Save Party/Save & Exit was last clicked, which goes
+    // fought the moment Save Party/Save Game was last clicked, which goes
     // stale the instant the player progresses further chapters via Campaign
     // Select's own "Continue" flow without re-saving that exact slot
     // (Kevin's report: loading a campaign he'd played several chapters into
@@ -336,6 +370,112 @@ export class LoadGameScene extends Phaser.Scene {
         console.error("Cloud delete failed:", err),
       );
     }
+    this.scene.restart();
+  }
+
+  /**
+   * Batch F (item 18): the `AutosaveSystem`-backed counterpart to
+   * `buildSlotCards` above — same card layout, different source/labels/
+   * actions ("Resume"/"Delete" instead of "Load"/"Delete"). No cloud sync —
+   * autosaves are local-only, same as every other per-browser-only store in
+   * this project (see `AutosaveSystem.ts`'s own header comment).
+   */
+  private buildAutosaveSlotCards(width: number): void {
+    const file = loadAutosaveFile(window.localStorage, AUTOSAVE_STORAGE_KEY);
+    const slots = this.mode ? autosaveSlotsForMode(file, this.mode) : [];
+
+    if (slots.length === 0) {
+      const emptyMessage =
+        this.mode === "campaign"
+          ? "No in-progress campaign runs — start one with New Campaign."
+          : "No in-progress Free Play runs — start one with New Game.";
+      this.add
+        .text(width / 2, 260, emptyMessage, {
+          fontFamily: FONT_BODY,
+          fontSize: "16px",
+          color: "#a89058",
+          fontStyle: "italic",
+        })
+        .setOrigin(0.5)
+        .setDepth(1);
+      return;
+    }
+
+    const cardWidth = width - 160;
+    const cardHeight = 100;
+    const gap = 20;
+    const startY = 220;
+
+    slots.forEach((slot, i) => {
+      const y = startY + i * (cardHeight + gap);
+
+      drawParchmentPanel(this, width / 2, y, cardWidth, cardHeight, 2);
+
+      this.add
+        .text(90, y - cardHeight / 2 + 16, slot.label, {
+          fontFamily: FONT_BODY,
+          fontSize: "18px",
+          color: "#2a1a10",
+          fontStyle: "bold",
+          wordWrap: { width: cardWidth - 300 },
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(3);
+
+      this.add
+        .text(
+          90,
+          y + cardHeight / 2 - 18,
+          `Party size ${slot.heroDefinitions.length}  ·  ${getDifficultyDefinition(slot.difficultyId).name}`,
+          {
+            fontFamily: FONT_BODY,
+            fontSize: "13px",
+            color: "#6a4a2a",
+            fontStyle: "italic",
+          },
+        )
+        .setOrigin(0, 0.5)
+        .setDepth(3);
+
+      createOrnateButton(this, width - 220, y - 18, 160, 36, "Resume", () => this.resumeAutosave(slot), {
+        variant: "tool",
+        depth: 3,
+      });
+      createOrnateButton(this, width - 220, y + 22, 160, 36, "Delete", () => this.deleteAutosave(slot.id), {
+        variant: "tool",
+        depth: 3,
+      });
+    });
+  }
+
+  /** Starts `BattleScene` directly from a checkpoint — see `BattleScene.init`'s own `resumeSnapshot` field and `create()`'s resume branch. */
+  private resumeAutosave(slot: AutosaveSlot): void {
+    this.scene.start("BattleScene", {
+      heroDefinitions: slot.heroDefinitions,
+      difficultyId: slot.difficultyId,
+      campaignId: slot.campaignId,
+      chapterIndex: slot.chapterIndex,
+      freePlayMapId: slot.freePlayMapId,
+      // Populated with the RESOLVED list purely so `create()`'s pre-existing
+      // `if (!campaign && freePlayMapId && freePlayWaves)` map-selection
+      // check still fires — the resume branch substitutes it again anyway.
+      freePlayWaves: slot.resolvedWaves,
+      freePlayRunLengthId: slot.freePlayRunLengthId,
+      freePlayBossEnemyId: slot.freePlayBossEnemyId,
+      originalParty: slot.originalParty,
+      resumeSnapshot: {
+        runId: slot.id,
+        battleState: slot.battleState,
+        resolvedWaves: slot.resolvedWaves,
+        campaignRewardGoldEarned: slot.campaignRewardGoldEarned,
+        temporaryStructures: slot.temporaryStructures,
+      },
+    });
+  }
+
+  private deleteAutosave(id: string): void {
+    const file = loadAutosaveFile(window.localStorage, AUTOSAVE_STORAGE_KEY);
+    saveAutosaveFile(window.localStorage, AUTOSAVE_STORAGE_KEY, deleteAutosaveSlot(file, id));
     this.scene.restart();
   }
 }

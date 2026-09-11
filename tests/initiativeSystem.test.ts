@@ -3,10 +3,11 @@ import { InitiativeSystem } from "../src/game/systems/InitiativeSystem";
 import { RandomService } from "../src/game/systems/RandomService";
 
 /**
- * Phase 13.5 (DECISIONS D-086 item 6, D-090): InitiativeSystem is built
- * "framework only" — nothing in BattleScene calls it yet (see the module's
- * own doc comment). These tests cover the pure math on its own, same as any
- * other new system in this project.
+ * Phase 13.5 (DECISIONS D-086 item 6, D-090): InitiativeSystem started as
+ * "framework only," later given a real caller by D-175's
+ * `WaveSystem.applyGroupInitiativeOrder` (see the module's own doc comment
+ * and `tests/waveInitiative.test.ts`). These tests cover the pure roll math
+ * on its own, same as any other system in this project.
  */
 
 describe("InitiativeSystem.rollInitiative", () => {

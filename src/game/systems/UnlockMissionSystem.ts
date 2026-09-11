@@ -34,8 +34,8 @@ export const UNLOCK_MISSION_FLEX_SLOTS = 2;
  *
  * - **Pool A** (a `sideMissionId` match): always chapter-index-agnostic
  *   (every side mission is flat) — unlocks unless already recruited or lost.
- * - **Pool B** (a `homeRegionId` match): only Chapter 1 unlocks anyone —
- *   Chapters 2-4 of the same region are never unlock missions, even before
+ * - **Pool B** (a `homeRegionId` match): only Chapter 1 unlocks anyone — no
+ *   later chapter of the same region is ever an unlock mission, even before
  *   the region's own companion is recruited (that can only happen via Ch1).
  */
 export function resolveUnlockMissionCompanion(

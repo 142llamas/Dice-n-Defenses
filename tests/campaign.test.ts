@@ -54,10 +54,9 @@ describe("Phase 7 roster (D-050), extended by Phase 11.6 (D-079)", () => {
   const minibosses = all.filter((e) => e.role === "miniboss");
   const bosses = all.filter((e) => e.role === "boss");
 
-  it("delivers six-plus regular enemies, at least one miniboss, and (as of D-112) six true bosses", () => {
+  it("delivers six-plus regular enemies and at least one miniboss (exact boss/miniboss/minion counts are enemyRoster.test.ts's job)", () => {
     expect(minions.length).toBeGreaterThanOrEqual(6);
     expect(minibosses.length).toBeGreaterThanOrEqual(1); // D-095 (13.10) adds a second: gravemaw; D-111 (20) a third: juggernaut; D-112 (21) two more: bloodrage-warlord, the-husk
-    expect(bosses.length).toBe(6); // D-095 adds a third (blightmother); D-111 (20) two more: warlord-korrath, the-devourer; D-112 (21) one more: sundered-king
   });
 
   it("names the miniboss basalt-colossus and makes it the beefiest MINION-tier threat", () => {
@@ -87,9 +86,8 @@ describe("Phase 7 roster (D-050), extended by Phase 11.6 (D-079)", () => {
     expect(getEnemyDefinition("tidelord").role).toBe("boss");
   });
 
-  it("gives every enemy a placeholder colour and self-consistent id", () => {
+  it("gives every enemy a self-consistent id (placeholder-colour coverage is enemyRoster.test.ts's job)", () => {
     for (const def of all) {
-      expect(def.id in ENEMY_COLORS).toBe(true);
       // the record key and the definition's own id must agree (catches typos)
       expect(ENEMY_DEFINITIONS[def.id]).toBe(def);
     }

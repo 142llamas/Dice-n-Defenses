@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CREATABLE_CLASS_IDS,
   startingGearIdsForSlotType,
-  startingGearPointCost,
+  defaultStartingGearForClass,
   companionStartingGearForDifficulty,
   knownSpellIdsForClass,
 } from "../src/game/data/characterCreation";
@@ -82,16 +82,24 @@ describe("startingGearIdsForSlotType (D-193, Party Creation Overhaul Plan 2)", (
   });
 });
 
-describe("startingGearPointCost (D-194, campaign gear economy)", () => {
-  it("costs 1 point for common, 2 for uncommon — the only rarities the starting pool ever contains", () => {
-    expect(startingGearPointCost("common")).toBe(1);
-    expect(startingGearPointCost("uncommon")).toBe(2);
+describe("defaultStartingGearForClass (D-246, Plan 5)", () => {
+  it("gives every creatable class a kit with at least a weapon", () => {
+    CREATABLE_CLASS_IDS.forEach((classId) => {
+      expect(defaultStartingGearForClass(classId).weapon).toBeTruthy();
+    });
   });
 
-  it("costs strictly more for a rarer tier, in case a future pool ever includes one", () => {
-    expect(startingGearPointCost("rare")).toBeGreaterThan(startingGearPointCost("uncommon"));
-    expect(startingGearPointCost("veryRare")).toBeGreaterThan(startingGearPointCost("rare"));
-    expect(startingGearPointCost("legendary")).toBeGreaterThan(startingGearPointCost("veryRare"));
+  it("resolves every item id in every class's kit to a real item of the matching slot", () => {
+    CREATABLE_CLASS_IDS.forEach((classId) => {
+      const kit = defaultStartingGearForClass(classId);
+      (Object.entries(kit) as [GearSlotType, string][]).forEach(([slot, itemId]) => {
+        expect(getEquipmentDefinition(itemId).slot).toBe(slot);
+      });
+    });
+  });
+
+  it("returns an empty kit for an unrecognized class id, defensively", () => {
+    expect(defaultStartingGearForClass("not-a-real-class")).toEqual({});
   });
 });
 

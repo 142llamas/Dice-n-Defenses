@@ -74,21 +74,35 @@ describe("CampaignLevelSystem", () => {
       expect(highestReachedCampaignLevel(DEFAULT_CAMPAIGN_PROGRESS, REGION_CAMPAIGN_IDS)).toBe(1);
     });
 
-    it("maps a completed chapter to that chapter's own levelRange[1]", () => {
-      // Chapter 1 (index 0) of any region is levelRange [1, 5].
+    // D-253 (Batch H, item 13): the backfill now counts distinct completed
+    // chapters (the new "+1 level per chapter clear" cadence), not each
+    // region's old fixed `levelRange[1]` band — that formula belonged to a
+    // leveling model this batch replaced.
+    it("grants 1 + the number of chapters completed so far", () => {
+      // Chapter 1 (index 0) of Emberford Reach — 1 chapter cleared.
       const progress = markChapterCompleted(DEFAULT_CAMPAIGN_PROGRESS, "emberford-reach", 0);
-      expect(highestReachedCampaignLevel(progress, REGION_CAMPAIGN_IDS)).toBe(5);
+      expect(highestReachedCampaignLevel(progress, REGION_CAMPAIGN_IDS)).toBe(2);
     });
 
-    it("takes the max across multiple regions, regardless of play order", () => {
-      let progress = markChapterCompleted(DEFAULT_CAMPAIGN_PROGRESS, "emberford-reach", 1); // levelRange [6, 10]
-      progress = markChapterCompleted(progress, "saltmere-shallows", 3); // levelRange [16, 20]
-      expect(highestReachedCampaignLevel(progress, REGION_CAMPAIGN_IDS)).toBe(20);
+    it("sums cleared chapters across multiple regions, regardless of play order", () => {
+      // Emberford Reach Ch1-2 (index 1 = highest, 2 chapters) + Saltmere
+      // Shallows Ch1-4 (index 3 = highest, 4 chapters) = 6 chapters cleared.
+      let progress = markChapterCompleted(DEFAULT_CAMPAIGN_PROGRESS, "emberford-reach", 1);
+      progress = markChapterCompleted(progress, "saltmere-shallows", 3);
+      expect(highestReachedCampaignLevel(progress, REGION_CAMPAIGN_IDS)).toBe(7);
     });
 
     it("ignores a campaign id outside the given region list", () => {
-      const progress = markChapterCompleted(DEFAULT_CAMPAIGN_PROGRESS, "emberford-reach", 3); // levelRange [16, 20]
+      const progress = markChapterCompleted(DEFAULT_CAMPAIGN_PROGRESS, "emberford-reach", 2);
       expect(highestReachedCampaignLevel(progress, ["saltmere-shallows"])).toBe(1);
+    });
+
+    it("clamps a stale recorded chapter index that no longer exists after a region's chapter count changed", () => {
+      // Emberford Reach only has 3 chapters (indices 0-2) post-D-253 — a save
+      // recorded against the old 4-chapter shape (index 3) should count as
+      // "cleared every chapter this region has now" rather than over-count.
+      const progress = markChapterCompleted(DEFAULT_CAMPAIGN_PROGRESS, "emberford-reach", 3);
+      expect(highestReachedCampaignLevel(progress, REGION_CAMPAIGN_IDS)).toBe(4);
     });
   });
 });

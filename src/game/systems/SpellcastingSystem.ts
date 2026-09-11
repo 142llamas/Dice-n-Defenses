@@ -1,4 +1,5 @@
 import type { CharacterClassDefinition } from "../data/classes";
+import { lookupSparse } from "./CharacterSystem";
 
 /**
  * SpellcastingSystem: pure derived math for the cantrips-known/spell-slot
@@ -49,13 +50,4 @@ export function spellSlotsForClassAtLevel(classDef: CharacterClassDefinition, le
   assertValidLevel(level);
   if (!classDef.spellcasting) return [];
   return [...(lookupSparse(classDef.spellcasting.spellSlotsByLevel, level) ?? [])];
-}
-
-function lookupSparse<T>(table: Record<number, T>, level: number): T | undefined {
-  const eligibleLevels = Object.keys(table)
-    .map(Number)
-    .filter((lvl) => lvl <= level)
-    .sort((a, b) => b - a);
-  if (eligibleLevels.length === 0) return undefined;
-  return table[eligibleLevels[0]];
 }

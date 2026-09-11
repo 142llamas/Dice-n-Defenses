@@ -60,23 +60,18 @@ describe("difficulty tiers — Rest-charge budget (Phase 13.4, D-088)", () => {
   });
 });
 
-describe("difficulty tiers — campaign gear economy (D-194)", () => {
-  it("gives every tier a non-negative gear-points budget and discretionary-slot count", () => {
+describe("difficulty tiers — companion discretionary gear (D-194)", () => {
+  it("gives every tier a non-negative discretionary-slot count", () => {
     for (const id of DIFFICULTY_IDS) {
       const tier = getDifficultyDefinition(id);
-      expect(tier.startingGearPoints).toBeGreaterThanOrEqual(0);
       expect(tier.companionDiscretionaryGearSlots).toBeGreaterThanOrEqual(0);
     }
   });
 
-  it("gives a harder tier no MORE gear points or discretionary slots than an easier one", () => {
-    const easy = getDifficultyDefinition("easy");
+  it("gives a harder tier no MORE discretionary slots than an easier one", () => {
     const normal = getDifficultyDefinition("normal");
     const hard = getDifficultyDefinition("hard");
     const nightmare = getDifficultyDefinition("nightmare");
-    expect(normal.startingGearPoints).toBeLessThanOrEqual(easy.startingGearPoints);
-    expect(hard.startingGearPoints).toBeLessThanOrEqual(normal.startingGearPoints);
-    expect(nightmare.startingGearPoints).toBeLessThanOrEqual(hard.startingGearPoints);
     expect(hard.companionDiscretionaryGearSlots).toBeLessThanOrEqual(normal.companionDiscretionaryGearSlots);
     expect(nightmare.companionDiscretionaryGearSlots).toBeLessThanOrEqual(hard.companionDiscretionaryGearSlots);
   });
@@ -118,6 +113,40 @@ describe("difficulty tiers — threat budget (D-217, item 3b)", () => {
       // Lower cadenceMultiplier = shorter intervals = MORE pressure.
       expect(b.cadenceMultiplier).toBeLessThanOrEqual(a.cadenceMultiplier);
     }
+  });
+});
+
+describe("difficulty tiers — campaign gold levers (CAMPAIGN_ECONOMY_REDESIGN_PLAN.md Plan 1)", () => {
+  it("gives every tier a positive starting-gold kit and gold multiplier", () => {
+    for (const id of DIFFICULTY_IDS) {
+      const tier = getDifficultyDefinition(id);
+      expect(tier.startingCampaignGold).toBeGreaterThan(0);
+      expect(tier.campaignGoldMultiplier).toBeGreaterThan(0);
+    }
+  });
+
+  it("gives a harder tier no MORE starting gold or gold multiplier than an easier one", () => {
+    const easy = getDifficultyDefinition("easy");
+    const normal = getDifficultyDefinition("normal");
+    const hard = getDifficultyDefinition("hard");
+    const nightmare = getDifficultyDefinition("nightmare");
+    expect(normal.startingCampaignGold).toBeLessThanOrEqual(easy.startingCampaignGold);
+    expect(hard.startingCampaignGold).toBeLessThanOrEqual(normal.startingCampaignGold);
+    expect(nightmare.startingCampaignGold).toBeLessThanOrEqual(hard.startingCampaignGold);
+    expect(normal.campaignGoldMultiplier).toBeLessThanOrEqual(easy.campaignGoldMultiplier);
+    expect(hard.campaignGoldMultiplier).toBeLessThanOrEqual(normal.campaignGoldMultiplier);
+    expect(nightmare.campaignGoldMultiplier).toBeLessThanOrEqual(hard.campaignGoldMultiplier);
+  });
+
+  it("Plan 6 (D-247): scales gold scarcer across the board, Normal included — no longer pinned to a 1x baseline like the other Normal-tier levers", () => {
+    // A first-pass numeric analysis (no in-browser playtest existed yet)
+    // found the un-tuned D-242 defaults let a Normal-difficulty player
+    // likely afford most of the rare/veryRare gear ladder well before the
+    // campaign's 24 missions end. Confirmed with Kevin: worth breaking the
+    // "every lever is 1x at Normal" convention specifically for this one,
+    // since Normal is the difficulty most players will actually pick.
+    expect(getDifficultyDefinition("normal").campaignGoldMultiplier).toBeLessThan(1);
+    expect(getDifficultyDefinition("normal").campaignGoldMultiplier).toBe(0.5);
   });
 });
 

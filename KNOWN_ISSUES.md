@@ -29,6 +29,537 @@ Every item below is **(headless-verified, not yet played)** unless noted
 otherwise — typecheck/tests/build all pass, but Kevin hasn't seen it in a
 real browser battle yet. Ordered newest first.
 
+### KI-202 — D-254: Nameless Throne mercy-tally fix — a skipped Shattered Causeway no longer counts as "showed no mercy" (found + fixed during the D-255 cleanup pass)
+See `DECISIONS.md` D-254 for the full bug and fix. This can only really be
+confirmed by actually reaching The Nameless Throne capstone, so it's a
+longer-horizon check than most entries here.
+- **Skip Causeway entirely, then reach the capstone**: play through the 5
+  mandatory regions (Emberford/Cinderfall/Drowning Vale/Saltmere/Frostbound)
+  WITHOUT ever starting Shattered Causeway, sparing at least 3 of the other
+  4 home minibosses along the way (Ashen-leaning) — confirm the capstone
+  resolves to the **Ashen Sovereign** ending, not the Hollow Empress (before
+  this fix, Causeway's un-earned "not spared" would have silently dragged an
+  otherwise-Ashen-leaning tally toward Hollow or a false tie).
+- **Play Causeway, spare its miniboss (the Juggernaut), then reach the
+  capstone**: confirm it's counted normally toward Ashen — this path should
+  feel completely unchanged from before this fix.
+- **Play Causeway, finish the Juggernaut outright, then reach the
+  capstone**: confirm it's counted normally toward Hollow — also unchanged.
+- **Companion mirror-boss dialogue tone**: whichever ending you're tracking
+  toward, confirm a mirror-boss reaction line (if your PC's own region has
+  one, and that companion is still with you) reads with the matching
+  Ashen/Hollow tone — this reads from the same fixed tally as the capstone
+  itself.
+
+### KI-201 — D-253: chapter-select submenu + the 19-chapter campaign restructure (Batch H, items 12/13 — closes the ENTIRE 2026-09-09 19-item playtest list)
+See `DECISIONS.md` D-253 and `PLAYTEST_2026-09-09_BATCHES.md`'s Batch H
+section for the full design. This was the single most disruptive item on
+the whole 19-item list — content cuts, chapter renumbering, and a new
+leveling model — please prioritize this checklist.
+- **Chapter-select submenu**: from Campaign, click any of the 5 mandatory
+  regions (or Shattered Causeway) — confirm a new chapter list appears
+  (not a jump straight into a battle), showing each chapter's
+  locked/unlocked/completed status correctly, and that clicking a
+  **completed** chapter replays it rather than refusing.
+- **Emberford Reach is now 3 chapters, not 4** — play (or fast-forward via
+  Test Mode) through all of it; confirm Chapter 3 is the real Cinderlord
+  finale (the old Chapter 3's "ash fields" flavor text is gone entirely,
+  by design) and that Tamsin Rourke's mirror-boss reaction dialogue still
+  fires on that finale's victory (this was a real bug this session's own
+  fix addresses — confirm it actually fires, not just that it doesn't
+  crash).
+- **One level-up per chapter clear**: clear any chapter in any region (in
+  any order — try starting a region other than Emberford first) and
+  confirm the party gains exactly one character level, not a multi-level
+  jump. Replay an already-completed chapter and confirm NO additional
+  level is granted (the farming guard).
+- **Boss difficulty feels right at your actual level**: since bosses now
+  scale off your real accumulated campaign level instead of a fixed
+  per-chapter band, check a boss fight doesn't feel wildly over- or
+  under-tuned regardless of which order you tackled regions in.
+- **Shattered Causeway is now optional**: confirm it's still fully
+  playable from Campaign, just no longer required to unlock the Nameless
+  Throne capstone (5 regions now, not 6, per its locked-card hint).
+- **Dorian Wick's new recruitment**: he no longer unlocks from Shattered
+  Causeway's Chapter 1 — confirm he now appears as a locked card on the
+  Companions screen with his own side mission ("What the Causeway Kept"),
+  and that clearing it recruits him normally.
+- **Accepted, deliberate loss (not a bug)**: Shattered Causeway's finale no
+  longer has Dorian's own "homecoming beat" reaction dialogue — moving him
+  to a side mission (required by the same tests that guard every other
+  Pool A companion) means he no longer gets that beat. If this reads as a
+  real narrative loss in practice, flag it — the writing could be
+  re-added to his side mission's own outro instead, just wasn't in this
+  session's scope.
+- **Known, accepted, cosmetic-only edge case**: if your own pre-D-253 dev
+  save has Emberford Reach's progress recorded as "Chapter 3 done" (the OLD
+  chapter numbering, before the real finale), its chapter-select card may
+  briefly display as already-completed until you play or replay it once —
+  this does not bypass the real capstone-completion gate, which tracks
+  completion separately and correctly. Use "Reset Campaign Progress" on the
+  Campaign screen if it's confusing.
+
+### KI-200 — D-252: real mid-battle autosave for Campaign and Free Play (Batch F's item 18, closes the full 19-item playtest list)
+Closes Batch F in full — see `DECISIONS.md` D-252 and
+`PLAYTEST_2026-09-09_BATCHES.md`'s Batch F section for the full design.
+This is the single riskiest change of the whole 19-item arc (touches
+`BattleScene.create()`'s core setup) — please prioritize this checklist.
+- **Checkpoint fires on wave clear**: clear a wave in a real Campaign
+  chapter — confirm "Autosaved." appears in the combat log right before the
+  between-wave beat, and that hero moves/build clicks are unresponsive for
+  that instant (should be imperceptibly brief).
+- **Continue appears and resumes correctly**: from the Main Menu, go
+  Campaign → Continue (or Free Play → Continue) — confirm the run you just
+  checkpointed is listed with a sensible label ("Region — Ch. N (Wave M)"
+  or "Map Name (Run Length) — Wave M"), and that clicking Resume drops you
+  back into the SAME battle: correct hero HP/position, gold, built
+  structures, and wave number — not a fresh chapter/run start.
+- **Free Play resume specifically**: repeat the above for a Free Play run
+  (not just Campaign) — this mode had NO run-continuity at all before this
+  session, so it's the less-tested half.
+- **A spell-placed temporary structure survives correctly**: cast a
+  terrain-altering spell (e.g. a Druid's), clear a wave to checkpoint, then
+  resume — confirm the structure is still there AND still counts down/
+  expires on schedule rather than becoming permanent.
+- **Finishing a run clears its Continue entry**: resume a run (or just play
+  one through) to victory or defeat — confirm it no longer appears under
+  Continue afterward.
+- **A second, different run doesn't evict the first**: start Run A, clear a
+  wave (checkpoint 1), leave it in progress. Start a completely different
+  Run B (different mode or mission), clear a wave. Confirm BOTH still
+  appear under their respective Continue lists — Run A's checkpoint should
+  NOT have been silently evicted by Run B's first checkpoint (only matters
+  once more than `MAX_AUTOSAVE_SLOTS` (3) DISTINCT runs are in progress at
+  once).
+- **Known, accepted gaps** (not bugs — see D-252 for why): an active
+  summoned creature at checkpoint time won't survive a resume
+  (`SummonSystem` was already a documented gap in `BattleStateSnapshot`
+  before this session). A treasure tile already claimed before the
+  checkpoint could be re-claimed for a second gold bonus after a resume
+  (`consumedTreasureTiles` was already documented as "not persisted, reset
+  on scene create" before this session). Neither needs a bug report unless
+  it's worse than described here.
+
+### KI-199 — D-251: "Reset to Default" for Settings and Controls (Batch G of the 2026-09-09 playtest list)
+Closes Batch G in full — see `DECISIONS.md` D-251 and
+`PLAYTEST_2026-09-09_BATCHES.md`'s Batch G section for the full design.
+- **Reset actually resets everything**: on `SettingsScene`, change Master/
+  Music/SFX Volume, toggle Mute, change Game Speed, and rebind all three
+  Controls rows away from their defaults — then click "Reset to Default"
+  and confirm. Every row should read back to its default label (Volume
+  100%→75%, Mute Off, Game Speed Normal, Confirm/Cancel/Bonus Action back
+  to Enter/Esc/R) immediately, with no need to leave and re-enter the
+  screen.
+- **Confirmation actually guards it**: click "Reset to Default," then click
+  "Cancel" (or press Esc) — confirm nothing changes and you're back on the
+  normal Settings screen, not exited from it entirely.
+- **In-battle overlay entry also resets live**: pause a battle, open
+  Settings from the pause menu, change Game Speed, then Reset to Default —
+  confirm the battle's own live speed actually changes back to Normal (not
+  just what a fresh Settings visit would show later), by checking a
+  subsequent action's animation.
+- **Reset persists**: after resetting, back out to the Main Menu and back
+  into Settings (or close and reopen the browser tab) — confirm it still
+  reads all defaults rather than reverting to the pre-reset values.
+
+### KI-198 — D-250: reconciled Batch E's real gaps — equipment-bonus recipient choice, gold-comparable equipment cost, player-placed free structures (item 6b/6c/15)
+Closes Batch E in full — see `DECISIONS.md` D-250 and
+`PLAYTEST_2026-09-09_BATCHES.md`'s Batch E section for the full design.
+- **Recipient choice reads right**: pick an "equipment" bonus card in
+  `RegionBonusChoiceScene` — confirm a second "Who receives {item}?" screen
+  appears listing your actual party members by name plus "First available
+  hero," and that the item actually ends up on whichever hero you picked
+  once the battle starts.
+- **"First available hero" still works**: pick that option specifically —
+  confirm it behaves exactly like the old auto-assign (first hero with a
+  free matching slot).
+- **A re-geared slot degrades gracefully**: pick a specific hero as
+  recipient, then in the Armory/Character Creation give THAT hero something
+  else in the same slot before Start Battle — confirm the bonus item is
+  sold for gold at battle-start instead of erroring or landing on a
+  different hero.
+- **Equipment/gold feel genuinely comparable now**: play through a region
+  bonus screen a few times — confirm the equipment option doesn't
+  obviously read as "worse than either gold amount" anymore. The new costs
+  are a first-pass reasoned number, not verified play data — say so if it
+  swings too far the other way (equipment always beating gold instead).
+- **Free structures place where you want**: pick a "structure" bonus —
+  confirm you get a combat-log message about 2 free placements, that
+  entering Build mode (B) lets you place them anywhere legal (Batch A's
+  highlighting), and that a THIRD placement of that same structure type
+  charges gold normally.
+- **No refund exploit**: place one of the 2 free structures, then remove it
+  — confirm you get NO gold back (only a paid structure refunds).
+- **Load Game still asks who gets an equipment bonus**: resume a saved
+  campaign slot mid-run and let the live in-battle fallback draw an
+  equipment option — confirm it now also asks "who receives this?" before
+  applying it, not just auto-assigning.
+
+### KI-197 — D-249: "Save Party" dropped from the in-battle pause menu for a campaign battle (Batch F of the 2026-09-09 playtest list)
+Closes Batch F. See `DECISIONS.md` D-249 for why this is safe (a campaign's
+party build already autosaves via `CompanionRosterSystem` at Start Battle;
+"Save Game" — which still produces a resumable save slot — is untouched).
+- **Campaign battle**: pause during any campaign chapter — confirm "Save
+  Party" is gone entirely, "Save Game" (still saves + exits) sits where
+  "Save Party" used to be, and the menu reads as a clean 6-row list
+  (Resume/Controls/Settings/Save Game/Load Game/Exit) with no leftover gap.
+- **Free Play/Co-op unaffected**: pause during a Free Play (or Co-op)
+  battle — confirm "Save Party" is still there exactly as before, in its
+  original position, alongside "Save Game."
+- **Save Game still works for campaign**: actually click "Save Game"
+  mid-campaign-chapter — confirm it still saves and exits to Main Menu, and
+  that slot still resumes correctly via Load Game.
+
+### KI-196 — D-248: region-bonus dominance fix + "Choose a Bonus" now appears before Character Creation/the Armory, on a new `RegionBonusChoiceScene` (Batch E of the 2026-09-09 playtest list)
+Closes Batch E. Two independent things to confirm — see `DECISIONS.md`
+D-248 for the full design (why the choice moved, and why gold banking
+timing deliberately did NOT change).
+- **The bonus screen appears earlier**: start (or continue) any of the 6
+  chaptered regions — confirm "Choose a Bonus" now shows up BEFORE
+  Character Creation (for Chapter 1) or before the between-missions Armory
+  (Chapter 2+), not after the battle has already begun like before. It
+  should never appear twice for the same chapter attempt.
+- **No two options ever share a category**: look at several bonus draws
+  across different regions/chapters — you should never see two gold (or
+  two equipment, or two structure) options offered together; every draw
+  should be one of each.
+- **An Armory purchase and a chosen equipment bonus no longer collide**:
+  pick an equipment bonus, then go shop in the Armory for that same hero's
+  slot — confirm the bonus item still lands correctly at battle start
+  instead of silently getting sold for gold (the old collision this fix
+  targets).
+- **The Prologue and the Nameless Throne capstone show no bonus screen at
+  all** (unchanged — neither has a curated pool) — confirm starting/
+  replaying either goes straight through with no interruption.
+- **Load Game still offers a bonus**: load a saved campaign slot mid-run —
+  confirm you still get a "Choose a Bonus" prompt (via the in-battle
+  fallback this change deliberately kept), even though Load Game skips the
+  new pre-battle screen entirely.
+- **Gold-bonus timing is unchanged**: a gold bonus picked this chapter still
+  isn't spendable until the FOLLOWING chapter's Armory visit (same as
+  before D-248) — this is deliberate, not a bug; only equipment/structure
+  bonuses benefit from the earlier ask.
+
+### KI-195 — D-247: gold-scarcity tuning pass — `campaignGoldMultiplier` roughly halved at every tier, Normal included (`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 6)
+**This closes `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` in its entirety** — all
+6 plans are now shipped. Unlike every other item in this arc, this one was
+done WITHOUT a playtest of Plans 1-5 first (Kevin's own explicit call,
+confirmed via `AskUserQuestion` when asked directly) — a first-pass numeric
+analysis, not real play data. See `DECISIONS.md` D-247 for the full
+reasoning (why the old numbers likely let a Normal-difficulty player afford
+most of the rare/veryRare gear ladder well before the campaign's 24
+missions end, and why Normal's multiplier is no longer pinned to 1.0).
+- **The real test is whether gold actually feels scarcer now**: play a
+  campaign for several chapters at Normal — confirm the Armory doesn't feel
+  like "everything is affordable within a chapter or two." If it still
+  feels too abundant (or, the opposite failure mode, too punishing to ever
+  afford anything), that's exactly the kind of feedback this number needs —
+  say so and the multiplier can move again.
+- **Difficulty choice still matters**: confirm Easy still feels
+  meaningfully more generous than Nightmare, not just "everything is
+  scarce now" — the tier-to-tier shape was deliberately preserved, only the
+  absolute scale moved.
+- **Free Play unaffected**: confirm Free Play's own in-battle gold/economy
+  is completely unchanged — this multiplier only ever applies to the
+  persistent campaign pool.
+
+### KI-194 — D-246: Gear Points retired — a campaign PC's starting gear is a fixed per-class kit, and their gear is no longer player-editable in Character Creation (`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 5)
+This closes the ENTIRE gameplay-changing arc of the economy redesign — see
+`DECISIONS.md` D-246 for the full design, including the Chapter-1
+starting-kit design fork confirmed directly with Kevin (fixed authored kit,
+no player choice, matching a companion's own floor loadout).
+- **Fresh Chapter 1 PC gets a real kit, no picker**: start a brand-new
+  campaign, create a PC — confirm they show a real HP/AC/Speed line (not a
+  naked 0-AC hero) reflecting a sensible class-appropriate kit (e.g. a
+  Fighter shows a longsword/chain shirt/shield's worth of AC), and that
+  clicking "Gear" does nothing (no picker opens).
+- **The kit follows a class change live**: still on that same fresh PC,
+  cycle through a few different classes before hitting Start Battle —
+  confirm the AC number updates each time as if a different kit were
+  equipped (a Monk's AC in particular should read differently — no chest
+  armor, unarmored formula).
+- **Pool still works for a fresh PC**: if anything is sitting in the shared
+  Party Inventory pool, confirm the "Pool" button still lets the PC claim
+  from it, exactly as before.
+- **Returning PC (Chapter 2+) can't free-edit gear either**: once the PC's
+  identity has locked (a persisted build exists), confirm "Gear" is STILL
+  inert for them (same as a companion) — their only ways to change gear now
+  are the between-missions Armory (D-243) and the Pool button.
+- **Armory purchases still show up correctly**: buy/sell something for the
+  PC in the between-missions Armory, then check Character Creation — confirm
+  their AC/kit reflects the purchase (this path was untouched by this
+  session, but worth re-confirming nothing regressed).
+- **Free Play totally unaffected**: confirm Free Play's Character Creation
+  gear picker still works exactly as before for every slot — free pick, no
+  budget, no class-derived kit.
+
+### KI-193 — D-245: the in-battle Armory is removed entirely for campaign battles (`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 4)
+The first session in this arc that genuinely REMOVES player-visible
+functionality rather than adding it — worth a direct confirmation, not just
+a "did the new thing work" check. See `DECISIONS.md` D-245 for the full
+design.
+- **No Gear button, no G key, in a campaign battle**: start (or continue)
+  a campaign battle — confirm the "Gear (G)" button that used to sit left
+  of "Build (B)" is simply gone (not greyed out, not present-but-disabled),
+  and pressing G does nothing but log "Gear is managed between missions in
+  the Armory during a campaign." in the battle log.
+- **Banner still fits**: with Gear's button gone, confirm the top banner
+  ("Wave X / Y · <phase>") still never overlaps Build or End Turn at any
+  wave count, including double-digit waves — the banner's safe-width
+  calculation was widened to reclaim the space Gear used to occupy.
+- **Build still works normally**: confirm Build (B) is completely
+  unaffected — same position, same toggle, same behavior as before.
+- **Between-missions Armory is still the way to manage gear**: confirm
+  `CampaignArmoryScene` (D-243, between `CampaignSelectScene` and
+  `CharacterCreationScene`) is still fully reachable and working — this
+  session didn't touch it, just removed the now-redundant in-battle path.
+- **Free Play unaffected**: start (or continue) a Free Play battle — confirm
+  the Gear (G) button/key work exactly as before, unchanged.
+
+### KI-192 — D-244: real gold sources (kills/waves/region bonus) now feed the persistent campaign pool (`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 2)
+See `DECISIONS.md` D-244 for the full design, including a correctness fix
+(a gross-earned counter instead of the victory screen's net `goldEarned`)
+and a real exploit avoided during design (region bonus gold accumulates
+toward the persistent credit rather than crediting immediately, since the
+bonus choice re-offers on every chapter retry).
+- **Basic flow**: play a campaign chapter (Chapter 2 or later, so the
+  Armory is already in the loop), kill some enemies and clear a wave or
+  two, then win. Before the next mission's Armory visit, confirm the gold
+  balance went up by roughly (kill gold + wave gold) × this difficulty's
+  multiplier (1.25/1/0.75/0.5 for Easy/Normal/Hard/Nightmare) on top of
+  whatever it was before.
+- **Region bonus "gold" option**: pick the gold option at a chapter's
+  bonus-choice screen — confirm it still funds THIS battle's in-battle
+  Armory immediately (unchanged), AND that the persistent balance also
+  went up by that amount (times the multiplier) once you actually WIN the
+  chapter — not immediately when you pick it.
+- **Loss/retry doesn't farm gold**: pick the gold region bonus, then
+  deliberately LOSE the chapter (or quit mid-battle) and retry — confirm
+  the persistent balance does NOT increase from that failed attempt, even
+  though the bonus choice (and its gold) is offered again on the retry.
+  This is the specific exploit this design was built to avoid — worth
+  confirming directly.
+- **In-battle spending doesn't reduce the credit**: in a campaign battle,
+  buy some gear at the still-live in-battle Armory mid-fight, then win —
+  confirm the persistent gold credit reflects your GROSS kill/wave
+  earnings, not reduced by whatever you spent in-battle (this was the bug
+  in the original plan doc's suggested approach, fixed before shipping).
+- **Free Play unaffected**: confirm Free Play battles are completely
+  unchanged — this entire feature is campaign-only.
+
+### KI-191 — D-243: the new between-missions `CampaignArmoryScene` (`CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 3)
+The first genuinely player-visible piece of the economy redesign, and a
+brand-new scene — a real click-through matters more than usual here. See
+`DECISIONS.md` D-243 for the full design (including the two confirmed
+forks: full rarity now, and skipping this scene entirely before Chapter 1).
+- **Reaching it at all**: start (or continue) a campaign, clear Chapter 1,
+  return to `CampaignSelectScene` and pick the next chapter — confirm a new
+  "The Armory" screen appears BEFORE Character Creation (not after), and
+  that a fresh Chapter 1 attempt (no `pcBuild` yet) skips it entirely, going
+  straight to Character Creation exactly as before.
+- **Starting gold**: on that first real visit (before Chapter 2), confirm
+  the gold readout (top-right, same "Gold: Ng" style as the in-battle
+  Armory) shows the difficulty's starting kit (90/70/50/30 for Easy/Normal/
+  Hard/Nightmare) — and that leaving and returning later (e.g. before
+  Chapter 3) does NOT grant a second kit on top, even if it was all spent.
+- **Whole-party shopping**: confirm the sidebar shows the PC AND every
+  active companion (or, if this chapter is a recruit/unlock mission, the
+  exact 3 companions chosen on `UnlockMissionPartyScene`) — not just the
+  PC — and that switching between them in the sidebar works the same way
+  the in-battle Armory/Character Creation's gear picker already do.
+- **Full rarity**: confirm rare/very rare/legendary items appear in the
+  catalog once the party's shared campaign level clears the same
+  thresholds the in-battle Armory already uses (rare at 4, very rare at 8,
+  legendary at 13) — not just common/uncommon.
+- **Buying/selling actually sticks**: buy a rare-or-better item for the PC,
+  click Continue into Character Creation, confirm the item is still
+  equipped there (this is the specific bug the new `pinnedGearIds`
+  mechanism exists to prevent) and that Character Creation's OWN Gear
+  button still works normally for every other slot. Do the same for a
+  companion (buy something in the Armory, confirm it still shows equipped
+  once Character Creation loads that companion). Also try SELLING a
+  companion's authored/starting item in the Armory and confirm it does NOT
+  silently reappear on their next load (would be a gold-duplication bug).
+- **Party Inventory (Sell)**: unequip a benched companion's gear
+  ("Unequip All Benched Heroes" in the Companions screen) to populate the
+  pool, then confirm the Armory's "Party Inventory" button shows it with a
+  Sell option crediting gold — and that claiming it later in Character
+  Creation's own pool picker still works if you don't sell it first.
+- **Layout**: the "Party Inventory" button (top-left, under Back) and the
+  "Continue" button (bottom-center) were positioned by measurement only,
+  never seen on a real screen — confirm neither overlaps the shared gear
+  picker's own sidebar/catalog/compare-strip content.
+- **Free Play unaffected**: confirm Free Play's own in-battle Armory and
+  flow are completely unchanged — this entire feature only exists inside
+  the campaign flow.
+
+### KI-190 — D-241 (Batch D, items 3/5 of the 2026-09-09 playtest list): Character Creation's gear picker rebuilt to match The Armory, via a new shared `gearPickerView.ts` component
+This is the biggest pure-UI change since D-216/D-217 — a real click-through
+matters more than usual. See `DECISIONS.md` D-241 for full detail on the
+shared-component design and every deliberate call made along the way.
+- Open any non-locked hero's "Gear" button (any hero in Free Play; only the
+  PC in a campaign) — confirm a full-screen overlay opens with a hero
+  SIDEBAR on the left (compact paperdoll per hero, same look as the
+  Armory) and a wide shopping panel on the right, instead of the old
+  single-hero plain-list picker.
+- Click a DIFFERENT hero in the sidebar (Free Play only, where more than
+  one hero is gear-editable) — confirm it switches cleanly without closing
+  the overlay, something the old picker couldn't do at all (you had to
+  close and reopen per hero before this session).
+- Click the "Hands" tab — confirm Weapon and Shield now show together
+  (Right hand/Left hand), consolidated for the first time in this picker;
+  equip a Light melee weapon (e.g. Dagger/Shortsword/Scimitar) into an
+  empty off-hand while a weapon is already equipped — confirm it
+  auto-places into Left hand. With BOTH hands full, pick a new Light melee
+  weapon — confirm it shows a "Replace Right hand"/"Replace Left hand"
+  choice instead of guessing.
+- Click "Rings" — confirm BOTH Ring 1 and Ring 2 show their own row with
+  their own independent Unequip button (item 5's actual fix — previously
+  there was exactly one shared "Unequip" button that only affected
+  whichever ring cell was last clicked in the paperdoll).
+- **Campaign PC only — SUPERSEDED by D-246/KI-194, not testable as written**:
+  this bullet described a Gear-Points budget picker for a campaign PC, but
+  D-246 later retired Gear Points and made a campaign PC's gear non-editable
+  in Character Creation entirely (their "Gear" button does nothing — see
+  KI-194's own checklist for the current, real behavior). Left here only for
+  history; **Free Play only** below is still the live, testable behavior for
+  this picker.
+- **Free Play only**: confirm NO "Gear Points"/gold readout appears at all,
+  and every item just reads "Equip"/"Unequip" with no cost anywhere.
+- Pick a class with real weapon-proficiency restrictions (e.g. a Wizard) —
+  confirm martial weapons are hidden from the Hands catalog with a
+  "N hidden — not proficient" footer, matching what the Armory already
+  does (this picker previously had its own separate, differently-coded
+  proficiency filter — now the same shared logic).
+- Press Esc (or click "Back") while the gear picker is open — confirm it
+  does NOT jump straight to Main Menu anymore (a real pre-existing gap this
+  rebuild closed as a side effect) — either it stays blocked/inert, or (if
+  you'd rather it close the picker instead) flag that as a preferred
+  follow-up.
+- Click "Done" — confirm it closes cleanly and the hero's "Gear: ..."
+  button label updates correctly, same as before.
+- General "does this actually look and feel like the Armory now" gut
+  check — that's the whole point of this rebuild.
+
+### KI-189 — D-240 (item 1 of the 2026-09-09 playtest list): PC identity/ability-score lock once a campaign persists a build (reverses D-213), plus a Subclass-picker lock-guard bug fix
+See `DECISIONS.md` D-240 for the full story, including why this reverses
+an earlier explicit decision (confirmed directly with Kevin first).
+- Start a brand-new campaign, play through at least one full chapter
+  (enough for a `pcBuild` to actually get persisted), return to Character
+  Creation for the next chapter — confirm the PC's Class, Race, Background,
+  and ability-score controls (Standard Array/Point Buy allocator, and the
+  Background ability-bonus picker) are now all inert (clicking does
+  nothing — no visual "locked" indicator, same "always interactive,
+  handler early-returns" convention every other locked control in this
+  file already uses) instead of editable.
+- Same PC, same return visit — confirm Gear, Spells (spell picker/spell
+  prep), Level Plan (Auto/Prompt/Fresh cadence and the blueprint picker),
+  and the Name field are all STILL fully editable — only identity/stats
+  should have locked, nothing else.
+- A locked companion of a level-1-subclass-choice class (Cleric, Sorcerer,
+  or Warlock) — confirm their Subclass row no longer responds to clicking
+  (this bug affected companions too, not just the PC scenario above).
+- Load Game into a mid-campaign save from BEFORE this session shipped —
+  confirm the PC's identity locks correctly on that first load too (the
+  lock is computed from whether a persisted `pcBuild` exists, which an
+  existing mid-campaign save already has).
+- Confirm Free Play / manual "Create Party" is completely UNCHANGED — this
+  fix only applies `if (this.campaignId)`, no persisted build ever exists
+  outside a campaign.
+
+### KI-188 — D-239 (Batch C of the 2026-09-09 playtest list): shrink-to-fit consolidation, renderAsiPrompt dynamic row heights, targeted wordWrap/shrink sweep
+See `DECISIONS.md` D-239 for the full list of what changed and — just as
+importantly — what was deliberately left alone (bounded/fixed content,
+verified by reading the actual code, not assumed). Nothing here changes
+game rules or balance, only text layout safety.
+- **Feat-choice screen (Level Up → Choose a Feat)**: with several feats
+  available at once (narrow buttons), confirm each one's description now
+  wraps inside its own row, and the row itself grows tall enough for a long
+  description instead of clipping it. A very long description in an
+  already-narrow button may still slightly overflow the row's own bottom
+  edge — that's a known remaining gap (Batch C's own plan flagged this as
+  needing per-row measurement, not a total fix), not a regression.
+- **Long hero names**: rename a hero to something long (via Character
+  Creation or Test Mode) and confirm it no longer overflows its roster HUD
+  slot, and that opening the spellbook / a spell-swap prompt / any ASI-
+  style choice screen with that hero shows the shrunk-or-wrapped title
+  cleanly instead of running off-screen.
+- **Boss/legendary enemy name banner**: fight a boss/legendary-tier enemy
+  (e.g. The Hollow Empress, Ashen Sovereign) and confirm its floating name
+  banner shrinks to fit above its token instead of spilling over neighbors.
+- **Multi-enemy-type wave preview**: a wave with several distinct enemy
+  types should show its full "Next: Wave N — ..." line wrapped, not cut off
+  or overflowing the canvas edges.
+- **Co-op partner name**: in a co-op battle, a long partner display name in
+  the Gold HUD line should shrink rather than pushing into the centered
+  banner.
+- **Shop/debug item-grid buttons**: a long structure/status/enemy name (with
+  a cost suffix in the shop) should shrink to fit its button instead of
+  spilling past it.
+
+### KI-187 — D-238 (Batch B of the 2026-09-09 playtest list): shared-overlay reskins (items 9/10), gear-compare deltas (item 4), Gear button label (item 2), dialogue-box hint/Skip move (item 14), pause-menu reorder (item 17)
+Six independent presentation/logic fixes — see `DECISIONS.md` D-238 for
+full detail on each. Nothing here changes game rules or balance, only how
+existing information is shown or laid out.
+- **Shared choice-overlay reskin (item 9)**: open any "pick one from a
+  list" screen that used to look like plain blue rectangles on
+  `system-ui` text — Class/Race pickers, `CampaignSelectScene`'s difficulty
+  choice, the Map Builder's enemy pickers, etc. — and confirm it now reads
+  wood-panel/parchment like the rest of the game, with real hover/press
+  feedback per option and no dynamic-row-height regressions (a long
+  description should still get a taller row, not clip).
+- **Button sublabel wrapping (item 10's root cause)**: reopen
+  `BattleScene.showFeatChoice` (Level Up → Choose a Feat) with several feats
+  available at once (narrow buttons) and confirm each feat's description
+  wraps inside its own button instead of spilling into its neighbor. A
+  very long description in a narrow button may still slightly overflow the
+  button's own BOTTOM edge (fixed-height rows are Batch C's job, not this
+  fix) — that's expected, not a regression; only edge-to-edge spillover
+  into another button is the bug this closes.
+- **Gear compare deltas (item 4)**: in The Armory or Character Creation's
+  gear picker, hover/select an item that changes something other than
+  AC/attack bonus (e.g. Boots of Striding and Springing for movement, a
+  Ring of Protection for saving throws, Gauntlets of Ogre Power for STR,
+  Ring of Free Action for a status immunity, a Wand for a charged spell)
+  and confirm the compare line now shows that change instead of "No
+  change."
+- **Gear button label (item 2)**: Character Creation's Gear button should
+  always just read "Gear," never a list of equipped items or a count.
+- **Dialogue box (item 14)**: open any chapter-boundary dialogue and
+  confirm a faint pulsing "Click anywhere to continue" hint appears near
+  the bottom, and (when Skip is visible — sequences with no decision line)
+  Skip now sits at the bottom, left-of-center, not top-left.
+- **Pause menu reorder (item 17)**: open the in-battle pause menu (Esc) and
+  confirm the order is Resume Battle, Controls, Settings, Save Party, Save
+  Game, Load Game, Exit to Main Menu — "Save Game" is "Save & Exit"
+  renamed (Kevin's own call), same behavior as before (saves the party
+  build, then exits to Main Menu).
+
+### KI-186 — D-237 (Batch A of the 2026-09-09 playtest list): build-mode tile highlighting, correct build-attribution hero, Emberford Ch2 unplayable bug
+Three independent fixes, all in `BattleScene.ts`. See `DECISIONS.md` D-237
+for full root-cause detail on each.
+- **Build placement highlight (item 7)**: open the build menu (B) on any
+  battle map — every legal tile should light up immediately, not just
+  whichever tile the mouse happens to be hovering. Switching to a different
+  structure in the shop grid should refresh the highlight (some structures,
+  e.g. walls, have stricter placement rules than others).
+- **Build attribution (item 8)**: select a specific hero first, THEN open
+  the build menu and place a structure — it should count against that
+  hero's own structure cap (3 max), not whichever hero happens to be
+  physically closest to the tile. Opening the build menu with NO hero
+  selected should behave exactly as before (nearest living hero to the
+  clicked tile).
+- **Emberford Reach ("Cinderlord") Chapter 2 (item 16)**: replay this
+  specific chapter start-to-finish. Previously reported as: map loads, but
+  clicking anything does nothing; hotkeys (B, arrows, etc.) still work but
+  skip straight to building with no visible menu; a "move a hero to a Shop
+  tile" message appears despite what looked like no shop on the map. The fix
+  closes the structural gap that best explains this (an orphaned, invisible,
+  click-eating dialogue overlay) but the exact trigger sequence couldn't be
+  confirmed without a browser — if clicks still die anywhere in the campaign
+  after this, get the DevTools console output at the moment it happens
+  before assuming it's the same bug recurring.
+
 ### KI-185 — D-236: live site was a black screen on load (`GearShopScene.ts` `const` ordering bug) — fixed, needs Kevin's reload to confirm
 Kevin reported the deployed link loading to a black screen, immediately,
 every time — no Main Menu ever appeared. He supplied the DevTools console
@@ -2127,11 +2658,12 @@ it look and fit right" check, not a "does it work right" check.
 
 ### KI-115 — D-164: replaced every remaining click-to-cycle button with a real list picker
 - Map Builder's Width/Height buttons, Settings' Game Speed/Master/Music/SFX
-  Volume buttons, Character Creation's Signature Action/Starting Level/
-  Party Size/Difficulty/Team Level buttons, and Free Play's/Browse Shared
-  Maps' Difficulty buttons should all now open a full-screen list of every
-  option instead of cycling on each click — picking one should apply it and
-  close immediately.
+  Volume buttons, Character Creation's Starting Level/Party Size/Difficulty/
+  Team Level buttons (its "Signature Action" button, also on this original
+  list, is moot — that whole mechanic was removed in D-178), and Free Play's/
+  Browse Shared Maps' Difficulty buttons should all now open a full-screen
+  list of every option instead of cycling on each click — picking one should
+  apply it and close immediately.
 - The currently-selected option in each list should show the gold "★ "
   highlight, matching the Class/Race/Gear/Subclass pickers' existing look.
 - Character Creation: opening any of these new pickers should still hide
@@ -2188,8 +2720,9 @@ it look and fit right" check, not a "does it work right" check.
   no overlap between the two.
 
 ### KI-111 — D-160: Character Creation stray hero names + Back button relocation
-- Opening any full-screen picker (Class/Race/Gear/Subclass/Signature
-  Action/Starting Level/Party Size/Difficulty/Team Level) or the Plan
+- Opening any full-screen picker (Class/Race/Gear/Subclass/Starting Level/
+  Party Size/Difficulty/Team Level — this list originally also included
+  Signature Action, a mechanic fully removed in D-178) or the Plan
   Levels/Spells wizards should hide all 4 hero-name fields underneath —
   they should reappear the instant the picker/wizard closes, with their
   typed text and focus state intact.
@@ -3202,17 +3735,16 @@ done; corrected in place below rather than left stale):
     KI-132) — `WorldFlagSystem` (D-118 scaffolding) is now actually wired
     up: sparing one of the 5 home minibosses in its own Ch1 fight persists a
     flag that Saltmere Ch1 reads back to spawn that same miniboss instead of
-    the nameless `tide-wretch` fallback. Still fully open: full dialogue/arc writing for the
-    six mirror companions (explicitly deferred by Kevin's own instruction —
-    a dedicated future planning-and-writing session, not a quick
-    follow-up), the capstone (The Nameless Throne) has no map or chapters
-    yet, any scene/UI to actually recruit a companion in battle, the
-    Sorrel-Thane-Lost priority tier §4 also wants ahead of a spared
-    miniboss (needs the not-yet-built companion-fate data model — see
-    D-182's own deferred-scope note),
-    and cross-chapter continuity (gold/gear/level carrying over between
-    chapters — see KI-129/KI-130's own deferred-scope notes). See
-    D-177/D-179/D-180/D-181/D-182 in `DECISIONS.md` for the full accounting.
+    the nameless `tide-wretch` fallback. **Update: every gap this paragraph
+    used to list here has since closed** — companion roster/recruitment UI
+    (KI-133, D-183), the Proving Ground (KI-134, D-184), Sorrel Thane's own
+    fate arc including the Lost priority tier (KI-135, D-185), side-quest
+    missions (KI-136, D-186), the Nameless Throne capstone map/chapters
+    (KI-138, D-188), and the companion dialogue/branch-choice writing pass
+    (KI-139, D-189) are all shipped — see those entries (all newer, so
+    listed above this one) for their own checklists, and
+    D-177/D-179/D-180/D-181/D-182/D-183/D-184/D-185/D-186/D-188/D-189 in
+    `DECISIONS.md` for the full build accounting.
     `CAMPAIGN_STORY_DESIGN.md` and D-118's world-flag/companion-roster
     scaffolding remain the foundation for what's left. Now ALSO carries
     item 12's former scope (D-174): the overworld/campaign-only XP track

@@ -249,6 +249,20 @@ export class CombatSystem {
   }
 
   /**
+   * Shared tie-break used by both `chooseTarget` and `attackArea`: nearest to
+   * `from` first, then lowest current health, then lowest id — negative when
+   * `a` should sort/win before `b`, matching `Array.sort`'s comparator sign
+   * convention.
+   */
+  private static compareTargetPriority<T extends Combatant>(from: GridPosition, a: T, b: T): number {
+    const da = CombatSystem.range(from, a.position);
+    const db = CombatSystem.range(from, b.position);
+    if (da !== db) return da - db;
+    if (a.health !== b.health) return a.health - b.health;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  }
+
+  /**
    * Deterministically choose the "best" target within range, or null if none.
    * Priority: nearest first, then lowest current health, then lowest id. This
    * makes both the enemy AI and any auto-target fully predictable and testable.
@@ -260,13 +274,7 @@ export class CombatSystem {
   ): T | null {
     const inRange = CombatSystem.targetsInRange(from, rangeTiles, candidates);
     if (inRange.length === 0) return null;
-    return inRange.reduce((best, c) => {
-      const db = CombatSystem.range(from, best.position);
-      const dc = CombatSystem.range(from, c.position);
-      if (dc !== db) return dc < db ? c : best;
-      if (c.health !== best.health) return c.health < best.health ? c : best;
-      return c.id < best.id ? c : best;
-    });
+    return inRange.reduce((best, c) => (CombatSystem.compareTargetPriority(from, c, best) < 0 ? c : best));
   }
 
   /** Damage dealt by a hit: full `rawDamage`, doubled on a critical hit. */
@@ -479,13 +487,9 @@ export class CombatSystem {
     profile: AttackProfile,
     random: RandomService,
   ): AttackResult[] {
-    const hit = CombatSystem.targetsInRange(from, profile.rangeTiles, candidates).sort((a, b) => {
-      const da = CombatSystem.range(from, a.position);
-      const db = CombatSystem.range(from, b.position);
-      if (da !== db) return da - db;
-      if (a.health !== b.health) return a.health - b.health;
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-    });
+    const hit = CombatSystem.targetsInRange(from, profile.rangeTiles, candidates).sort((a, b) =>
+      CombatSystem.compareTargetPriority(from, a, b),
+    );
     return hit.map((t) => CombatSystem.applyAttack(t, profile, random));
   }
 }

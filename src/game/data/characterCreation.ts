@@ -31,10 +31,12 @@
  * D-194: that free-pick-everything model is CAMPAIGN-MODE-ONLY as of this
  * decision — Free Play/manual Create Party keeps it unchanged, but a real
  * campaign run now gives companions a FIXED kit (`companionStartingGearForDifficulty`,
- * scaled by difficulty, never player-edited) and gives the PC a point-buy
- * budget instead (`startingGearPointCost`, spent via `CharacterCreationScene
- * .openGearPicker`/`openGearItemPicker`) — see `DifficultyDefinition
- * .startingGearPoints`/`.companionDiscretionaryGearSlots`, `data/difficulty.ts`.
+ * scaled by difficulty, never player-edited). `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md`
+ * Plan 5 (D-246) later gave the campaign PC the same fixed-kit treatment —
+ * see `defaultStartingGearForClass` below — retiring the point-buy "Gear
+ * Points" budget this comment used to describe (`DifficultyDefinition
+ * .startingGearPoints` no longer exists; `.companionDiscretionaryGearSlots`,
+ * `data/difficulty.ts`, is unaffected and still companion-only).
  *
  * Phase 13.7 (D-092): in BATTLE, every caster gets its FULL real known-spell
  * list — `knownSpellIdsForClass` lists EVERY mechanically-active spell for a
@@ -64,7 +66,6 @@ import {
   getEquipmentDefinition,
   type GearSlotType,
   type GearSlotId,
-  type EquipmentRarity,
 } from "./equipment";
 import { getDifficultyDefinition, type DifficultyId } from "./difficulty";
 
@@ -96,24 +97,40 @@ export function startingGearIdsForSlotType(slot: GearSlotType): string[] {
 }
 
 /**
- * D-194: a starting-gear item's point-buy cost, for the campaign PC's
- * gear budget (`DifficultyDefinition.startingGearPoints`,
- * `CharacterCreationScene.openGearPicker`). Only common/uncommon values
- * matter — the starting pool never contains anything rarer.
+ * `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 5 (D-246): a brand-new campaign
+ * PC's fixed, non-editable starting kit — retires the old "Gear Points"
+ * free-pick-with-budget system entirely (there's no Armory to shop at
+ * before Chapter 1 exists, per D-243, so a fixed floor loadout replaces the
+ * point-buy pick that used to fill that gap). Confirmed with Kevin: no
+ * player choice here, matching a companion's own fixed kit — each entry
+ * reuses the EXACT item ids that class's own established companion carries
+ * (`data/companions.ts`), for flavor consistency and zero new content. A
+ * RETURNING campaign PC (once a build actually persists) never reads this —
+ * their real gear comes from `CharacterCreationScene.startingGearIdsFromIndices`
+ * reading back their persisted `startingGearIds`, which already reflects
+ * whatever they bought in the between-missions Armory (D-243).
  */
-export function startingGearPointCost(rarity: EquipmentRarity): number {
-  switch (rarity) {
-    case "common":
-      return 1;
-    case "uncommon":
-      return 2;
-    case "rare":
-      return 4;
-    case "veryRare":
-      return 8;
-    case "legendary":
-      return 16;
-  }
+const DEFAULT_STARTING_GEAR_BY_CLASS: Record<string, Partial<Record<GearSlotId, string>>> = {
+  fighter: { weapon: "longsword", chest: "chain-shirt", shield: "shield" },
+  wizard: { weapon: "dagger", chest: "padded-armor", shield: "arcane-focus" },
+  rogue: { weapon: "shortsword", chest: "leather-armor" },
+  cleric: { weapon: "mace", chest: "chain-shirt", shield: "holy-symbol" },
+  barbarian: { weapon: "greataxe", chest: "hide-armor" },
+  bard: { weapon: "rapier", chest: "leather-armor", shield: "component-pouch" },
+  druid: { weapon: "quarterstaff", chest: "hide-armor", shield: "druidic-totem" },
+  // D-193: no chest armor — Monk's `Hero.armorClass` only applies its
+  // favorable unarmored formula when the chest slot is empty (same reason
+  // the Monk companion, Mira Quill, carries no chest piece either).
+  monk: { weapon: "quarterstaff" },
+  paladin: { weapon: "warhammer", chest: "chain-mail", shield: "shield" },
+  ranger: { weapon: "longbow", chest: "leather-armor" },
+  sorcerer: { weapon: "dagger", chest: "padded-armor", shield: "arcane-focus" },
+  warlock: { weapon: "dagger", chest: "leather-armor", shield: "component-pouch" },
+};
+
+/** Looks up `DEFAULT_STARTING_GEAR_BY_CLASS`, falling back to an empty kit for an unrecognized class id (defensive only — every `CREATABLE_CLASS_IDS` entry has an authored kit above). */
+export function defaultStartingGearForClass(classId: string): Partial<Record<GearSlotId, string>> {
+  return DEFAULT_STARTING_GEAR_BY_CLASS[classId] ?? {};
 }
 
 /**

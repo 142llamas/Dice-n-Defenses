@@ -1,6 +1,7 @@
 import Phaser from "phaser";
-import { CAMPAIGN_PROGRESS_STORAGE_KEY, CAMPAIGN_LEVEL_STORAGE_KEY, COMPANION_ROSTER_STORAGE_KEY, WORLD_FLAG_STORAGE_KEY } from "../config";
+import { CAMPAIGN_PROGRESS_STORAGE_KEY, CAMPAIGN_LEVEL_STORAGE_KEY, CAMPAIGN_GOLD_STORAGE_KEY, COMPANION_ROSTER_STORAGE_KEY, WORLD_FLAG_STORAGE_KEY } from "../config";
 import { DEFAULT_CAMPAIGN_LEVEL_STATE, saveCampaignLevel } from "../systems/CampaignLevelSystem";
+import { DEFAULT_CAMPAIGN_GOLD_STATE, saveCampaignGold } from "../systems/CampaignGoldSystem";
 import {
   CAMPAIGNS,
   PROLOGUE_CAMPAIGN_ID,
@@ -28,8 +29,8 @@ import {
 } from "../systems/CompanionRosterSystem";
 import { saveWorldFlags, DEFAULT_WORLD_FLAG_STATE } from "../systems/WorldFlagSystem";
 import { seedStartingCompanions } from "../systems/CompanionSeedSystem";
-import { resolveUnlockMissionCompanion } from "../systems/UnlockMissionSystem";
 import { RandomService } from "../systems/RandomService";
+import { startMissionFlow } from "./missionRouting";
 import { DIFFICULTY_IDS, getDifficultyDefinition, difficultyChoiceDescription, type DifficultyId } from "../data/difficulty";
 import {
   getViewport,
@@ -238,6 +239,10 @@ export class CampaignSelectScene extends Phaser.Scene {
     // D-217 (item 3c): a fresh playthrough's shared campaignLevel resets to 1
     // along with everything else this button already wipes.
     saveCampaignLevel(window.localStorage, CAMPAIGN_LEVEL_STORAGE_KEY, DEFAULT_CAMPAIGN_LEVEL_STATE);
+    // CAMPAIGN_ECONOMY_REDESIGN_PLAN.md Plan 1: same treatment for the
+    // persistent campaign gold balance — a fresh playthrough starts back at
+    // the flat default, not carrying over a prior run's balance.
+    saveCampaignGold(window.localStorage, CAMPAIGN_GOLD_STORAGE_KEY, DEFAULT_CAMPAIGN_GOLD_STATE);
     this.rebuildLayout();
   }
 
@@ -292,7 +297,14 @@ export class CampaignSelectScene extends Phaser.Scene {
         cardWidth,
         cardHeight,
         "",
-        () => this.selectCampaign(campaign, nextChapterIndex),
+        // D-253 (Batch H, item 12): a chaptered campaign now opens the new
+        // chapter-select submenu instead of jumping straight to the next
+        // unplayed chapter — a flat campaign (Prologue, Nameless Throne)
+        // has no chapters to pick from, so it's unchanged.
+        () =>
+          isChapteredCampaign(campaign)
+            ? this.scene.start("ChapterSelectScene", { campaignId: campaign.id, difficultyId: this.selectedDifficultyId })
+            : this.selectCampaign(campaign, nextChapterIndex),
         { variant: "secondary", disabled: locked },
       );
       if (completed) cardHandle.setSelected(true);
@@ -320,7 +332,7 @@ export class CampaignSelectScene extends Phaser.Scene {
       // (also avoids spoiling a region's next boss while it's still locked).
       const lockedHint =
         campaign.id === NAMELESS_THRONE_CAMPAIGN_ID
-          ? "Complete all 6 regions to unlock"
+          ? "Complete all 5 regions to unlock"
           : "Complete The Proving Ground to unlock";
       const bossLine = this.add
         .text(leftInset, cardHeight / 2 - 18, locked ? lockedHint : this.bossLineFor(campaign, nextChapterIndex), {
@@ -377,22 +389,12 @@ export class CampaignSelectScene extends Phaser.Scene {
    * into the party before building it. Every other case (a later chapter,
    * a Chapter 1 replay after the companion's already recruited, or that
    * companion having been permanently lost) goes straight to Character
-   * Creation exactly as before.
+   * Creation exactly as before. D-253 (Batch H): this 2-branch routing is
+   * now shared with `ChapterSelectScene` via `startMissionFlow` rather than
+   * duplicated — this method is a thin delegate, kept only as the flat-
+   * campaign path's own call site (see the card click handler above).
    */
   private selectCampaign(campaign: CampaignDefinition, chapterIndex: number): void {
-    const roster = loadCompanionRoster(window.localStorage, COMPANION_ROSTER_STORAGE_KEY);
-    if (resolveUnlockMissionCompanion(campaign.id, chapterIndex, roster)) {
-      this.scene.start("UnlockMissionPartyScene", {
-        campaignId: campaign.id,
-        chapterIndex,
-        difficultyId: this.selectedDifficultyId,
-      });
-      return;
-    }
-    this.scene.start("CharacterCreationScene", {
-      campaignId: campaign.id,
-      chapterIndex,
-      difficultyId: this.selectedDifficultyId,
-    });
+    startMissionFlow(this, campaign, chapterIndex, this.selectedDifficultyId);
   }
 }

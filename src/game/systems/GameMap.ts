@@ -154,30 +154,6 @@ export class GameMap {
     return effect.targets === "flying" ? null : effect;
   }
 
-  /** A short human-readable description of a tile, for the debug overlay. */
-  describe(pos: GridPosition): string {
-    const type = this.getTileType(pos);
-    if (type === null) return "off-map";
-    const role = this.roleAt(pos);
-    const roleText = role ? ` (${role})` : "";
-    switch (type) {
-      case "blocked":
-        return "wall — blocked";
-      case "cliff":
-        return "cliff — blocked (ground)";
-      case "pit":
-        return "pit — blocked (ground); lethal if pushed in";
-      case "sand":
-        return `sand${roleText} — walkable, not buildable`;
-      case "water":
-      case "fire":
-      case "acid":
-        return `${type}${roleText}`;
-      default:
-        return `floor${roleText}`;
-    }
-  }
-
   private contains(list: GridPosition[], pos: GridPosition): boolean {
     return list.some((p) => GridSystem.equals(p, pos));
   }

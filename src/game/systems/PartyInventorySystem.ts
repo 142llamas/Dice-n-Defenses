@@ -104,3 +104,28 @@ export function dropPoolEntriesForLostCompanion(state: CompanionRosterState, com
     getPartyInventory(state).filter((e) => e.originCompanionId !== companionId),
   );
 }
+
+/**
+ * `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 3: the between-missions Armory's
+ * "Sell" action for a pool entry that nobody's claimed — removes it from
+ * the pool outright and hands the caller its `itemId` so THEY credit
+ * `CampaignGoldSystem` (this module stays free of any gold/economy
+ * coupling, same discipline as every other function here). Returns `null`
+ * if `entryId` doesn't match any current entry, so a caller never credits
+ * gold for a sale that didn't actually happen (e.g. a stale/double click).
+ */
+export function sellPartyInventoryEntry(
+  state: CompanionRosterState,
+  entryId: string,
+): { state: CompanionRosterState; itemId: string } | null {
+  const pool = getPartyInventory(state);
+  const entry = pool.find((e) => e.id === entryId);
+  if (!entry) return null;
+  return {
+    state: setPartyInventory(
+      state,
+      pool.filter((e) => e.id !== entryId),
+    ),
+    itemId: entry.itemId,
+  };
+}

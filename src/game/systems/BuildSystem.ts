@@ -104,6 +104,19 @@ export class BuildSystem {
   private nextInstance = 1;
   /** Phase 11.7 (D-071): active structure count per `builtBy` hero id. */
   private builtByCounts = new Map<string, number>();
+  /**
+   * D-250 (Batch E gap 3, item 15): free placement charges per structure
+   * def id, granted by a region bonus (`BattleScene.grantRegionBonusStructure`)
+   * instead of that bonus auto-placing the structure itself. `place()`
+   * itself never touches gold either way (see its own doc comment) — the
+   * caller (`BattleScene.tryBuild`) checks `consumeFreeCharge` first and
+   * skips its normal gold charge on a successful consume, otherwise charges
+   * gold exactly as before. A charge does NOT exempt the placement from the
+   * per-hero structure cap (`builtByCounts`) — still a real structure.
+   */
+  private freeCharges = new Map<string, number>();
+  /** D-250 (Batch E gap 3): instance ids placed via a free charge — so a refund doesn't hand back gold that was never spent. Never cleaned up on remove(); instance ids are never reused, so this is a bounded, harmless per-battle leak. */
+  private freePlacedIds = new Set<string>();
 
   private readonly spawns: GridPosition[];
   private readonly exits: GridPosition[];
@@ -335,7 +348,10 @@ export class BuildSystem {
    * Validate and place a structure. On success returns the created structure;
    * on failure returns the reason and places nothing. This never touches gold —
    * the caller spends gold exactly once around a successful placement, keeping
-   * the "purchases update gold once" guarantee in one place.
+   * the "purchases update gold once" guarantee in one place. `free`, when true
+   * (D-250, Batch E gap 3: the caller just consumed a region-bonus free
+   * charge), only records that this instance shouldn't refund gold on removal
+   * (`wasFreePlaced`) — everything else about placement is identical.
    */
   place(
     defId: string,
@@ -343,6 +359,7 @@ export class BuildSystem {
     isOccupied?: (p: GridPosition) => boolean,
     heroPositions?: GridPosition[],
     builtBy?: string,
+    free = false,
   ): PlaceResult {
     const check = this.canPlace(defId, pos, isOccupied, heroPositions, builtBy);
     if (!check.ok) return check;
@@ -359,7 +376,36 @@ export class BuildSystem {
     this.placed.push(structure);
     this.byTile.set(KEY(pos), structure);
     if (builtBy) this.builtByCounts.set(builtBy, (this.builtByCounts.get(builtBy) ?? 0) + 1);
+    if (free) this.freePlacedIds.add(structure.instanceId);
     return { ok: true, structure };
+  }
+
+  /** D-250 (Batch E gap 3): true if `instanceId` was placed via `place(..., true)` — the caller should skip refunding gold for it on removal. */
+  wasFreePlaced(instanceId: string): boolean {
+    return this.freePlacedIds.has(instanceId);
+  }
+
+  /** D-250 (Batch E gap 3): grant `count` free placement charges for `defId` — adds to any already held, never resets. */
+  grantFreeCharge(defId: string, count: number): void {
+    this.freeCharges.set(defId, (this.freeCharges.get(defId) ?? 0) + count);
+  }
+
+  /** D-250 (Batch E gap 3): how many free charges remain for `defId` (0 if none). */
+  freeChargesFor(defId: string): number {
+    return this.freeCharges.get(defId) ?? 0;
+  }
+
+  /**
+   * D-250 (Batch E gap 3): spend one free charge for `defId` if any remain —
+   * returns true and decrements on success, false (no-op) if none are held.
+   * Does not place anything itself; the caller places normally afterward,
+   * having skipped its own gold charge.
+   */
+  consumeFreeCharge(defId: string): boolean {
+    const remaining = this.freeCharges.get(defId) ?? 0;
+    if (remaining <= 0) return false;
+    this.freeCharges.set(defId, remaining - 1);
+    return true;
   }
 
   /**
@@ -379,12 +425,6 @@ export class BuildSystem {
       else this.builtByCounts.set(removed.builtBy, count - 1);
     }
     return removed;
-  }
-
-  /** Remove the structure on a tile (if any) and return it. */
-  removeAt(pos: GridPosition): PlacedStructure | null {
-    const s = this.structureAt(pos);
-    return s ? this.remove(s.instanceId) : null;
   }
 
   /**

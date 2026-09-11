@@ -18,20 +18,14 @@
  * advances a real class level on this same wave-clear cadence — `BattleScene`
  * calls `hasPendingLevelUp` right after awarding a wave's reward and, if true,
  * calls `acknowledgeLevelUp()` while it applies each hero's own
- * `Hero.levelUpClass()`. `Hero.grantVigor`/`grantMight` still exist — they're
- * also how a Vigor Tonic/other attack-buff potion works — just no longer
- * reachable via a level-up choice.
+ * `Hero.levelUpClass()`. `Hero.grantMight` still exists — it's also how an
+ * attack-buff potion works — just no longer reachable via a level-up choice.
  */
 
 export const LEVEL_UP_WAVE_INTERVAL = 1;
 
 export class ProgressionSystem {
   private levelsGranted = 0;
-
-  /** How many level-ups have been granted so far. */
-  get levelsSoFar(): number {
-    return this.levelsGranted;
-  }
 
   /**
    * True once `wavesCleared` has crossed a new LEVEL_UP_WAVE_INTERVAL

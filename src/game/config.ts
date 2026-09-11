@@ -66,6 +66,10 @@ export const CAMPAIGN_PROGRESS_STORAGE_KEY = "fantasy-td:campaign-progress";
 // CAMPAIGN_PROGRESS_STORAGE_KEY, same "different concerns, same mechanism"
 // reasoning as that key's own comment above.
 export const CAMPAIGN_LEVEL_STORAGE_KEY = "fantasy-td:campaign-level";
+// `CAMPAIGN_ECONOMY_REDESIGN_PLAN.md` Plan 1: the persistent SHARED
+// campaign gold balance (see systems/CampaignGoldSystem.ts) — its own key,
+// same "different concerns, same mechanism" reasoning as the key above.
+export const CAMPAIGN_GOLD_STORAGE_KEY = "fantasy-td:campaign-gold";
 // Phase 9 (D-083): locally-saved party builds (see systems/SaveSystem.ts) —
 // same local-only storage treatment, its own key since a save slot's shape
 // (a whole party + party size + difficulty) is unrelated to the other three.
@@ -95,6 +99,12 @@ export const CHARACTER_LIBRARY_STORAGE_KEY = "fantasy-td:character-library";
 // local-only treatment as the above, its own key since a key-binding map's
 // shape is unrelated to any of them.
 export const KEYBINDINGS_STORAGE_KEY = "fantasy-td:keybindings";
+// Batch F (item 18): mid-battle autosave checkpoints (see
+// systems/AutosaveSystem.ts) — a small rotating pool of in-progress
+// Campaign/Free-Play runs, keyed by run id. Its own key since a checkpoint's
+// shape (a full BattleStateSnapshot plus static run identity) is unrelated
+// to every other key above.
+export const AUTOSAVE_STORAGE_KEY = "fantasy-td:autosaves";
 
 // A small, readable colour palette for placeholder art (all original, no IP).
 export const COLORS = {

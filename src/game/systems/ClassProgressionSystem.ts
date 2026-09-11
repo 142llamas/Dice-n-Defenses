@@ -1,7 +1,8 @@
 import { getClassDefinition, type ClassFeature } from "../data/classes";
 import { getSubclassDefinition } from "../data/subclasses";
-import { spellSlotsForClassAtLevel, cantripsKnownForClassAtLevel } from "./SpellcastingSystem";
+import { spellSlotsForClassAtLevel, cantripsKnownForClassAtLevel, isSpellcaster } from "./SpellcastingSystem";
 import { preparedSpellCountForClassAtLevel, wizardSpellbookSizeAtLevel } from "./SpellPreparationSystem";
+import { featuresAtLevel } from "./CharacterSystem";
 
 /**
  * D-200 (Party Creation Overhaul Plan 7) — a level-by-level (1-20) reference
@@ -35,14 +36,14 @@ export function classProgressionTable(classId: string, subclassId?: string): Pro
   // if it really belongs to this class.
   const subclassDef = subclassId ? getSubclassDefinition(subclassId) : undefined;
   const validSubclassDef = subclassDef && subclassDef.classId === classId ? subclassDef : undefined;
-  const isCaster = !!classDef.spellcasting;
+  const isCaster = isSpellcaster(classDef);
 
   const entries: ProgressionLevelEntry[] = [];
   for (let level = MIN_LEVEL; level <= MAX_LEVEL; level++) {
     entries.push({
       level,
-      classFeatures: classDef.features.filter((f) => f.level === level),
-      subclassFeatures: validSubclassDef ? validSubclassDef.features.filter((f) => f.level === level) : [],
+      classFeatures: featuresAtLevel(classDef, level),
+      subclassFeatures: validSubclassDef ? featuresAtLevel(validSubclassDef, level) : [],
       isCaster,
       cantripsKnown: isCaster ? cantripsKnownForClassAtLevel(classDef, level) : 0,
       spellSlots: isCaster ? spellSlotsForClassAtLevel(classDef, level) : [],

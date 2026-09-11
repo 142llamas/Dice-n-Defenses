@@ -2,6 +2,7 @@ import { getEquipmentDefinition } from "../data/equipment";
 import { getClassDefinition } from "../data/classes";
 import { WEAPON_PROFICIENCIES } from "../data/proficiencies";
 import { handsCategoryOf } from "./GearFilterSystem";
+import { isSpellcaster } from "./SpellcastingSystem";
 
 /**
  * ProficiencySystem — D-235 (item 7): the answer to "is there a weapon-
@@ -20,7 +21,7 @@ export function isProficientWithHandsItem(classId: string, itemId: string): bool
   const category = handsCategoryOf(itemId);
   if (category === null) return true; // not a weapon/shield/focus item — weapon proficiency doesn't apply
   if (category === "shield") return true;
-  if (category === "focus") return getClassDefinition(classId).spellcasting !== undefined;
+  if (category === "focus") return isSpellcaster(getClassDefinition(classId));
 
   const def = getEquipmentDefinition(itemId);
   const weapon = def.weapon;

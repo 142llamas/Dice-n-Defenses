@@ -9,11 +9,11 @@
  *
  * What this is for: `CAMPAIGN_STORY_DESIGN.md` §4-§6 describes choices whose
  * consequences need to be readable much later — which miniboss a player
- * spared (read by Saltmere's Ch1, region 5), Sorrel Thane's 3-outcome branch
- * chain (read by the same slot), and the accumulated pattern across all six
- * regions that picks the capstone's ending (§5). None of that story content
- * exists yet — this is only the generic mechanism a future content pass
- * would read/write through. A flag's VALUE is deliberately generic
+ * spared (read by Saltmere's Ch1, region 5, via `ReturningMinibossSystem`),
+ * Sorrel Thane's 3-outcome branch chain (`SorrelFateSystem`), and the
+ * accumulated pattern across regions that picks the capstone's ending
+ * (`NamelessThroneSystem`, §5) all read/write through this mechanism for
+ * real as of D-182/D-185/D-189. A flag's VALUE is deliberately generic
  * (boolean/string/number) rather than a fixed enum, since the eventual
  * flags (a spared-or-destroyed miniboss id, a 3-way outcome, a numeric
  * "held-on vs. let-go" counter) don't share one shape.

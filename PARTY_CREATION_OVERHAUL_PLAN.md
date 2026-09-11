@@ -1,5 +1,9 @@
 # Party & Character Creation Overhaul — Plan
 
+**STATUS: ALL 8 PLANS SHIPPED (D-190 through D-202).** This document is now
+historical reference — see the status table below for each plan's D-NNN and
+any still-open browser-confirmation KI-NNN.
+
 Born from Kevin's first real playtest pass of Character Creation and
 campaign party creation (2026-08-26 — see his raw notes preserved at the
 bottom of this doc). This doc is the roadmap future sessions work through,

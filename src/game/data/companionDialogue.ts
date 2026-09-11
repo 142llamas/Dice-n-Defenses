@@ -48,19 +48,6 @@ export const COMPANION_RECRUITMENT_DIALOGUE: Record<string, DialogueLine[]> = {
       text: "I've spent long enough hammering out my own anger alone. Maybe it goes better with company.",
     },
   ],
-  "dorian-wick": [
-    {
-      text: "Past the wreckage at the causeway's far end, a tiefling in a scavenged coat watches the last of the fighting with more curiosity than fear.",
-    },
-    {
-      speakerName: "Dorian Wick",
-      text: "The Devourer took my family the way it takes everything — like it can't tell wanting something from just having it. I've spent two years trying to get close enough to end it.",
-    },
-    {
-      speakerName: "Dorian Wick",
-      text: "I won't say no to help. Just don't ask me to explain everything I've traded for what I can do. Some of that I'd rather not remember either.",
-    },
-  ],
   "hollis-vane": [
     {
       text: "Cinderfall's rift road is finally clear. A weathered fighter steps out from cover where he'd clearly been waiting, not fighting.",
@@ -127,19 +114,6 @@ export const COMPANION_MIRROR_REACTION_DIALOGUE: Record<string, MirrorReactionDi
     {
       speakerName: "Tamsin Rourke",
       text: "I'm not him. I got to find that out the hard way, with people who'd have stopped me if I'd ever started down that road. Thank you for that, whether you meant it or not.",
-    },
-  ],
-  "dorian-wick": [
-    {
-      text: "The Devourer stops moving. Dorian stands over the wreck of it a long while before he finally lowers his hand.",
-    },
-    {
-      speakerName: "Dorian Wick",
-      text: "I used to think if I hated it hard enough, long enough, that would be the same as still loving what it took from me. It isn't. I think I forgot that, for a while.",
-    },
-    {
-      speakerName: "Dorian Wick",
-      text: "Grief's supposed to burn down to something. I was afraid it'd be hunger, same as it was for that thing. Turns out it's just quiet, actually. I can live with quiet.",
     },
   ],
   "hollis-vane": [
